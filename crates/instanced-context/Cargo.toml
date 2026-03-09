@@ -1,0 +1,9 @@
+[package]
+name = "instanced-context"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uzor = "1.0.6"
+uzor-backend-wgpu-instanced = "1.0.6"
+zengeld-chart = { path = "../chart" }

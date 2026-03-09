@@ -1,0 +1,23 @@
+[package]
+name = "live-data"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Chart types (Bar, Timeframe, DataProvider trait)
+zengeld-chart = { path = "../chart" }
+
+# V5 connectors (async exchange API) — separate workspace, use path
+digdigdig3 = "0.1.1"
+
+# Async runtime for background tasks
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+
+# Stream utilities for WebSocket event_stream() consumption
+futures-util = "0.3"
+
+# Raw WebSocket connection for special all-market streams (e.g. !miniTicker@arr)
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+
+# JSON parsing for mini ticker WebSocket messages
+serde_json = "1.0"

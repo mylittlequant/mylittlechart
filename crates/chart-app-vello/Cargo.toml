@@ -1,0 +1,37 @@
+[package]
+name = "chart-app-vello"
+version.workspace = true
+edition.workspace = true
+description = "Standalone chart vello/winit runner — like terminal-vello but for chart-app"
+
+[[bin]]
+name = "chart-app-vello"
+path = "src/main.rs"
+
+[dependencies]
+chart-app = { path = "../chart-app" }
+sidebar-content = { path = "../sidebar-content" }
+alert-delivery = { path = "../alert-delivery" }
+live-data = { path = "../live-data" }
+vello-context = { path = "../vello-context" }
+zengeld-chart = { path = "../chart" }
+uzor = "1.0.6"
+vello = "0.7"
+winit = "0.30"
+pollster = "0.4"
+png = "0.17"
+arboard = "3"
+tokio = { version = "1", features = ["sync"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+zengeld-server = { path = "../zengeld-server" }
+zengeld-terminal-indicators = { path = "../indicators" }
+sysinfo = "0.34"
+instanced-context = { path = "../instanced-context" }
+uzor-backend-wgpu-instanced = "1.0.6"
+vello-cpu-context = { path = "../vello-cpu-context" }
+vello-hybrid-context = { path = "../vello-hybrid-context" }
+uzor-backend-vello-hybrid = "1.0.6"
+vello_hybrid = { version = "0.0.6", features = ["wgpu"] }
+tiny-skia-context = { path = "../tiny-skia-context" }
+zengeld-updater = { path = "../updater" }

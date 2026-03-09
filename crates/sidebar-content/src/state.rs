@@ -1,0 +1,513 @@
+//! Sidebar state management — faithful clone of terminal core's SidebarState.
+//!
+//! Stripped to the 4 panels used by chart-app (no ThemeSettings, no Indicators,
+//! no left/bottom sidebars, no color picker).
+
+use std::collections::{HashSet, HashMap, VecDeque};
+use std::time::Instant;
+use zengeld_chart::ui::scroll_state::ScrollState;
+use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
+use crate::watchlist::WatchlistManager;
+
+// =============================================================================
+// MetricsSnapshot
+// =============================================================================
+
+/// A single point-in-time snapshot of connector metrics, captured at ~1 Hz.
+///
+/// Up to 60 snapshots are kept per exchange, providing ~60 seconds of history
+/// for sparkline graphs rendered in the Connectors sidebar panel.
+#[derive(Clone, Debug)]
+pub struct MetricsSnapshot {
+    /// Total HTTP requests made since connector creation (cumulative counter).
+    pub http_requests: u64,
+    /// Total HTTP errors since connector creation (cumulative counter).
+    pub http_errors: u64,
+    /// Latency of the most recently completed HTTP request in milliseconds.
+    pub latency_ms: u64,
+    /// Current consumed rate-limiter weight for this window.
+    pub rate_used: u32,
+    /// Maximum rate-limiter weight allowed per window.
+    pub rate_max: u32,
+    /// Number of active WebSocket connections.
+    pub ws_count: usize,
+    /// WebSocket ping round-trip time in milliseconds (0 = not measured yet).
+    pub ws_ping_rtt_ms: u64,
+}
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Default width of the right sidebar panel content area.
+///
+/// Matches `RIGHT_SIDEBAR_WIDTH` in terminal core (340.0 px).
+pub const RIGHT_SIDEBAR_WIDTH: f64 = 340.0;
+
+/// Minimum allowed right sidebar width (px).
+pub const MIN_SIDEBAR_WIDTH: f64 = 200.0;
+
+/// Maximum allowed right sidebar width (px).
+pub const MAX_SIDEBAR_WIDTH: f64 = 600.0;
+
+// =============================================================================
+// Panel enum
+// =============================================================================
+
+/// Which right sidebar panel is currently open (if any).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RightSidebarPanel {
+    #[default]
+    None,
+    Watchlist,
+    Alerts,
+    ObjectTree,
+    /// Strategy signals panel — separate from user primitives.
+    Signals,
+    /// Exchange connector control panel — health status and capabilities.
+    Connectors,
+    /// Application performance monitoring and resource control panel.
+    Performance,
+}
+
+impl RightSidebarPanel {
+    /// Returns `true` when any panel is open.
+    pub fn is_open(self) -> bool {
+        self != RightSidebarPanel::None
+    }
+
+    /// Returns a stable string key used to index per-panel scroll offsets.
+    pub fn scroll_key(self) -> &'static str {
+        match self {
+            RightSidebarPanel::None       => "none",
+            RightSidebarPanel::Watchlist  => "watchlist",
+            RightSidebarPanel::Alerts     => "alerts",
+            RightSidebarPanel::ObjectTree => "object_tree",
+            RightSidebarPanel::Signals    => "signals",
+            RightSidebarPanel::Connectors => "connectors",
+            RightSidebarPanel::Performance => "performance",
+        }
+    }
+}
+
+// =============================================================================
+// State struct
+// =============================================================================
+
+/// Centralized sidebar state for chart-app.
+///
+/// Mirrors `SidebarState` from `zengeld-terminal-core` but scoped to the 4
+/// panels that are available in the standalone chart application.
+#[derive(Clone, Debug)]
+pub struct SidebarState {
+    /// Which right sidebar panel is open (None = closed).
+    pub right_panel: RightSidebarPanel,
+
+    /// Current right sidebar width in pixels (user-resizable via drag).
+    ///
+    /// Clamped to `[MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH]`.
+    pub right_sidebar_width: f64,
+    /// Items for the Watchlist panel (populated by app before render).
+    pub watchlist_items: Vec<WatchlistItem>,
+    /// Items for rendering in the Object Tree sidebar (populated by app before render).
+    pub object_tree_items: Vec<ObjectTreeItem>,
+    /// Alert items for the Alerts panel (populated by app before render).
+    pub alert_items: Vec<AlertItem>,
+    /// Currently hovered object tree item ID (for hover effects and delete button).
+    pub hovered_object_tree_id: Option<String>,
+    /// Currently hovered alert ID (for hover effects and buttons).
+    pub hovered_alert_id: Option<u64>,
+    /// Right sidebar scroll state (for scrollable content).
+    ///
+    /// Kept for backward compatibility with external code that reads `.right_scroll` directly.
+    /// Internal rendering uses `panel_scroll` for per-panel isolation.
+    pub right_scroll: ScrollState,
+
+    /// Per-panel scroll states, keyed by `RightSidebarPanel::scroll_key()`.
+    ///
+    /// Each panel keeps its own independent scroll offset so that switching
+    /// between panels does not reset (or leak) scroll position.
+    pub panel_scroll: HashMap<String, ScrollState>,
+
+    /// Whether a drag-to-scroll gesture is active on the sidebar content area.
+    pub sidebar_drag_active: bool,
+
+    /// Screen Y position of the last mouse event during a sidebar drag-to-scroll.
+    pub sidebar_drag_last_y: f64,
+    /// Collapsed signal groups (by instance_id).
+    pub collapsed_signal_groups: HashSet<u64>,
+    /// Per-group scroll offsets for the Signals panel (instance_id → pixel offset).
+    ///
+    /// Keyed by `IndicatorSignalGroup::instance_id`.  The renderer uses these
+    /// to clip and translate each group's signal list independently.
+    pub signal_group_scroll_offsets: HashMap<u64, f64>,
+    /// Currently hovered indicator signal group ID (for collapse toggle).
+    pub hovered_signal_group_id: Option<u64>,
+    /// Indicator signals data for the Signals panel.
+    pub indicator_signals: IndicatorsTabData,
+
+    /// Items for the Connectors panel (populated by app before render).
+    pub connector_items: Vec<ConnectorStatusItem>,
+
+    /// Persistent expand/collapse state for each connector card (keyed by exchange_id).
+    pub connector_expanded: HashMap<String, bool>,
+
+    /// Persistent enabled/disabled state for each connector (keyed by exchange_id).
+    pub connector_enabled: HashMap<String, bool>,
+
+    /// Persistent metrics section visibility for each connector (keyed by exchange_id).
+    ///
+    /// When `true` the extended metrics section is shown in the connector card.
+    /// Toggled by clicking the metrics toggle widget in the connector panel.
+    pub connector_metrics_visible: HashMap<String, bool>,
+
+    /// Persistent collapse state for connector group sections.
+    /// Keyed by group label string (e.g. "NO API KEY", "REQUIRES API KEY", "NON-CHART DATA").
+    /// When `true`, the group is collapsed (items hidden).
+    pub connector_group_collapsed: HashMap<String, bool>,
+
+    /// Watchlist manager — tracks which symbols have been starred by the user.
+    ///
+    /// Used by the symbol search overlay to render filled/empty star icons
+    /// and by the star toggle input handler to add/remove symbols.
+    pub watchlist_manager: WatchlistManager,
+
+    /// Whether the watchlist column-config dropdown is open.
+    ///
+    /// Toggled by clicking the `watchlist_column_config` header button.
+    /// The dropdown renders as an overlay panel over the watchlist content.
+    pub watchlist_config_dropdown_open: bool,
+
+    /// Index of the watchlist row currently being drag-reordered (`None` when idle).
+    pub watchlist_drag_index: Option<usize>,
+
+    /// Current Y screen position of the dragged watchlist row.
+    pub watchlist_drag_y: f64,
+
+    /// Computed drop target index during a drag-reorder operation.
+    ///
+    /// `None` when no drag is active or the drop position hasn't been computed yet.
+    pub watchlist_drop_index: Option<usize>,
+
+    /// Active column-separator drag state.
+    ///
+    /// `Some((sep_index, drag_start_x, sep_offset_at_start))` while the user
+    /// drags a watchlist column separator.  `sep_index` is the 0-based
+    /// separator index (separator 0 sits between column 0 and column 1).
+    /// `drag_start_x` is the screen X coordinate where the drag began.
+    /// `sep_offset_at_start` is the separator's absolute X offset from the
+    /// left edge of the usable area at the moment the drag started.
+    pub watchlist_sep_drag: Option<(usize, f64, f64)>,
+
+    /// Currently open color flag picker: `Some((row_index, screen_x, screen_y))`.
+    ///
+    /// `row_index` is the watchlist item index that owns the flag stripe that
+    /// was clicked.  `screen_x / screen_y` are the popup anchor coordinates
+    /// (bottom-left corner of the flag stripe for the relevant row).
+    pub watchlist_color_picker_open: Option<(usize, f64, f64)>,
+
+    /// Current sort mode for the watchlist sort-by-color button.
+    ///
+    /// - 0 = no sort (symbols stay in their current order)
+    /// - 1 = flagged first, by color order (red first)
+    /// - 2 = flagged first, reverse color order (gray/last first)
+    pub watchlist_sort_mode: u8,
+
+    /// Rolling 60-sample metrics history per exchange, keyed by exchange_id.
+    ///
+    /// Populated by `push_metrics_sample` at ~1 Hz from the connector panel
+    /// update path.  Used by the sparkline renderer.
+    pub metrics_history: HashMap<String, VecDeque<MetricsSnapshot>>,
+
+    /// Timestamp of the last metrics sample push, used to throttle sampling
+    /// to approximately once per second.
+    pub metrics_last_sample: Option<Instant>,
+
+    /// Performance monitoring data for the Performance panel.
+    pub performance_data: PerformanceData,
+}
+
+// =============================================================================
+// RenderBackend
+// =============================================================================
+
+/// Available render backends for the chart application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderBackend {
+    VelloGpu,
+    InstancedWgpu,
+    VelloCpu,
+    VelloHybrid,
+    TinySkia,
+}
+
+impl RenderBackend {
+    /// Human-readable label for this backend.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::VelloGpu => "Vello GPU",
+            Self::InstancedWgpu => "Instanced wGPU",
+            Self::VelloCpu => "Vello CPU",
+            Self::VelloHybrid => "Vello Hybrid",
+            Self::TinySkia => "Tiny-Skia CPU",
+        }
+    }
+
+    /// Returns a slice of all available backends in cycle order.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::VelloGpu,
+            Self::InstancedWgpu,
+            Self::VelloCpu,
+            Self::VelloHybrid,
+            Self::TinySkia,
+        ]
+    }
+}
+
+// =============================================================================
+// PerformanceData
+// =============================================================================
+
+/// Performance metrics and control state for the Performance sidebar panel.
+#[derive(Clone, Debug)]
+pub struct PerformanceData {
+    /// Rolling FPS value (updated from main.rs frame timing).
+    pub fps: f64,
+    /// Last frame time in milliseconds.
+    pub frame_time_ms: f64,
+    /// Total number of bars across all windows.
+    pub total_bars: usize,
+    /// Number of active WebSocket connections.
+    pub ws_connections: usize,
+    /// Number of broadcast lag events since last reset.
+    pub lag_events: u64,
+    /// Current FPS limit setting (0 = unlimited).
+    pub fps_limit: u32,
+    /// Current MSAA sample count (0=off, 4, 8, 16).
+    pub msaa_samples: u8,
+    /// Maximum bars per window (0 = unlimited).
+    pub max_bars: usize,
+    /// Current RecalcMode label.
+    pub recalc_mode: String,
+    /// Number of open windows.
+    pub window_count: usize,
+    /// Number of active connectors.
+    pub active_connectors: usize,
+    /// System-wide CPU usage percentage (0-100).
+    pub cpu_usage: f32,
+    /// Process CPU usage (sum of all threads, can exceed 100% on multicore).
+    pub process_cpu: f32,
+    /// Process CPU normalized to total machine capacity (0–100%).
+    ///
+    /// Computed as `process_cpu / num_cores`.  E.g. 154% raw on a 16-core
+    /// machine becomes ~9.6% normalized — directly comparable with System CPU.
+    pub process_cpu_normalized: f32,
+    /// Process memory (RSS) in megabytes.
+    pub ram_mb: f64,
+    /// Total system RAM in megabytes.
+    pub ram_total_mb: f64,
+    /// GPU adapter name (e.g. "NVIDIA GeForce RTX 4090").
+    pub gpu_name: String,
+    /// GPU driver info string.
+    pub gpu_driver: String,
+    /// Whether frame timing logs are printed to stderr.
+    pub perf_log_enabled: bool,
+    /// Current render backend selection.
+    pub render_backend: RenderBackend,
+    /// Whether VSync is enabled.
+    pub vsync_enabled: bool,
+    /// Scene build time in microseconds (CPU).
+    pub scene_build_us: u64,
+    /// GPU render-to-texture time in microseconds.
+    pub gpu_render_us: u64,
+    /// GPU present time in microseconds.
+    pub gpu_present_us: u64,
+    /// Per-core CPU usage percentages (0–100).
+    pub per_core_cpu: Vec<f32>,
+    /// GPU memory usage in MB (0 if unavailable).
+    pub gpu_mem_mb: f64,
+}
+
+impl Default for PerformanceData {
+    fn default() -> Self {
+        Self {
+            fps: 0.0,
+            frame_time_ms: 0.0,
+            total_bars: 0,
+            ws_connections: 0,
+            lag_events: 0,
+            fps_limit: 60,
+            msaa_samples: 16,
+            max_bars: 0,
+            recalc_mode: "PerFrame".to_string(),
+            window_count: 0,
+            active_connectors: 0,
+            cpu_usage: 0.0,
+            process_cpu: 0.0,
+            process_cpu_normalized: 0.0,
+            ram_mb: 0.0,
+            ram_total_mb: 0.0,
+            gpu_name: String::new(),
+            gpu_driver: String::new(),
+            perf_log_enabled: false,
+            render_backend: RenderBackend::VelloGpu,
+            vsync_enabled: true,
+            scene_build_us: 0,
+            gpu_render_us: 0,
+            gpu_present_us: 0,
+            per_core_cpu: Vec::new(),
+            gpu_mem_mb: 0.0,
+        }
+    }
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self {
+            right_panel: RightSidebarPanel::default(),
+            right_sidebar_width: RIGHT_SIDEBAR_WIDTH,
+            watchlist_items: Vec::new(),
+            object_tree_items: Vec::new(),
+            alert_items: Vec::new(),
+            connector_items: Vec::new(),
+            connector_expanded: HashMap::new(),
+            connector_enabled: HashMap::new(),
+            connector_metrics_visible: HashMap::new(),
+            connector_group_collapsed: HashMap::new(),
+            hovered_object_tree_id: None,
+            hovered_alert_id: None,
+            right_scroll: ScrollState::default(),
+            panel_scroll: HashMap::new(),
+            sidebar_drag_active: false,
+            sidebar_drag_last_y: 0.0,
+            collapsed_signal_groups: std::collections::HashSet::new(),
+            signal_group_scroll_offsets: HashMap::new(),
+            hovered_signal_group_id: None,
+            indicator_signals: IndicatorsTabData::default(),
+            watchlist_manager: WatchlistManager::default(),
+            watchlist_config_dropdown_open: false,
+            watchlist_drag_index: None,
+            watchlist_drag_y: 0.0,
+            watchlist_drop_index: None,
+            watchlist_sep_drag: None,
+            watchlist_color_picker_open: None,
+            watchlist_sort_mode: 0,
+            metrics_history: HashMap::new(),
+            metrics_last_sample: None,
+            performance_data: PerformanceData::default(),
+        }
+    }
+}
+
+impl SidebarState {
+    /// Create new sidebar state (all closed).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` when the right sidebar is open.
+    pub fn is_right_open(&self) -> bool {
+        self.right_panel.is_open()
+    }
+
+    /// Returns the right sidebar width in pixels, or 0.0 when closed.
+    pub fn right_width(&self) -> f64 {
+        if self.is_right_open() { self.right_sidebar_width } else { 0.0 }
+    }
+
+    /// Set the right sidebar width, clamping to `[MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH]`.
+    pub fn set_right_width(&mut self, w: f64) {
+        self.right_sidebar_width = w.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+    }
+
+    // =========================================================================
+    // Panel control — matching core API exactly
+    // =========================================================================
+
+    /// Set the right sidebar panel.
+    ///
+    /// Returns `Some((opening, width))` if the open/closed state changed, or
+    /// `None` if we are just switching between panels.
+    ///
+    /// - `opening = true`  → sidebar was closed, now opening
+    /// - `opening = false` → sidebar was open, now closing
+    ///
+    /// The caller uses this to call `viewport.compensate_right_sidebar()` when `Some`.
+    pub fn set_right_panel(&mut self, panel: RightSidebarPanel) -> Option<(bool, f64)> {
+        let was_open = self.is_right_open();
+        let will_open = panel.is_open();
+        self.right_panel = panel;
+
+        if was_open != will_open {
+            Some((will_open, self.right_sidebar_width))
+        } else {
+            None // just switching panels — no viewport compensation needed
+        }
+    }
+
+    /// Toggle a right sidebar panel.
+    ///
+    /// If the **same** panel is already open, close it.
+    /// If a **different** panel is open (or none), switch to (or open) the new one.
+    ///
+    /// Returns `Some((opening, width))` when the open/closed state changes,
+    /// `None` when only the active panel changes.
+    pub fn toggle_right_panel(&mut self, panel: RightSidebarPanel) -> Option<(bool, f64)> {
+        if self.right_panel == panel {
+            // Same panel — close it.
+            self.set_right_panel(RightSidebarPanel::None)
+        } else {
+            // Different panel — open/switch to it.
+            // Each panel keeps its own scroll offset in panel_scroll, so there
+            // is nothing to reset here.  (right_scroll is kept for legacy callers.)
+            self.set_right_panel(panel)
+        }
+    }
+
+    /// Close the right sidebar.
+    ///
+    /// Returns `Some((false, width))` if it was open, `None` if already closed.
+    pub fn close_right(&mut self) -> Option<(bool, f64)> {
+        self.set_right_panel(RightSidebarPanel::None)
+    }
+
+    // =========================================================================
+    // Metrics history helpers
+    // =========================================================================
+
+    /// Push a new metrics snapshot for `exchange_id`.
+    ///
+    /// Keeps a rolling window of at most 60 snapshots (~60 s at 1 Hz).
+    /// Older snapshots are dropped from the front when the window is full.
+    pub fn push_metrics_sample(&mut self, exchange_id: &str, snapshot: MetricsSnapshot) {
+        let history = self.metrics_history
+            .entry(exchange_id.to_string())
+            .or_insert_with(|| VecDeque::with_capacity(61));
+        if history.len() >= 60 {
+            history.pop_front();
+        }
+        history.push_back(snapshot);
+    }
+
+    // =========================================================================
+    // Per-panel scroll helpers
+    // =========================================================================
+
+    /// Returns the scroll state for the currently open right panel.
+    ///
+    /// Each panel has its own independent scroll offset stored in `panel_scroll`.
+    /// Falls back to `right_scroll` when the panel key is `"none"`.
+    pub fn current_right_scroll(&self) -> &ScrollState {
+        let key = self.right_panel.scroll_key();
+        self.panel_scroll.get(key).unwrap_or(&self.right_scroll)
+    }
+
+    /// Returns a mutable reference to the scroll state for the currently open right panel.
+    ///
+    /// Inserts a default entry if none exists yet, so the reference is always valid.
+    pub fn current_right_scroll_mut(&mut self) -> &mut ScrollState {
+        let key = self.right_panel.scroll_key().to_owned();
+        self.panel_scroll.entry(key).or_default()
+    }
+}

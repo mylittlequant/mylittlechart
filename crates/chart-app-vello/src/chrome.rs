@@ -1,0 +1,627 @@
+//! Custom window chrome (title bar) for a borderless window.
+//!
+//! Renders a 32-pixel-tall strip at `y = 0` containing:
+//! - Tab buttons (one per preset) starting at the left margin.
+//! - A "+" new-tab button after the last tab.
+//! - A draggable caption area in the middle.
+//! - A settings (gear) button just left of the minimize button.
+//! - Three window control buttons (minimize, maximize, close) on the right edge.
+//!
+//! Window control icons (minimize, maximize, close) are drawn as filled
+//! rectangles / stroked lines for pixel-perfect crispness at any DPI.
+//! Tab close icons and the settings gear use SVG icons from the chart icon set.
+
+use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::ui::icons::icon_svg;
+
+// ── Public constants ──────────────────────────────────────────────────────────
+
+/// Height of the chrome strip in logical pixels.
+pub const CHROME_HEIGHT: f64 = 32.0;
+
+// ── Chrome Context Menu ─────────────────────────────────────────────────────
+
+/// Items available in the chrome right-click context menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeMenuAction {
+    CloseWindow,
+    DeleteWindow,
+}
+
+/// State for the chrome strip's right-click context menu.
+pub struct ChromeContextMenu {
+    pub open: bool,
+    /// Position where the menu was opened (logical px, relative to window).
+    pub x: f64,
+    pub y: f64,
+    /// Which item is currently hovered (-1 = none).
+    pub hovered_index: i32,
+}
+
+impl ChromeContextMenu {
+    pub fn new() -> Self {
+        Self { open: false, x: 0.0, y: 0.0, hovered_index: -1 }
+    }
+
+    pub fn open_at(&mut self, x: f64, y: f64) {
+        self.open = true;
+        self.x = x;
+        self.y = y;
+        self.hovered_index = -1;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.hovered_index = -1;
+    }
+}
+
+const CONTEXT_MENU_WIDTH: f64 = 160.0;
+const CONTEXT_MENU_ITEM_HEIGHT: f64 = 28.0;
+const CONTEXT_MENU_PADDING: f64 = 4.0;
+const CONTEXT_MENU_ITEMS: &[(&str, bool)] = &[
+    ("Close Window", false),  // (label, is_danger)
+    ("Delete Window", true),
+];
+
+/// Width of the resize border zone in logical pixels.
+const BORDER_WIDTH: f64 = 4.0;
+
+/// Width of each window control button in logical pixels.
+const BUTTON_WIDTH: f64 = 46.0;
+
+/// Height of each window control button in logical pixels (equals CHROME_HEIGHT).
+const BUTTON_HEIGHT: f64 = CHROME_HEIGHT;
+
+// ── Tab layout constants ──────────────────────────────────────────────────────
+
+/// Width of the settings button (gear icon) in logical pixels.
+const SETTINGS_BUTTON_WIDTH: f64 = 36.0;
+
+/// Width of the new-window button in logical pixels.
+const NEW_WINDOW_BUTTON_WIDTH: f64 = 36.0;
+
+/// Width of the new-tab (+) button in logical pixels.
+const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
+
+/// Padding from left edge before the first tab.
+const TAB_LEFT_MARGIN: f64 = 4.0;
+
+/// Gap between tabs.
+const TAB_GAP: f64 = 1.0;
+
+/// Horizontal padding inside each tab (applied on each side).
+const TAB_PADDING_H: f64 = 12.0;
+
+/// Tab close button area size (the × icon zone).
+const TAB_CLOSE_SIZE: f64 = 16.0;
+
+// ── Tab data ──────────────────────────────────────────────────────────────────
+
+/// A single tab in the chrome strip.
+#[derive(Clone)]
+pub struct Tab {
+    /// Preset id (used to fire LoadPreset event).
+    pub id: String,
+    /// Display name shown on the tab.
+    pub name: String,
+    /// Whether this is the currently active tab.
+    pub active: bool,
+}
+
+// ── ChromeHit ─────────────────────────────────────────────────────────────────
+
+/// The region of the window chrome that was hit by a pointer event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeHit {
+    None,
+    Caption,
+    MinimizeButton,
+    MaximizeButton,
+    CloseButton,
+    Tab(usize),
+    TabClose(usize),
+    NewTabButton,
+    SettingsButton,
+    NewWindowButton,
+    ResizeTop,
+    ResizeBottom,
+    ResizeLeft,
+    ResizeRight,
+    ResizeTopLeft,
+    ResizeTopRight,
+    ResizeBottomLeft,
+    ResizeBottomRight,
+}
+
+// ── ChromeColors ──────────────────────────────────────────────────────────────
+
+/// Theme colours for the chrome strip, synced from the chart theme each frame.
+pub struct ChromeColors {
+    pub background: String,
+    pub icon_normal: String,
+    pub icon_hover: String,
+    pub button_hover: String,
+    pub close_hover: String,
+    pub separator: String,
+    pub tab_accent: String,
+}
+
+impl Default for ChromeColors {
+    fn default() -> Self {
+        Self {
+            background:   "#131722".into(),
+            icon_normal:  "#a6adc8".into(),
+            icon_hover:   "#cdd6f4".into(),
+            button_hover: "#1f2937".into(),
+            close_hover:  "#e81123".into(),
+            separator:    "#313244".into(),
+            tab_accent:   "#3b82f6".into(),
+        }
+    }
+}
+
+// ── ChromeState ───────────────────────────────────────────────────────────────
+
+/// Mutable rendering state for the chrome strip.
+pub struct ChromeState {
+    pub hovered: ChromeHit,
+    pub is_maximized: bool,
+    pub title: String,
+    pub colors: ChromeColors,
+    pub tabs: Vec<Tab>,
+    /// Pre-computed tab widths (updated each frame via [`update_tab_widths`]).
+    pub tab_widths: Vec<f64>,
+    /// Right-click context menu state.
+    pub context_menu: ChromeContextMenu,
+}
+
+impl ChromeState {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            hovered:      ChromeHit::None,
+            is_maximized: false,
+            title:        title.into(),
+            colors:       ChromeColors::default(),
+            tabs:         Vec::new(),
+            tab_widths:   Vec::new(),
+            context_menu: ChromeContextMenu::new(),
+        }
+    }
+}
+
+// ── update_tab_widths ─────────────────────────────────────────────────────────
+
+/// Pre-compute tab widths using the render context for accurate text measurement.
+pub fn update_tab_widths(ctx: &mut dyn RenderContext, state: &mut ChromeState) {
+    ctx.set_font("12px sans-serif");
+    state.tab_widths.clear();
+    for tab in &state.tabs {
+        let text_w = ctx.measure_text(&tab.name);
+        let w = TAB_PADDING_H + text_w + TAB_CLOSE_SIZE + TAB_PADDING_H;
+        state.tab_widths.push(w);
+    }
+}
+
+// ── hit_test ──────────────────────────────────────────────────────────────────
+
+pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) -> ChromeHit {
+    let in_top    = y < BORDER_WIDTH;
+    let in_bottom = y >= height - BORDER_WIDTH;
+    let in_left   = x < BORDER_WIDTH;
+    let in_right  = x >= width - BORDER_WIDTH;
+
+    if in_top && in_left  { return ChromeHit::ResizeTopLeft; }
+    if in_top && in_right { return ChromeHit::ResizeTopRight; }
+    if in_bottom && in_left  { return ChromeHit::ResizeBottomLeft; }
+    if in_bottom && in_right { return ChromeHit::ResizeBottomRight; }
+    if in_top    { return ChromeHit::ResizeTop; }
+    if in_bottom { return ChromeHit::ResizeBottom; }
+    if in_left   { return ChromeHit::ResizeLeft; }
+    if in_right  { return ChromeHit::ResizeRight; }
+
+    if y < CHROME_HEIGHT {
+        let close_x    = width - BUTTON_WIDTH;
+        let maximize_x = width - BUTTON_WIDTH * 2.0;
+        let minimize_x = width - BUTTON_WIDTH * 3.0;
+        let settings_left    = minimize_x - SETTINGS_BUTTON_WIDTH;
+        let new_window_left  = settings_left - NEW_WINDOW_BUTTON_WIDTH;
+
+        if x >= close_x    { return ChromeHit::CloseButton; }
+        if x >= maximize_x { return ChromeHit::MaximizeButton; }
+        if x >= minimize_x { return ChromeHit::MinimizeButton; }
+        if x >= settings_left && x < minimize_x { return ChromeHit::SettingsButton; }
+        if x >= new_window_left && x < settings_left { return ChromeHit::NewWindowButton; }
+
+        // Tabs
+        let mut cursor = TAB_LEFT_MARGIN;
+        for (i, tw) in state.tab_widths.iter().enumerate() {
+            let tab_right = cursor + tw;
+            if x >= cursor && x < tab_right {
+                // Close × is flush right (last TAB_CLOSE_SIZE pixels)
+                if x >= tab_right - TAB_CLOSE_SIZE {
+                    return ChromeHit::TabClose(i);
+                }
+                return ChromeHit::Tab(i);
+            }
+            cursor = tab_right + TAB_GAP;
+        }
+
+        // "+" button
+        let new_tab_right = cursor + NEW_TAB_BUTTON_WIDTH;
+        if x >= cursor && x < new_tab_right {
+            return ChromeHit::NewTabButton;
+        }
+
+        return ChromeHit::Caption;
+    }
+
+    ChromeHit::None
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+
+pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
+    let c = &state.colors;
+
+    // ── Background ──────────────────────────────────────────────────────────
+    ctx.set_fill_color(&c.background);
+    ctx.fill_rect(0.0, 0.0, width, CHROME_HEIGHT);
+
+    // ── Button positions ────────────────────────────────────────────────────
+    let close_x         = width - BUTTON_WIDTH;
+    let maximize_x      = width - BUTTON_WIDTH * 2.0;
+    let minimize_x      = width - BUTTON_WIDTH * 3.0;
+    let settings_left   = minimize_x - SETTINGS_BUTTON_WIDTH;
+    let new_window_left = settings_left - NEW_WINDOW_BUTTON_WIDTH;
+
+    // ── Hover backgrounds (window controls & settings) ──────────────────────
+    match state.hovered {
+        ChromeHit::MinimizeButton => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(minimize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::MaximizeButton => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(maximize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::CloseButton => {
+            ctx.set_fill_color(&c.close_hover);
+            ctx.fill_rect(close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::SettingsButton => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(settings_left, 0.0, SETTINGS_BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::NewWindowButton => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::NewTabButton => {
+            let new_tab_x = tab_strip_end_x(state);
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(new_tab_x, 0.0, NEW_TAB_BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        _ => {}
+    }
+
+    // ── Tabs ────────────────────────────────────────────────────────────────
+    // All tabs share the SAME background as chrome (no active/inactive bg difference).
+    // Active tab: accent-colored line at bottom.
+    // Hovered tab: button_hover-colored line at bottom.
+    {
+        let mut cursor = TAB_LEFT_MARGIN;
+        for (i, tab) in state.tabs.iter().enumerate() {
+            let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
+            let tab_left  = cursor;
+            let tab_right = cursor + tw;
+
+            // Bottom accent line (2px)
+            if tab.active {
+                ctx.set_fill_color(&c.tab_accent);
+                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+            } else if state.hovered == ChromeHit::Tab(i)
+                   || state.hovered == ChromeHit::TabClose(i)
+            {
+                ctx.set_fill_color(&c.icon_hover);
+                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+            }
+
+            // Tab name text
+            {
+                let text_x = tab_left + TAB_PADDING_H;
+                let text_color = if tab.active {
+                    &c.icon_hover
+                } else {
+                    &c.icon_normal
+                };
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
+            }
+
+            // Tab close × button — flush right, icon turns red on hover
+            {
+                let close_rect_left = tab_right - TAB_CLOSE_SIZE;
+                let icon_size = 14.0;
+                let icon_color = if state.hovered == ChromeHit::TabClose(i) {
+                    &c.close_hover
+                } else {
+                    &c.icon_normal
+                };
+                let icon_x = close_rect_left + (TAB_CLOSE_SIZE - icon_size) / 2.0;
+                let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
+                if let Some(svg) = icon_svg("close") {
+                    draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, icon_color);
+                }
+            }
+
+            cursor = tab_right + TAB_GAP;
+        }
+
+        // "+" new tab button with dividers on both sides
+        let new_tab_x = cursor;
+
+        // Left divider (75% height vertical line)
+        let div_h = CHROME_HEIGHT * 0.6;
+        let div_y = (CHROME_HEIGHT - div_h) / 2.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rect(new_tab_x, div_y, 1.0, div_h);
+
+        let plus_color = if state.hovered == ChromeHit::NewTabButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        // Draw + as stroked lines (same technique as close × icon — crisp)
+        let plus_cx = (new_tab_x + NEW_TAB_BUTTON_WIDTH / 2.0).floor() + 0.5;
+        let plus_cy = (CHROME_HEIGHT / 2.0).floor() + 0.5;
+        let arm = 5.0;
+        ctx.set_stroke_color(plus_color);
+        ctx.set_stroke_width(1.5);
+        ctx.begin_path();
+        ctx.move_to(plus_cx - arm, plus_cy);
+        ctx.line_to(plus_cx + arm, plus_cy);
+        ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(plus_cx, plus_cy - arm);
+        ctx.line_to(plus_cx, plus_cy + arm);
+        ctx.stroke();
+
+    }
+
+    // ── New-window icon (SVG, 18×18) ────────────────────────────────────────
+    {
+        let icon_color = if state.hovered == ChromeHit::NewWindowButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let icon_x = new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
+        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+        if let Some(svg) = icon_svg("new_window") {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
+        }
+    }
+
+    // ── Divider between new-window and settings (75% height) ────────────────
+    {
+        let div_h = CHROME_HEIGHT * 0.6;
+        let div_y = (CHROME_HEIGHT - div_h) / 2.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rect(settings_left, div_y, 1.0, div_h);
+    }
+
+    // ── Settings gear icon (SVG, 18×18 for better visibility) ───────────────
+    {
+        let gear_color = if state.hovered == ChromeHit::SettingsButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let icon_x = settings_left + (SETTINGS_BUTTON_WIDTH - 18.0) / 2.0;
+        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+        if let Some(svg) = icon_svg("settings") {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, gear_color);
+        }
+    }
+
+    // ── Divider right of settings (75% height) ─────────────────────────────
+    {
+        let div_h = CHROME_HEIGHT * 0.6;
+        let div_y = (CHROME_HEIGHT - div_h) / 2.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rect(minimize_x, div_y, 1.0, div_h);
+    }
+
+    // ── Minimize icon ─ (filled rect, pixel-perfect) ────────────────────────
+    {
+        let icon_color = if state.hovered == ChromeHit::MinimizeButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let cx = minimize_x + BUTTON_WIDTH / 2.0;
+        let cy = CHROME_HEIGHT / 2.0;
+        ctx.set_fill_color(icon_color);
+        ctx.fill_rect(cx - 5.0, cy, 10.0, 1.0);
+    }
+
+    // ── Maximize icon □ / restore (filled rect outlines) ────────────────────
+    {
+        let icon_color = if state.hovered == ChromeHit::MaximizeButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let cx = maximize_x + BUTTON_WIDTH / 2.0;
+        let cy = CHROME_HEIGHT / 2.0;
+        let half = 5.0;
+
+        if state.is_maximized {
+            // Back rect (offset 2px)
+            draw_rect_outline(ctx, cx - half + 2.0, cy - half - 2.0, half * 2.0, half * 2.0, 1.0, icon_color);
+            // Front rect — fill bg to occlude back corner, then outline
+            ctx.set_fill_color(&c.background);
+            ctx.fill_rect(cx - half, cy - half, half * 2.0, half * 2.0);
+            draw_rect_outline(ctx, cx - half, cy - half, half * 2.0, half * 2.0, 1.0, icon_color);
+        } else {
+            draw_rect_outline(ctx, cx - half, cy - half, half * 2.0, half * 2.0, 1.0, icon_color);
+        }
+    }
+
+    // ── Close icon × (stroked diagonals, 1.5px) ────────────────────────────
+    {
+        let icon_color = if state.hovered == ChromeHit::CloseButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let cx = close_x + BUTTON_WIDTH / 2.0;
+        let cy = CHROME_HEIGHT / 2.0;
+        let s = 5.0;
+        ctx.set_stroke_color(icon_color);
+        ctx.set_stroke_width(1.5);
+        ctx.begin_path();
+        ctx.move_to(cx - s, cy - s);
+        ctx.line_to(cx + s, cy + s);
+        ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(cx - s, cy + s);
+        ctx.line_to(cx + s, cy - s);
+        ctx.stroke();
+    }
+
+    // ── Bottom separator ────────────────────────────────────────────────────
+    ctx.set_fill_color(&c.separator);
+    ctx.fill_rect(0.0, CHROME_HEIGHT - 1.0, width, 1.0);
+}
+
+// ── Context menu render / hit-test ────────────────────────────────────────────
+
+/// Render the chrome context menu if open.
+pub fn render_context_menu(ctx: &mut dyn RenderContext, menu: &ChromeContextMenu, colors: &ChromeColors) {
+    if !menu.open { return; }
+
+    let item_count = CONTEXT_MENU_ITEMS.len() as f64;
+    let menu_h = CONTEXT_MENU_PADDING * 2.0 + item_count * CONTEXT_MENU_ITEM_HEIGHT;
+
+    // Shadow
+    ctx.set_fill_color("rgba(0,0,0,0.3)");
+    ctx.fill_rect(menu.x + 2.0, menu.y + 2.0, CONTEXT_MENU_WIDTH, menu_h);
+
+    // Background
+    ctx.set_fill_color(&colors.background);
+    ctx.fill_rect(menu.x, menu.y, CONTEXT_MENU_WIDTH, menu_h);
+
+    // Border
+    draw_rect_outline(ctx, menu.x, menu.y, CONTEXT_MENU_WIDTH, menu_h, 1.0, &colors.separator);
+
+    // Items
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    for (i, (label, is_danger)) in CONTEXT_MENU_ITEMS.iter().enumerate() {
+        let item_y = menu.y + CONTEXT_MENU_PADDING + i as f64 * CONTEXT_MENU_ITEM_HEIGHT;
+
+        // Hover background
+        if menu.hovered_index == i as i32 {
+            let hover_color = if *is_danger { &colors.close_hover } else { &colors.button_hover };
+            ctx.set_fill_color(hover_color);
+            ctx.fill_rect(menu.x + 1.0, item_y, CONTEXT_MENU_WIDTH - 2.0, CONTEXT_MENU_ITEM_HEIGHT);
+        }
+
+        // Text
+        let text_color = if *is_danger && menu.hovered_index == i as i32 {
+            &colors.icon_hover  // white text on red bg
+        } else if *is_danger {
+            &colors.close_hover  // red text
+        } else {
+            &colors.icon_normal
+        };
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(label, menu.x + 12.0, item_y + CONTEXT_MENU_ITEM_HEIGHT / 2.0);
+    }
+}
+
+/// Hit-test the chrome context menu. Returns the action if a menu item was clicked,
+/// or `None` if outside the menu (caller should close it).
+pub fn context_menu_hit_test(menu: &ChromeContextMenu, x: f64, y: f64) -> Option<ChromeMenuAction> {
+    if !menu.open { return None; }
+
+    let item_count = CONTEXT_MENU_ITEMS.len() as f64;
+    let menu_h = CONTEXT_MENU_PADDING * 2.0 + item_count * CONTEXT_MENU_ITEM_HEIGHT;
+
+    // Check if inside menu bounds
+    if x < menu.x || x >= menu.x + CONTEXT_MENU_WIDTH || y < menu.y || y >= menu.y + menu_h {
+        return None;
+    }
+
+    // Which item?
+    let rel_y = y - menu.y - CONTEXT_MENU_PADDING;
+    if rel_y < 0.0 { return None; }
+    let idx = (rel_y / CONTEXT_MENU_ITEM_HEIGHT) as usize;
+
+    match idx {
+        0 => Some(ChromeMenuAction::CloseWindow),
+        1 => Some(ChromeMenuAction::DeleteWindow),
+        _ => None,
+    }
+}
+
+/// Update the hovered index based on mouse position.
+pub fn context_menu_hover(menu: &mut ChromeContextMenu, x: f64, y: f64) {
+    if !menu.open {
+        menu.hovered_index = -1;
+        return;
+    }
+
+    let item_count = CONTEXT_MENU_ITEMS.len() as f64;
+    let menu_h = CONTEXT_MENU_PADDING * 2.0 + item_count * CONTEXT_MENU_ITEM_HEIGHT;
+
+    if x < menu.x || x >= menu.x + CONTEXT_MENU_WIDTH || y < menu.y || y >= menu.y + menu_h {
+        menu.hovered_index = -1;
+        return;
+    }
+
+    let rel_y = y - menu.y - CONTEXT_MENU_PADDING;
+    if rel_y < 0.0 {
+        menu.hovered_index = -1;
+        return;
+    }
+    let idx = (rel_y / CONTEXT_MENU_ITEM_HEIGHT) as i32;
+    if idx < CONTEXT_MENU_ITEMS.len() as i32 {
+        menu.hovered_index = idx;
+    } else {
+        menu.hovered_index = -1;
+    }
+}
+
+// ── Public helpers ────────────────────────────────────────────────────────────
+
+/// Returns the x coordinate of the left edge of the + button.
+pub fn new_tab_button_x(state: &ChromeState) -> f64 {
+    tab_strip_end_x(state)
+}
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+fn tab_strip_end_x(state: &ChromeState) -> f64 {
+    let mut cursor = TAB_LEFT_MARGIN;
+    for tw in &state.tab_widths {
+        cursor += tw + TAB_GAP;
+    }
+    cursor
+}
+
+/// Draw a rectangle outline using four filled rects (pixel-perfect edges).
+fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64, t: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.fill_rect(x, y, w, t);             // top
+    ctx.fill_rect(x, y + h - t, w, t);     // bottom
+    ctx.fill_rect(x, y + t, t, h - t * 2.0);   // left
+    ctx.fill_rect(x + w - t, y + t, t, h - t * 2.0); // right
+}
