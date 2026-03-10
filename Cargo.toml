@@ -20,9 +20,16 @@ resolver = "2"
 
 [workspace.dependencies]
 rayon = "1"
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["simple"] }
+hkdf = "0.12"
+hex = "0.4"
+rand = "0.8"
+ed25519-dalek = { version = "2", features = ["std"] }
+base64 = "0.22"
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 

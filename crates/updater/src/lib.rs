@@ -13,6 +13,8 @@ pub mod telemetry;
 pub mod oauth;
 pub mod key_sync;
 pub mod cloud_sync;
+pub mod e2e_crypto;
+pub mod verify;
 
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus};
 
@@ -363,6 +365,7 @@ async fn do_check_and_telemetry(
                     download_url: manifest.download_url,
                     release_notes: manifest.release_notes,
                     file_size: manifest.file_size,
+                    signature: manifest.signature,
                 };
                 let _ = status_tx.send(UpdateStatus::UpdateAvailable(info));
             } else {
@@ -380,6 +383,21 @@ async fn do_install(
     status_tx: &watch::Sender<UpdateStatus>,
     info: &state::UpdateInfo,
 ) {
+    // Rollback / downgrade protection — defense-in-depth on top of check::is_newer().
+    // This catches any path that bypasses the check (e.g. ManualInstall command).
+    let current_version = env!("CARGO_PKG_VERSION");
+    if verify::is_downgrade(current_version, &info.version) {
+        log::warn!(
+            "[Updater] Rejecting update v{}: would downgrade from current v{}",
+            info.version, current_version
+        );
+        let _ = status_tx.send(UpdateStatus::Error(format!(
+            "Update v{} rejected: would downgrade from v{}",
+            info.version, current_version
+        )));
+        return;
+    }
+
     // Download
     let _ = status_tx.send(UpdateStatus::Downloading { percent: 0 });
     let progress_tx = status_tx.clone();
@@ -389,6 +407,46 @@ async fn do_install(
 
     match download::download_and_verify(&info.download_url, &info.sha256, on_progress).await {
         Ok(binary_data) => {
+            // Verify Ed25519 signature BEFORE writing anything to disk.
+            // The signature covers the identical bytes that SHA-256 was computed over.
+            let _ = status_tx.send(UpdateStatus::Verifying);
+            let sig_str = info.signature.as_deref().unwrap_or("");
+            match verify::verify_binary_signature(&binary_data, sig_str) {
+                verify::VerifyResult::Valid => {
+                    log::info!("[Updater] Signature verified OK for v{}", info.version);
+                }
+                verify::VerifyResult::Unsigned => {
+                    // Transition period: unsigned releases are warned but allowed.
+                    // TODO: After all releases are signed, change this branch to reject.
+                    log::warn!(
+                        "[Updater] Update v{} has no signature — installing during transition period",
+                        info.version
+                    );
+                }
+                verify::VerifyResult::Invalid(reason) => {
+                    log::error!(
+                        "[Updater] SECURITY: Signature verification FAILED for v{}: {}",
+                        info.version, reason
+                    );
+                    let _ = status_tx.send(UpdateStatus::Error(format!(
+                        "Update v{} rejected: invalid signature. {}",
+                        info.version, reason
+                    )));
+                    return; // DO NOT install
+                }
+                verify::VerifyResult::FormatError(reason) => {
+                    log::error!(
+                        "[Updater] SECURITY: Signature format error for v{}: {}",
+                        info.version, reason
+                    );
+                    let _ = status_tx.send(UpdateStatus::Error(format!(
+                        "Update v{} rejected: signature format error. {}",
+                        info.version, reason
+                    )));
+                    return; // DO NOT install
+                }
+            }
+
             // Apply update
             let _ = status_tx.send(UpdateStatus::Installing);
             match replace::self_replace(&binary_data) {

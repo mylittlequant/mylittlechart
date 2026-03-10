@@ -22,6 +22,11 @@ pub struct UpdateInfo {
     pub download_url: String,
     pub release_notes: String,
     pub file_size: u64,
+    /// Ed25519 signature (base64-encoded, 88 chars) over the binary bytes.
+    /// None = old server that doesn't emit this field.
+    /// Some("") = server present but release was not signed.
+    /// Some(b64) = signed release — must verify before installing.
+    pub signature: Option<String>,
 }
 
 /// Current status of the updater.
@@ -124,4 +129,9 @@ pub struct VersionManifest {
     pub download_url: String,
     pub release_notes: String,
     pub file_size: u64,
+    /// Ed25519 signature (base64-encoded) over the raw binary bytes.
+    /// `#[serde(default)]` ensures old servers that omit this field
+    /// deserialize to `None` rather than failing.
+    #[serde(default)]
+    pub signature: Option<String>,
 }

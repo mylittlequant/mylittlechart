@@ -291,6 +291,19 @@ pub struct SyncState {
     /// Whether the user has opted into cloud sync.
     #[serde(default)]
     pub enabled: bool,
+    /// Whether the user has enabled E2E encryption for sync data.
+    ///
+    /// When `true`, all sync item content is encrypted client-side before
+    /// being sent to the server.  The server stores only opaque ciphertext.
+    #[serde(default)]
+    pub e2e_enabled: bool,
+    /// Hex-encoded 16-byte PBKDF2 salt, fetched from the server after the
+    /// user sets up E2E.  Empty string means E2E has not been configured.
+    ///
+    /// This value is safe to persist locally — without the passphrase it
+    /// provides no useful information to an attacker.
+    #[serde(default)]
+    pub e2e_salt: String,
 }
 
 impl UserProfile {

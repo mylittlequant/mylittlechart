@@ -133,6 +133,16 @@ pub struct SyncState {
     pub last_sync_timestamp: i64,
     /// Whether the user has opted into cloud sync.
     pub enabled: bool,
+    /// Whether the user has enabled E2E encryption for sync data.
+    ///
+    /// When `true`, all sync item content is encrypted client-side before
+    /// being sent to the server.  The server stores only opaque ciphertext.
+    #[serde(default)]
+    pub e2e_enabled: bool,
+    /// Hex-encoded 16-byte PBKDF2 salt, fetched from the server after the
+    /// user sets up E2E.  Empty string means E2E has not been configured.
+    #[serde(default)]
+    pub e2e_salt: String,
 }
 
 // =============================================================================
@@ -322,6 +332,8 @@ pub async fn do_sync_cycle(
     let new_state = SyncState {
         last_sync_timestamp: now,
         enabled: state.enabled,
+        e2e_enabled: state.e2e_enabled,
+        e2e_salt: state.e2e_salt.clone(),
     };
 
     Ok((0, pulled, new_state))
