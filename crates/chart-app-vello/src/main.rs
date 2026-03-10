@@ -1835,7 +1835,8 @@ impl App<'_> {
                 shared: telemetry_shared.clone(),
             });
 
-            Some(zengeld_updater::start(bridge.runtime().handle(), source))
+            let connected = profile.client_mode == zengeld_chart::user_profile::profile::ClientMode::Connected;
+            Some(zengeld_updater::start(bridge.runtime().handle(), source, connected))
         };
 
         Self {
@@ -2025,6 +2026,10 @@ impl App<'_> {
         } else {
             "stopped".to_string()
         };
+        // Sync connection mode from the loaded profile.
+        chart.panel_app.user_settings_state.client_mode_connected =
+            self.user_manager.profile.client_mode
+                == zengeld_chart::user_profile::profile::ClientMode::Connected;
         // API keys are now managed via /api/v1/keys REST endpoint.
         // Show key count in the UI instead of the raw key string.
         chart.panel_app.user_settings_state.api_key = format!(
@@ -3696,12 +3701,24 @@ impl ApplicationHandler for App<'_> {
             let cmd: Option<String> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.pending_updater_cmd.take());
             if let Some(ref cmd_str) = cmd {
+                // Mirror mode changes into profile so they persist on next save.
+                if cmd_str == "set_connected" {
+                    self.user_manager.profile.client_mode =
+                        zengeld_chart::user_profile::profile::ClientMode::Connected;
+                } else if cmd_str == "set_standalone" {
+                    self.user_manager.profile.client_mode =
+                        zengeld_chart::user_profile::profile::ClientMode::Standalone;
+                }
                 if let Some(ref handle) = self.updater_handle {
                     use zengeld_updater::UpdaterCommand;
                     let command = if cmd_str == "logout" {
                         Some(UpdaterCommand::Logout)
                     } else if let Some(provider) = cmd_str.strip_prefix("start_oauth:") {
                         Some(UpdaterCommand::StartOAuth(provider.to_string()))
+                    } else if cmd_str == "set_connected" {
+                        Some(UpdaterCommand::SetConnectedMode(true))
+                    } else if cmd_str == "set_standalone" {
+                        Some(UpdaterCommand::SetConnectedMode(false))
                     } else {
                         eprintln!("[App] unknown updater command: {}", cmd_str);
                         None
@@ -3732,6 +3749,25 @@ impl ApplicationHandler for App<'_> {
                                 s.auth_provider = prov.clone();
                                 s.auth_user_id = uid;
                             }
+                            // Mirror auth state into profile so it persists across restarts.
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            self.user_manager.profile.linked_account =
+                                Some(zengeld_chart::user_profile::profile::LinkedAccount {
+                                    provider: prov.clone(),
+                                    provider_user_id: uid.to_string(),
+                                    display_name: dn.clone(),
+                                    linked_at: now,
+                                });
+                            // Auto-switch to Connected mode when user logs in.
+                            self.user_manager.profile.client_mode =
+                                zengeld_chart::user_profile::profile::ClientMode::Connected;
+                            // Reflect the mode change in all open windows immediately.
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.client_mode_connected = true;
+                            }
                             eprintln!("[App] auth: logged in as {} ({})", dn, prov);
                         }
                         zengeld_updater::AuthStatus::NotLoggedIn => {
@@ -3742,6 +3778,8 @@ impl ApplicationHandler for App<'_> {
                                 s.auth_provider = String::new();
                                 s.auth_user_id = 0;
                             }
+                            // Clear the profile mirror on logout / missing token.
+                            self.user_manager.profile.linked_account = None;
                             eprintln!("[App] auth: not logged in");
                         }
                     }

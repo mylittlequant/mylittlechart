@@ -7052,6 +7052,16 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("logout".to_string());
                     eprintln!("[ChartApp] sign_out: sending logout command to updater");
                 }
+                "mode_connected" => {
+                    self.panel_app.user_settings_state.client_mode_connected = true;
+                    self.pending_updater_cmd = Some("set_connected".to_string());
+                    eprintln!("[ChartApp] connection mode set to: Connected");
+                }
+                "mode_standalone" => {
+                    self.panel_app.user_settings_state.client_mode_connected = false;
+                    self.pending_updater_cmd = Some("set_standalone".to_string());
+                    eprintln!("[ChartApp] connection mode set to: Standalone");
+                }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);
                 }

@@ -255,6 +255,100 @@ fn render_general_tab(
 ) {
     let mut cy = y;
 
+    // ── Section: CONNECTION MODE ──────────────────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("CONNECTION MODE", x, cy);
+    cy += 20.0;
+
+    // Option row height and radio dot metrics
+    let mode_row_h = 44.0;
+    let mode_row_gap = 6.0;
+    let dot_size = 14.0;
+    let dot_r = dot_size / 2.0;
+
+    // ── Option: Connected ────────────────────────────────────────────────────
+    let connected_y = cy;
+    if state.client_mode_connected {
+        ctx.set_fill_color(&toolbar_theme.item_bg_active);
+        ctx.fill_rounded_rect(x - 6.0, connected_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+    }
+
+    // Radio dot (filled = active)
+    let dot_cx = x + dot_r;
+    let dot_cy = connected_y + 10.0 + dot_r;
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.5);
+    ctx.begin_path();
+    ctx.arc(dot_cx, dot_cy, dot_r, 0.0, std::f64::consts::TAU);
+    ctx.stroke();
+    if state.client_mode_connected {
+        ctx.set_fill_color(&toolbar_theme.accent);
+        ctx.begin_path();
+        ctx.arc(dot_cx, dot_cy, dot_r - 4.0, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
+
+    // Title + description for Connected
+    let text_x = x + dot_size + 10.0;
+    ctx.set_fill_color(toolbar_theme.item_text.as_str());
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Connected to chart.example", text_x, connected_y + 6.0);
+    ctx.set_fill_color("rgba(254,255,238,0.45)");
+    ctx.set_font("11px sans-serif");
+    ctx.fill_text("OTA updates, cloud sync, centralized API keys", text_x, connected_y + 24.0);
+
+    let connected_rect = WidgetRect::new(x, connected_y, available_w, mode_row_h);
+    result.content_items.push(("mode_connected".to_string(), connected_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:mode_connected",
+        uzor::types::Rect::new(x, connected_y, available_w, mode_row_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += mode_row_h + mode_row_gap;
+
+    // ── Option: Standalone ───────────────────────────────────────────────────
+    let standalone_y = cy;
+    if !state.client_mode_connected {
+        ctx.set_fill_color(&toolbar_theme.item_bg_active);
+        ctx.fill_rounded_rect(x - 6.0, standalone_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+    }
+
+    let dot_cy2 = standalone_y + 10.0 + dot_r;
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.5);
+    ctx.begin_path();
+    ctx.arc(dot_cx, dot_cy2, dot_r, 0.0, std::f64::consts::TAU);
+    ctx.stroke();
+    if !state.client_mode_connected {
+        ctx.set_fill_color(&toolbar_theme.accent);
+        ctx.begin_path();
+        ctx.arc(dot_cx, dot_cy2, dot_r - 4.0, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
+
+    ctx.set_fill_color(toolbar_theme.item_text.as_str());
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Standalone (offline)", text_x, standalone_y + 6.0);
+    ctx.set_fill_color("rgba(254,255,238,0.45)");
+    ctx.set_font("11px sans-serif");
+    ctx.fill_text("No server communication, all data stays local", text_x, standalone_y + 24.0);
+
+    let standalone_rect = WidgetRect::new(x, standalone_y, available_w, mode_row_h);
+    result.content_items.push(("mode_standalone".to_string(), standalone_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:mode_standalone",
+        uzor::types::Rect::new(x, standalone_y, available_w, mode_row_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += mode_row_h + 16.0;
+
     // ── Section: ACCOUNT ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
@@ -265,9 +359,11 @@ fn render_general_tab(
 
     if state.is_logged_in {
         // ── Logged in state ───────────────────────────────────────────────────
-        // Display name (large)
+        // Display name — slightly muted when in Standalone mode (info only, no action).
+        let name_alpha = if state.client_mode_connected { "1.0" } else { "0.5" };
+        let name_color = format!("rgba(254,255,238,{})", name_alpha);
         ctx.set_font("700 18px sans-serif");
-        ctx.set_fill_color(text_color);
+        ctx.set_fill_color(name_color.as_str());
         ctx.fill_text(&state.auth_display_name, x, cy);
         cy += 26.0;
 
@@ -282,53 +378,70 @@ fn render_general_tab(
         ctx.fill_text(&provider_text, x, cy);
         cy += 30.0;
 
-        // "Open Dashboard" button
-        let btn_h = 28.0;
-        let btn_w = available_w.min(180.0);
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        // Only show interactive buttons when in Connected mode.
+        if state.client_mode_connected {
+            // "Open Dashboard" button
+            let btn_h = 28.0;
+            let btn_w = available_w.min(180.0);
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+            input_coordinator.register_on_layer(
+                "user_settings:open_dashboard",
+                uzor::types::Rect::new(x, cy, btn_w, btn_h),
+                Sense::CLICK,
+                layer_id,
+            );
+            cy += btn_h + 8.0;
+
+            // "Sign Out" button
+            ctx.set_fill_color("rgba(239,83,80,0.15)");
+            ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+            ctx.set_stroke_color("rgba(239,83,80,0.5)");
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color("#ef5350");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Sign Out", x + btn_w / 2.0, cy + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push(("sign_out".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+            input_coordinator.register_on_layer(
+                "user_settings:sign_out",
+                uzor::types::Rect::new(x, cy, btn_w, btn_h),
+                Sense::CLICK,
+                layer_id,
+            );
+            cy += btn_h + 24.0;
+        } else {
+            // Standalone while logged in — show grayed note
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text("Switch to Connected mode to access account actions.", x, cy);
+            cy += 20.0;
+        }
+    } else if !state.client_mode_connected {
+        // ── Standalone, not logged in ─────────────────────────────────────────
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:open_dashboard",
-            uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK,
-            layer_id,
-        );
-        cy += btn_h + 8.0;
-
-        // "Sign Out" button
-        ctx.set_fill_color("rgba(239,83,80,0.15)");
-        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color("rgba(239,83,80,0.5)");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("#ef5350");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Sign Out", x + btn_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        result.content_items.push(("sign_out".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:sign_out",
-            uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK,
-            layer_id,
-        );
-        cy += btn_h + 24.0;
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Sign in is available in Connected mode.", x, cy);
+        cy += 28.0;
     } else {
-        // ── Not logged in state ───────────────────────────────────────────────
+        // ── Connected, not logged in ──────────────────────────────────────────
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.5)");
         ctx.set_text_baseline(TextBaseline::Top);

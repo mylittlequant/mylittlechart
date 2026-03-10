@@ -3240,6 +3240,11 @@ pub struct UserSettingsState {
     pub auth_provider: String,
     /// Numeric user ID from the server.
     pub auth_user_id: i64,
+
+    // ── Connection mode ───────────────────────────────────────────────────────
+    /// `true` = Connected to chart.example (OTA updates, cloud sync).
+    /// `false` = Standalone / offline mode (no server communication).
+    pub client_mode_connected: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3268,6 +3273,7 @@ impl Default for UserSettingsState {
             auth_display_name: String::new(),
             auth_provider: String::new(),
             auth_user_id: 0,
+            client_mode_connected: false,
         }
     }
 }

@@ -58,6 +58,10 @@ pub enum UpdaterCommand {
     StartOAuth(String),
     /// Log out (clear stored token).
     Logout,
+    /// Switch connected mode at runtime.
+    /// `true` = Connected (enable server communication),
+    /// `false` = Standalone (stop all phone-home).
+    SetConnectedMode(bool),
 }
 
 /// Handle for the UI to interact with the updater.

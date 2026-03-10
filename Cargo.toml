@@ -22,7 +22,7 @@ resolver = "2"
 rayon = "1"
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 

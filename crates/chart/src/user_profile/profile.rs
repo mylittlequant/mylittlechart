@@ -8,6 +8,25 @@
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
+// ClientMode
+// =============================================================================
+
+/// Client operation mode — controls server connectivity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientMode {
+    /// No communication with chart.example. Zero phone-home.
+    Standalone,
+    /// Connected to chart.example — OTA, sync, centralized keys.
+    Connected,
+}
+
+impl Default for ClientMode {
+    fn default() -> Self {
+        ClientMode::Connected
+    }
+}
+
+// =============================================================================
 // Schema version
 // =============================================================================
 
@@ -90,6 +109,11 @@ pub struct UserProfile {
     /// Schema version.  Used for forward-compatible migration.
     #[serde(default = "default_version")]
     pub version: u32,
+
+    /// Client operation mode — whether to connect to chart.example or run
+    /// fully standalone.  Defaults to `Connected` for new installs.
+    #[serde(default)]
+    pub client_mode: ClientMode,
 
     // -------------------------------------------------------------------------
     // Active selections
@@ -246,6 +270,7 @@ impl UserProfile {
     pub fn new() -> Self {
         Self {
             version: PROFILE_VERSION,
+            client_mode: ClientMode::default(),
             active_preset_id: String::new(),
             open_tabs: Vec::new(),
             active_theme: default_theme(),

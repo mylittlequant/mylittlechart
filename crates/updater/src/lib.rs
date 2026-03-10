@@ -33,9 +33,15 @@ pub trait TelemetrySource: Send + Sync + 'static {
 ///
 /// Call this after the DataBridge is created. The background task runs on
 /// the existing tokio runtime (spawned via `tokio::spawn`).
+///
+/// `connected` controls whether the updater makes any HTTP calls to
+/// chart.example on startup. In standalone mode (`connected = false`)
+/// the loop still runs so it can handle commands, but no network traffic
+/// is generated until a `SetConnectedMode(true)` command arrives.
 pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
+    connected: bool,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -56,7 +62,7 @@ pub fn start(
         auth_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, cmd_rx, telemetry_source));
+    runtime.spawn(updater_loop(status_tx, auth_tx, cmd_rx, telemetry_source, connected));
 
     handle
 }
@@ -73,10 +79,9 @@ async fn updater_loop(
     auth_tx: watch::Sender<state::AuthStatus>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
+    mut connected: bool,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
-    let token = token_store::load_token();
-    let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -84,8 +89,14 @@ async fn updater_loop(
     let mut check_interval = tokio::time::interval(CHECK_INTERVAL);
     check_interval.tick().await; // consume first immediate tick
 
-    // Do initial check + telemetry
-    do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source).await;
+    // Do initial check + telemetry only in connected mode.
+    if connected {
+        let token = token_store::load_token();
+        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source).await;
+    } else {
+        log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
+    }
 
     let mut pending_update: Option<state::UpdateInfo> = None;
 
@@ -100,28 +111,35 @@ async fn updater_loop(
     loop {
         tokio::select! {
             _ = check_interval.tick() => {
-                let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
-                do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                if connected {
+                    let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
 
-                // If we found an update, cache it and auto-install.
-                if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
-                    pending_update = Some(info.clone());
+                    // If we found an update, cache it and auto-install.
+                    if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
+                        pending_update = Some(info.clone());
+                    }
+                    if let Some(ref info) = pending_update {
+                        do_install(&status_tx, info).await;
+                    }
                 }
-                if let Some(ref info) = pending_update {
-                    do_install(&status_tx, info).await;
-                }
+                // In standalone mode: interval fires but we do nothing — no HTTP calls.
             }
             Some(cmd) = cmd_rx.recv() => {
                 match cmd {
                     state::UpdaterCommand::ForceCheck => {
-                        let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
-                        do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
-                        if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
-                            pending_update = Some(info.clone());
-                        }
-                        // Auto-install on forced check as well.
-                        if let Some(ref info) = pending_update {
-                            do_install(&status_tx, info).await;
+                        if connected {
+                            let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
+                                pending_update = Some(info.clone());
+                            }
+                            // Auto-install on forced check as well.
+                            if let Some(ref info) = pending_update {
+                                do_install(&status_tx, info).await;
+                            }
+                        } else {
+                            log::warn!("[Updater] ForceCheck ignored — running in standalone mode");
                         }
                     }
                     state::UpdaterCommand::InstallNow => {
@@ -153,6 +171,25 @@ async fn updater_loop(
                         token_store::clear_token();
                         let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                         log::info!("Logged out");
+                    }
+                    state::UpdaterCommand::SetConnectedMode(new_mode) => {
+                        let was_connected = connected;
+                        connected = new_mode;
+                        log::info!("[Updater] Client mode changed: connected={}", connected);
+                        if connected && !was_connected {
+                            // Switched from standalone → connected: do an immediate check.
+                            log::info!("[Updater] Switched to connected mode — running immediate update check");
+                            let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
+                                pending_update = Some(info.clone());
+                            }
+                            if let Some(ref info) = pending_update {
+                                do_install(&status_tx, info).await;
+                            }
+                        }
+                        // Switched connected → standalone: nothing to do, HTTP calls
+                        // will simply be skipped on the next interval tick.
                     }
                 }
             }

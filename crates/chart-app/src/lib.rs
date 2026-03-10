@@ -5535,6 +5535,11 @@ impl ChartApp {
         };
         zengeld_chart::UserProfile {
             version: zengeld_chart::user_profile::profile::PROFILE_VERSION,
+            client_mode: if self.panel_app.user_settings_state.client_mode_connected {
+                zengeld_chart::user_profile::profile::ClientMode::Connected
+            } else {
+                zengeld_chart::user_profile::profile::ClientMode::Standalone
+            },
             active_preset_id: self.panel_app.active_preset_id.clone(),
             open_tabs: self.panel_app.open_tabs.clone(),
             active_theme: self.panel_app.theme_manager.preset_name().to_string(),
