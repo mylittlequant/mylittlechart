@@ -1,6 +1,19 @@
 use tokio::sync::{mpsc, watch};
 use serde::{Serialize, Deserialize};
 
+/// Authentication status — broadcast via a watch channel so the UI can react.
+#[derive(Clone, Debug)]
+pub enum AuthStatus {
+    /// No token on disk, user has not authenticated.
+    NotLoggedIn,
+    /// User is authenticated.
+    LoggedIn {
+        display_name: String,
+        provider: String,
+        user_id: i64,
+    },
+}
+
 /// Information about an available update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -50,10 +63,12 @@ pub enum UpdaterCommand {
 /// Handle for the UI to interact with the updater.
 #[derive(Clone)]
 pub struct UpdaterHandle {
-    /// Current status — watch channel for efficient polling.
+    /// Current update status — watch channel for efficient polling.
     pub status_rx: watch::Receiver<UpdateStatus>,
     /// Send commands to the background task.
     pub cmd_tx: mpsc::UnboundedSender<UpdaterCommand>,
+    /// Current authentication status — watch channel updated on login/logout.
+    pub auth_rx: watch::Receiver<AuthStatus>,
 }
 
 /// Server manifest response for latest version.

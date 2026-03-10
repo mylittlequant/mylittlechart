@@ -7,6 +7,9 @@ pub struct StoredToken {
     pub provider: String,
     pub display_name: String,
     pub saved_at: u64,
+    /// User ID returned by the server. Defaults to 0 for tokens saved before this field was added.
+    #[serde(default)]
+    pub user_id: i64,
 }
 
 /// Get the path for the auth token file.

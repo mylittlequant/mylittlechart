@@ -12,7 +12,7 @@ pub mod replace;
 pub mod telemetry;
 pub mod oauth;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus};
 
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
@@ -40,12 +40,23 @@ pub fn start(
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
+    // Seed the initial auth status from whatever token is already on disk.
+    let initial_auth = token_store::load_token()
+        .map(|t| AuthStatus::LoggedIn {
+            display_name: t.display_name,
+            provider: t.provider,
+            user_id: t.user_id,
+        })
+        .unwrap_or(AuthStatus::NotLoggedIn);
+    let (auth_tx, auth_rx) = watch::channel(initial_auth);
+
     let handle = UpdaterHandle {
         status_rx,
         cmd_tx,
+        auth_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, cmd_rx, telemetry_source));
+    runtime.spawn(updater_loop(status_tx, auth_tx, cmd_rx, telemetry_source));
 
     handle
 }
@@ -59,6 +70,7 @@ pub fn wait_for_parent_exit_if_needed() {
 
 async fn updater_loop(
     status_tx: watch::Sender<UpdateStatus>,
+    auth_tx: watch::Sender<state::AuthStatus>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
 ) {
@@ -121,10 +133,16 @@ async fn updater_loop(
                         let _ = status_tx.send(UpdateStatus::Idle);
                     }
                     state::UpdaterCommand::StartOAuth(provider) => {
-                        match oauth::start_oauth_flow(&provider).await {
+                        let device_id = telemetry::get_or_create_device_id();
+                        match oauth::start_oauth_flow(&provider, &device_id).await {
                             Ok(token) => {
                                 let _ = token_store::save_token(&token);
                                 log::info!("OAuth successful: {} ({})", token.display_name, token.provider);
+                                let _ = auth_tx.send(state::AuthStatus::LoggedIn {
+                                    display_name: token.display_name,
+                                    provider: token.provider,
+                                    user_id: token.user_id,
+                                });
                             }
                             Err(e) => {
                                 log::error!("OAuth failed: {}", e);
@@ -133,6 +151,7 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::Logout => {
                         token_store::clear_token();
+                        let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                         log::info!("Logged out");
                     }
                 }

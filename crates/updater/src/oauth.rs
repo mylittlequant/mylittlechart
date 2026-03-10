@@ -12,14 +12,14 @@ const CALLBACK_PORT_END: u16 = 17424;
 
 /// Start an OAuth flow for the given provider ("github", "discord", "telegram").
 /// Opens the browser, waits for the callback, exchanges the code, returns a token.
-pub async fn start_oauth_flow(provider: &str) -> Result<StoredToken, String> {
+pub async fn start_oauth_flow(provider: &str, device_id: &str) -> Result<StoredToken, String> {
     // Find an available port for the callback
     let (listener, port) = bind_callback_listener().await?;
 
     // Build the authorization URL
     let auth_url = format!(
-        "{}/api/oauth/{}/authorize?redirect_port={}",
-        UPDATE_SERVER, provider, port
+        "{}/api/oauth/{}/authorize?redirect_port={}&device_id={}",
+        UPDATE_SERVER, provider, port, device_id
     );
 
     // Open browser
@@ -31,7 +31,7 @@ pub async fn start_oauth_flow(provider: &str) -> Result<StoredToken, String> {
     let (code, state) = wait_for_callback(listener).await?;
 
     // Exchange code for token
-    let token = exchange_code(provider, &code, port, state).await?;
+    let token = exchange_code(provider, &code, port, state, Some(device_id.to_string())).await?;
 
     Ok(token)
 }
@@ -119,7 +119,13 @@ async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<(String,
 }
 
 /// Exchange an OAuth code for a stored token.
-async fn exchange_code(provider: &str, code: &str, redirect_port: u16, state: Option<String>) -> Result<StoredToken, String> {
+async fn exchange_code(
+    provider: &str,
+    code: &str,
+    redirect_port: u16,
+    state: Option<String>,
+    device_id: Option<String>,
+) -> Result<StoredToken, String> {
     let url = format!("{}/api/oauth/{}/callback", UPDATE_SERVER, provider);
 
     let client = reqwest::Client::builder()
@@ -133,12 +139,15 @@ async fn exchange_code(provider: &str, code: &str, redirect_port: u16, state: Op
         redirect_port: u16,
         #[serde(skip_serializing_if = "Option::is_none")]
         state: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device_id: Option<String>,
     }
 
     #[derive(serde::Deserialize)]
     struct ExchangeResponse {
         token: String,
         display_name: String,
+        user_id: i64,
     }
 
     let resp = client.post(&url)
@@ -146,6 +155,7 @@ async fn exchange_code(provider: &str, code: &str, redirect_port: u16, state: Op
             code: code.to_string(),
             redirect_port,
             state,
+            device_id,
         })
         .send()
         .await
@@ -169,5 +179,6 @@ async fn exchange_code(provider: &str, code: &str, redirect_port: u16, state: Op
         provider: provider.to_string(),
         display_name: exchange.display_name,
         saved_at: now,
+        user_id: exchange.user_id,
     })
 }
