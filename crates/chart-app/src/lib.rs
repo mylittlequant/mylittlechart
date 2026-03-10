@@ -355,6 +355,14 @@ pub struct ChartApp {
     /// create/delete so main.rs re-reads the list on the next about_to_wait().
     pub key_list_refresh: bool,
 
+    /// Signal: open a URL in the system browser. Set by click handlers in input.rs,
+    /// drained by main.rs which calls `open::that()`.
+    pub pending_open_url: Option<String>,
+
+    /// Signal: send a command to the OTA updater. Set by click handlers in input.rs,
+    /// drained by main.rs which forwards it to `updater_handle.cmd_tx`.
+    pub pending_updater_cmd: Option<String>, // "logout" | "start_oauth:{provider}"
+
     /// Timestamp of the last backfill triggered after a broadcast lag event.
     ///
     /// Used to debounce rapid successive `Lagged` errors — backfill is only
@@ -680,6 +688,8 @@ impl ChartApp {
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
+            pending_open_url: None,
+            pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -939,6 +949,8 @@ impl ChartApp {
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
+            pending_open_url: None,
+            pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,
@@ -1094,6 +1106,8 @@ impl ChartApp {
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
+            pending_open_url: None,
+            pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
             lag_event_count: 0,
             recalc_count: 0,

@@ -188,7 +188,18 @@ pub fn render_user_settings_modal(
 
     match state.active_tab {
         UserSettingsTab::General => {
-            render_general_tab(ctx, content_x + padding, settings_y, text_color, toolbar_theme);
+            render_general_tab(
+                ctx,
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                state,
+                text_color,
+                toolbar_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
         }
         UserSettingsTab::Performance => {
             render_performance_tab(
@@ -229,31 +240,136 @@ pub fn render_user_settings_modal(
 // Tab content renderers
 // =============================================================================
 
+#[allow(clippy::too_many_arguments)]
 fn render_general_tab(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
+    available_w: f64,
+    state: &UserSettingsState,
     text_color: &str,
-    _toolbar_theme: &ToolbarTheme,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
 ) {
     let mut cy = y;
 
-    // Version
+    // ── Section: ACCOUNT ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("VERSION", x, cy);
+    ctx.fill_text("ACCOUNT", x, cy);
     cy += 20.0;
 
-    ctx.set_font("700 22px sans-serif");
+    if state.is_logged_in {
+        // ── Logged in state ───────────────────────────────────────────────────
+        // Display name (large)
+        ctx.set_font("700 18px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(&state.auth_display_name, x, cy);
+        cy += 26.0;
+
+        // "Signed in via {provider}"
+        let provider_text = if state.auth_provider.is_empty() {
+            "Signed in".to_string()
+        } else {
+            format!("Signed in via {}", state.auth_provider)
+        };
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.5)");
+        ctx.fill_text(&provider_text, x, cy);
+        cy += 30.0;
+
+        // "Open Dashboard" button
+        let btn_h = 28.0;
+        let btn_w = available_w.min(180.0);
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:open_dashboard",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h + 8.0;
+
+        // "Sign Out" button
+        ctx.set_fill_color("rgba(239,83,80,0.15)");
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color("rgba(239,83,80,0.5)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#ef5350");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Sign Out", x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("sign_out".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:sign_out",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h + 24.0;
+    } else {
+        // ── Not logged in state ───────────────────────────────────────────────
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.5)");
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Sign in to sync your settings and link devices.", x, cy);
+        cy += 28.0;
+
+        // "Sign In via Browser" button
+        let btn_h = 28.0;
+        let btn_w = available_w.min(200.0);
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.accent);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Sign In via Browser", x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:sign_in",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h + 24.0;
+    }
+
+    // ── Version info (always shown at bottom) ─────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("VERSION", x, cy);
+    cy += 18.0;
+
+    ctx.set_font("700 18px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x, cy);
-    cy += 34.0;
-
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.4)");
-    ctx.fill_text("General settings coming soon.", x, cy);
 }
 
 #[allow(clippy::too_many_arguments)]

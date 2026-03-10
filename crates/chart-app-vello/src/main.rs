@@ -3662,6 +3662,93 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
+        // ── Drain open-URL requests ──────────────────────────────────────
+        {
+            let url: Option<String> = self.windows.values_mut()
+                .find_map(|pw| pw.chart.pending_open_url.take());
+            if let Some(ref url) = url {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Err(e) = std::process::Command::new("cmd")
+                        .args(["/c", "start", "", url])
+                        .spawn()
+                    {
+                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
+                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
+                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                    }
+                }
+            }
+        }
+
+        // ── Drain updater command requests ───────────────────────────────
+        {
+            let cmd: Option<String> = self.windows.values_mut()
+                .find_map(|pw| pw.chart.pending_updater_cmd.take());
+            if let Some(ref cmd_str) = cmd {
+                if let Some(ref handle) = self.updater_handle {
+                    use zengeld_updater::UpdaterCommand;
+                    let command = if cmd_str == "logout" {
+                        Some(UpdaterCommand::Logout)
+                    } else if let Some(provider) = cmd_str.strip_prefix("start_oauth:") {
+                        Some(UpdaterCommand::StartOAuth(provider.to_string()))
+                    } else {
+                        eprintln!("[App] unknown updater command: {}", cmd_str);
+                        None
+                    };
+                    if let Some(command) = command {
+                        if let Err(e) = handle.cmd_tx.send(command) {
+                            eprintln!("[App] updater cmd_tx send failed: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Poll auth_rx → sync to all windows ───────────────────────────
+        {
+            if let Some(ref handle) = self.updater_handle {
+                if handle.auth_rx.has_changed().unwrap_or(false) {
+                    let status = handle.auth_rx.borrow().clone();
+                    match &status {
+                        zengeld_updater::AuthStatus::LoggedIn { display_name, provider, user_id } => {
+                            let dn = display_name.clone();
+                            let prov = provider.clone();
+                            let uid = *user_id;
+                            for pw in self.windows.values_mut() {
+                                let s = &mut pw.chart.panel_app.user_settings_state;
+                                s.is_logged_in = true;
+                                s.auth_display_name = dn.clone();
+                                s.auth_provider = prov.clone();
+                                s.auth_user_id = uid;
+                            }
+                            eprintln!("[App] auth: logged in as {} ({})", dn, prov);
+                        }
+                        zengeld_updater::AuthStatus::NotLoggedIn => {
+                            for pw in self.windows.values_mut() {
+                                let s = &mut pw.chart.panel_app.user_settings_state;
+                                s.is_logged_in = false;
+                                s.auth_display_name = String::new();
+                                s.auth_provider = String::new();
+                                s.auth_user_id = 0;
+                            }
+                            eprintln!("[App] auth: not logged in");
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Telegram test / detect users (async via bridge runtime) ────
         {
             // Check any window for pending Telegram operations

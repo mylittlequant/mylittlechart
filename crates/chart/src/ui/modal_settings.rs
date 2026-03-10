@@ -3230,6 +3230,16 @@ pub struct UserSettingsState {
     pub new_key_label_focused: bool,
     /// Scroll state for the registered keys list in the Server tab.
     pub server_keys_scroll: ScrollState,
+
+    // ── Auth / Account ────────────────────────────────────────────────────────
+    /// Whether the user is currently logged in to chart.example.
+    pub is_logged_in: bool,
+    /// Display name shown in the General tab when logged in.
+    pub auth_display_name: String,
+    /// OAuth provider name (e.g. "GitHub", "Google").
+    pub auth_provider: String,
+    /// Numeric user ID from the server.
+    pub auth_user_id: i64,
 }
 
 impl Default for UserSettingsState {
@@ -3254,6 +3264,10 @@ impl Default for UserSettingsState {
             last_created_key: None,
             new_key_label_focused: false,
             server_keys_scroll: ScrollState::default(),
+            is_logged_in: false,
+            auth_display_name: String::new(),
+            auth_provider: String::new(),
+            auth_user_id: 0,
         }
     }
 }
