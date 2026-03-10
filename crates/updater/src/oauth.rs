@@ -28,10 +28,10 @@ pub async fn start_oauth_flow(provider: &str) -> Result<StoredToken, String> {
     log::info!("Waiting for OAuth callback on port {}...", port);
 
     // Wait for the callback (with timeout)
-    let code = wait_for_callback(listener).await?;
+    let (code, state) = wait_for_callback(listener).await?;
 
     // Exchange code for token
-    let token = exchange_code(provider, &code, port).await?;
+    let token = exchange_code(provider, &code, port, state).await?;
 
     Ok(token)
 }
@@ -73,9 +73,9 @@ fn open_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Wait for the OAuth callback GET request. Extracts `code` query parameter.
+/// Wait for the OAuth callback GET request. Extracts `code` and `state` query parameters.
 /// Times out after 120 seconds.
-async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<String, String> {
+async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<(String, Option<String>), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let accept = tokio::time::timeout(
@@ -93,16 +93,21 @@ async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<String, 
     let request = String::from_utf8_lossy(&buf[..n]);
 
     // Parse query params from GET /callback?code=XXX&state=YYY HTTP/1.1
-    let code = request.lines()
+    let (code, state) = request.lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|path| {
-            let query = path.split('?').nth(1)?;
-            query.split('&')
+        .map(|path| {
+            let query = path.split('?').nth(1).unwrap_or("");
+            let code = query.split('&')
                 .find(|p| p.starts_with("code="))
-                .map(|p| p[5..].to_string())
+                .map(|p| p[5..].to_string());
+            let state = query.split('&')
+                .find(|p| p.starts_with("state="))
+                .map(|p| p[6..].to_string());
+            (code, state)
         })
-        .ok_or_else(|| "No 'code' parameter in callback".to_string())?;
+        .unwrap_or((None, None));
+    let code = code.ok_or_else(|| "No 'code' parameter in callback".to_string())?;
 
     // Send a response to the browser
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
@@ -110,11 +115,11 @@ async fn wait_for_callback(listener: tokio::net::TcpListener) -> Result<String, 
         <script>window.close()</script></body></html>";
     let _ = stream.write_all(response.as_bytes()).await;
 
-    Ok(code)
+    Ok((code, state))
 }
 
 /// Exchange an OAuth code for a stored token.
-async fn exchange_code(provider: &str, code: &str, redirect_port: u16) -> Result<StoredToken, String> {
+async fn exchange_code(provider: &str, code: &str, redirect_port: u16, state: Option<String>) -> Result<StoredToken, String> {
     let url = format!("{}/api/oauth/{}/callback", UPDATE_SERVER, provider);
 
     let client = reqwest::Client::builder()
@@ -126,6 +131,8 @@ async fn exchange_code(provider: &str, code: &str, redirect_port: u16) -> Result
     struct ExchangeRequest {
         code: String,
         redirect_port: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -138,6 +145,7 @@ async fn exchange_code(provider: &str, code: &str, redirect_port: u16) -> Result
         .json(&ExchangeRequest {
             code: code.to_string(),
             redirect_port,
+            state,
         })
         .send()
         .await
