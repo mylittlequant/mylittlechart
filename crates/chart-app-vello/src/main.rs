@@ -3858,11 +3858,20 @@ impl ApplicationHandler for App<'_> {
                                             .unwrap_or_default()
                                             .as_secs()
                                     });
+                                // Derive a tier string from the permissions vec for
+                                // backward-compat with ApiKeyEntry which still stores tier.
+                                let tier = if s.permissions.iter().any(|p| p == "admin") {
+                                    "admin"
+                                } else if s.permissions.iter().any(|p| p == "write") {
+                                    "read_write"
+                                } else {
+                                    "read_only"
+                                };
                                 zengeld_server::state::ApiKeyEntry {
                                     key_hash: s.token_hash.clone(),
                                     label: s.label.clone(),
-                                    tier: s.tier.clone(),
-                                    permissions: zengeld_server::state::Permissions::from_tier(&s.tier),
+                                    tier: tier.to_string(),
+                                    permissions: zengeld_server::state::Permissions::from_tier(tier),
                                     created_at,
                                     agent_id: None,
                                     source: zengeld_server::state::KeySource::Cloud,

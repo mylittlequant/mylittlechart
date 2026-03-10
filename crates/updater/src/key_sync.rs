@@ -27,8 +27,10 @@ pub struct KeySyncResponse {
 pub struct SyncedKeyEntry {
     /// SHA-256 hex digest of the raw key.
     pub token_hash: String,
-    /// Permission tier string: `"read_only"`, `"read_write"`, or `"admin"`.
-    pub tier: String,
+    /// Permission strings granted to this key (e.g. `["read", "write", "admin"]`).
+    pub permissions: Vec<String>,
+    /// Optional expiry timestamp (ISO 8601 or Unix string).  `None` means no expiry.
+    pub expires_at: Option<String>,
     /// Human-readable label assigned by the user on the server.
     pub label: String,
 }

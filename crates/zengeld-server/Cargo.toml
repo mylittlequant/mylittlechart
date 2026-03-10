@@ -13,6 +13,7 @@ base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
+subtle = "2"
 
 # Workspace path dependencies
 live-data = { path = "../live-data" }

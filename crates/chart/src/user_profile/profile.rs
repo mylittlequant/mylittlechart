@@ -22,7 +22,7 @@ pub enum ClientMode {
 
 impl Default for ClientMode {
     fn default() -> Self {
-        ClientMode::Connected
+        ClientMode::Standalone
     }
 }
 
@@ -111,7 +111,7 @@ pub struct UserProfile {
     pub version: u32,
 
     /// Client operation mode — whether to connect to chart.example or run
-    /// fully standalone.  Defaults to `Connected` for new installs.
+    /// fully standalone.  Defaults to `Standalone` for new installs (privacy-first).
     #[serde(default)]
     pub client_mode: ClientMode,
 

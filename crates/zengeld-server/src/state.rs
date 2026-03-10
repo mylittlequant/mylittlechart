@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
+use subtle::ConstantTimeEq;
 
 use live_data::DataBridge;
 
@@ -201,7 +202,7 @@ impl AgentState {
         let guard = self.keys.read().ok()?;
         guard
             .iter()
-            .find(|e| e.key_hash == hash)
+            .find(|e| bool::from(e.key_hash.as_bytes().ct_eq(hash.as_bytes())))
             .map(|e| (e.permissions.clone(), e.agent_id.clone()))
     }
 
