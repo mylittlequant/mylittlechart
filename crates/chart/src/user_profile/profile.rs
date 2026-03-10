@@ -239,6 +239,16 @@ pub struct UserProfile {
     pub connector_enabled: std::collections::HashMap<String, bool>,
 
     // -------------------------------------------------------------------------
+    // Telemetry opt-out
+    // -------------------------------------------------------------------------
+
+    /// Whether to send anonymized usage metrics to chart.example.
+    /// Defaults to `true` (opt-in).  Requires Connected mode to have any effect.
+    /// Changing this at runtime sends `UpdaterCommand::SetTelemetryEnabled`.
+    #[serde(default = "default_true")]
+    pub telemetry_enabled: bool,
+
+    // -------------------------------------------------------------------------
     // Telemetry counters (accumulated since installation)
     // -------------------------------------------------------------------------
 
@@ -332,6 +342,7 @@ impl UserProfile {
             agent_api_key: String::new(),
             agent_api_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
+            telemetry_enabled: true,
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
@@ -475,6 +486,10 @@ pub struct TelemetryData {
 
 fn default_version() -> u32 {
     PROFILE_VERSION
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_key_source() -> String {

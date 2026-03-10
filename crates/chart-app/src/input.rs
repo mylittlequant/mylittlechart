@@ -6996,6 +6996,16 @@ impl ChartApp {
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
+                "telemetry_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.telemetry_enabled;
+                    self.panel_app.user_settings_state.telemetry_enabled = new_val;
+                    self.pending_updater_cmd = Some(if new_val {
+                        "set_telemetry_enabled:true".to_string()
+                    } else {
+                        "set_telemetry_enabled:false".to_string()
+                    });
+                    eprintln!("[ChartApp] telemetry_enabled = {}", new_val);
+                }
                 "server_toggle" => {
                     self.panel_app.user_settings_state.server_enabled =
                         !self.panel_app.user_settings_state.server_enabled;

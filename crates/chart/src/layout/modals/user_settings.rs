@@ -487,6 +487,61 @@ fn render_general_tab(
         cy += btn_h + 24.0;
     }
 
+    // ── Section: PRIVACY ─────────────────────────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("PRIVACY", x, cy);
+    cy += 20.0;
+
+    // Telemetry toggle row
+    {
+        let toggle_w = 32.0;
+        let toggle_h = 18.0;
+        let toggle_x = x + available_w - toggle_w;
+        let toggle_y = cy + 1.0;
+        let is_on = state.telemetry_enabled;
+
+        // Track
+        let track_color = if is_on { &toolbar_theme.accent } else { &toolbar_theme.separator };
+        ctx.set_fill_color(track_color);
+        ctx.fill_rounded_rect(toggle_x, toggle_y, toggle_w, toggle_h, toggle_h / 2.0);
+
+        // Thumb
+        let thumb_r = toggle_h / 2.0 - 2.0;
+        let thumb_cx = if is_on {
+            toggle_x + toggle_w - thumb_r - 3.0
+        } else {
+            toggle_x + thumb_r + 3.0
+        };
+        ctx.set_fill_color("rgba(255,255,255,0.95)");
+        ctx.begin_path();
+        ctx.arc(thumb_cx, toggle_y + toggle_h / 2.0, thumb_r, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+
+        // Label
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Send anonymous usage data", x, cy);
+        cy += 20.0;
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.45)");
+        ctx.fill_text("Heartbeat & metrics sent to chart.example (Connected mode only)", x, cy);
+        cy += 20.0;
+
+        let row_rect = uzor::types::Rect::new(x, toggle_y - 2.0, available_w, toggle_h + 4.0);
+        result.content_items.push(("telemetry_toggle".to_string(), uzor::types::Rect::new(toggle_x, toggle_y, toggle_w, toggle_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:telemetry_toggle",
+            row_rect,
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += 8.0;
+
     // ── Version info (always shown at bottom) ─────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
@@ -497,6 +552,7 @@ fn render_general_tab(
     ctx.set_font("700 18px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x, cy);
+    let _ = cy; // suppress unused variable warning
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -42,10 +42,18 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// chart.example on startup. In standalone mode (`connected = false`)
 /// the loop still runs so it can handle commands, but no network traffic
 /// is generated until a `SetConnectedMode(true)` command arrives.
+///
+/// `telemetry_enabled` controls whether anonymized metrics are sent.  Can be
+/// toggled at runtime via [`UpdaterCommand::SetTelemetryEnabled`].
+///
+/// `sync_enabled` seeds the initial cloud-sync enabled state from the user
+/// profile.  Can be toggled at runtime via [`UpdaterCommand::SetSyncEnabled`].
 pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
     connected: bool,
+    telemetry_enabled: bool,
+    sync_enabled: bool,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -74,7 +82,7 @@ pub fn start(
         sync_status_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled));
 
     handle
 }
@@ -94,6 +102,8 @@ async fn updater_loop(
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
     mut connected: bool,
+    mut telemetry_enabled: bool,
+    sync_enabled_init: bool,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
 
@@ -108,7 +118,10 @@ async fn updater_loop(
     // The authoritative state is owned by main.rs (in UserProfile); this copy
     // lets the updater loop track the last-sync timestamp without needing a
     // channel back to main.rs on every tick.
-    let mut sync_state = cloud_sync::SyncState::default();
+    let mut sync_state = cloud_sync::SyncState {
+        enabled: sync_enabled_init,
+        ..cloud_sync::SyncState::default()
+    };
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -120,7 +133,7 @@ async fn updater_loop(
     if connected {
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
-        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source).await;
+        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, telemetry_enabled).await;
         // Initial key sync.
         if let Some(ref td) = token {
             do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
@@ -145,7 +158,7 @@ async fn updater_loop(
                 if connected {
                     let token = token_store::load_token();
                     let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, telemetry_enabled).await;
 
                     // If we found an update, cache it and auto-install.
                     if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
@@ -175,7 +188,7 @@ async fn updater_loop(
                         if connected {
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, telemetry_enabled).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -246,7 +259,7 @@ async fn updater_loop(
                             log::info!("[Updater] Switched to connected mode — running immediate update check");
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, telemetry_enabled).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -266,6 +279,18 @@ async fn updater_loop(
                         }
                         // Switched connected → standalone: nothing to do, HTTP calls
                         // will simply be skipped on the next interval tick.
+                    }
+                    state::UpdaterCommand::SetTelemetryEnabled(enabled) => {
+                        telemetry_enabled = enabled;
+                        log::info!("[Updater] Telemetry enabled: {}", telemetry_enabled);
+                    }
+                    state::UpdaterCommand::SetSyncEnabled(enabled) => {
+                        sync_state.enabled = enabled;
+                        log::info!("[Updater] Cloud sync enabled: {}", sync_state.enabled);
+                    }
+                    state::UpdaterCommand::Shutdown => {
+                        log::info!("Updater shutdown requested");
+                        break;
                     }
                 }
             }
@@ -326,33 +351,38 @@ async fn do_check_and_telemetry(
     current_version: &str,
     auth_header: Option<&str>,
     telemetry_source: &Arc<dyn TelemetrySource>,
+    telemetry_enabled: bool,
 ) {
     // Send telemetry (fire-and-forget, don't block update check).
-    let payload = telemetry_source.collect();
-    let auth_clone = auth_header.map(String::from);
+    if telemetry_enabled {
+        let payload = telemetry_source.collect();
+        let auth_clone = auth_header.map(String::from);
 
-    let heartbeat = telemetry::HeartbeatPayload {
-        device_id: payload.device_id.clone(),
-        app_version: payload.app_version.clone(),
-        uptime_seconds: payload.uptime_secs,
-        os: payload.os.clone(),
-        device_name: hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .unwrap_or_default(),
-    };
+        let heartbeat = telemetry::HeartbeatPayload {
+            device_id: payload.device_id.clone(),
+            app_version: payload.app_version.clone(),
+            uptime_seconds: payload.uptime_secs,
+            os: payload.os.clone(),
+            device_name: hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_default(),
+        };
 
-    tokio::spawn(async move {
-        if let Err(e) = telemetry::send_telemetry(&payload, auth_clone.as_deref()).await {
-            log::warn!("Telemetry send failed: {}", e);
-        }
-    });
+        tokio::spawn(async move {
+            if let Err(e) = telemetry::send_telemetry(&payload, auth_clone.as_deref()).await {
+                log::warn!("Telemetry send failed: {}", e);
+            }
+        });
 
-    tokio::spawn(async move {
-        if let Err(e) = telemetry::send_heartbeat(&heartbeat).await {
-            log::warn!("Heartbeat send failed: {}", e);
-        }
-    });
+        tokio::spawn(async move {
+            if let Err(e) = telemetry::send_heartbeat(&heartbeat).await {
+                log::warn!("Heartbeat send failed: {}", e);
+            }
+        });
+    } else {
+        log::debug!("[Updater] Telemetry disabled — skipping heartbeat and metrics send");
+    }
 
     // Check for updates.
     let _ = status_tx.send(UpdateStatus::Checking);

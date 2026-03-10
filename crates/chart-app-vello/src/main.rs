@@ -1843,7 +1843,13 @@ impl App<'_> {
             });
 
             let connected = profile.client_mode == zengeld_chart::user_profile::profile::ClientMode::Connected;
-            Some(zengeld_updater::start(bridge.runtime().handle(), source, connected))
+            Some(zengeld_updater::start(
+                bridge.runtime().handle(),
+                source,
+                connected,
+                profile.telemetry_enabled,
+                profile.sync_state.enabled,
+            ))
         };
 
         Self {
@@ -2037,6 +2043,9 @@ impl App<'_> {
         chart.panel_app.user_settings_state.client_mode_connected =
             self.user_manager.profile.client_mode
                 == zengeld_chart::user_profile::profile::ClientMode::Connected;
+        // Sync telemetry opt-out from the loaded profile.
+        chart.panel_app.user_settings_state.telemetry_enabled =
+            self.user_manager.profile.telemetry_enabled;
         // API keys are now managed via /api/v1/keys REST endpoint.
         // Show key count in the UI instead of the raw key string.
         chart.panel_app.user_settings_state.api_key = format!(
@@ -3485,6 +3494,10 @@ impl ApplicationHandler for App<'_> {
             if let Some(ref tx) = self.gpu_cmd_tx {
                 let _ = tx.send(GpuCommand::Shutdown);
             }
+            // Shutdown the updater background task cleanly.
+            if let Some(ref handle) = self.updater_handle {
+                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::Shutdown);
+            }
             self.save_all(&[]);
             event_loop.exit();
             return;
@@ -3745,6 +3758,18 @@ impl ApplicationHandler for App<'_> {
                         Some(UpdaterCommand::SetConnectedMode(true))
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetConnectedMode(false))
+                    } else if cmd_str == "set_telemetry_enabled:true" {
+                        self.user_manager.profile.telemetry_enabled = true;
+                        Some(UpdaterCommand::SetTelemetryEnabled(true))
+                    } else if cmd_str == "set_telemetry_enabled:false" {
+                        self.user_manager.profile.telemetry_enabled = false;
+                        Some(UpdaterCommand::SetTelemetryEnabled(false))
+                    } else if cmd_str == "set_sync_enabled:true" {
+                        self.user_manager.profile.sync_state.enabled = true;
+                        Some(UpdaterCommand::SetSyncEnabled(true))
+                    } else if cmd_str == "set_sync_enabled:false" {
+                        self.user_manager.profile.sync_state.enabled = false;
+                        Some(UpdaterCommand::SetSyncEnabled(false))
                     } else {
                         eprintln!("[App] unknown updater command: {}", cmd_str);
                         None

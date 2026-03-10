@@ -72,6 +72,21 @@ pub enum UpdaterCommand {
     /// Ignored in standalone mode.  The updater broadcasts progress via the
     /// `sync_status_rx` watch channel on `UpdaterHandle`.
     ForceSync,
+    /// Enable or disable telemetry at runtime.
+    ///
+    /// When `false`, update checks still run but heartbeat/telemetry payloads
+    /// are not sent to the server.
+    SetTelemetryEnabled(bool),
+    /// Enable or disable cloud sync at runtime.
+    ///
+    /// Mirrors `UserProfile.sync_state.enabled` so the updater loop does not
+    /// need a channel back to main to query the profile on every tick.
+    SetSyncEnabled(bool),
+    /// Shut down the updater background task cleanly.
+    ///
+    /// After receiving this command the loop exits; no further network calls
+    /// are made.  Send this before the process exits.
+    Shutdown,
 }
 
 // =============================================================================

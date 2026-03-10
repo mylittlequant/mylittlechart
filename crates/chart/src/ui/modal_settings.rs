@@ -3246,6 +3246,10 @@ pub struct UserSettingsState {
     /// `false` = Standalone / offline mode (no server communication).
     pub client_mode_connected: bool,
 
+    // ── Telemetry ─────────────────────────────────────────────────────────────
+    /// Whether to send anonymized usage metrics.  Mirrors `UserProfile.telemetry_enabled`.
+    pub telemetry_enabled: bool,
+
     // ── Mode transition confirmation ──────────────────────────────────────────
     /// `true` = showing the Standalone → Connected confirmation dialog.
     /// The radio visually stays on Standalone until user confirms.
@@ -3281,6 +3285,7 @@ impl Default for UserSettingsState {
             auth_provider: String::new(),
             auth_user_id: 0,
             client_mode_connected: false,
+            telemetry_enabled: true,
             sync_transition_pending: false,
             disconnect_pending: false,
         }
