@@ -235,7 +235,6 @@ struct AppState {
     /// Single source of truth — synced to all windows each frame.
     theme_preset: String,
     /// Device identity — read-only after startup, shared to avoid stale per-window copies.
-    device_id: String,
     device_name: String,
     app_version: String,
 
@@ -313,7 +312,6 @@ impl AppState {
             snapshots,
             template_manager,
             theme_preset: profile.active_theme.clone(),
-            device_id: profile.device_id.clone(),
             device_name: profile.device_name.clone(),
             app_version: profile.app_version.clone(),
             // Start dirty so the first frame syncs everything to all windows.
@@ -2269,7 +2267,6 @@ impl App<'_> {
         // device identity (replaces per-window copies that were previously written here).
         profile.connector_enabled = self.app_state.connector_enabled.clone();
         profile.active_theme = self.app_state.theme_preset.clone();
-        profile.device_id = self.app_state.device_id.clone();
         profile.device_name = self.app_state.device_name.clone();
         profile.app_version = self.app_state.app_version.clone();
         profile.recalc_mode = match self.app_state.recalc_mode {
@@ -3408,7 +3405,6 @@ impl ApplicationHandler for App<'_> {
                 profile.windows = window_states;
                 profile.connector_enabled = self.app_state.connector_enabled.clone();
                 profile.active_theme = self.app_state.theme_preset.clone();
-                profile.device_id = self.app_state.device_id.clone();
                 profile.device_name = self.app_state.device_name.clone();
                 profile.app_version = self.app_state.app_version.clone();
                 profile.recalc_mode = match self.app_state.recalc_mode {
@@ -4921,9 +4917,8 @@ fn main() {
     // All windows share this loaded state — no per-window disk reads.
     let mut user_manager = zengeld_chart::UserManager::load();
 
-    // Ensure device identity and record this launch (was previously done per-window
+    // Record this launch (was previously done per-window
     // in load_user_state(); now done once here at the application level).
-    user_manager.profile.ensure_device_id();
     user_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
     user_manager.save_profile();
 

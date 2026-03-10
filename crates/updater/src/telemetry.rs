@@ -64,6 +64,39 @@ pub fn sanitize_gpu_name(raw: &str) -> String {
         .collect()
 }
 
+/// Heartbeat payload sent to `/api/heartbeat` every 5 minutes.
+#[derive(Debug, Clone, Serialize)]
+pub struct HeartbeatPayload {
+    pub device_id: String,
+    pub app_version: String,
+    pub uptime_seconds: u64,
+    pub os: String,
+    pub device_name: String,
+}
+
+/// Send a heartbeat to the server (fire-and-forget, no auth required).
+pub async fn send_heartbeat(payload: &HeartbeatPayload) -> Result<(), String> {
+    let url = format!("{}/api/heartbeat", UPDATE_SERVER);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .post(&url)
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| format!("Heartbeat send failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Heartbeat server returned {}", resp.status()));
+    }
+
+    Ok(())
+}
+
 /// Send telemetry to the server (fire-and-forget, errors are logged).
 pub async fn send_telemetry(payload: &TelemetryPayload, auth_header: Option<&str>) -> Result<(), String> {
     let url = format!("{}/api/telemetry", UPDATE_SERVER);

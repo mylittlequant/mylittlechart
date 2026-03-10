@@ -150,9 +150,27 @@ async fn do_check_and_telemetry(
     // Send telemetry (fire-and-forget, don't block update check).
     let payload = telemetry_source.collect();
     let auth_clone = auth_header.map(String::from);
+
+    let heartbeat = telemetry::HeartbeatPayload {
+        device_id: payload.device_id.clone(),
+        app_version: payload.app_version.clone(),
+        uptime_seconds: payload.uptime_secs,
+        os: payload.os.clone(),
+        device_name: hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_default(),
+    };
+
     tokio::spawn(async move {
         if let Err(e) = telemetry::send_telemetry(&payload, auth_clone.as_deref()).await {
             log::warn!("Telemetry send failed: {}", e);
+        }
+    });
+
+    tokio::spawn(async move {
+        if let Err(e) = telemetry::send_heartbeat(&heartbeat).await {
+            log::warn!("Heartbeat send failed: {}", e);
         }
     });
 

@@ -7,7 +7,6 @@ members = [
     "crates/sidebar-content",
     "crates/alerts",
     "crates/alert-delivery",
-    "crates/zengeld-client",
     "crates/live-data",
     "crates/zengeld-server",
     "crates/instanced-context",
@@ -23,7 +22,7 @@ resolver = "2"
 rayon = "1"
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 

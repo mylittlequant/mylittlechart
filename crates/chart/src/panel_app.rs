@@ -2453,11 +2453,10 @@ impl ChartPanelApp {
         self.user_manager.profile = um.profile;
         self.user_manager.snapshots = um.snapshots;
 
-        // Ensure device identity and record this launch.
-        self.user_manager.profile.ensure_device_id();
+        // Record this launch.
         self.user_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
 
-        // Save profile immediately to persist new device_id if it was just generated.
+        // Save profile immediately to persist the updated launch record.
         self.user_manager.save_profile();
 
         eprintln!(

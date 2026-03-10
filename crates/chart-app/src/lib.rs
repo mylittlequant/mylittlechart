@@ -1139,7 +1139,7 @@ impl ChartApp {
         // else: new user-spawned window — don't copy parent's tabs/preset.
         // The "fresh state" path below will create a new "Untitled" preset.
 
-        // Keep profile + snapshots in user_manager (device_id already set by main).
+        // Keep profile + snapshots in user_manager.
         app.panel_app.user_manager.profile = user_manager.profile.clone();
         app.panel_app.user_manager.snapshots = user_manager.snapshots.clone();
 
@@ -5511,7 +5511,7 @@ impl ChartApp {
     /// own sub-systems.
     pub fn build_user_profile(&self) -> zengeld_chart::UserProfile {
         // Preserve device identity and telemetry from the currently loaded
-        // profile so that we don't clobber device_id or counters on every save.
+        // profile so that we don't clobber counters on every save.
         let existing = &self.panel_app.user_manager.profile;
         let inline = &self.panel_app.toolbar_state.floating_inline_bar;
         let inline_dock_str = match inline.dock_edge {
@@ -5531,7 +5531,6 @@ impl ChartApp {
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
             // Preserve fields managed by the profile itself
-            device_id: existing.device_id.clone(),
             device_name: existing.device_name.clone(),
             app_version: existing.app_version.clone(),
             linked_account: existing.linked_account.clone(),

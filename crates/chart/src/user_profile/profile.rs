@@ -146,12 +146,6 @@ pub struct UserProfile {
     // Device identity
     // -------------------------------------------------------------------------
 
-    /// Unique device identifier, generated on first launch.
-    /// Format: 64-char hex string from hashing random bytes + timestamp.
-    /// Once generated, never changes for this installation.
-    #[serde(default)]
-    pub device_id: String,
-
     /// Human-readable device name (auto-detected or user-set).
     /// e.g. "VA-PC-WIN10", "MacBook Pro"
     #[serde(default)]
@@ -262,7 +256,6 @@ impl UserProfile {
             inline_bar_y: None,
             inline_bar_dock: None,
             // New fields
-            device_id: String::new(), // will be filled by ensure_device_id()
             device_name: String::new(),
             app_version: String::new(),
             linked_account: None,
@@ -277,16 +270,6 @@ impl UserProfile {
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
         }
-    }
-
-    /// Ensure device_id is populated. Call on every startup.
-    /// If device_id is empty, generates a new one.
-    pub fn ensure_device_id(&mut self) {
-        if !self.device_id.is_empty() {
-            return;
-        }
-        self.device_id = generate_device_id();
-        self.device_name = detect_device_name();
     }
 
     /// Record a new app launch in telemetry.
@@ -410,67 +393,6 @@ pub struct TelemetryData {
     /// Total symbols searched/viewed
     #[serde(default)]
     pub symbols_viewed: u64,
-}
-
-// =============================================================================
-// Device ID generation
-// =============================================================================
-
-/// Generate a unique device ID from random data + timestamp.
-/// Uses a simple non-cryptographic approach — just needs to be unique, not secure.
-fn generate_device_id() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-
-    // Mix multiple entropy sources
-    let mut hasher = DefaultHasher::new();
-    now.as_nanos().hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-
-    // Get hostname/username for more entropy
-    if let Ok(name) = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .or_else(|_| std::env::var("USER"))
-        .or_else(|_| std::env::var("USERNAME"))
-    {
-        name.hash(&mut hasher);
-    }
-
-    let hash1 = hasher.finish();
-
-    // Second hash with different seed
-    let mut hasher2 = DefaultHasher::new();
-    hash1.hash(&mut hasher2);
-    (now.as_nanos() ^ 0xDEAD_BEEF_CAFE_BABE_u128).hash(&mut hasher2);
-    let hash2 = hasher2.finish();
-
-    // Third hash
-    let mut hasher3 = DefaultHasher::new();
-    hash2.hash(&mut hasher3);
-    now.as_secs().hash(&mut hasher3);
-    let hash3 = hasher3.finish();
-
-    // Fourth hash
-    let mut hasher4 = DefaultHasher::new();
-    hash3.hash(&mut hasher4);
-    (now.as_nanos() >> 32).hash(&mut hasher4);
-    let hash4 = hasher4.finish();
-
-    // Combine 4 x u64 hashes into 64 hex chars
-    format!("{:016x}{:016x}{:016x}{:016x}", hash1, hash2, hash3, hash4)
-}
-
-/// Detect a human-readable device name.
-fn detect_device_name() -> String {
-    // Try COMPUTERNAME (Windows), HOSTNAME (Linux/Mac), or fallback
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown-device".to_string())
 }
 
 // =============================================================================
