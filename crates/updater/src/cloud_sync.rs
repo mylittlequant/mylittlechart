@@ -318,34 +318,100 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
     items
 }
 
+/// Create a timestamped backup of `path` in a `.sync_backups` subdirectory,
+/// then prune old backups so only the most recent `keep` copies are retained.
+///
+/// Does nothing if the file does not yet exist.
+fn backup_file(path: &Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let backup_dir = parent.join(".sync_backups");
+    std::fs::create_dir_all(&backup_dir)?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let backup_name = format!("{}_{}", timestamp, filename);
+    std::fs::copy(path, backup_dir.join(&backup_name))?;
+
+    // Keep only the last 5 backups per original file name.
+    cleanup_old_backups(&backup_dir, &filename, 5)?;
+
+    Ok(())
+}
+
+/// Remove the oldest backups in `backup_dir` that end with `original_name`,
+/// keeping at most `keep` copies.
+fn cleanup_old_backups(backup_dir: &Path, original_name: &str, keep: usize) -> std::io::Result<()> {
+    let mut backups: Vec<_> = std::fs::read_dir(backup_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name().to_string_lossy().ends_with(original_name)
+        })
+        .collect();
+
+    // Lexicographic sort is chronological because entries are prefixed with
+    // a Unix timestamp (e.g. "1741699200_watchlists.json").
+    backups.sort_by_key(|e| e.file_name());
+
+    if backups.len() > keep {
+        for entry in &backups[..backups.len() - keep] {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+
+    Ok(())
+}
+
 /// Write pulled sync items to their appropriate files on disk.
 ///
-/// Directories are created as needed.  Unknown categories are logged and
-/// skipped rather than returning an error, so a single unrecognised item
-/// does not abort the whole write pass.
+/// A timestamped backup is created in `.sync_backups/` before overwriting any
+/// file that already exists (last 5 backups per file are kept).  Directories
+/// are created as needed.  Unknown categories are logged and skipped rather
+/// than returning an error, so a single unrecognised item does not abort the
+/// whole write pass.
 pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io::Result<()> {
     for item in items {
         match item.category.as_str() {
             "watchlist" => {
-                std::fs::write(data_dir.join("watchlists.json"), &item.content)?;
+                let target = data_dir.join("watchlists.json");
+                backup_file(&target)?;
+                std::fs::write(target, &item.content)?;
             }
             "settings_snapshot" => {
-                std::fs::write(data_dir.join("settings_snapshots.json"), &item.content)?;
+                let target = data_dir.join("settings_snapshots.json");
+                backup_file(&target)?;
+                std::fs::write(target, &item.content)?;
             }
             "preset" => {
                 let dir = data_dir.join("presets");
                 std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(format!("{}.json", item.name)), &item.content)?;
+                let target = dir.join(format!("{}.json", item.name));
+                backup_file(&target)?;
+                std::fs::write(target, &item.content)?;
             }
             "template_primitive" => {
                 let dir = data_dir.join("templates").join("primitives");
                 std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(format!("{}.json", item.name)), &item.content)?;
+                let target = dir.join(format!("{}.json", item.name));
+                backup_file(&target)?;
+                std::fs::write(target, &item.content)?;
             }
             "template_indicator" => {
                 let dir = data_dir.join("templates").join("indicators");
                 std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(format!("{}.json", item.name)), &item.content)?;
+                let target = dir.join(format!("{}.json", item.name));
+                backup_file(&target)?;
+                std::fs::write(target, &item.content)?;
             }
             other => {
                 log::warn!("[CloudSync] Unknown sync category '{}' — skipping write", other);

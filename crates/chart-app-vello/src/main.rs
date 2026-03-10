@@ -6,6 +6,7 @@
 //! Creates windows on demand; closing the last window exits the process.
 
 mod chrome;
+pub mod keychain;
 
 /// Win32 cursor position polling helpers.
 ///
