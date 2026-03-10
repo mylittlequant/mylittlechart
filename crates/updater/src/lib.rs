@@ -11,6 +11,7 @@ pub mod download;
 pub mod replace;
 pub mod telemetry;
 pub mod oauth;
+pub mod key_sync;
 
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus};
 
@@ -56,13 +57,17 @@ pub fn start(
         .unwrap_or(AuthStatus::NotLoggedIn);
     let (auth_tx, auth_rx) = watch::channel(initial_auth);
 
+    // Channel for server-synced API key hashes (Connected mode only).
+    let (synced_keys_tx, synced_keys_rx) = watch::channel(Vec::<key_sync::SyncedKeyEntry>::new());
+
     let handle = UpdaterHandle {
         status_rx,
         cmd_tx,
         auth_rx,
+        synced_keys_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, cmd_rx, telemetry_source, connected));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, cmd_rx, telemetry_source, connected));
 
     handle
 }
@@ -77,11 +82,19 @@ pub fn wait_for_parent_exit_if_needed() {
 async fn updater_loop(
     status_tx: watch::Sender<UpdateStatus>,
     auth_tx: watch::Sender<state::AuthStatus>,
+    synced_keys_tx: watch::Sender<Vec<key_sync::SyncedKeyEntry>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
     mut connected: bool,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
+
+    // Shared HTTP client for key sync requests.
+    // Built once here; reused on every interval tick.
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -94,6 +107,10 @@ async fn updater_loop(
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
         do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source).await;
+        // Initial key sync.
+        if let Some(ref td) = token {
+            do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+        }
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
     }
@@ -112,7 +129,8 @@ async fn updater_loop(
         tokio::select! {
             _ = check_interval.tick() => {
                 if connected {
-                    let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                    let token = token_store::load_token();
+                    let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
                     do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
 
                     // If we found an update, cache it and auto-install.
@@ -122,6 +140,11 @@ async fn updater_loop(
                     if let Some(ref info) = pending_update {
                         do_install(&status_tx, info).await;
                     }
+
+                    // Key sync — best-effort, logged but not fatal.
+                    if let Some(ref td) = token {
+                        do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                    }
                 }
                 // In standalone mode: interval fires but we do nothing — no HTTP calls.
             }
@@ -129,7 +152,8 @@ async fn updater_loop(
                 match cmd {
                     state::UpdaterCommand::ForceCheck => {
                         if connected {
-                            let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                            let token = token_store::load_token();
+                            let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
                             do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
@@ -137,6 +161,10 @@ async fn updater_loop(
                             // Auto-install on forced check as well.
                             if let Some(ref info) = pending_update {
                                 do_install(&status_tx, info).await;
+                            }
+                            // Also sync keys on forced check.
+                            if let Some(ref td) = token {
+                                do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
                             }
                         } else {
                             log::warn!("[Updater] ForceCheck ignored — running in standalone mode");
@@ -179,7 +207,8 @@ async fn updater_loop(
                         if connected && !was_connected {
                             // Switched from standalone → connected: do an immediate check.
                             log::info!("[Updater] Switched to connected mode — running immediate update check");
-                            let auth = token_store::load_token().map(|t| format!("Bearer {}", t.token));
+                            let token = token_store::load_token();
+                            let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
                             do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
@@ -187,12 +216,38 @@ async fn updater_loop(
                             if let Some(ref info) = pending_update {
                                 do_install(&status_tx, info).await;
                             }
+                            // Sync keys immediately after switching to connected.
+                            if let Some(ref td) = token {
+                                do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                            }
                         }
                         // Switched connected → standalone: nothing to do, HTTP calls
                         // will simply be skipped on the next interval tick.
                     }
                 }
             }
+        }
+    }
+}
+
+/// Fetch key hashes from the server and broadcast them via the watch channel.
+///
+/// Best-effort: logs warnings on failure but never panics and never modifies
+/// the local key registry directly — that happens in the main thread when it
+/// drains the watch channel.
+async fn do_key_sync(
+    client: &reqwest::Client,
+    auth_token: &str,
+    synced_keys_tx: &watch::Sender<Vec<key_sync::SyncedKeyEntry>>,
+) {
+    match key_sync::fetch_key_hashes(client, auth_token).await {
+        Ok(keys) => {
+            let count = keys.len();
+            let _ = synced_keys_tx.send(keys);
+            log::debug!("[Updater] Key sync: {} key(s) received from server", count);
+        }
+        Err(e) => {
+            log::warn!("[Updater] Key sync failed: {}", e);
         }
     }
 }

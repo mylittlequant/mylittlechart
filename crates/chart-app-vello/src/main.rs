@@ -339,6 +339,7 @@ impl AppState {
                         tier: "admin".to_string(),
                         created_at,
                         agent_id: None,
+                        source: "local".to_string(),
                     });
                 }
                 keys
@@ -1632,6 +1633,12 @@ impl App<'_> {
                 permissions: zengeld_server::state::Permissions::from_tier(&k.tier),
                 created_at: k.created_at,
                 agent_id: k.agent_id.clone(),
+                // Treat any stored key as Local unless it was explicitly marked cloud.
+                source: if k.source == "cloud" {
+                    zengeld_server::state::KeySource::Cloud
+                } else {
+                    zengeld_server::state::KeySource::Local
+                },
             })
             .collect();
 
@@ -2835,6 +2842,10 @@ impl App<'_> {
                 tier: k.tier.clone(),
                 created_at: k.created_at,
                 agent_id: k.agent_id.clone(),
+                source: match k.source {
+                    zengeld_server::state::KeySource::Cloud => "cloud".to_string(),
+                    zengeld_server::state::KeySource::Local => "local".to_string(),
+                },
             }
         }).collect();
         // Persist profile with updated keys
@@ -3619,6 +3630,7 @@ impl ApplicationHandler for App<'_> {
                                 .unwrap_or_default()
                                 .as_secs(),
                             agent_id: None,
+                            source: zengeld_server::state::KeySource::Local,
                         };
                         agent_state.add_key(entry);
                         self.sync_keys_from_agent(&agent_state);
@@ -3782,6 +3794,97 @@ impl ApplicationHandler for App<'_> {
                             self.user_manager.profile.linked_account = None;
                             eprintln!("[App] auth: not logged in");
                         }
+                    }
+                }
+            }
+        }
+
+        // ── Poll synced_keys_rx → merge server keys into Agent API registry ─
+        {
+            let should_merge = self.updater_handle
+                .as_ref()
+                .map(|h| h.synced_keys_rx.has_changed().unwrap_or(false))
+                .unwrap_or(false);
+
+            if should_merge {
+                if let (Some(ref handle), Some(ref agent_state)) =
+                    (&self.updater_handle, &self.agent_state)
+                {
+                    let synced = handle.synced_keys_rx.borrow().clone();
+                    if !synced.is_empty() {
+                        // Merge strategy (source-aware):
+                        //   - Keys with source=Local are NEVER removed by cloud sync.
+                        //     They were generated locally via CreateKey or the UI.
+                        //   - Keys with source=Cloud are fully managed by the server:
+                        //     the existing cloud set is replaced with the new synced set.
+                        //   - New keys from the server get source=Cloud.
+
+                        let existing = agent_state.list_keys();
+
+                        // Partition existing keys by source.
+                        let local_keys: Vec<zengeld_server::state::ApiKeyEntry> = existing
+                            .iter()
+                            .filter(|k| k.source == zengeld_server::state::KeySource::Local)
+                            .cloned()
+                            .collect();
+
+                        // Convert synced entries to ApiKeyEntry with source=Cloud.
+                        let cloud_keys: Vec<zengeld_server::state::ApiKeyEntry> = synced
+                            .iter()
+                            .map(|s| {
+                                // Preserve created_at from existing entry if we have it,
+                                // otherwise use current time as a placeholder.
+                                let created_at = existing
+                                    .iter()
+                                    .find(|k| k.key_hash == s.token_hash)
+                                    .map(|k| k.created_at)
+                                    .unwrap_or_else(|| {
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs()
+                                    });
+                                zengeld_server::state::ApiKeyEntry {
+                                    key_hash: s.token_hash.clone(),
+                                    label: s.label.clone(),
+                                    tier: s.tier.clone(),
+                                    permissions: zengeld_server::state::Permissions::from_tier(&s.tier),
+                                    created_at,
+                                    agent_id: None,
+                                    source: zengeld_server::state::KeySource::Cloud,
+                                }
+                            })
+                            .collect();
+
+                        // Combine: local keys always kept, cloud keys replaced entirely.
+                        let merged: Vec<zengeld_server::state::ApiKeyEntry> = local_keys
+                            .into_iter()
+                            .chain(cloud_keys)
+                            .collect();
+
+                        let merged_count = merged.len();
+
+                        // Replace the registry atomically.
+                        if let Ok(mut keys) = agent_state.keys.write() {
+                            *keys = merged.clone();
+                        }
+
+                        // Mirror into profile so the merged set persists on save.
+                        self.app_state.agent_api_keys = merged.iter().map(|k| {
+                            zengeld_chart::StoredApiKey {
+                                key_hash: k.key_hash.clone(),
+                                label: k.label.clone(),
+                                tier: k.tier.clone(),
+                                created_at: k.created_at,
+                                agent_id: k.agent_id.clone(),
+                                source: match k.source {
+                                    zengeld_server::state::KeySource::Cloud => "cloud".to_string(),
+                                    zengeld_server::state::KeySource::Local => "local".to_string(),
+                                },
+                            }
+                        }).collect();
+
+                        eprintln!("[App] Key sync: merged {} key(s) into Agent API registry", merged_count);
                     }
                 }
             }

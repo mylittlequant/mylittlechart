@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::check_permission;
-use crate::state::{hash_key, AgentState, ApiKeyEntry, Permissions};
+use crate::state::{hash_key, AgentState, ApiKeyEntry, KeySource, Permissions};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -200,6 +200,7 @@ async fn create_key(
         permissions: Permissions::from_tier(&body.tier),
         created_at,
         agent_id: body.agent_id,
+        source: KeySource::Local,
     };
 
     state.add_key(entry);

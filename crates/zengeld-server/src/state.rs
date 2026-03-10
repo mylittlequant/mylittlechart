@@ -87,6 +87,22 @@ impl Permissions {
     }
 }
 
+/// Origin of an API key — used to prevent cloud sync from evicting local keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KeySource {
+    /// Generated locally via the terminal UI or the Agent API `/api/v1/keys`
+    /// endpoint.  These keys are never removed by cloud sync.
+    Local,
+    /// Synced from chart.example.  Cloud sync may add or remove these.
+    Cloud,
+}
+
+impl Default for KeySource {
+    fn default() -> Self {
+        KeySource::Local
+    }
+}
+
 /// One entry in the API key registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyEntry {
@@ -102,6 +118,12 @@ pub struct ApiKeyEntry {
     pub created_at: u64,
     /// Optional agent identifier attached to this key.
     pub agent_id: Option<String>,
+    /// Whether this key was created locally or synced from the cloud.
+    ///
+    /// Defaults to [`KeySource::Local`] so that keys loaded from older
+    /// profile.json files (which lack this field) are treated as local.
+    #[serde(default)]
+    pub source: KeySource,
 }
 
 /// Hash a raw API key to a hex SHA-256 digest.
@@ -225,6 +247,7 @@ impl AgentState {
                 .unwrap_or_default()
                 .as_secs(),
             agent_id: None,
+            source: KeySource::Local,
         };
         self.add_key(entry);
         raw_key

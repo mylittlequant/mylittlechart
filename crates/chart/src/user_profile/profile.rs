@@ -340,6 +340,13 @@ pub struct StoredApiKey {
     /// Optional agent identifier.
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Key origin: `"local"` (never removed by cloud sync) or `"cloud"`.
+    ///
+    /// Uses `String` instead of an enum so the JSON stays human-readable and
+    /// backward-compatible.  Missing field defaults to `"local"` so that keys
+    /// loaded from older profile.json files are never accidentally evicted.
+    #[serde(default = "default_key_source")]
+    pub source: String,
 }
 
 // =============================================================================
@@ -426,6 +433,10 @@ pub struct TelemetryData {
 
 fn default_version() -> u32 {
     PROFILE_VERSION
+}
+
+fn default_key_source() -> String {
+    "local".to_string()
 }
 
 fn default_theme() -> String {
