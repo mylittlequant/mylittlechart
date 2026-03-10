@@ -1452,7 +1452,25 @@ async fn run_generic_trade_ws(
     };
 
     // Generic event loop — same for all exchanges
-    while let Some(result) = stream.next().await {
+    loop {
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            stream.next(),
+        )
+        .await
+        {
+            Ok(Some(result)) => result,
+            Ok(None) => break, // stream ended normally
+            Err(_) => {
+                // No data for 60s — assume the connection is silently dead.
+                eprintln!("[WS trades] No data for 60s on {:?}, reconnecting", exchange_id);
+                let _ = tx.send(LiveUpdate::Error {
+                    exchange_id,
+                    message: "WS timeout — no data for 60s".to_string(),
+                });
+                break;
+            }
+        };
         match result {
             Ok(StreamEvent::Trade(trade)) => {
                 let _ = tx.send(LiveUpdate::TradeUpdate {
@@ -1962,7 +1980,25 @@ async fn run_generic_ticker_ws(
     };
 
     // Generic event loop — same for all exchanges
-    while let Some(result) = stream.next().await {
+    loop {
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            stream.next(),
+        )
+        .await
+        {
+            Ok(Some(result)) => result,
+            Ok(None) => break, // stream ended normally
+            Err(_) => {
+                // No data for 60s — assume the connection is silently dead.
+                eprintln!("[WS ticker] No data for 60s on {:?}, reconnecting", exchange_id);
+                let _ = tx.send(LiveUpdate::Error {
+                    exchange_id,
+                    message: "WS timeout — no data for 60s".to_string(),
+                });
+                break;
+            }
+        };
         match result {
             Ok(StreamEvent::Ticker(ticker)) => {
                 let _ = tx.send(LiveUpdate::MiniTickerUpdate {
