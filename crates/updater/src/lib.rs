@@ -12,8 +12,9 @@ pub mod replace;
 pub mod telemetry;
 pub mod oauth;
 pub mod key_sync;
+pub mod cloud_sync;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus};
 
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
@@ -60,14 +61,18 @@ pub fn start(
     // Channel for server-synced API key hashes (Connected mode only).
     let (synced_keys_tx, synced_keys_rx) = watch::channel(Vec::<key_sync::SyncedKeyEntry>::new());
 
+    // Channel for cloud sync status — starts Idle, updated by the updater loop.
+    let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
+
     let handle = UpdaterHandle {
         status_rx,
         cmd_tx,
         auth_rx,
         synced_keys_rx,
+        sync_status_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, cmd_rx, telemetry_source, connected));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected));
 
     handle
 }
@@ -83,6 +88,7 @@ async fn updater_loop(
     status_tx: watch::Sender<UpdateStatus>,
     auth_tx: watch::Sender<state::AuthStatus>,
     synced_keys_tx: watch::Sender<Vec<key_sync::SyncedKeyEntry>>,
+    sync_status_tx: watch::Sender<state::SyncStatus>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
     mut connected: bool,
@@ -95,6 +101,12 @@ async fn updater_loop(
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_default();
+
+    // In-memory sync state — updated after each successful cycle.
+    // The authoritative state is owned by main.rs (in UserProfile); this copy
+    // lets the updater loop track the last-sync timestamp without needing a
+    // channel back to main.rs on every tick.
+    let mut sync_state = cloud_sync::SyncState::default();
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -144,6 +156,13 @@ async fn updater_loop(
                     // Key sync — best-effort, logged but not fatal.
                     if let Some(ref td) = token {
                         do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                    }
+
+                    // Cloud sync — best-effort, only runs if user opted in.
+                    if let Some(ref td) = token {
+                        if sync_state.enabled {
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                        }
                     }
                 }
                 // In standalone mode: interval fires but we do nothing — no HTTP calls.
@@ -200,6 +219,22 @@ async fn updater_loop(
                         let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                         log::info!("Logged out");
                     }
+                    state::UpdaterCommand::ForceSync => {
+                        if connected {
+                            let token = token_store::load_token();
+                            if let Some(ref td) = token {
+                                if sync_state.enabled {
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                                } else {
+                                    log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
+                                }
+                            } else {
+                                log::debug!("[Updater] ForceSync ignored — not logged in");
+                            }
+                        } else {
+                            log::warn!("[Updater] ForceSync ignored — running in standalone mode");
+                        }
+                    }
                     state::UpdaterCommand::SetConnectedMode(new_mode) => {
                         let was_connected = connected;
                         connected = new_mode;
@@ -220,12 +255,44 @@ async fn updater_loop(
                             if let Some(ref td) = token {
                                 do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
                             }
+                            // Cloud sync immediately after switching to connected.
+                            if let Some(ref td) = token {
+                                if sync_state.enabled {
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                                }
+                            }
                         }
                         // Switched connected → standalone: nothing to do, HTTP calls
                         // will simply be skipped on the next interval tick.
                     }
                 }
             }
+        }
+    }
+}
+
+/// Run one cloud sync cycle and update the status watch channel.
+///
+/// Best-effort: a sync failure is logged and broadcast but never fatal.
+/// The sync state is updated in-place on success so the next cycle is
+/// incremental (only items changed since the last run are fetched).
+async fn do_cloud_sync(
+    client: &reqwest::Client,
+    auth_token: &str,
+    sync_status_tx: &watch::Sender<state::SyncStatus>,
+    sync_state: &mut cloud_sync::SyncState,
+) {
+    sync_status_tx.send_replace(state::SyncStatus::Syncing);
+
+    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state).await {
+        Ok((pushed, pulled, new_state)) => {
+            log::debug!("[Updater] Cloud sync: pushed={} pulled={}", pushed, pulled);
+            *sync_state = new_state;
+            sync_status_tx.send_replace(state::SyncStatus::Completed { pushed, pulled });
+        }
+        Err(e) => {
+            log::warn!("[Updater] Cloud sync failed: {}", e);
+            sync_status_tx.send_replace(state::SyncStatus::Error(e));
         }
     }
 }

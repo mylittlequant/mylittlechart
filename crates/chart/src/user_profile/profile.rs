@@ -263,6 +263,34 @@ pub struct UserProfile {
     /// compatibility and always reflect the primary window.
     #[serde(default)]
     pub windows: Vec<WindowState>,
+
+    // -------------------------------------------------------------------------
+    // Cloud sync
+    // -------------------------------------------------------------------------
+
+    /// Incremental sync state — persisted so subsequent syncs only request
+    /// items changed since the last successful sync.
+    #[serde(default)]
+    pub sync_state: SyncState,
+}
+
+// =============================================================================
+// SyncState
+// =============================================================================
+
+/// Minimal state required to perform incremental cloud sync.
+///
+/// Stored inside [`UserProfile`] so it is automatically persisted to and
+/// loaded from `profile.json` via the existing save/load infrastructure.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SyncState {
+    /// Unix timestamp (seconds) of the last successful sync.
+    /// `0` means the client has never completed a sync.
+    #[serde(default)]
+    pub last_sync_timestamp: i64,
+    /// Whether the user has opted into cloud sync.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl UserProfile {
@@ -294,6 +322,7 @@ impl UserProfile {
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
+            sync_state: SyncState::default(),
         }
     }
 

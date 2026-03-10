@@ -263,91 +263,105 @@ fn render_general_tab(
     ctx.fill_text("CONNECTION MODE", x, cy);
     cy += 20.0;
 
-    // Option row height and radio dot metrics
-    let mode_row_h = 44.0;
-    let mode_row_gap = 6.0;
-    let dot_size = 14.0;
-    let dot_r = dot_size / 2.0;
+    if state.sync_transition_pending {
+        // ── Confirmation: Standalone → Connected ─────────────────────────────
+        cy = render_sync_connect_dialog(
+            ctx, x, cy, available_w, toolbar_theme,
+            input_coordinator, layer_id, result,
+        );
+        cy += 16.0;
+    } else if state.disconnect_pending {
+        // ── Confirmation: Connected → Standalone ─────────────────────────────
+        cy = render_disconnect_dialog(
+            ctx, x, cy, available_w, toolbar_theme,
+            input_coordinator, layer_id, result,
+        );
+        cy += 16.0;
+    } else {
+        // ── Normal radio buttons ──────────────────────────────────────────────
+        let mode_row_h = 44.0;
+        let mode_row_gap = 6.0;
+        let dot_size = 14.0;
+        let dot_r = dot_size / 2.0;
 
-    // ── Option: Connected ────────────────────────────────────────────────────
-    let connected_y = cy;
-    if state.client_mode_connected {
-        ctx.set_fill_color(&toolbar_theme.item_bg_active);
-        ctx.fill_rounded_rect(x - 6.0, connected_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
-    }
+        // Option: Connected
+        let connected_y = cy;
+        if state.client_mode_connected {
+            ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(x - 6.0, connected_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+        }
 
-    // Radio dot (filled = active)
-    let dot_cx = x + dot_r;
-    let dot_cy = connected_y + 10.0 + dot_r;
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.5);
-    ctx.begin_path();
-    ctx.arc(dot_cx, dot_cy, dot_r, 0.0, std::f64::consts::TAU);
-    ctx.stroke();
-    if state.client_mode_connected {
-        ctx.set_fill_color(&toolbar_theme.accent);
+        let dot_cx = x + dot_r;
+        let dot_cy = connected_y + 10.0 + dot_r;
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.5);
         ctx.begin_path();
-        ctx.arc(dot_cx, dot_cy, dot_r - 4.0, 0.0, std::f64::consts::TAU);
-        ctx.fill();
-    }
+        ctx.arc(dot_cx, dot_cy, dot_r, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+        if state.client_mode_connected {
+            ctx.set_fill_color(&toolbar_theme.accent);
+            ctx.begin_path();
+            ctx.arc(dot_cx, dot_cy, dot_r - 4.0, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        }
 
-    // Title + description for Connected
-    let text_x = x + dot_size + 10.0;
-    ctx.set_fill_color(toolbar_theme.item_text.as_str());
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Connected to chart.example", text_x, connected_y + 6.0);
-    ctx.set_fill_color("rgba(254,255,238,0.45)");
-    ctx.set_font("11px sans-serif");
-    ctx.fill_text("OTA updates, cloud sync, centralized API keys", text_x, connected_y + 24.0);
+        let text_x = x + dot_size + 10.0;
+        ctx.set_fill_color(toolbar_theme.item_text.as_str());
+        ctx.set_font("13px sans-serif");
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Connected to chart.example", text_x, connected_y + 6.0);
+        ctx.set_fill_color("rgba(254,255,238,0.45)");
+        ctx.set_font("11px sans-serif");
+        ctx.fill_text("OTA updates, cloud sync, centralized API keys", text_x, connected_y + 24.0);
 
-    let connected_rect = WidgetRect::new(x, connected_y, available_w, mode_row_h);
-    result.content_items.push(("mode_connected".to_string(), connected_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:mode_connected",
-        uzor::types::Rect::new(x, connected_y, available_w, mode_row_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += mode_row_h + mode_row_gap;
+        let connected_rect = WidgetRect::new(x, connected_y, available_w, mode_row_h);
+        result.content_items.push(("mode_connected".to_string(), connected_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:mode_connected",
+            uzor::types::Rect::new(x, connected_y, available_w, mode_row_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += mode_row_h + mode_row_gap;
 
-    // ── Option: Standalone ───────────────────────────────────────────────────
-    let standalone_y = cy;
-    if !state.client_mode_connected {
-        ctx.set_fill_color(&toolbar_theme.item_bg_active);
-        ctx.fill_rounded_rect(x - 6.0, standalone_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
-    }
+        // Option: Standalone
+        let standalone_y = cy;
+        if !state.client_mode_connected {
+            ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(x - 6.0, standalone_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+        }
 
-    let dot_cy2 = standalone_y + 10.0 + dot_r;
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.5);
-    ctx.begin_path();
-    ctx.arc(dot_cx, dot_cy2, dot_r, 0.0, std::f64::consts::TAU);
-    ctx.stroke();
-    if !state.client_mode_connected {
-        ctx.set_fill_color(&toolbar_theme.accent);
+        let dot_cy2 = standalone_y + 10.0 + dot_r;
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.5);
         ctx.begin_path();
-        ctx.arc(dot_cx, dot_cy2, dot_r - 4.0, 0.0, std::f64::consts::TAU);
-        ctx.fill();
+        ctx.arc(dot_cx, dot_cy2, dot_r, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+        if !state.client_mode_connected {
+            ctx.set_fill_color(&toolbar_theme.accent);
+            ctx.begin_path();
+            ctx.arc(dot_cx, dot_cy2, dot_r - 4.0, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        }
+
+        ctx.set_fill_color(toolbar_theme.item_text.as_str());
+        ctx.set_font("13px sans-serif");
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Standalone (offline)", text_x, standalone_y + 6.0);
+        ctx.set_fill_color("rgba(254,255,238,0.45)");
+        ctx.set_font("11px sans-serif");
+        ctx.fill_text("No server communication, all data stays local", text_x, standalone_y + 24.0);
+
+        let standalone_rect = WidgetRect::new(x, standalone_y, available_w, mode_row_h);
+        result.content_items.push(("mode_standalone".to_string(), standalone_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:mode_standalone",
+            uzor::types::Rect::new(x, standalone_y, available_w, mode_row_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += mode_row_h + 16.0;
     }
-
-    ctx.set_fill_color(toolbar_theme.item_text.as_str());
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Standalone (offline)", text_x, standalone_y + 6.0);
-    ctx.set_fill_color("rgba(254,255,238,0.45)");
-    ctx.set_font("11px sans-serif");
-    ctx.fill_text("No server communication, all data stays local", text_x, standalone_y + 24.0);
-
-    let standalone_rect = WidgetRect::new(x, standalone_y, available_w, mode_row_h);
-    result.content_items.push(("mode_standalone".to_string(), standalone_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:mode_standalone",
-        uzor::types::Rect::new(x, standalone_y, available_w, mode_row_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += mode_row_h + 16.0;
 
     // ── Section: ACCOUNT ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
@@ -1085,4 +1099,248 @@ fn render_api_keys_section(
     }
 
     let _scroll_result = container.end(ctx, total_keys_h, &widget_theme);
+}
+
+// =============================================================================
+// Mode-transition confirmation dialogs
+// =============================================================================
+
+/// Render the inline confirmation panel shown when the user clicks "Connected"
+/// from Standalone mode (sync_transition_pending = true).
+///
+/// Returns the new `cy` value after all rendered content.
+#[allow(clippy::too_many_arguments)]
+fn render_sync_connect_dialog(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let mut cy = y;
+
+    // Dialog box background
+    ctx.set_fill_color("rgba(244,205,99,0.06)");
+    ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 220.0, 6.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 220.0, 6.0);
+
+    // Title
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("CONNECT TO MYLITTLECHART.ORG?", x, cy);
+    cy += 22.0;
+
+    // Body text
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.fill_text("Your local data stays on this machine.", x, cy);
+    cy += 16.0;
+    ctx.fill_text("Choose how to handle cloud synchronization:", x, cy);
+    cy += 20.0;
+
+    let btn_h = 28.0;
+    let btn_gap = 8.0;
+    let btn_w = available_w;
+
+    // ── Button: Upload Local Data ─────────────────────────────────────────────
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.accent);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.accent);
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Upload Local Data", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("sync_upload".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:sync_upload",
+        uzor::types::Rect::new(x, cy, btn_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += btn_h + btn_gap;
+
+    // Sub-label for Upload
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("Push your presets and settings to the cloud.", x, cy);
+    cy += 16.0;
+
+    // ── Button: Download Cloud Data ───────────────────────────────────────────
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Download Cloud Data", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("sync_download".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:sync_download",
+        uzor::types::Rect::new(x, cy, btn_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += btn_h + btn_gap;
+
+    // Sub-label for Download
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("Replace local syncable data with your cloud version.", x, cy);
+    cy += 16.0;
+
+    // ── Button: Start Fresh ───────────────────────────────────────────────────
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Start Fresh", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("sync_fresh".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:sync_fresh",
+        uzor::types::Rect::new(x, cy, btn_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += btn_h + btn_gap;
+
+    // Sub-label for Fresh
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("Don't upload anything. Start with an empty cloud profile.", x, cy);
+    cy += 16.0;
+
+    // ── Button: Cancel ────────────────────────────────────────────────────────
+    ctx.set_fill_color("rgba(239,83,80,0.10)");
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_stroke_color("rgba(239,83,80,0.35)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(239,83,80,0.8)");
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Cancel — Stay Offline", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("sync_cancel".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:sync_cancel",
+        uzor::types::Rect::new(x, cy, btn_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += btn_h;
+
+    cy
+}
+
+/// Render the inline confirmation panel shown when the user clicks "Standalone"
+/// from Connected mode (disconnect_pending = true).
+///
+/// Returns the new `cy` value after all rendered content.
+#[allow(clippy::too_many_arguments)]
+fn render_disconnect_dialog(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let mut cy = y;
+
+    // Dialog box background
+    ctx.set_fill_color("rgba(239,83,80,0.06)");
+    ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 130.0, 6.0);
+    ctx.set_stroke_color("rgba(239,83,80,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 130.0, 6.0);
+
+    // Title
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color("rgba(239,83,80,0.9)");
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("SWITCH TO OFFLINE MODE?", x, cy);
+    cy += 22.0;
+
+    // Body text
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.fill_text("Your data stays on this machine.", x, cy);
+    cy += 15.0;
+    ctx.fill_text("Cloud sync will stop. You can reconnect anytime.", x, cy);
+    cy += 22.0;
+
+    let btn_h = 28.0;
+    let half_w = (available_w - 8.0) / 2.0;
+
+    // ── Button: Confirm Disconnect ────────────────────────────────────────────
+    ctx.set_fill_color("rgba(239,83,80,0.15)");
+    ctx.fill_rounded_rect(x, cy, half_w, btn_h, 4.0);
+    ctx.set_stroke_color("rgba(239,83,80,0.5)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, half_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("#ef5350");
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Disconnect", x + half_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("disconnect_confirm".to_string(), WidgetRect::new(x, cy, half_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:disconnect_confirm",
+        uzor::types::Rect::new(x, cy, half_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    // ── Button: Cancel ────────────────────────────────────────────────────────
+    let cancel_x = x + half_w + 8.0;
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(cancel_x, cy, half_w, btn_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(cancel_x, cy, half_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    ctx.fill_text("Cancel", cancel_x + half_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    result.content_items.push(("disconnect_cancel".to_string(), WidgetRect::new(cancel_x, cy, half_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:disconnect_cancel",
+        uzor::types::Rect::new(cancel_x, cy, half_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += btn_h;
+
+    cy
 }

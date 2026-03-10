@@ -3714,7 +3714,10 @@ impl ApplicationHandler for App<'_> {
                 .find_map(|pw| pw.chart.pending_updater_cmd.take());
             if let Some(ref cmd_str) = cmd {
                 // Mirror mode changes into profile so they persist on next save.
-                if cmd_str == "set_connected" {
+                let is_connected_cmd = cmd_str == "set_connected"
+                    || cmd_str == "set_connected_upload"
+                    || cmd_str == "set_connected_download";
+                if is_connected_cmd {
                     self.user_manager.profile.client_mode =
                         zengeld_chart::user_profile::profile::ClientMode::Connected;
                 } else if cmd_str == "set_standalone" {
@@ -3727,7 +3730,18 @@ impl ApplicationHandler for App<'_> {
                         Some(UpdaterCommand::Logout)
                     } else if let Some(provider) = cmd_str.strip_prefix("start_oauth:") {
                         Some(UpdaterCommand::StartOAuth(provider.to_string()))
-                    } else if cmd_str == "set_connected" {
+                    } else if cmd_str == "set_connected"
+                        || cmd_str == "set_connected_upload"
+                        || cmd_str == "set_connected_download"
+                    {
+                        // All three connect variants enable Connected mode.
+                        // Upload/download sync actions are placeholders for future
+                        // push/pull sync commands when that feature is implemented.
+                        if cmd_str == "set_connected_upload" {
+                            eprintln!("[App] set_connected_upload: connected (push sync pending future impl)");
+                        } else if cmd_str == "set_connected_download" {
+                            eprintln!("[App] set_connected_download: connected (pull sync pending future impl)");
+                        }
                         Some(UpdaterCommand::SetConnectedMode(true))
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetConnectedMode(false))

@@ -3245,6 +3245,13 @@ pub struct UserSettingsState {
     /// `true` = Connected to chart.example (OTA updates, cloud sync).
     /// `false` = Standalone / offline mode (no server communication).
     pub client_mode_connected: bool,
+
+    // ── Mode transition confirmation ──────────────────────────────────────────
+    /// `true` = showing the Standalone → Connected confirmation dialog.
+    /// The radio visually stays on Standalone until user confirms.
+    pub sync_transition_pending: bool,
+    /// `true` = showing the Connected → Standalone disconnect confirmation.
+    pub disconnect_pending: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3274,6 +3281,8 @@ impl Default for UserSettingsState {
             auth_provider: String::new(),
             auth_user_id: 0,
             client_mode_connected: false,
+            sync_transition_pending: false,
+            disconnect_pending: false,
         }
     }
 }
@@ -3290,6 +3299,10 @@ impl UserSettingsState {
         self.is_dragging = false;
         self.drag_offset = None;
         self.active_dropdown = None;
+        // Always discard any in-progress mode transition when the modal closes
+        // so the user cannot get stuck in a confirmation state.
+        self.sync_transition_pending = false;
+        self.disconnect_pending = false;
     }
 
     /// Toggle open/closed.

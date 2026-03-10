@@ -7053,14 +7053,51 @@ impl ChartApp {
                     eprintln!("[ChartApp] sign_out: sending logout command to updater");
                 }
                 "mode_connected" => {
-                    self.panel_app.user_settings_state.client_mode_connected = true;
-                    self.pending_updater_cmd = Some("set_connected".to_string());
-                    eprintln!("[ChartApp] connection mode set to: Connected");
+                    // Don't switch immediately — show the sync-choice confirmation dialog.
+                    self.panel_app.user_settings_state.sync_transition_pending = true;
+                    eprintln!("[ChartApp] mode_connected: showing sync transition dialog");
                 }
                 "mode_standalone" => {
+                    if self.panel_app.user_settings_state.client_mode_connected {
+                        // Already connected — ask for confirmation before disconnecting.
+                        self.panel_app.user_settings_state.disconnect_pending = true;
+                        eprintln!("[ChartApp] mode_standalone: showing disconnect confirmation");
+                    }
+                    // If already standalone, no-op.
+                }
+                // ── Sync transition choices (Standalone → Connected) ──────────
+                "sync_upload" => {
+                    self.panel_app.user_settings_state.sync_transition_pending = false;
+                    self.panel_app.user_settings_state.client_mode_connected = true;
+                    self.pending_updater_cmd = Some("set_connected_upload".to_string());
+                    eprintln!("[ChartApp] sync choice: upload local data, switching to Connected");
+                }
+                "sync_download" => {
+                    self.panel_app.user_settings_state.sync_transition_pending = false;
+                    self.panel_app.user_settings_state.client_mode_connected = true;
+                    self.pending_updater_cmd = Some("set_connected_download".to_string());
+                    eprintln!("[ChartApp] sync choice: download cloud data, switching to Connected");
+                }
+                "sync_fresh" => {
+                    self.panel_app.user_settings_state.sync_transition_pending = false;
+                    self.panel_app.user_settings_state.client_mode_connected = true;
+                    self.pending_updater_cmd = Some("set_connected".to_string());
+                    eprintln!("[ChartApp] sync choice: start fresh, switching to Connected");
+                }
+                "sync_cancel" => {
+                    self.panel_app.user_settings_state.sync_transition_pending = false;
+                    eprintln!("[ChartApp] sync transition cancelled, staying Standalone");
+                }
+                // ── Disconnect confirmation (Connected → Standalone) ──────────
+                "disconnect_confirm" => {
+                    self.panel_app.user_settings_state.disconnect_pending = false;
                     self.panel_app.user_settings_state.client_mode_connected = false;
                     self.pending_updater_cmd = Some("set_standalone".to_string());
-                    eprintln!("[ChartApp] connection mode set to: Standalone");
+                    eprintln!("[ChartApp] disconnect confirmed, switching to Standalone");
+                }
+                "disconnect_cancel" => {
+                    self.panel_app.user_settings_state.disconnect_pending = false;
+                    eprintln!("[ChartApp] disconnect cancelled, staying Connected");
                 }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);

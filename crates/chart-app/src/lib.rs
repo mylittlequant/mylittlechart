@@ -5563,6 +5563,7 @@ impl ChartApp {
             connector_enabled: self.sidebar_state.connector_enabled.clone(),
             notification_settings: existing.notification_settings.clone(),
             windows: existing.windows.clone(),
+            sync_state: existing.sync_state.clone(),
         }
     }
 
