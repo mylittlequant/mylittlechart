@@ -1849,6 +1849,7 @@ impl App<'_> {
                 connected,
                 profile.telemetry_enabled,
                 profile.sync_state.enabled,
+                zengeld_chart::get_user_data_dir(),
             ))
         };
 
@@ -3748,14 +3749,19 @@ impl ApplicationHandler for App<'_> {
                         || cmd_str == "set_connected_download"
                     {
                         // All three connect variants enable Connected mode.
-                        // Upload/download sync actions are placeholders for future
-                        // push/pull sync commands when that feature is implemented.
-                        if cmd_str == "set_connected_upload" {
-                            eprintln!("[App] set_connected_upload: connected (push sync pending future impl)");
-                        } else if cmd_str == "set_connected_download" {
-                            eprintln!("[App] set_connected_download: connected (pull sync pending future impl)");
+                        // Upload/download also trigger an immediate sync cycle so
+                        // local data is pushed / server data is pulled right away.
+                        if cmd_str == "set_connected_upload" || cmd_str == "set_connected_download" {
+                            // Send SetConnectedMode first, then ForceSync.
+                            // SetConnectedMode is sent below via the `command` variable;
+                            // ForceSync is queued here as a second message.
+                            let _ = handle.cmd_tx.send(UpdaterCommand::SetConnectedMode(true));
+                            let _ = handle.cmd_tx.send(UpdaterCommand::ForceSync);
+                            // Skip the generic send below (already sent).
+                            None
+                        } else {
+                            Some(UpdaterCommand::SetConnectedMode(true))
                         }
-                        Some(UpdaterCommand::SetConnectedMode(true))
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetConnectedMode(false))
                     } else if cmd_str == "set_telemetry_enabled:true" {

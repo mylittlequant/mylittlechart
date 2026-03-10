@@ -54,6 +54,7 @@ pub fn start(
     connected: bool,
     telemetry_enabled: bool,
     sync_enabled: bool,
+    data_dir: std::path::PathBuf,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -82,7 +83,7 @@ pub fn start(
         sync_status_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, data_dir));
 
     handle
 }
@@ -104,6 +105,7 @@ async fn updater_loop(
     mut connected: bool,
     mut telemetry_enabled: bool,
     sync_enabled_init: bool,
+    data_dir: std::path::PathBuf,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
 
@@ -176,7 +178,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
                         }
                     }
                 }
@@ -239,7 +241,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -273,7 +275,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
                                 }
                             }
                         }
@@ -308,10 +310,11 @@ async fn do_cloud_sync(
     auth_token: &str,
     sync_status_tx: &watch::Sender<state::SyncStatus>,
     sync_state: &mut cloud_sync::SyncState,
+    data_dir: &std::path::Path,
 ) {
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
-    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state).await {
+    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir).await {
         Ok((pushed, pulled, new_state)) => {
             log::debug!("[Updater] Cloud sync: pushed={} pulled={}", pushed, pulled);
             *sync_state = new_state;
