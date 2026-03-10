@@ -125,6 +125,39 @@ pub enum SyncAction {
 // Incremental sync state
 // =============================================================================
 
+/// Per-category cloud sync preferences used in the updater loop.
+///
+/// Mirrors `zengeld_chart::user_profile::profile::SyncCategoryPrefs` but is
+/// defined here so the updater crate stays independent of `zengeld-chart`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncCategoryPrefs {
+    /// Whether chart presets are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub presets: bool,
+    /// Whether watchlists are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub watchlists: bool,
+    /// Whether indicator/primitive templates are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub templates: bool,
+    /// Whether settings snapshots are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub settings_snapshots: bool,
+}
+
+fn default_true() -> bool { true }
+
+impl Default for SyncCategoryPrefs {
+    fn default() -> Self {
+        Self {
+            presets: true,
+            watchlists: true,
+            templates: true,
+            settings_snapshots: true,
+        }
+    }
+}
+
 /// Persisted state for incremental sync — stored in `profile.json` via
 /// [`crate::chart::user_profile::profile::UserProfile::sync_state`].
 ///
@@ -147,6 +180,9 @@ pub struct SyncState {
     /// user sets up E2E.  Empty string means E2E has not been configured.
     #[serde(default)]
     pub e2e_salt: String,
+    /// Per-category sync preferences — which data categories to include in sync.
+    #[serde(default)]
+    pub category_prefs: SyncCategoryPrefs,
 }
 
 // =============================================================================
@@ -175,16 +211,16 @@ fn file_modified_ms(path: impl AsRef<Path>) -> i64 {
         .unwrap_or(1)
 }
 
-/// Collect all syncable items from disk.
+/// Collect all syncable items from disk, filtered by `category_prefs`.
 ///
 /// Returns `Vec<SyncItem>` ready for push comparison.  Items whose files do
 /// not exist are silently skipped (not an error — the user simply hasn't
-/// created them yet).
-pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
+/// created them yet).  Items in disabled categories are excluded.
+pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPrefs) -> Vec<SyncItem> {
     let mut items = Vec::new();
 
     // Category: "watchlist" — single blob
-    {
+    if category_prefs.watchlists {
         let path = data_dir.join("watchlists.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -201,7 +237,7 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
     }
 
     // Category: "settings_snapshot" — single blob
-    {
+    if category_prefs.settings_snapshots {
         let path = data_dir.join("settings_snapshots.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -218,37 +254,8 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
     }
 
     // Category: "preset" — one per file in presets/
-    if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "json") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let id = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let checksum = sha256_hex(&content);
-                    items.push(SyncItem {
-                        sync_id: format!("preset_{}", id),
-                        category: "preset".to_string(),
-                        name: id,
-                        content,
-                        checksum,
-                        modified_at: file_modified_ms(&path),
-                        deleted: false,
-                    });
-                }
-            }
-        }
-    }
-
-    // Category: "template_primitive" and "template_indicator" — per file in templates/{type}/
-    for (subdir, category) in &[
-        ("primitives", "template_primitive"),
-        ("indicators", "template_indicator"),
-    ] {
-        let dir = data_dir.join("templates").join(subdir);
-        if let Ok(entries) = std::fs::read_dir(&dir) {
+    if category_prefs.presets {
+        if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map_or(false, |e| e == "json") {
@@ -259,14 +266,47 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
                             .unwrap_or_default();
                         let checksum = sha256_hex(&content);
                         items.push(SyncItem {
-                            sync_id: format!("{}_{}", category, id),
-                            category: category.to_string(),
+                            sync_id: format!("preset_{}", id),
+                            category: "preset".to_string(),
                             name: id,
                             content,
                             checksum,
                             modified_at: file_modified_ms(&path),
                             deleted: false,
                         });
+                    }
+                }
+            }
+        }
+    }
+
+    // Category: "template_primitive" and "template_indicator" — per file in templates/{type}/
+    if category_prefs.templates {
+        for (subdir, category) in &[
+            ("primitives", "template_primitive"),
+            ("indicators", "template_indicator"),
+        ] {
+            let dir = data_dir.join("templates").join(subdir);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "json") {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            let id = path
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let checksum = sha256_hex(&content);
+                            items.push(SyncItem {
+                                sync_id: format!("{}_{}", category, id),
+                                category: category.to_string(),
+                                name: id,
+                                content,
+                                checksum,
+                                modified_at: file_modified_ms(&path),
+                                deleted: false,
+                            });
+                        }
                     }
                 }
             }
@@ -475,8 +515,8 @@ pub async fn do_sync_cycle(
     state: &SyncState,
     data_dir: &Path,
 ) -> Result<(usize, usize, SyncState), String> {
-    // Step 1: collect local items.
-    let local_items = collect_local_sync_items(data_dir);
+    // Step 1: collect local items (filtered by per-category preferences).
+    let local_items = collect_local_sync_items(data_dir, &state.category_prefs);
 
     // Build a local index: sync_id → &SyncItem.
     let local_index: std::collections::HashMap<&str, &SyncItem> = local_items
@@ -609,6 +649,7 @@ pub async fn do_sync_cycle(
         enabled: state.enabled,
         e2e_enabled: state.e2e_enabled,
         e2e_salt: state.e2e_salt.clone(),
+        category_prefs: state.category_prefs.clone(),
     };
 
     log::info!(

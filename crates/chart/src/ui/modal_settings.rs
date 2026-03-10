@@ -3129,6 +3129,7 @@ impl Default for WatchlistGroupNameInputState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserSettingsTab {
     General,
+    Sync,
     Performance,
     Server,
 }
@@ -3137,6 +3138,7 @@ impl UserSettingsTab {
     pub fn id(&self) -> &'static str {
         match self {
             Self::General => "general",
+            Self::Sync => "sync",
             Self::Performance => "performance",
             Self::Server => "server",
         }
@@ -3145,18 +3147,20 @@ impl UserSettingsTab {
     pub fn label(&self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Sync => "Sync",
             Self::Performance => "Performance",
             Self::Server => "Server",
         }
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::General, Self::Performance, Self::Server]
+        &[Self::General, Self::Sync, Self::Performance, Self::Server]
     }
 
     pub fn from_id(s: &str) -> Option<Self> {
         match s {
             "general" => Some(Self::General),
+            "sync" => Some(Self::Sync),
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
             _ => None,
@@ -3256,6 +3260,26 @@ pub struct UserSettingsState {
     pub sync_transition_pending: bool,
     /// `true` = showing the Connected → Standalone disconnect confirmation.
     pub disconnect_pending: bool,
+
+    // ── Sync tab state ────────────────────────────────────────────────────────
+    /// Whether the user has opted into cloud sync (mirrors SyncState.enabled).
+    pub sync_enabled: bool,
+    /// Whether E2E encryption is enabled (mirrors SyncState.e2e_enabled).
+    pub e2e_enabled: bool,
+    /// In-memory passphrase input buffer — never persisted to disk.
+    pub e2e_passphrase: String,
+    /// Whether presets category is enabled for sync (mirrors SyncState.category_prefs.presets).
+    pub sync_presets: bool,
+    /// Whether watchlists category is enabled for sync.
+    pub sync_watchlists: bool,
+    /// Whether templates category is enabled for sync.
+    pub sync_templates: bool,
+    /// Whether settings snapshots category is enabled for sync.
+    pub sync_snapshots: bool,
+    /// Last sync timestamp displayed in the Sync tab (Unix seconds, 0 = never).
+    pub last_sync_timestamp: i64,
+    /// Quota used in bytes (from server status response, 0 = unknown).
+    pub quota_used_bytes: i64,
 }
 
 impl Default for UserSettingsState {
@@ -3288,6 +3312,15 @@ impl Default for UserSettingsState {
             telemetry_enabled: true,
             sync_transition_pending: false,
             disconnect_pending: false,
+            sync_enabled: false,
+            e2e_enabled: false,
+            e2e_passphrase: String::new(),
+            sync_presets: true,
+            sync_watchlists: true,
+            sync_templates: true,
+            sync_snapshots: true,
+            last_sync_timestamp: 0,
+            quota_used_bytes: 0,
         }
     }
 }

@@ -285,6 +285,42 @@ pub struct UserProfile {
 }
 
 // =============================================================================
+// SyncCategoryPrefs
+// =============================================================================
+
+/// Per-category cloud sync preferences.
+///
+/// Each field controls whether items of that category are included in the
+/// sync cycle.  All fields default to `true` (opt-in by category) so that
+/// new installs sync everything unless the user explicitly disables a category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncCategoryPrefs {
+    /// Whether chart presets are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub presets: bool,
+    /// Whether watchlists are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub watchlists: bool,
+    /// Whether indicator/primitive templates are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub templates: bool,
+    /// Whether settings snapshots are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub settings_snapshots: bool,
+}
+
+impl Default for SyncCategoryPrefs {
+    fn default() -> Self {
+        Self {
+            presets: true,
+            watchlists: true,
+            templates: true,
+            settings_snapshots: true,
+        }
+    }
+}
+
+// =============================================================================
 // SyncState
 // =============================================================================
 
@@ -314,6 +350,9 @@ pub struct SyncState {
     /// provides no useful information to an attacker.
     #[serde(default)]
     pub e2e_salt: String,
+    /// Per-category sync preferences — which data categories to include in sync.
+    #[serde(default)]
+    pub category_prefs: SyncCategoryPrefs,
 }
 
 impl UserProfile {

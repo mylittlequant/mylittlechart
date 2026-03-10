@@ -2047,6 +2047,18 @@ impl App<'_> {
         // Sync telemetry opt-out from the loaded profile.
         chart.panel_app.user_settings_state.telemetry_enabled =
             self.user_manager.profile.telemetry_enabled;
+        // Sync cloud sync settings from the loaded profile.
+        {
+            let ss = &self.user_manager.profile.sync_state;
+            let uss = &mut chart.panel_app.user_settings_state;
+            uss.sync_enabled = ss.enabled;
+            uss.e2e_enabled = ss.e2e_enabled;
+            uss.sync_presets = ss.category_prefs.presets;
+            uss.sync_watchlists = ss.category_prefs.watchlists;
+            uss.sync_templates = ss.category_prefs.templates;
+            uss.sync_snapshots = ss.category_prefs.settings_snapshots;
+            uss.last_sync_timestamp = ss.last_sync_timestamp;
+        }
         // API keys are now managed via /api/v1/keys REST endpoint.
         // Show key count in the UI instead of the raw key string.
         chart.panel_app.user_settings_state.api_key = format!(
@@ -3776,6 +3788,42 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str == "set_sync_enabled:false" {
                         self.user_manager.profile.sync_state.enabled = false;
                         Some(UpdaterCommand::SetSyncEnabled(false))
+                    } else if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
+                        // Spawn an async task to call setup_e2e_on_server.
+                        // The passphrase is consumed here and never stored.
+                        let passphrase = passphrase.to_string();
+                        let token = zengeld_updater::token_store::load_token();
+                        if let Some(tok) = token {
+                            let client = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(15))
+                                .build()
+                                .unwrap_or_default();
+                            let server_url = "https://chart.example".to_string();
+                            let token_str = tok.token.clone();
+                            let (key, params) = zengeld_updater::e2e_crypto::setup_e2e(&passphrase);
+                            let salt_hex = params.salt.clone();
+                            let salt_hex_for_spawn = salt_hex.clone();
+                            let _ = key; // held in memory only during this session
+                            tokio::spawn(async move {
+                                match zengeld_updater::e2e_crypto::setup_e2e_on_server(
+                                    &client,
+                                    &server_url,
+                                    &token_str,
+                                    &salt_hex_for_spawn,
+                                    params.iterations,
+                                )
+                                .await {
+                                    Ok(_) => eprintln!("[App] E2E setup on server succeeded"),
+                                    Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
+                                }
+                            });
+                            // Update profile so e2e_salt is persisted
+                            self.user_manager.profile.sync_state.e2e_enabled = true;
+                            self.user_manager.profile.sync_state.e2e_salt = salt_hex;
+                        } else {
+                            eprintln!("[App] e2e_setup: not logged in");
+                        }
+                        None
                     } else {
                         eprintln!("[App] unknown updater command: {}", cmd_str);
                         None

@@ -7006,6 +7006,49 @@ impl ChartApp {
                     });
                     eprintln!("[ChartApp] telemetry_enabled = {}", new_val);
                 }
+                // ── Sync tab handlers ──────────────────────────────────────────
+                "sync_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.sync_enabled;
+                    self.panel_app.user_settings_state.sync_enabled = new_val;
+                    self.pending_updater_cmd = Some(if new_val {
+                        "set_sync_enabled:true".to_string()
+                    } else {
+                        "set_sync_enabled:false".to_string()
+                    });
+                    eprintln!("[ChartApp] sync_enabled = {}", new_val);
+                }
+                "e2e_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.e2e_enabled;
+                    self.panel_app.user_settings_state.e2e_enabled = new_val;
+                    eprintln!("[ChartApp] e2e_enabled = {}", new_val);
+                }
+                "e2e_setup" => {
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    if !passphrase.is_empty() {
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        eprintln!("[ChartApp] e2e_setup requested");
+                    }
+                }
+                "sync_presets_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.sync_presets;
+                    self.panel_app.user_settings_state.sync_presets = new_val;
+                    eprintln!("[ChartApp] sync_presets = {}", new_val);
+                }
+                "sync_watchlists_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.sync_watchlists;
+                    self.panel_app.user_settings_state.sync_watchlists = new_val;
+                    eprintln!("[ChartApp] sync_watchlists = {}", new_val);
+                }
+                "sync_templates_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.sync_templates;
+                    self.panel_app.user_settings_state.sync_templates = new_val;
+                    eprintln!("[ChartApp] sync_templates = {}", new_val);
+                }
+                "sync_snapshots_toggle" => {
+                    let new_val = !self.panel_app.user_settings_state.sync_snapshots;
+                    self.panel_app.user_settings_state.sync_snapshots = new_val;
+                    eprintln!("[ChartApp] sync_snapshots = {}", new_val);
+                }
                 "server_toggle" => {
                     self.panel_app.user_settings_state.server_enabled =
                         !self.panel_app.user_settings_state.server_enabled;

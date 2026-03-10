@@ -5564,7 +5564,21 @@ impl ChartApp {
             telemetry_enabled: self.panel_app.user_settings_state.telemetry_enabled,
             notification_settings: existing.notification_settings.clone(),
             windows: existing.windows.clone(),
-            sync_state: existing.sync_state.clone(),
+            sync_state: {
+                let ui = &self.panel_app.user_settings_state;
+                zengeld_chart::user_profile::profile::SyncState {
+                    enabled: ui.sync_enabled,
+                    e2e_enabled: ui.e2e_enabled,
+                    e2e_salt: existing.sync_state.e2e_salt.clone(),
+                    last_sync_timestamp: existing.sync_state.last_sync_timestamp,
+                    category_prefs: zengeld_chart::user_profile::profile::SyncCategoryPrefs {
+                        presets: ui.sync_presets,
+                        watchlists: ui.sync_watchlists,
+                        templates: ui.sync_templates,
+                        settings_snapshots: ui.sync_snapshots,
+                    },
+                }
+            },
         }
     }
 

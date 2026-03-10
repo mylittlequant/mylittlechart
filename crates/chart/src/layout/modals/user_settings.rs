@@ -146,9 +146,10 @@ pub fn render_user_settings_modal(
         let icon_y = tab_y + (tab_button_h - tab_icon_size) / 2.0;
         let icon_color = if is_active { &toolbar_theme.item_text_active } else { text_color };
 
-        // Choose icon per tab — Settings for General, Grid for Performance, Layers for Server
+        // Choose icon per tab — Settings for General, Lock for Sync, Grid for Performance, Layers for Server
         let icon = match tab {
             UserSettingsTab::General => Icon::Settings,
+            UserSettingsTab::Sync => Icon::Lock,
             UserSettingsTab::Performance => Icon::Grid,
             UserSettingsTab::Server => Icon::Layers,
         };
@@ -189,6 +190,20 @@ pub fn render_user_settings_modal(
     match state.active_tab {
         UserSettingsTab::General => {
             render_general_tab(
+                ctx,
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                state,
+                text_color,
+                toolbar_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
+        UserSettingsTab::Sync => {
+            render_sync_tab(
                 ctx,
                 content_x + padding,
                 settings_y,
@@ -553,6 +568,307 @@ fn render_general_tab(
     ctx.set_fill_color(text_color);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x, cy);
     let _ = cy; // suppress unused variable warning
+}
+
+// =============================================================================
+// Helper: render a single toggle row (track + thumb + label)
+// Returns the toggle track rect for hit-testing.
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_toggle_row(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    label: &str,
+    is_on: bool,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+) -> uzor::types::Rect {
+    let toggle_w = 32.0;
+    let toggle_h = 18.0;
+    let toggle_x = x + available_w - toggle_w;
+    let toggle_y = y + 1.0;
+
+    let track_color = if is_on { &toolbar_theme.accent } else { &toolbar_theme.separator };
+    ctx.set_fill_color(track_color);
+    ctx.fill_rounded_rect(toggle_x, toggle_y, toggle_w, toggle_h, toggle_h / 2.0);
+
+    let thumb_r = toggle_h / 2.0 - 2.0;
+    let thumb_cx = if is_on {
+        toggle_x + toggle_w - thumb_r - 3.0
+    } else {
+        toggle_x + thumb_r + 3.0
+    };
+    ctx.set_fill_color("rgba(255,255,255,0.95)");
+    ctx.begin_path();
+    ctx.arc(thumb_cx, toggle_y + toggle_h / 2.0, thumb_r, 0.0, std::f64::consts::TAU);
+    ctx.fill();
+
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text(label, x, y);
+
+    uzor::types::Rect::new(x, toggle_y - 2.0, available_w, toggle_h + 4.0)
+}
+
+// =============================================================================
+// Helper: render a checkbox row
+// Returns the row rect for hit-testing.
+// =============================================================================
+
+fn render_checkbox_row(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    label: &str,
+    is_checked: bool,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+) -> uzor::types::Rect {
+    let cb_size = 14.0;
+    let cb_y = y + 1.0;
+
+    // Box
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.set_fill_color(if is_checked { &toolbar_theme.accent } else { "transparent" });
+    ctx.begin_path();
+    ctx.move_to(x, cb_y);
+    ctx.line_to(x + cb_size, cb_y);
+    ctx.line_to(x + cb_size, cb_y + cb_size);
+    ctx.line_to(x, cb_y + cb_size);
+    ctx.close_path();
+    ctx.fill();
+    ctx.stroke();
+
+    // Checkmark
+    if is_checked {
+        ctx.set_stroke_color("rgba(255,255,255,0.95)");
+        ctx.set_stroke_width(1.5);
+        ctx.begin_path();
+        ctx.move_to(x + 2.5, cb_y + cb_size / 2.0);
+        ctx.line_to(x + cb_size / 2.0 - 1.0, cb_y + cb_size - 3.0);
+        ctx.line_to(x + cb_size - 2.0, cb_y + 2.5);
+        ctx.stroke();
+    }
+
+    // Label
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text(label, x + cb_size + 8.0, y);
+
+    uzor::types::Rect::new(x, y, 200.0, 20.0)
+}
+
+// =============================================================================
+// Sync tab renderer
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_sync_tab(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let mut cy = y;
+    let section_gap = 20.0;
+    let row_gap = 26.0;
+
+    // ── Section: CLOUD SYNC ───────────────────────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_align(uzor::render::TextAlign::Left);
+    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+    ctx.fill_text("CLOUD SYNC", x, cy);
+    cy += section_gap;
+
+    // Toggle: Enable Cloud Sync
+    {
+        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Enable Cloud Sync", state.sync_enabled, text_color, toolbar_theme);
+        result.content_items.push(("sync_toggle".to_string(), row_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:sync_toggle",
+            row_rect,
+            uzor::input::sense::Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += row_gap;
+
+    // Status: last sync time
+    {
+        let ts_str = if state.last_sync_timestamp > 0 {
+            // Format as "YYYY-MM-DD HH:MM" from unix seconds
+            let secs = state.last_sync_timestamp as u64;
+            let mins = secs / 60;
+            let hours = mins / 60;
+            let days = hours / 24;
+            // Simple formatting without external crate
+            format!("Last synced: {}d {}h ago", days, hours % 24)
+        } else {
+            "Last synced: Never".to_string()
+        };
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.45)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text(&ts_str, x, cy);
+        cy += 18.0;
+    }
+
+    // Status: quota usage
+    {
+        let quota_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
+        let quota_str = format!("Storage: {:.1} MB / 50 MB", quota_mb);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.45)");
+        ctx.fill_text(&quota_str, x, cy);
+        cy += 24.0;
+    }
+
+    // ── Section: ENCRYPTION (only when sync enabled) ──────────────────────────
+    if state.sync_enabled {
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.7)");
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("ENCRYPTION", x, cy);
+        cy += section_gap;
+
+        // Toggle: End-to-End Encryption
+        {
+            let row_rect = render_toggle_row(ctx, x, cy, available_w, "End-to-End Encryption", state.e2e_enabled, text_color, toolbar_theme);
+            result.content_items.push(("e2e_toggle".to_string(), row_rect));
+            input_coordinator.register_on_layer(
+                "user_settings:e2e_toggle",
+                row_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += row_gap;
+
+        if state.e2e_enabled {
+            // Passphrase label
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("Passphrase", x, cy);
+            cy += 18.0;
+
+            // Passphrase input box (read-only display)
+            let input_h = 24.0;
+            let masked: String = if state.e2e_passphrase.is_empty() {
+                "Click to type passphrase...".to_string()
+            } else {
+                "*".repeat(state.e2e_passphrase.chars().count().min(20))
+            };
+            let input_color = if state.e2e_passphrase.is_empty() {
+                "rgba(254,255,238,0.25)"
+            } else {
+                text_color
+            };
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(x, cy, available_w, input_h, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(x, cy);
+            ctx.line_to(x + available_w, cy);
+            ctx.line_to(x + available_w, cy + input_h);
+            ctx.line_to(x, cy + input_h);
+            ctx.close_path();
+            ctx.stroke();
+            ctx.set_font("13px sans-serif");
+            ctx.set_fill_color(input_color);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+            ctx.fill_text(&masked, x + 8.0, cy + input_h / 2.0);
+
+            let input_rect = uzor::types::Rect::new(x, cy, available_w, input_h);
+            result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
+            input_coordinator.register_on_layer(
+                "user_settings:e2e_passphrase_input",
+                input_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+            cy += input_h + 8.0;
+
+            // Setup E2E button (only when passphrase is non-empty)
+            if !state.e2e_passphrase.is_empty() {
+                let btn_w = 100.0;
+                let btn_h = 26.0;
+                ctx.set_fill_color(&toolbar_theme.accent);
+                ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+                ctx.set_font("bold 12px sans-serif");
+                ctx.set_fill_color("rgba(0,0,0,0.85)");
+                ctx.set_text_align(uzor::render::TextAlign::Center);
+                ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+                ctx.fill_text("Setup E2E", x + btn_w / 2.0, cy + btn_h / 2.0);
+                ctx.set_text_align(uzor::render::TextAlign::Left);
+
+                let btn_rect = uzor::types::Rect::new(x, cy, btn_w, btn_h);
+                result.content_items.push(("e2e_setup".to_string(), btn_rect));
+                input_coordinator.register_on_layer(
+                    "user_settings:e2e_setup",
+                    btn_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+                cy += btn_h + 8.0;
+            }
+
+            // Note text
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("Your passphrase is never stored or transmitted. Keep it safe.", x, cy);
+            cy += 18.0;
+        }
+
+        cy += 8.0;
+
+        // ── Section: SYNC CATEGORIES ──────────────────────────────────────────
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.7)");
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("SYNC CATEGORIES", x, cy);
+        cy += section_gap;
+
+        let categories: &[(&str, &str, bool)] = &[
+            ("sync_presets_toggle", "Presets", state.sync_presets),
+            ("sync_watchlists_toggle", "Watchlists", state.sync_watchlists),
+            ("sync_templates_toggle", "Templates", state.sync_templates),
+            ("sync_snapshots_toggle", "Settings Snapshots", state.sync_snapshots),
+        ];
+
+        for (action_id, label, is_checked) in categories {
+            let row_rect = render_checkbox_row(ctx, x, cy, label, *is_checked, text_color, toolbar_theme);
+            result.content_items.push((action_id.to_string(), row_rect));
+            let hit_id = format!("user_settings:{}", action_id);
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                row_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+            cy += row_gap - 6.0;
+        }
+    }
+
+    let _ = cy;
 }
 
 #[allow(clippy::too_many_arguments)]
