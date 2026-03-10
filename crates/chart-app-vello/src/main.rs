@@ -1842,7 +1842,23 @@ impl App<'_> {
                 shared: telemetry_shared.clone(),
             });
 
+            // In standalone builds the updater always starts disconnected,
+            // regardless of what the profile says.  This permanently disables
+            // all server communication in open-source / self-hosted builds.
+            #[cfg(feature = "standalone")]
+            let connected = false;
+            #[cfg(not(feature = "standalone"))]
             let connected = profile.client_mode == zengeld_chart::user_profile::profile::ClientMode::Connected;
+
+            // Build attestation — embedded at compile time by build.rs.
+            // Empty string for dev builds (no RELEASE_SIGNING_KEY set).
+            let build_attest = zengeld_updater::BuildAttestation {
+                attestation: env!("BUILD_ATTESTATION").to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                platform: env!("BUILD_PLATFORM").to_string(),
+                timestamp: env!("BUILD_TIMESTAMP").to_string(),
+            };
+
             Some(zengeld_updater::start(
                 bridge.runtime().handle(),
                 source,
@@ -1850,6 +1866,7 @@ impl App<'_> {
                 profile.telemetry_enabled,
                 profile.sync_state.enabled,
                 zengeld_chart::get_user_data_dir(),
+                build_attest,
             ))
         };
 

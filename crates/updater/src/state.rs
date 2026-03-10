@@ -1,6 +1,31 @@
 use tokio::sync::{mpsc, watch};
 use serde::{Serialize, Deserialize};
 
+// =============================================================================
+// BuildAttestation
+// =============================================================================
+
+/// Compile-time build attestation values, set by `chart-app-vello/build.rs`.
+///
+/// The binary crate reads these from `env!()` macros and passes them into
+/// [`crate::start`].  The updater library does not use `env!()` directly
+/// because the compile-time constants live in the binary crate's build graph,
+/// not the library's.
+///
+/// Dev builds (no `RELEASE_SIGNING_KEY`) produce an empty `attestation` field,
+/// which causes [`crate::attest::attestation_headers`] to return no headers.
+#[derive(Clone, Debug, Default)]
+pub struct BuildAttestation {
+    /// Base64-encoded Ed25519 signature over the canonical message, or empty for dev builds.
+    pub attestation: String,
+    /// App version string (e.g. `"0.2.8"`).
+    pub version: String,
+    /// Target platform (e.g. `"windows"`, `"linux"`, `"macos"`).
+    pub platform: String,
+    /// Unix timestamp (seconds) when this binary was built.
+    pub timestamp: String,
+}
+
 /// Authentication status — broadcast via a watch channel so the UI can react.
 #[derive(Clone, Debug)]
 pub enum AuthStatus {

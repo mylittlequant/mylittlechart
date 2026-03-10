@@ -9,6 +9,7 @@
 
 use reqwest::Client;
 use crate::UPDATE_SERVER;
+use crate::state::BuildAttestation;
 
 // ===========================================================================
 // Response types
@@ -44,16 +45,25 @@ pub struct SyncedKeyEntry {
 /// Uses the existing shared `Client` so no extra connections are opened.
 /// Returns an error string on any network or parse failure; callers should
 /// log the error and continue — local keys are never affected by a failed sync.
+///
+/// `build_attest` is used to inject `X-Build-*` headers for server-side
+/// client verification.  Dev builds pass an empty attestation and no headers
+/// are added.
 pub async fn fetch_key_hashes(
     client: &Client,
     auth_token: &str,
+    build_attest: &BuildAttestation,
 ) -> Result<Vec<SyncedKeyEntry>, String> {
     let url = format!("{}/api/auth/keys?format=sync", UPDATE_SERVER);
 
-    let resp = client
+    let builder = client
         .get(&url)
         .bearer_auth(auth_token)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("key sync request failed: {}", e))?;

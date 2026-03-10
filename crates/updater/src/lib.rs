@@ -15,8 +15,9 @@ pub mod key_sync;
 pub mod cloud_sync;
 pub mod e2e_crypto;
 pub mod verify;
+pub mod attest;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation};
 
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
@@ -48,6 +49,10 @@ pub trait TelemetrySource: Send + Sync + 'static {
 ///
 /// `sync_enabled` seeds the initial cloud-sync enabled state from the user
 /// profile.  Can be toggled at runtime via [`UpdaterCommand::SetSyncEnabled`].
+///
+/// `build_attest` carries the compile-time attestation values produced by
+/// `chart-app-vello/build.rs`.  Pass [`BuildAttestation::default`] for dev
+/// builds or when running without the binary crate context.
 pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
@@ -55,6 +60,7 @@ pub fn start(
     telemetry_enabled: bool,
     sync_enabled: bool,
     data_dir: std::path::PathBuf,
+    build_attest: state::BuildAttestation,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -83,7 +89,7 @@ pub fn start(
         sync_status_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, data_dir));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, data_dir, build_attest));
 
     handle
 }
@@ -106,6 +112,7 @@ async fn updater_loop(
     mut telemetry_enabled: bool,
     sync_enabled_init: bool,
     data_dir: std::path::PathBuf,
+    build_attest: state::BuildAttestation,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
 
@@ -138,7 +145,7 @@ async fn updater_loop(
         do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, telemetry_enabled).await;
         // Initial key sync.
         if let Some(ref td) = token {
-            do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+            do_key_sync(&http_client, &td.token, &synced_keys_tx, &build_attest).await;
         }
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
@@ -172,13 +179,13 @@ async fn updater_loop(
 
                     // Key sync — best-effort, logged but not fatal.
                     if let Some(ref td) = token {
-                        do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                        do_key_sync(&http_client, &td.token, &synced_keys_tx, &build_attest).await;
                     }
 
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
                         }
                     }
                 }
@@ -200,7 +207,7 @@ async fn updater_loop(
                             }
                             // Also sync keys on forced check.
                             if let Some(ref td) = token {
-                                do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                                do_key_sync(&http_client, &td.token, &synced_keys_tx, &build_attest).await;
                             }
                         } else {
                             log::warn!("[Updater] ForceCheck ignored — running in standalone mode");
@@ -241,7 +248,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -270,12 +277,12 @@ async fn updater_loop(
                             }
                             // Sync keys immediately after switching to connected.
                             if let Some(ref td) = token {
-                                do_key_sync(&http_client, &td.token, &synced_keys_tx).await;
+                                do_key_sync(&http_client, &td.token, &synced_keys_tx, &build_attest).await;
                             }
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
                                 }
                             }
                         }
@@ -311,10 +318,11 @@ async fn do_cloud_sync(
     sync_status_tx: &watch::Sender<state::SyncStatus>,
     sync_state: &mut cloud_sync::SyncState,
     data_dir: &std::path::Path,
+    build_attest: &state::BuildAttestation,
 ) {
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
-    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir).await {
+    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest).await {
         Ok((pushed, pulled, new_state)) => {
             log::debug!("[Updater] Cloud sync: pushed={} pulled={}", pushed, pulled);
             *sync_state = new_state;
@@ -336,8 +344,9 @@ async fn do_key_sync(
     client: &reqwest::Client,
     auth_token: &str,
     synced_keys_tx: &watch::Sender<Vec<key_sync::SyncedKeyEntry>>,
+    build_attest: &state::BuildAttestation,
 ) {
-    match key_sync::fetch_key_hashes(client, auth_token).await {
+    match key_sync::fetch_key_hashes(client, auth_token, build_attest).await {
         Ok(keys) => {
             let count = keys.len();
             let _ = synced_keys_tx.send(keys);

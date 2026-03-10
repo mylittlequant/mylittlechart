@@ -35,3 +35,11 @@ uzor-backend-vello-hybrid = "1.0.6"
 vello_hybrid = { version = "0.0.6", features = ["wgpu"] }
 tiny-skia-context = { path = "../tiny-skia-context" }
 zengeld-updater = { path = "../updater" }
+
+[build-dependencies]
+ed25519-dalek = { workspace = true }
+base64 = { workspace = true }
+
+[features]
+default = []
+standalone = []

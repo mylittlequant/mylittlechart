@@ -13,6 +13,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::state::BuildAttestation;
+
 // =============================================================================
 // Sync item types
 // =============================================================================
@@ -365,11 +367,16 @@ pub async fn check_status(
     client: &reqwest::Client,
     server_url: &str,
     token: &str,
+    build_attest: &BuildAttestation,
 ) -> Result<SyncStatusResponse, String> {
-    let resp = client
+    let builder = client
         .get(format!("{}/api/sync/status", server_url))
         .bearer_auth(token)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("sync status request: {}", e))?;
@@ -393,11 +400,16 @@ pub async fn fetch_changes(
     server_url: &str,
     token: &str,
     since: i64,
+    build_attest: &BuildAttestation,
 ) -> Result<Vec<SyncItemMeta>, String> {
-    let resp = client
+    let builder = client
         .get(format!("{}/api/sync/changes?since={}", server_url, since))
         .bearer_auth(token)
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(15));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("sync changes request: {}", e))?;
@@ -428,17 +440,22 @@ pub async fn push_items(
     server_url: &str,
     token: &str,
     items: &[SyncItem],
+    build_attest: &BuildAttestation,
 ) -> Result<usize, String> {
     #[derive(Serialize)]
     struct Req<'a> {
         items: &'a [SyncItem],
     }
 
-    let resp = client
+    let builder = client
         .post(format!("{}/api/sync/push", server_url))
         .bearer_auth(token)
         .json(&Req { items })
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(30));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("sync push request: {}", e))?;
@@ -463,11 +480,16 @@ pub async fn pull_all(
     client: &reqwest::Client,
     server_url: &str,
     token: &str,
+    build_attest: &BuildAttestation,
 ) -> Result<Vec<SyncItem>, String> {
-    let resp = client
+    let builder = client
         .get(format!("{}/api/sync/pull", server_url))
         .bearer_auth(token)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(30));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("sync pull request: {}", e))?;
@@ -514,6 +536,7 @@ pub async fn do_sync_cycle(
     token: &str,
     state: &SyncState,
     data_dir: &Path,
+    build_attest: &BuildAttestation,
 ) -> Result<(usize, usize, SyncState), String> {
     // Step 1: collect local items (filtered by per-category preferences).
     let local_items = collect_local_sync_items(data_dir, &state.category_prefs);
@@ -526,7 +549,7 @@ pub async fn do_sync_cycle(
 
     // Step 2: fetch server change metadata.
     // On the very first sync (last_sync_timestamp == 0) we fetch everything.
-    let server_changes = fetch_changes(client, server_url, token, state.last_sync_timestamp).await?;
+    let server_changes = fetch_changes(client, server_url, token, state.last_sync_timestamp, build_attest).await?;
 
     log::debug!(
         "[CloudSync] Cycle start: {} local item(s), {} server change(s) since ts={}",
@@ -595,7 +618,7 @@ pub async fn do_sync_cycle(
 
     // Push in batches of 50 (server limit).
     for batch in to_push.chunks(50) {
-        match push_items(client, server_url, token, batch).await {
+        match push_items(client, server_url, token, batch, build_attest).await {
             Ok(n) => {
                 pushed_count += n;
                 log::debug!("[CloudSync] Pushed batch: {} item(s)", n);
@@ -613,7 +636,7 @@ pub async fn do_sync_cycle(
     if !to_pull_ids.is_empty() {
         // Pull all items at once using the full-pull endpoint.
         // This is the simplest approach; incremental per-item pull can be added later.
-        match pull_all(client, server_url, token).await {
+        match pull_all(client, server_url, token, build_attest).await {
             Ok(all_server_items) => {
                 // Filter to only the items we actually need.
                 let to_write: Vec<SyncItem> = all_server_items
