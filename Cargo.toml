@@ -23,7 +23,7 @@ resolver = "2"
 rayon = "1"
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -35,3 +35,14 @@ lto = true
 # (large enum with 480 variants needs optimization)
 [profile.dev.package.zengeld-terminal-indicators]
 opt-level = 2
+
+# Local development overrides — use local source instead of crates.io.
+# CI strips this section before building (see .github/workflows/release.yml).
+[patch.crates-io]
+uzor = { path = "../uzor/uzor" }
+uzor-backend-vello-gpu = { path = "../uzor/uzor-backend-vello-gpu" }
+uzor-backend-wgpu-instanced = { path = "../uzor/uzor-backend-wgpu-instanced" }
+uzor-backend-vello-hybrid = { path = "../uzor/uzor-backend-vello-hybrid" }
+uzor-backend-vello-cpu = { path = "../uzor/uzor-backend-vello-cpu" }
+uzor-backend-tiny-skia = { path = "../uzor/uzor-backend-tiny-skia" }
+digdigdig3 = { path = "../digdigdig3" }
