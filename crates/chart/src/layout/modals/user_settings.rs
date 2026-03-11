@@ -424,7 +424,7 @@ fn render_general_tab(
             ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
-            result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+            result.content_items.push(("open_dashboard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
             input_coordinator.register_on_layer(
                 "user_settings:open_dashboard",
                 uzor::types::Rect::new(x, cy, btn_w, btn_h),
@@ -567,6 +567,30 @@ fn render_general_tab(
     ctx.set_font("700 18px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x, cy);
+    cy += 30.0;
+
+    // "Show Welcome Wizard" debug button
+    let btn_h = 24.0;
+    let btn_w = available_w.min(180.0);
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Show Welcome Wizard", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    result.content_items.push(("show_wizard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+    input_coordinator.register_on_layer(
+        "user_settings:show_wizard",
+        uzor::types::Rect::new(x, cy, btn_w, btn_h),
+        Sense::CLICK,
+        layer_id,
+    );
     let _ = cy; // suppress unused variable warning
 }
 
@@ -779,8 +803,12 @@ fn render_sync_tab(
 
         // Below: muted "Last synced: X" relative time
         let ts_str = if state.last_sync_timestamp > 0 {
-            let secs = state.last_sync_timestamp as u64;
-            let mins = secs / 60;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let elapsed = (now - state.last_sync_timestamp).max(0) as u64;
+            let mins = elapsed / 60;
             let hours = mins / 60;
             let days = hours / 24;
             format!("Last synced: {}d {}h ago", days, hours % 24)
@@ -891,7 +919,7 @@ fn render_sync_tab(
     }
 
     // ── Sync Conflicts Banner ─────────────────────────────────────────────────
-    if state.sync_has_conflicts {
+    if !sync_tab_locked && state.sync_has_conflicts {
         let banner_h = 72.0;
         ctx.set_fill_color("rgba(244,205,99,0.07)");
         ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
@@ -965,7 +993,7 @@ fn render_sync_tab(
     }
 
     // ── NeedsSetup Prompt ─────────────────────────────────────────────────────
-    if state.sync_needs_setup {
+    if !sync_tab_locked && state.sync_needs_setup {
         let box_h = 110.0;
         ctx.set_fill_color("rgba(244,205,99,0.08)");
         ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, box_h, 4.0);
@@ -1049,8 +1077,8 @@ fn render_sync_tab(
         cy += 24.0;
     }
 
-    // ── Section: ENCRYPTION (only when sync enabled) ──────────────────────────
-    if state.sync_enabled {
+    // ── Section: ENCRYPTION (always shown — zero-trust is a local feature) ──────
+    {
         ctx.set_font("600 11px sans-serif");
         ctx.set_fill_color("rgba(244,205,99,0.7)");
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);
@@ -1189,7 +1217,7 @@ fn render_sync_tab(
         } else {
             // ── Normal E2E Setup Flow ─────────────────────────────────────────
 
-            // Zero-Trust Notice — shown when the user has just toggled E2E on (setup mode)
+            // Setup notice — shown when E2E is not yet enabled (setup mode)
             {
                 let notice_h = 82.0;
                 ctx.set_fill_color("rgba(244,205,99,0.07)");
@@ -1201,7 +1229,7 @@ fn render_sync_tab(
                 ctx.set_font("600 11px sans-serif");
                 ctx.set_fill_color("rgba(244,205,99,0.90)");
                 ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-                ctx.fill_text("Zero-trust mode active", x, cy + 2.0);
+                ctx.fill_text("Set up end-to-end encryption", x, cy + 2.0);
                 cy += 16.0;
 
                 ctx.set_font("10px sans-serif");
@@ -1294,8 +1322,10 @@ fn render_sync_tab(
         }
 
         cy += 8.0;
+    }
 
-        // ── Section: SYNC CATEGORIES ──────────────────────────────────────────
+    // ── Section: SYNC CATEGORIES (only when sync enabled) ─────────────────────
+    if state.sync_enabled {
         ctx.set_font("600 11px sans-serif");
         ctx.set_fill_color("rgba(244,205,99,0.7)");
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);

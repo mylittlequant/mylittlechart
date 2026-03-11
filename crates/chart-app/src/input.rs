@@ -4306,6 +4306,40 @@ impl ChartApp {
             return;
         }
 
+        // Handle E2E passphrase input in User Settings Sync tab
+        if self.panel_app.user_settings_state.is_open
+            && self.panel_app.user_settings_state.e2e_passphrase_focused
+        {
+            match ch {
+                '\r' | '\n' => {
+                    // Enter submits the E2E setup/restore form if passphrase is non-empty
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.trim().to_string();
+                    if !passphrase.is_empty() {
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        self.panel_app.user_settings_state.e2e_restore_mode = false;
+                    }
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                }
+                '\x1b' => {
+                    // Escape unfocuses without submitting
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                }
+                '\x08' => {
+                    // Backspace
+                    let passphrase = &mut self.panel_app.user_settings_state.e2e_passphrase;
+                    if !passphrase.is_empty() {
+                        passphrase.pop();
+                    }
+                }
+                c if !c.is_control() => {
+                    self.panel_app.user_settings_state.e2e_passphrase.push(c);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Handle watchlist group name input modal
         if self.wl_group_name_input.is_open() {
             let editing = &mut self.wl_group_name_input.editing;
@@ -7097,6 +7131,25 @@ impl ChartApp {
                         // e2e_enabled will be set by updater response via sync_status_rx
                         eprintln!("[ChartApp] e2e_restore requested");
                     }
+                }
+                "e2e_passphrase_input" => {
+                    self.panel_app.user_settings_state.e2e_passphrase_focused =
+                        !self.panel_app.user_settings_state.e2e_passphrase_focused;
+                    eprintln!("[ChartApp] e2e_passphrase_input: toggled focus");
+                }
+                "e2e_setup" => {
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    if !passphrase.is_empty() {
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        eprintln!("[ChartApp] e2e_setup requested");
+                    }
+                }
+                "show_wizard" => {
+                    self.panel_app.user_settings_state.show_welcome_wizard = true;
+                    self.panel_app.user_settings_state.wizard_page = 0;
+                    eprintln!("[ChartApp] show_wizard: opening welcome wizard");
                 }
                 "server_toggle" => {
                     self.panel_app.user_settings_state.server_enabled =

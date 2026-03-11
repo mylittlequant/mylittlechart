@@ -3268,6 +3268,8 @@ pub struct UserSettingsState {
     pub e2e_enabled: bool,
     /// In-memory passphrase input buffer — never persisted to disk.
     pub e2e_passphrase: String,
+    /// Whether the E2E passphrase input field has keyboard focus.
+    pub e2e_passphrase_focused: bool,
     /// Whether presets category is enabled for sync (mirrors SyncState.category_prefs.presets).
     pub sync_presets: bool,
     /// Whether watchlists category is enabled for sync.
@@ -3353,6 +3355,7 @@ impl Default for UserSettingsState {
             sync_enabled: false,
             e2e_enabled: false,
             e2e_passphrase: String::new(),
+            e2e_passphrase_focused: false,
             sync_presets: true,
             sync_watchlists: true,
             sync_templates: true,
@@ -3400,7 +3403,11 @@ impl UserSettingsState {
 
     /// Toggle open/closed.
     pub fn toggle(&mut self) {
-        self.is_open = !self.is_open;
+        if self.is_open {
+            self.close();
+        } else {
+            self.open();
+        }
     }
 
     /// Switch to a different tab and close any open dropdown.

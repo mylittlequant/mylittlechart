@@ -3852,6 +3852,46 @@ impl ApplicationHandler for App<'_> {
                         Some(UpdaterCommand::SetSyncEnabled(false))
                     } else if cmd_str == "force_sync" {
                         Some(UpdaterCommand::ForceSync)
+                    } else if cmd_str == "start_device_auth" {
+                        // No dedicated device-auth flow yet — open browser for sign-in.
+                        eprintln!("[App] start_device_auth requested — opening browser login");
+                        for pw in self.windows.values_mut() {
+                            pw.chart.pending_open_url =
+                                Some("https://chart.example/login".to_string());
+                            pw.chart.panel_app.user_settings_state.wizard_device_code =
+                                "BROWSER".to_string();
+                            pw.chart.panel_app.user_settings_state.wizard_linking_status =
+                                "Sign in via browser...".to_string();
+                        }
+                        None
+                    } else if cmd_str == "resolve_all:keep_local"
+                        || cmd_str == "resolve_all:keep_cloud"
+                    {
+                        // Resolve every pending conflict in bulk by sending individual
+                        // ResolveConflict messages — ResolveAllConflicts variant does not
+                        // exist in the updater yet.
+                        let resolution = if cmd_str == "resolve_all:keep_local" {
+                            zengeld_updater::ConflictResolution::KeepLocal
+                        } else {
+                            zengeld_updater::ConflictResolution::KeepCloud
+                        };
+                        eprintln!("[App] resolve_all: {:?}", cmd_str);
+                        // Borrow the current sync status to extract the conflict list.
+                        let conflicts: Vec<String> = {
+                            match &*handle.sync_status_rx.borrow() {
+                                zengeld_updater::SyncStatus::ConflictsDetected(list) => {
+                                    list.iter().map(|c| c.sync_id.clone()).collect()
+                                }
+                                _ => Vec::new(),
+                            }
+                        };
+                        for sync_id in conflicts {
+                            let _ = handle.cmd_tx.send(UpdaterCommand::ResolveConflict {
+                                sync_id,
+                                resolution: resolution.clone(),
+                            });
+                        }
+                        None
                     } else if let Some(rest) = cmd_str.strip_prefix("resolve_conflict:") {
                         if let Some((sync_id, resolution_str)) = rest.rsplit_once(':') {
                             let resolution = if resolution_str == "keep_local" {
@@ -3977,6 +4017,23 @@ impl ApplicationHandler for App<'_> {
                             if let Some(stored) = zengeld_updater::token_store::load_token() {
                                 if let Err(e) = keychain::store_auth_token(&stored.token) {
                                     eprintln!("[App] keychain: failed to mirror auth token: {}", e);
+                                }
+                            }
+                            // Wizard transition on successful account linking.
+                            // If the wizard is still open on page 1 (linking page):
+                            //   - E2E chosen → advance to page 2 (E2E setup)
+                            //   - Connected only → close wizard and activate connected mode
+                            for pw in self.windows.values_mut() {
+                                let uss = &mut pw.chart.panel_app.user_settings_state;
+                                if uss.show_welcome_wizard && uss.wizard_page == 1 {
+                                    uss.wizard_linking_status = "Linked!".to_string();
+                                    if uss.wizard_e2e_chosen {
+                                        uss.wizard_page = 2;
+                                    } else {
+                                        uss.show_welcome_wizard = false;
+                                        pw.chart.pending_updater_cmd =
+                                            Some("set_connected".to_string());
+                                    }
                                 }
                             }
                             eprintln!("[App] auth: logged in as {} ({})", dn, prov);
