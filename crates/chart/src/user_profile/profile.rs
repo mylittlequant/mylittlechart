@@ -381,7 +381,7 @@ impl UserProfile {
             agent_api_key: String::new(),
             agent_api_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
-            telemetry_enabled: true,
+            telemetry_enabled: false,
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),

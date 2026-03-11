@@ -3309,7 +3309,7 @@ impl Default for UserSettingsState {
             auth_provider: String::new(),
             auth_user_id: 0,
             client_mode_connected: false,
-            telemetry_enabled: true,
+            telemetry_enabled: false,
             sync_transition_pending: false,
             disconnect_pending: false,
             sync_enabled: false,
