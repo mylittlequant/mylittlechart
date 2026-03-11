@@ -47,6 +47,47 @@ pub fn list_credential_names() -> Vec<String> {
 }
 
 // =============================================================================
+// Auth token helpers
+// =============================================================================
+
+/// Store the OAuth bearer token in the OS keychain.
+///
+/// The token is stored as a plain string under the fixed key
+/// `"auth:bearer:default"`.  Use this as a secondary secure store in
+/// addition to `auth_token.json`; on Windows, the Credential Manager
+/// provides encrypted storage that survives profile roaming.
+pub fn store_auth_token(token: &str) -> Result<(), String> {
+    let entry = Entry::new(SERVICE_NAME, "auth:bearer:default")
+        .map_err(|e| format!("keychain entry: {e}"))?;
+    entry.set_password(token)
+        .map_err(|e| format!("keychain store: {e}"))
+}
+
+/// Retrieve the OAuth bearer token from the OS keychain.
+///
+/// Returns `Some(token)` if found, `None` if not yet stored or on any
+/// keychain access error (treated as a cache miss rather than a hard
+/// error so the caller can fall back to `auth_token.json`).
+pub fn get_auth_token() -> Option<String> {
+    let entry = Entry::new(SERVICE_NAME, "auth:bearer:default").ok()?;
+    entry.get_password().ok()
+}
+
+/// Delete the OAuth bearer token from the OS keychain.
+///
+/// Should be called on logout alongside clearing `auth_token.json`.
+/// Silently succeeds if the entry does not exist.
+pub fn delete_auth_token() -> Result<(), String> {
+    let entry = Entry::new(SERVICE_NAME, "auth:bearer:default")
+        .map_err(|e| format!("keychain entry: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()), // already gone
+        Err(e) => Err(format!("keychain delete: {e}")),
+    }
+}
+
+// =============================================================================
 // Exchange API secret helpers
 // =============================================================================
 

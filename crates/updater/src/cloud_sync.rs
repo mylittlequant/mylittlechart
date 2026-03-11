@@ -83,7 +83,14 @@ pub struct SyncStatusResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushResponse {
     /// Number of items the server successfully recorded.
-    pub synced: usize,
+    /// The server now returns `accepted`; `synced` is kept as an alias
+    /// for backwards compatibility with older server deployments.
+    #[serde(alias = "synced")]
+    pub accepted: usize,
+    /// Items the server rejected (e.g. validation failures, quota exceeded).
+    /// Empty on success; populated when the server rejects specific items.
+    #[serde(default)]
+    pub rejected: Vec<serde_json::Value>,
 }
 
 // =============================================================================
@@ -643,7 +650,15 @@ pub async fn push_items(
         .await
         .map_err(|e| format!("sync push parse: {}", e))?;
 
-    Ok(data.synced)
+    if !data.rejected.is_empty() {
+        log::warn!(
+            "[CloudSync] Push: {} item(s) rejected by server: {:?}",
+            data.rejected.len(),
+            data.rejected
+        );
+    }
+
+    Ok(data.accepted)
 }
 
 /// Pull every item for this user from the server (full download).

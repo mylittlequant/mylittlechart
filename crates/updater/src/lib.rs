@@ -155,6 +155,12 @@ async fn updater_loop(
     let mut pending_conflicts: std::collections::HashMap<String, state::SyncConflict> =
         std::collections::HashMap::new();
 
+    // Flag that prevents the NeedsSetup notification from being emitted on
+    // every periodic tick.  Set to `true` after the first NeedsSetup emission,
+    // reset to `false` when the user sends ForceSync (which also advances
+    // last_sync_timestamp to bypass the NeedsSetup guard on the next cycle).
+    let mut needs_setup_emitted: bool = false;
+
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -208,7 +214,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                         }
                     }
                 }
@@ -271,7 +277,16 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
+                                    // Reset the NeedsSetup guard so the next cycle re-evaluates.
+                                    needs_setup_emitted = false;
+                                    // If last_sync_timestamp is still 0 (user never synced before
+                                    // and NeedsSetup was shown), advance it to 1 so do_cloud_sync
+                                    // skips the NeedsSetup guard and proceeds with the normal cycle.
+                                    if sync_state.last_sync_timestamp == 0 {
+                                        sync_state.last_sync_timestamp = 1;
+                                        log::info!("[Updater] ForceSync: advancing last_sync_timestamp past 0 to bypass NeedsSetup guard");
+                                    }
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -305,7 +320,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                                 }
                             }
                         }
@@ -423,8 +438,17 @@ async fn updater_loop(
                             }
                             state::ConflictResolution::KeepCloud => {
                                 // Pull full item from server and write to disk.
+                                //
+                                // TODO(GAP-5): This calls pull_all() which fetches every item
+                                // for the user, then filters to the one conflicted item.  This
+                                // is suboptimal for users with many items.  A future improvement
+                                // would add a `GET /api/sync/pull?sync_id={id}` endpoint on the
+                                // server so only the single needed item is transferred.  For now
+                                // the server does not support single-item pull, so we pull all
+                                // and filter client-side.  Only the conflicted item is written to
+                                // disk — all other pulled items are discarded.
                                 log::info!(
-                                    "[Updater] Resolving conflict '{}' — KeepCloud: pulling server version",
+                                    "[Updater] Resolving conflict '{}' — KeepCloud: pulling server version (note: fetches all items, then filters to this one)",
                                     conflict.sync_id
                                 );
                                 let conflict_id = conflict.sync_id.clone();
@@ -530,23 +554,29 @@ async fn do_cloud_sync(
     build_attest: &state::BuildAttestation,
     e2e_key: Option<[u8; 32]>,
     pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
+    needs_setup_emitted: &mut bool,
 ) {
     // On the very first sync attempt, check whether the server already has
     // data.  If it does, emit NeedsSetup so the UI can prompt the user
     // instead of silently pulling and potentially overwriting local data.
-    if sync_state.last_sync_timestamp == 0 {
+    //
+    // `needs_setup_emitted` prevents emitting the same notification on every
+    // periodic tick — once emitted we stop repeating it until the user
+    // explicitly sends ForceSync (which resets this flag and advances
+    // last_sync_timestamp to 1 to bypass this guard).
+    if sync_state.last_sync_timestamp == 0 && !*needs_setup_emitted {
         match cloud_sync::check_status(client, UPDATE_SERVER, auth_token, build_attest).await {
             Ok(server_status) if server_status.has_cloud_data => {
                 log::info!(
                     "[Updater] First sync: server has {} item(s) — emitting NeedsSetup",
                     server_status.item_count
                 );
+                *needs_setup_emitted = true;
                 sync_status_tx.send_replace(state::SyncStatus::NeedsSetup);
                 // Do not proceed with the full sync cycle yet; wait for the
                 // user to acknowledge via the UI.  The periodic timer will
-                // call us again; once the user confirms, the caller should
-                // advance last_sync_timestamp or the UI should trigger a
-                // ForceSync to continue.
+                // call us again; once the user sends ForceSync the flag is
+                // cleared and last_sync_timestamp is set to 1 so we proceed.
                 return;
             }
             Ok(_) => {
@@ -565,6 +595,10 @@ async fn do_cloud_sync(
                 return;
             }
         }
+    } else if sync_state.last_sync_timestamp == 0 && *needs_setup_emitted {
+        // NeedsSetup already emitted — skip silently until ForceSync resets us.
+        log::debug!("[Updater] Skipping sync: NeedsSetup already emitted, waiting for user action");
+        return;
     }
 
     sync_status_tx.send_replace(state::SyncStatus::Syncing);

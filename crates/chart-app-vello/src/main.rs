@@ -3924,6 +3924,15 @@ impl ApplicationHandler for App<'_> {
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.client_mode_connected = true;
                             }
+                            // Mirror the bearer token into the OS keychain as a
+                            // secondary encrypted store.  This is best-effort: a
+                            // failure here is non-fatal since auth_token.json is
+                            // still the primary storage.
+                            if let Some(stored) = zengeld_updater::token_store::load_token() {
+                                if let Err(e) = keychain::store_auth_token(&stored.token) {
+                                    eprintln!("[App] keychain: failed to mirror auth token: {}", e);
+                                }
+                            }
                             eprintln!("[App] auth: logged in as {} ({})", dn, prov);
                         }
                         zengeld_updater::AuthStatus::NotLoggedIn => {
@@ -3936,6 +3945,10 @@ impl ApplicationHandler for App<'_> {
                             }
                             // Clear the profile mirror on logout / missing token.
                             self.user_manager.profile.linked_account = None;
+                            // Remove the keychain copy on logout (best-effort).
+                            if let Err(e) = keychain::delete_auth_token() {
+                                eprintln!("[App] keychain: failed to delete auth token: {}", e);
+                            }
                             eprintln!("[App] auth: not logged in");
                         }
                     }
