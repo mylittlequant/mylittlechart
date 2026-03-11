@@ -2878,6 +2878,31 @@ impl ChartApp {
             }
         }
 
+        // User settings modal — update hover highlight for content items.
+        if self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref us) = result.user_settings {
+                    if us.modal_rect.contains(x, y) || self.panel_app.user_settings_state.show_welcome_wizard {
+                        let mut found = false;
+                        for (id, rect) in &us.content_items {
+                            if rect.contains(x, y) {
+                                self.panel_app.user_settings_state.hovered_item_id = Some(id.clone());
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            self.panel_app.user_settings_state.hovered_item_id = None;
+                        }
+                    } else {
+                        self.panel_app.user_settings_state.hovered_item_id = None;
+                    }
+                }
+            }
+        } else {
+            self.panel_app.user_settings_state.hovered_item_id = None;
+        }
+
         // Chart browser modal — update hovered preset for icon visibility
         if self.panel_app.chart_browser.is_open {
             if let Some(ref result) = self.frame_result {

@@ -107,13 +107,15 @@ fn render_page0(
     x: f64,
     w: f64,
     cy: &mut f64,
-    _state: &UserSettingsState,
+    state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
+    let hovered = state.hovered_item_id.as_deref();
+
     // Title
     ctx.set_font("bold 22px sans-serif");
     ctx.set_fill_color(text_color);
@@ -137,6 +139,7 @@ fn render_page0(
         "Choose Offline",
         "wizard_standalone",
         false,
+        hovered,
     );
     *cy += 102.0;
 
@@ -148,6 +151,7 @@ fn render_page0(
         "Choose Connected",
         "wizard_connected",
         true,
+        hovered,
     );
 }
 
@@ -168,8 +172,10 @@ fn render_page1(
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
+    let hovered = state.hovered_item_id.as_deref();
+
     // Back arrow
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result);
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
     // Title
@@ -196,6 +202,7 @@ fn render_page1(
         "Standard",
         "wizard_standard",
         false,
+        hovered,
     );
     *cy += 102.0;
 
@@ -207,6 +214,7 @@ fn render_page1(
         "Zero-Trust",
         "wizard_zerotrust",
         true,
+        hovered,
     );
 }
 
@@ -227,8 +235,9 @@ fn render_page2(
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
+    let hovered = state.hovered_item_id.as_deref();
     match (state.wizard_mode_standalone, state.wizard_e2e_chosen) {
-        (true, false) => render_page2_standalone_standard(ctx, x, w, cy, text_color, toolbar_theme, layer_id, input_coordinator, result),
+        (true, false) => render_page2_standalone_standard(ctx, x, w, cy, text_color, toolbar_theme, layer_id, input_coordinator, result, hovered),
         (true, true)  => render_page2_standalone_e2e(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
         (false, false) => render_page2_connected_standard(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
         (false, true)  => render_page2_connected_e2e(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
@@ -247,8 +256,9 @@ fn render_page2_standalone_standard(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
+    hovered_item_id: Option<&str>,
 ) {
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result);
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered_item_id);
     *cy += 16.0;
 
     ctx.set_font("bold 22px sans-serif");
@@ -267,7 +277,9 @@ fn render_page2_standalone_standard(
     let btn_w = 160.0;
     let btn_h = 36.0;
     let btn_x = x + (w - btn_w) / 2.0;
-    ctx.set_fill_color(&toolbar_theme.accent);
+    let is_finish_hovered = hovered_item_id == Some("wizard_finish");
+    let finish_bg = if is_finish_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(finish_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 5.0);
     ctx.set_font("bold 13px sans-serif");
     ctx.set_fill_color("rgba(0,0,0,0.85)");
@@ -294,7 +306,8 @@ fn render_page2_standalone_e2e(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result);
+    let hovered = state.hovered_item_id.as_deref();
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
     ctx.set_font("bold 20px sans-serif");
@@ -326,7 +339,14 @@ fn render_page2_standalone_e2e(
     let btn_h = 32.0;
     let enable_btn_w = w.min(200.0);
     let enable_disabled = state.e2e_passphrase.is_empty();
-    let enable_bg = if enable_disabled { "rgba(244,205,99,0.20)" } else { toolbar_theme.accent.as_str() };
+    let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
+    let enable_bg = if enable_disabled {
+        "rgba(244,205,99,0.20)"
+    } else if is_e2e_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
     let enable_text = if enable_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
     ctx.set_fill_color(enable_bg);
     ctx.fill_rounded_rect(x, *cy, enable_btn_w, btn_h, 4.0);
@@ -358,7 +378,8 @@ fn render_page2_connected_standard(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result);
+    let hovered = state.hovered_item_id.as_deref();
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
     ctx.set_font("bold 20px sans-serif");
@@ -378,7 +399,9 @@ fn render_page2_connected_standard(
     // Open Browser button
     let btn_h = 32.0;
     let btn_w = w.min(200.0);
-    ctx.set_fill_color(&toolbar_theme.accent);
+    let is_browser_hovered = hovered == Some("wizard_open_browser");
+    let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(browser_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color("rgba(0,0,0,0.85)");
@@ -404,7 +427,7 @@ fn render_page2_connected_standard(
     *cy += 16.0;
 
     // "Skip for now" link
-    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result);
+    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result, hovered);
 }
 
 /// Connected + Zero-Trust: sign in + passphrase
@@ -421,7 +444,8 @@ fn render_page2_connected_e2e(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result);
+    let hovered = state.hovered_item_id.as_deref();
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
     ctx.set_font("bold 20px sans-serif");
@@ -446,7 +470,9 @@ fn render_page2_connected_e2e(
 
     let btn_h = 28.0;
     let btn_w = w.min(160.0);
-    ctx.set_fill_color(&toolbar_theme.accent);
+    let is_browser_hovered = hovered == Some("wizard_open_browser");
+    let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(browser_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 11px sans-serif");
     ctx.set_fill_color("rgba(0,0,0,0.85)");
@@ -481,7 +507,14 @@ fn render_page2_connected_e2e(
 
     // Complete Setup button
     let enable_disabled = state.e2e_passphrase.is_empty();
-    let enable_bg = if enable_disabled { "rgba(244,205,99,0.20)" } else { toolbar_theme.accent.as_str() };
+    let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
+    let enable_bg = if enable_disabled {
+        "rgba(244,205,99,0.20)"
+    } else if is_e2e_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
     let enable_text_col = if enable_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
     let cbtn_h = 32.0;
     let cbtn_w = w.min(200.0);
@@ -501,7 +534,7 @@ fn render_page2_connected_e2e(
     }
     *cy += cbtn_h + 12.0;
 
-    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result);
+    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result, hovered);
 }
 
 // =============================================================================
@@ -524,14 +557,18 @@ fn render_mode_card(
     btn_label: &str,
     action: &str,
     accent_title: bool,
+    hovered_item_id: Option<&str>,
 ) {
     let card_h = 90.0;
     let card_padding = 14.0;
+    let is_btn_hovered = hovered_item_id == Some(action);
 
-    // Card background
-    ctx.set_fill_color("rgba(255,255,255,0.04)");
+    // Card background — subtle highlight when button is hovered
+    let card_bg = if is_btn_hovered { "rgba(255,255,255,0.07)" } else { "rgba(255,255,255,0.04)" };
+    ctx.set_fill_color(card_bg);
     ctx.fill_rounded_rect(x, y, w, card_h, 6.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.18)");
+    let card_stroke = if is_btn_hovered { "rgba(244,205,99,0.32)" } else { "rgba(244,205,99,0.18)" };
+    ctx.set_stroke_color(card_stroke);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, y, w, card_h, 6.0);
 
@@ -554,7 +591,14 @@ fn render_mode_card(
     let btn_x = x + w - card_padding - btn_w;
     let btn_y = y + (card_h - btn_h) / 2.0;
 
-    ctx.set_fill_color(&toolbar_theme.accent);
+    // Slightly brighten button on hover
+    let btn_bg = if is_btn_hovered {
+        // Blend accent with white for a lighter shade on hover
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 4.0);
     ctx.set_font("bold 11px sans-serif");
     ctx.set_fill_color("rgba(0,0,0,0.85)");
@@ -583,12 +627,16 @@ fn render_back_button(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
+    hovered_item_id: Option<&str>,
 ) {
     let btn_w = 70.0;
     let btn_h = 26.0;
-    ctx.set_fill_color("rgba(255,255,255,0.06)");
+    let is_hovered = hovered_item_id == Some("wizard_back");
+    let btn_bg = if is_hovered { "rgba(255,255,255,0.12)" } else { "rgba(255,255,255,0.06)" };
+    ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_stroke_color("rgba(254,255,238,0.20)");
+    let stroke_color = if is_hovered { "rgba(254,255,238,0.40)" } else { "rgba(254,255,238,0.20)" };
+    ctx.set_stroke_color(stroke_color);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("12px sans-serif");
@@ -663,11 +711,14 @@ fn render_skip_link(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
+    hovered_item_id: Option<&str>,
 ) {
     let skip_btn_w = 120.0;
     let skip_btn_h = 24.0;
+    let is_hovered = hovered_item_id == Some("wizard_skip");
+    let link_color = if is_hovered { "rgba(254,255,238,0.70)" } else { "rgba(254,255,238,0.40)" };
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.40)");
+    ctx.set_fill_color(link_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Skip for now", x, *cy + skip_btn_h / 2.0);

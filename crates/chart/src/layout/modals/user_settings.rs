@@ -352,8 +352,12 @@ fn render_general_tab(
 
         // Option: Connected
         let connected_y = cy;
+        let is_connected_hovered = state.hovered_item_id.as_deref() == Some("mode_connected");
         if state.client_mode_connected {
             ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(x - 6.0, connected_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+        } else if is_connected_hovered {
+            ctx.set_fill_color("rgba(255,255,255,0.04)");
             ctx.fill_rounded_rect(x - 6.0, connected_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
         }
 
@@ -392,8 +396,12 @@ fn render_general_tab(
 
         // Option: Standalone
         let standalone_y = cy;
+        let is_standalone_hovered = state.hovered_item_id.as_deref() == Some("mode_standalone");
         if !state.client_mode_connected {
             ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(x - 6.0, standalone_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
+        } else if is_standalone_hovered {
+            ctx.set_fill_color("rgba(255,255,255,0.04)");
             ctx.fill_rounded_rect(x - 6.0, standalone_y - 4.0, available_w + 12.0, mode_row_h, 4.0);
         }
 
@@ -459,7 +467,9 @@ fn render_general_tab(
         let btn_w = available_w.min(180.0);
 
         // "Open Dashboard" button
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        let is_hovered = state.hovered_item_id.as_deref() == Some("open_dashboard");
+        let dash_bg = if is_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+        ctx.set_fill_color(dash_bg);
         ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
@@ -481,9 +491,12 @@ fn render_general_tab(
         cy += btn_h + 8.0;
 
         // "Log Out" button — always shown when logged in (works in any mode)
-        ctx.set_fill_color("rgba(239,83,80,0.15)");
+        let is_logout_hovered = state.hovered_item_id.as_deref() == Some("logout");
+        let logout_bg = if is_logout_hovered { "rgba(239,83,80,0.28)" } else { "rgba(239,83,80,0.15)" };
+        let logout_border = if is_logout_hovered { "rgba(239,83,80,0.75)" } else { "rgba(239,83,80,0.5)" };
+        ctx.set_fill_color(logout_bg);
         ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color("rgba(239,83,80,0.5)");
+        ctx.set_stroke_color(logout_border);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
         ctx.set_font("12px sans-serif");
@@ -512,7 +525,9 @@ fn render_general_tab(
         // "Sign In via Browser" button — works in both modes
         let btn_h = 28.0;
         let btn_w = available_w.min(200.0);
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        let is_signin_hovered = state.hovered_item_id.as_deref() == Some("sign_in");
+        let signin_bg = if is_signin_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+        ctx.set_fill_color(signin_bg);
         ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
         ctx.set_stroke_color(&toolbar_theme.accent);
         ctx.set_stroke_width(1.0);
@@ -604,13 +619,15 @@ fn render_general_tab(
     // "Show Welcome Wizard" debug button
     let btn_h = 24.0;
     let btn_w = available_w.min(180.0);
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    let is_wizard_hovered = state.hovered_item_id.as_deref() == Some("show_wizard");
+    let wizard_bg = if is_wizard_hovered { "rgba(255,255,255,0.10)" } else { &toolbar_theme.item_bg_hover };
+    ctx.set_fill_color(wizard_bg);
     ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(if is_wizard_hovered { "rgba(254,255,238,0.80)" } else { "rgba(254,255,238,0.55)" });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Show Welcome Wizard", x + btn_w / 2.0, cy + btn_h / 2.0);
@@ -779,13 +796,15 @@ fn render_profile_section(
         let btn_y = cy + (header_h - btn_h) / 2.0;
 
         // "Rename" button
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        let is_rename_hovered = state.hovered_item_id.as_deref() == Some("profile_rename");
+        let rename_bg = if is_rename_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+        ctx.set_fill_color(rename_bg);
         ctx.fill_rounded_rect(rename_btn_x, btn_y, btn_w, btn_h, 3.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(rename_btn_x, btn_y, btn_w, btn_h, 3.0);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_fill_color(if is_rename_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Rename", rename_btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
@@ -800,13 +819,15 @@ fn render_profile_section(
         );
 
         // "Avatar" button
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        let is_avatar_hovered = state.hovered_item_id.as_deref() == Some("profile_avatar_toggle");
+        let avatar_bg = if is_avatar_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+        ctx.set_fill_color(avatar_bg);
         ctx.fill_rounded_rect(avatar_btn_x, btn_y, btn_w, btn_h, 3.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(avatar_btn_x, btn_y, btn_w, btn_h, 3.0);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_fill_color(if is_avatar_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Avatar", avatar_btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
@@ -917,13 +938,16 @@ fn render_profile_section(
             // "Switch" button
             let sw_x = x + available_w - switch_btn_w;
             let sw_y = cy + (profile_row_h - 20.0) / 2.0;
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            let switch_hover_id = format!("profile_switch:{}", id);
+            let is_switch_hovered = state.hovered_item_id.as_deref() == Some(switch_hover_id.as_str());
+            let switch_bg = if is_switch_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+            ctx.set_fill_color(switch_bg);
             ctx.fill_rounded_rect(sw_x, sw_y, switch_btn_w, 20.0, 3.0);
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(sw_x, sw_y, switch_btn_w, 20.0, 3.0);
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.7)");
+            ctx.set_fill_color(if is_switch_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Switch", sw_x + switch_btn_w / 2.0, sw_y + 10.0);
@@ -1025,13 +1049,15 @@ fn render_profile_section(
         // "+ New Profile" button
         let new_btn_h = 24.0;
         let new_btn_w = available_w.min(140.0);
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        let is_new_profile_hovered = state.hovered_item_id.as_deref() == Some("profile_new");
+        let new_profile_bg = if is_new_profile_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
+        ctx.set_fill_color(new_profile_bg);
         ctx.fill_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_fill_color(if is_new_profile_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("+ New Profile", x + new_btn_w / 2.0, cy + new_btn_h / 2.0);
@@ -1348,8 +1374,12 @@ fn render_sync_tab(
         let btn_label = if is_syncing { "Syncing\u{2026}" } else { "Sync Now" };
         let btn_disabled = sync_tab_locked || is_syncing;
 
+        let is_sync_now_hovered = !btn_disabled
+            && state.hovered_item_id.as_deref() == Some("force_sync");
         let btn_bg = if btn_disabled {
             "rgba(254,255,238,0.05)"
+        } else if is_sync_now_hovered {
+            "rgba(255,255,255,0.12)"
         } else {
             &toolbar_theme.item_bg_hover
         };

@@ -378,6 +378,19 @@ impl TelemetryShared {
     }
 }
 
+/// Status updates sent from the OAuth device-link poll task to the main thread.
+#[derive(Debug)]
+enum LinkPollStatus {
+    /// Poll responded — waiting for user to click the link.
+    Pending,
+    /// Successfully linked — carry display name and provider.
+    Linked { display_name: String, provider: String },
+    /// Token expired or network error.
+    Expired(String),
+    /// Display the token/URL so the user can see it in the wizard.
+    Init { token: String, link_url: String },
+}
+
 /// Application state — owns all per-window state and the shared render context.
 struct App<'s> {
     render_cx: RenderContext,
@@ -499,6 +512,13 @@ struct App<'s> {
     /// True when `profile.json` did not exist at startup (first-run).
     /// Causes the Welcome Wizard overlay to appear on the first window created.
     is_first_run: bool,
+
+    /// Receiver for status updates from the OAuth link-poll task.
+    ///
+    /// Set when `start_device_auth` spawns a poll loop; `None` when no link
+    /// attempt is in progress.  Drained in `about_to_wait` so the wizard UI
+    /// reflects current polling state.
+    link_poll_rx: Option<tokio::sync::mpsc::UnboundedReceiver<LinkPollStatus>>,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -1953,6 +1973,7 @@ impl App<'_> {
             is_unofficial_build,
             telemetry_shared,
             is_first_run,
+            link_poll_rx: None,
         }
     }
 
@@ -3964,16 +3985,154 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str == "force_sync" {
                         Some(UpdaterCommand::ForceSync)
                     } else if cmd_str == "start_device_auth" {
-                        // No dedicated device-auth flow yet — open browser for sign-in.
-                        eprintln!("[App] start_device_auth requested — opening browser login");
+                        // OAuth device-link flow:
+                        // 1. POST /api/auth/link/init  → get token + link_url
+                        // 2. Open link_url in browser
+                        // 3. Poll /api/auth/link/poll?token=... every 2 s
+                        // 4. Send status updates via an mpsc channel to about_to_wait
+                        eprintln!("[App] start_device_auth requested — starting link flow");
+
+                        let profile_id = self.user_manager.profile.profile_id.clone();
+                        let device_name = self.app_state.device_name.clone();
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<LinkPollStatus>();
+                        self.link_poll_rx = Some(rx);
+
+                        // Update wizard UI immediately to show "Connecting…"
                         for pw in self.windows.values_mut() {
-                            pw.chart.pending_open_url =
-                                Some("https://chart.example/login".to_string());
-                            pw.chart.panel_app.user_settings_state.wizard_device_code =
-                                "BROWSER".to_string();
                             pw.chart.panel_app.user_settings_state.wizard_linking_status =
-                                "Sign in via browser...".to_string();
+                                "Connecting to server\u{2026}".to_string();
                         }
+
+                        tokio::spawn(async move {
+                            let client = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(15))
+                                .build()
+                                .unwrap_or_default();
+
+                            // Step 1: POST /api/auth/link/init
+                            let init_resp = client
+                                .post("https://chart.example/api/auth/link/init")
+                                .json(&serde_json::json!({
+                                    "device_name": device_name,
+                                    "device_id": profile_id,
+                                }))
+                                .send()
+                                .await;
+
+                            let (token, link_url) = match init_resp {
+                                Ok(r) if r.status().is_success() => {
+                                    match r.json::<serde_json::Value>().await {
+                                        Ok(body) => {
+                                            let tok = body["token"].as_str().unwrap_or("").to_string();
+                                            let url = body["link_url"].as_str().unwrap_or("").to_string();
+                                            if tok.is_empty() || url.is_empty() {
+                                                let _ = tx.send(LinkPollStatus::Expired(
+                                                    "Server returned empty token.".to_string(),
+                                                ));
+                                                return;
+                                            }
+                                            (tok, url)
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(LinkPollStatus::Expired(
+                                                format!("Failed to parse server response: {}", e),
+                                            ));
+                                            return;
+                                        }
+                                    }
+                                }
+                                Ok(r) => {
+                                    let status = r.status();
+                                    let _ = tx.send(LinkPollStatus::Expired(
+                                        format!("Server error: {}", status),
+                                    ));
+                                    return;
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(LinkPollStatus::Expired(
+                                        format!("Network error: {}", e),
+                                    ));
+                                    return;
+                                }
+                            };
+
+                            // Step 2: send init data (token + link_url) to UI, open browser
+                            let _ = tx.send(LinkPollStatus::Init {
+                                token: token.clone(),
+                                link_url: link_url.clone(),
+                            });
+
+                            // Step 3: poll every 2 seconds for up to 10 minutes
+                            let deadline = std::time::Instant::now()
+                                + std::time::Duration::from_secs(10 * 60);
+                            loop {
+                                if std::time::Instant::now() >= deadline {
+                                    let _ = tx.send(LinkPollStatus::Expired(
+                                        "Link expired. Try again.".to_string(),
+                                    ));
+                                    return;
+                                }
+
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                                let poll_url = format!(
+                                    "https://chart.example/api/auth/link/poll?token={}",
+                                    token
+                                );
+                                let poll_result = client.get(&poll_url).send().await;
+
+                                match poll_result {
+                                    Ok(r) if r.status().is_success() => {
+                                        match r.json::<serde_json::Value>().await {
+                                            Ok(body) => {
+                                                let status_str = body["status"].as_str().unwrap_or("pending");
+                                                match status_str {
+                                                    "linked" => {
+                                                        let display_name = body["display_name"]
+                                                            .as_str()
+                                                            .unwrap_or("User")
+                                                            .to_string();
+                                                        let provider = body["provider"]
+                                                            .as_str()
+                                                            .unwrap_or("")
+                                                            .to_string();
+                                                        let _ = tx.send(LinkPollStatus::Linked {
+                                                            display_name,
+                                                            provider,
+                                                        });
+                                                        return;
+                                                    }
+                                                    "expired" => {
+                                                        let _ = tx.send(LinkPollStatus::Expired(
+                                                            "Link expired. Try again.".to_string(),
+                                                        ));
+                                                        return;
+                                                    }
+                                                    _ => {
+                                                        // "pending" — send Pending so UI stays updated
+                                                        let _ = tx.send(LinkPollStatus::Pending);
+                                                    }
+                                                }
+                                            }
+                                            Err(_) => {
+                                                let _ = tx.send(LinkPollStatus::Pending);
+                                            }
+                                        }
+                                    }
+                                    Ok(r) if r.status() == 404 => {
+                                        // Token not found or expired
+                                        let _ = tx.send(LinkPollStatus::Expired(
+                                            "Link expired. Try again.".to_string(),
+                                        ));
+                                        return;
+                                    }
+                                    _ => {
+                                        // Network error — keep polling
+                                        let _ = tx.send(LinkPollStatus::Pending);
+                                    }
+                                }
+                            }
+                        });
                         None
                     } else if cmd_str == "resolve_all:keep_local"
                         || cmd_str == "resolve_all:keep_cloud"
@@ -4167,6 +4326,82 @@ impl ApplicationHandler for App<'_> {
                         }
                     }
                 }
+            }
+        }
+
+        // ── Drain link-poll task updates → update wizard UI ──────────────
+        {
+            // Collect all pending messages from the link poll task (non-blocking).
+            let mut link_done = false;
+            if self.link_poll_rx.is_some() {
+                use tokio::sync::mpsc::error::TryRecvError;
+                let mut last_status: Option<LinkPollStatus> = None;
+                loop {
+                    match self.link_poll_rx.as_mut().unwrap().try_recv() {
+                        Ok(status) => { last_status = Some(status); }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            link_done = true;
+                            break;
+                        }
+                    }
+                }
+                if let Some(status) = last_status {
+                    match status {
+                        LinkPollStatus::Init { token, link_url } => {
+                            // Truncate token for display (first 8 chars)
+                            let token_display = if token.len() > 8 {
+                                token[..8].to_string()
+                            } else {
+                                token.clone()
+                            };
+                            for pw in self.windows.values_mut() {
+                                let uss = &mut pw.chart.panel_app.user_settings_state;
+                                uss.wizard_device_code = token_display.clone();
+                                uss.wizard_linking_status =
+                                    "Waiting for confirmation\u{2026}".to_string();
+                                // Open the link URL in the browser
+                                pw.chart.pending_open_url = Some(link_url.clone());
+                            }
+                            eprintln!("[App] link flow: opened {}", link_url);
+                        }
+                        LinkPollStatus::Pending => {
+                            // Keep showing "Waiting…" — no change needed unless UI is stale
+                        }
+                        LinkPollStatus::Linked { display_name, provider } => {
+                            eprintln!("[App] link flow: linked as {} ({})", display_name, provider);
+                            for pw in self.windows.values_mut() {
+                                let uss = &mut pw.chart.panel_app.user_settings_state;
+                                uss.wizard_linking_status = "Linked!".to_string();
+                                uss.is_logged_in = true;
+                                uss.auth_display_name = display_name.clone();
+                                uss.auth_provider = provider.clone();
+                                // Advance wizard on successful link
+                                if uss.show_welcome_wizard && uss.wizard_page == 1 {
+                                    if uss.wizard_e2e_chosen {
+                                        uss.wizard_page = 2;
+                                    } else {
+                                        uss.show_welcome_wizard = false;
+                                        pw.chart.pending_updater_cmd =
+                                            Some("set_connected".to_string());
+                                    }
+                                }
+                            }
+                            link_done = true;
+                        }
+                        LinkPollStatus::Expired(msg) => {
+                            eprintln!("[App] link flow expired: {}", msg);
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.wizard_linking_status =
+                                    msg.clone();
+                            }
+                            link_done = true;
+                        }
+                    }
+                }
+            }
+            if link_done {
+                self.link_poll_rx = None;
             }
         }
 
