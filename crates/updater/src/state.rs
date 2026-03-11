@@ -2,6 +2,43 @@ use tokio::sync::{mpsc, watch};
 use serde::{Serialize, Deserialize};
 
 // =============================================================================
+// Conflict types
+// =============================================================================
+
+/// Describes a conflict between local and cloud versions of an item.
+///
+/// Both sides were modified since the last successful sync.  Resolution is
+/// deferred to the caller (typically presented to the user).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConflict {
+    /// Stable identifier shared by both sides.
+    pub sync_id: String,
+    /// Category of the item: `"preset"`, `"watchlist"`, etc.
+    pub category: String,
+    /// Human-readable name.
+    pub name: String,
+    /// Unix timestamp (milliseconds) of the local version.
+    pub local_modified: i64,
+    /// Unix timestamp (milliseconds) of the cloud version.
+    pub cloud_modified: i64,
+    /// Checksum of the local version.
+    pub local_checksum: String,
+    /// Checksum of the cloud version.
+    pub cloud_checksum: String,
+    /// Full local content — stored so we can push it back if user picks KeepLocal.
+    pub local_content: String,
+}
+
+/// How the user wants to resolve a sync conflict for a single item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConflictResolution {
+    /// Discard the cloud version; push local version to the server.
+    KeepLocal,
+    /// Discard the local version; write cloud version to disk.
+    KeepCloud,
+}
+
+// =============================================================================
 // BuildAttestation
 // =============================================================================
 
@@ -107,6 +144,29 @@ pub enum UpdaterCommand {
     /// Mirrors `UserProfile.sync_state.enabled` so the updater loop does not
     /// need a channel back to main to query the profile on every tick.
     SetSyncEnabled(bool),
+    /// Set or clear the in-memory E2E encryption key.
+    ///
+    /// Pass `Some(key)` after the user sets up E2E or re-enters their passphrase.
+    /// Pass `None` to disable E2E encryption (plaintext sync from now on).
+    /// The key is held in memory only — it is never written to disk.
+    SetE2EKey(Option<[u8; 32]>),
+    /// Re-encrypt all existing cloud data with the current E2E key.
+    ///
+    /// Collects all local sync items and pushes them to the server encrypted,
+    /// regardless of whether the server checksums match.  This is used after
+    /// E2E setup so that previously-plaintext cloud data is replaced with
+    /// ciphertext.  Ignored if E2E key is not set or user is not logged in.
+    ReEncryptAll,
+    /// Resolve a sync conflict for a specific item.
+    ///
+    /// - `KeepLocal`: push the local version to the server.
+    /// - `KeepCloud`: write the server version to disk.
+    ///
+    /// If `sync_id` is not in the pending conflicts list the command is a no-op.
+    ResolveConflict {
+        sync_id: String,
+        resolution: ConflictResolution,
+    },
     /// Shut down the updater background task cleanly.
     ///
     /// After receiving this command the loop exits; no further network calls
@@ -137,6 +197,11 @@ pub enum SyncStatus {
     /// Sync has never run and the server has cloud data — user should be
     /// prompted to decide whether to download it.
     NeedsSetup,
+    /// One or more items have conflicting changes on both local and cloud.
+    ///
+    /// The UI should surface a conflict resolution modal.  Items not listed
+    /// here were synced successfully; they do **not** need re-resolution.
+    ConflictsDetected(Vec<SyncConflict>),
 }
 
 /// Handle for the UI to interact with the updater.

@@ -11,9 +11,10 @@
 
 use std::path::Path;
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use crate::state::BuildAttestation;
+use crate::state::{BuildAttestation, SyncConflict};
 
 // =============================================================================
 // Sync item types
@@ -86,41 +87,22 @@ pub struct PushResponse {
 }
 
 // =============================================================================
-// Conflict detection
-// =============================================================================
-
-/// Describes a conflict between local and cloud versions of an item.
-///
-/// Both sides were modified since the last successful sync.  Resolution is
-/// deferred to the caller (typically presented to the user).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncConflict {
-    pub sync_id: String,
-    pub category: String,
-    pub name: String,
-    /// Unix timestamp (milliseconds) of the local version.
-    pub local_modified: i64,
-    /// Unix timestamp (milliseconds) of the cloud version.
-    pub cloud_modified: i64,
-    /// Checksum of the local version.
-    pub local_checksum: String,
-    /// Checksum of the cloud version.
-    pub cloud_checksum: String,
-}
-
-// =============================================================================
-// Sync action result
+// Sync cycle result
 // =============================================================================
 
 /// Outcome of a completed sync cycle.
 #[derive(Debug, Clone)]
-pub enum SyncAction {
-    /// No conflicts — sync completed silently.
-    Completed { pushed: usize, pulled: usize },
-    /// One or more items conflict and need user resolution.
-    ConflictsDetected(Vec<SyncConflict>),
-    /// A non-fatal error occurred; app continues normally.
-    Error(String),
+pub struct SyncCycleResult {
+    /// Number of local items pushed to the server.
+    pub pushed: usize,
+    /// Number of server items pulled and written to disk.
+    pub pulled: usize,
+    /// Updated sync state (new timestamp, etc.).
+    pub new_state: SyncState,
+    /// Items that could not be auto-resolved — both local and server copies
+    /// differ from the last successfully synced checksum.  These items are
+    /// **not** pushed or pulled; the caller must surface them to the user.
+    pub conflicts: Vec<SyncConflict>,
 }
 
 // =============================================================================
@@ -185,6 +167,29 @@ pub struct SyncState {
     /// Per-category sync preferences — which data categories to include in sync.
     #[serde(default)]
     pub category_prefs: SyncCategoryPrefs,
+    /// Checksums of items as they were after the last successful push/pull.
+    ///
+    /// Key: `sync_id`  (e.g. `"preset_my_chart"`).
+    /// Value: SHA-256 hex of the item content at the time it was last
+    /// successfully synced to *or* from the server.
+    ///
+    /// Used for true conflict detection: an item is a conflict if *both*
+    /// the local checksum *and* the server checksum differ from this value —
+    /// meaning both sides have been independently modified since the last sync.
+    #[serde(default)]
+    pub last_synced_checksums: std::collections::HashMap<String, String>,
+    /// Set of `sync_id` strings that have been successfully pushed to the server
+    /// at least once during this session.
+    ///
+    /// Used for tombstone detection: on each cycle, items present in this set
+    /// but absent from the current local item list are treated as locally
+    /// deleted.  A tombstone (`deleted: true`, `content: ""`) is pushed for
+    /// each such item so the server marks it as deleted.
+    ///
+    /// This set is seeded from the persisted profile on startup and updated
+    /// after each successful push.
+    #[serde(default)]
+    pub synced_items: std::collections::HashSet<String>,
 }
 
 // =============================================================================
@@ -586,16 +591,18 @@ pub async fn pull_all(
 /// Algorithm:
 /// 1. Collect local items from disk (checksums computed on the fly).
 /// 2. Fetch server change metadata since `state.last_sync_timestamp`.
-/// 3. Build index of server items (sync_id → meta).
-/// 4. For each local item:
-///    - If the server has it with the same checksum → already in sync, skip.
-///    - Otherwise → push to server.
-/// 5. For each server item not present locally (or with a different checksum):
-///    - If the server item is deleted → skip (tombstone, no local action needed).
-///    - Otherwise → pull its full content and write to disk.
-///    - Conflict (both sides differ): server wins (last-writer-wins semantics).
-/// 6. Update `last_sync_timestamp` to now.
-/// 7. Return `(pushed_count, pulled_count, new_state)`.
+/// 3. Build indices for local and server items.
+/// 4. For each item that exists on both sides with differing checksums:
+///    - Compare both checksums against the last-synced checkpoint stored in
+///      `state.last_synced_checksums`.
+///    - If only the server side changed → pull (safe auto-merge).
+///    - If only the local side changed → push (safe auto-merge).
+///    - If **both** sides changed → true conflict; added to the conflicts vec,
+///      not pushed or pulled.  Caller surfaces it to the user.
+/// 5. Items only on one side are pushed/pulled normally.
+/// 6. Update `last_sync_timestamp` and `last_synced_checksums` for all
+///    successfully synced items.
+/// 7. Return `SyncCycleResult` which includes the conflicts vec.
 pub async fn do_sync_cycle(
     client: &reqwest::Client,
     server_url: &str,
@@ -603,7 +610,8 @@ pub async fn do_sync_cycle(
     state: &SyncState,
     data_dir: &Path,
     build_attest: &BuildAttestation,
-) -> Result<(usize, usize, SyncState), String> {
+    e2e_key: Option<[u8; 32]>,
+) -> Result<SyncCycleResult, String> {
     // Step 1: collect local items (filtered by per-category preferences).
     let local_items = collect_local_sync_items(data_dir, &state.category_prefs);
 
@@ -612,6 +620,67 @@ pub async fn do_sync_cycle(
         .iter()
         .map(|i| (i.sync_id.as_str(), i))
         .collect();
+
+    // Step 1b: tombstone detection — items previously pushed but no longer on disk.
+    //
+    // For each sync_id in `state.synced_items` that is absent from the current
+    // local index, we synthesise a tombstone SyncItem (`deleted: true`, `content: ""`).
+    // The server validates checksum == SHA-256(content), so we compute that
+    // for the empty string.  These tombstones are prepended to the push list.
+    let tombstone_checksum = sha256_hex("");
+    let now_for_tombstones = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    // Use 1 if clock is broken (server rejects modified_at <= 0).
+    let now_for_tombstones = if now_for_tombstones > 0 { now_for_tombstones } else { 1 };
+
+    let mut tombstones: Vec<SyncItem> = state
+        .synced_items
+        .iter()
+        .filter(|id| !local_index.contains_key(id.as_str()))
+        .map(|id| {
+            // Derive name and category from the sync_id so the server can
+            // identify and tombstone the correct row.  sync_id format examples:
+            //   "preset_my_chart"            → category="preset", name="my_chart"
+            //   "template_indicator_rsi"     → category="template_indicator", name="rsi"
+            //   "template_primitive_fib"     → category="template_primitive", name="fib"
+            //   "watchlists"                 → category="watchlist", name="watchlists"
+            //   "settings_snapshots"         → category="settings_snapshot", name="settings_snapshots"
+            let (category, name) = if id == "watchlists" {
+                ("watchlist".to_string(), "watchlists".to_string())
+            } else if id == "settings_snapshots" {
+                ("settings_snapshot".to_string(), "settings_snapshots".to_string())
+            } else if let Some(rest) = id.strip_prefix("template_indicator_") {
+                ("template_indicator".to_string(), rest.to_string())
+            } else if let Some(rest) = id.strip_prefix("template_primitive_") {
+                ("template_primitive".to_string(), rest.to_string())
+            } else if let Some(rest) = id.strip_prefix("preset_") {
+                ("preset".to_string(), rest.to_string())
+            } else {
+                // Unknown format — use sync_id as both category and name; server
+                // will reject with an unknown-category error which is logged below.
+                (id.clone(), id.clone())
+            };
+            SyncItem {
+                sync_id: id.clone(),
+                category,
+                name,
+                content: String::new(),
+                checksum: tombstone_checksum.clone(),
+                modified_at: now_for_tombstones,
+                deleted: true,
+            }
+        })
+        .collect();
+
+    if !tombstones.is_empty() {
+        log::debug!(
+            "[CloudSync] {} tombstone(s) detected for locally deleted items: {:?}",
+            tombstones.len(),
+            tombstones.iter().map(|t| t.sync_id.as_str()).collect::<Vec<_>>()
+        );
+    }
 
     // Step 2: fetch server change metadata.
     // On the very first sync (last_sync_timestamp == 0) we fetch everything.
@@ -630,64 +699,140 @@ pub async fn do_sync_cycle(
         .map(|m| (m.sync_id.as_str(), m))
         .collect();
 
-    // Step 4: determine which local items need to be pushed.
+    // Step 4: classify every item into push / pull / conflict / in-sync buckets.
     let mut to_push: Vec<SyncItem> = Vec::new();
+    let mut to_pull_ids: Vec<String> = Vec::new();
+    let mut conflicts: Vec<SyncConflict> = Vec::new();
 
+    // --- Local items: decide push vs conflict ---
     for local in &local_items {
         match server_index.get(local.sync_id.as_str()) {
             Some(server_meta) if !server_meta.deleted && server_meta.checksum == local.checksum => {
-                // Already in sync — skip.
+                // Identical on both sides — already in sync, skip.
                 log::trace!("[CloudSync] In sync: {}", local.sync_id);
             }
             Some(server_meta) if !server_meta.deleted => {
-                // Both sides have it but content differs.
-                // Server wins (last-writer-wins), so do NOT push local.
-                // The server version will be pulled in step 5.
-                log::debug!(
-                    "[CloudSync] Conflict (server wins): {} local_cs={} server_cs={}",
-                    local.sync_id,
-                    &local.checksum[..8],
-                    &server_meta.checksum[..8]
-                );
+                // Both sides have it but content differs — need conflict detection.
+                let last_known = state.last_synced_checksums.get(local.sync_id.as_str());
+
+                let local_changed = last_known.map_or(true, |ck| ck != &local.checksum);
+                let server_changed = last_known.map_or(true, |ck| ck != &server_meta.checksum);
+
+                if local_changed && server_changed {
+                    // True conflict: both sides modified since last sync.
+                    log::debug!(
+                        "[CloudSync] True conflict: {} local_cs={} server_cs={}",
+                        local.sync_id,
+                        &local.checksum[..8.min(local.checksum.len())],
+                        &server_meta.checksum[..8.min(server_meta.checksum.len())]
+                    );
+                    conflicts.push(SyncConflict {
+                        sync_id: local.sync_id.clone(),
+                        category: local.category.clone(),
+                        name: local.name.clone(),
+                        local_modified: local.modified_at,
+                        cloud_modified: server_meta.modified_at,
+                        local_checksum: local.checksum.clone(),
+                        cloud_checksum: server_meta.checksum.clone(),
+                        local_content: local.content.clone(),
+                    });
+                    // Do NOT push or pull this item — leave it for user resolution.
+                } else if local_changed {
+                    // Only local changed — safe to push.
+                    log::debug!("[CloudSync] Local-only change, will push: {}", local.sync_id);
+                    to_push.push(local.clone());
+                } else {
+                    // Only server changed — safe to pull.
+                    log::debug!("[CloudSync] Server-only change, will pull: {}", local.sync_id);
+                    to_pull_ids.push(local.sync_id.clone());
+                }
             }
             _ => {
-                // Server doesn't have it, or it's deleted there — push local.
-                log::debug!("[CloudSync] Will push: {}", local.sync_id);
+                // Server doesn't have it (or it's deleted there) — push local.
+                log::debug!("[CloudSync] New local item, will push: {}", local.sync_id);
                 to_push.push(local.clone());
             }
         }
     }
 
-    // Step 5: determine which server items to pull (not in local, or checksum differs, and not deleted).
-    // We pull everything that changed on the server where local is missing or differs.
-    let mut to_pull_ids: Vec<&str> = Vec::new();
-
+    // --- Server items not present locally → pull ---
     for server_meta in &server_changes {
         if server_meta.deleted {
             // Tombstone — no local write needed.
             continue;
         }
-        match local_index.get(server_meta.sync_id.as_str()) {
-            Some(local) if local.checksum == server_meta.checksum => {
-                // Same content — skip.
-            }
-            _ => {
-                // Missing locally or content differs → pull.
-                log::debug!("[CloudSync] Will pull: {}", server_meta.sync_id);
-                to_pull_ids.push(server_meta.sync_id.as_str());
-            }
+        if local_index.contains_key(server_meta.sync_id.as_str()) {
+            // Already handled above.
+            continue;
         }
+        // Item only on server — pull it.
+        log::debug!("[CloudSync] New server item, will pull: {}", server_meta.sync_id);
+        to_pull_ids.push(server_meta.sync_id.clone());
     }
+
+    // Deduplicate to_pull_ids (shouldn't happen but be safe).
+    to_pull_ids.sort_unstable();
+    to_pull_ids.dedup();
+
+    // Append tombstones for locally deleted items to the push list.
+    // Tombstones have `deleted: true` and empty content; they are never
+    // E2E-encrypted because there is no content to protect.
+    to_push.append(&mut tombstones);
 
     // Execute push.
     let mut pushed_count = 0usize;
+    // Track which sync_ids were successfully pushed so we can update checksum state.
+    let mut pushed_ids: Vec<String> = Vec::new();
+
+    // If E2E is active, produce an encrypted copy of every item to push.
+    // The original `to_push` holds plaintext — we build a parallel `encrypted_push`
+    // that replaces `content` with `base64(nonce || ciphertext)`.  The checksum
+    // stored on the server covers the *ciphertext*, which is fine — it's only used
+    // for change-detection, not integrity verification (the GCM tag handles that).
+    // Tombstones (`deleted: true`) are passed through as-is: their content is empty
+    // and their checksum is already SHA-256(""), so no encryption is needed.
+    let items_to_push: Vec<SyncItem> = if let Some(ref key) = e2e_key {
+        let mut enc_items = Vec::with_capacity(to_push.len());
+        for item in &to_push {
+            if item.deleted {
+                // Pass tombstones through without encryption.
+                enc_items.push(item.clone());
+                continue;
+            }
+            match crate::e2e_crypto::encrypt(key, item.content.as_bytes()) {
+                Ok(ciphertext) => {
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
+                    let enc_checksum = sha256_hex(&encoded);
+                    enc_items.push(SyncItem {
+                        sync_id: item.sync_id.clone(),
+                        category: item.category.clone(),
+                        name: item.name.clone(),
+                        content: encoded,
+                        checksum: enc_checksum,
+                        modified_at: item.modified_at,
+                        deleted: item.deleted,
+                    });
+                }
+                Err(e) => {
+                    log::warn!("[CloudSync] E2E encrypt failed for {}: {} — skipping item", item.sync_id, e);
+                }
+            }
+        }
+        enc_items
+    } else {
+        to_push.clone()
+    };
 
     // Push in batches of 50 (server limit).
-    for batch in to_push.chunks(50) {
+    for batch in items_to_push.chunks(50) {
         match push_items(client, server_url, token, batch, build_attest).await {
             Ok(n) => {
                 pushed_count += n;
                 log::debug!("[CloudSync] Pushed batch: {} item(s)", n);
+                // Record the sync_ids from this batch as successfully pushed.
+                for item in batch {
+                    pushed_ids.push(item.sync_id.clone());
+                }
             }
             Err(e) => {
                 log::warn!("[CloudSync] Push batch failed: {}", e);
@@ -698,6 +843,8 @@ pub async fn do_sync_cycle(
 
     // Execute pull.
     let mut pulled_count = 0usize;
+    // Successfully written items — used to update checksum state.
+    let mut written_items: Vec<SyncItem> = Vec::new();
 
     if !to_pull_ids.is_empty() {
         // Pull all items at once using the full-pull endpoint.
@@ -705,19 +852,54 @@ pub async fn do_sync_cycle(
         match pull_all(client, server_url, token, build_attest).await {
             Ok(all_server_items) => {
                 // Filter to only the items we actually need.
-                let to_write: Vec<SyncItem> = all_server_items
+                let filtered: Vec<SyncItem> = all_server_items
                     .into_iter()
-                    .filter(|item| to_pull_ids.contains(&item.sync_id.as_str()))
+                    .filter(|item| to_pull_ids.contains(&item.sync_id))
                     .collect();
+
+                // If E2E is active, base64-decode then decrypt each item's content
+                // before writing to disk.  Items that fail to decrypt are skipped
+                // with a warning so a single bad blob does not abort the whole pull.
+                let to_write: Vec<SyncItem> = if let Some(ref key) = e2e_key {
+                    let mut dec_items = Vec::with_capacity(filtered.len());
+                    for item in filtered {
+                        match base64::engine::general_purpose::STANDARD.decode(&item.content) {
+                            Ok(ciphertext) => {
+                                match crate::e2e_crypto::decrypt(key, &ciphertext) {
+                                    Ok(plaintext_bytes) => {
+                                        match String::from_utf8(plaintext_bytes) {
+                                            Ok(plaintext) => {
+                                                dec_items.push(SyncItem { content: plaintext, ..item });
+                                            }
+                                            Err(e) => {
+                                                log::warn!("[CloudSync] Decrypted content is not valid UTF-8 for {}: {} — skipping", item.sync_id, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[CloudSync] E2E decrypt failed for {}: {} — skipping", item.sync_id, e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("[CloudSync] Base64 decode failed for {}: {} — skipping", item.sync_id, e);
+                            }
+                        }
+                    }
+                    dec_items
+                } else {
+                    filtered
+                };
 
                 pulled_count = to_write.len();
 
                 if !to_write.is_empty() {
                     if let Err(e) = write_sync_items_to_disk(data_dir, &to_write) {
                         log::warn!("[CloudSync] Failed to write pulled items to disk: {}", e);
-                        // Don't abort — still update the timestamp.
+                        // Don't update checksum state for items that failed to write.
                     } else {
                         log::debug!("[CloudSync] Wrote {} pulled item(s) to disk", pulled_count);
+                        written_items = to_write;
                     }
                 }
             }
@@ -727,11 +909,58 @@ pub async fn do_sync_cycle(
         }
     }
 
-    // Step 6: update timestamp.
+    // Step 6: update timestamp, checksum state, and synced_items tracking.
+    //
+    // Only update `last_synced_checksums` for items that were *actually*
+    // successfully synced (pushed or pulled).  Conflicted items are left
+    // untouched so the next cycle still sees them as conflicts.
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+
+    let mut new_checksums = state.last_synced_checksums.clone();
+
+    // Update checksums for pushed items (use plaintext checksum — it is what
+    // was on disk; the server stored the encrypted variant but we compare locally).
+    for item in &to_push {
+        if pushed_ids.contains(&item.sync_id) {
+            if !item.deleted {
+                new_checksums.insert(item.sync_id.clone(), item.checksum.clone());
+            } else {
+                // Tombstone was accepted — remove from checksum tracking too.
+                new_checksums.remove(&item.sync_id);
+            }
+        }
+    }
+
+    // Update checksums for successfully written pulled items.
+    for item in &written_items {
+        // For pulled items, compute the checksum of the plaintext we wrote to disk.
+        let cs = sha256_hex(&item.content);
+        new_checksums.insert(item.sync_id.clone(), cs);
+    }
+
+    // Rebuild synced_items: start from the previous set, apply changes from
+    // this cycle so future cycles can detect newly deleted items.
+    //
+    // Rules:
+    // - Successfully pushed non-tombstone items → add to set (now known to server).
+    // - Successfully pushed tombstone items → remove from set (deleted on server).
+    // - Successfully pulled items → add to set (server has them; also now local).
+    let mut new_synced_items = state.synced_items.clone();
+    for item in &to_push {
+        if pushed_ids.contains(&item.sync_id) {
+            if item.deleted {
+                new_synced_items.remove(&item.sync_id);
+            } else {
+                new_synced_items.insert(item.sync_id.clone());
+            }
+        }
+    }
+    for item in &written_items {
+        new_synced_items.insert(item.sync_id.clone());
+    }
 
     let new_state = SyncState {
         last_sync_timestamp: now_ms,
@@ -739,13 +968,21 @@ pub async fn do_sync_cycle(
         e2e_enabled: state.e2e_enabled,
         e2e_salt: state.e2e_salt.clone(),
         category_prefs: state.category_prefs.clone(),
+        last_synced_checksums: new_checksums,
+        synced_items: new_synced_items,
     };
 
     log::info!(
-        "[CloudSync] Cycle complete: pushed={} pulled={}",
+        "[CloudSync] Cycle complete: pushed={} pulled={} conflicts={}",
         pushed_count,
-        pulled_count
+        pulled_count,
+        conflicts.len()
     );
 
-    Ok((pushed_count, pulled_count, new_state))
+    Ok(SyncCycleResult {
+        pushed: pushed_count,
+        pulled: pulled_count,
+        new_state,
+        conflicts,
+    })
 }

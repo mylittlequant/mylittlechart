@@ -17,7 +17,7 @@ pub mod e2e_crypto;
 pub mod verify;
 pub mod attest;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution};
 
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
@@ -53,12 +53,18 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// `build_attest` carries the compile-time attestation values produced by
 /// `chart-app-vello/build.rs`.  Pass [`BuildAttestation::default`] for dev
 /// builds or when running without the binary crate context.
+///
+/// `initial_synced_items` seeds the tombstone-detection set from the persisted
+/// profile so that items deleted between sessions are still tombstoned on the
+/// next sync.  Pass an empty `HashSet` if the profile does not yet have this
+/// data (first run or older profile).
 pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
     connected: bool,
     telemetry_enabled: bool,
     sync_enabled: bool,
+    initial_synced_items: std::collections::HashSet<String>,
     data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
 ) -> UpdaterHandle {
@@ -89,7 +95,7 @@ pub fn start(
         sync_status_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, data_dir, build_attest));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, data_dir, build_attest));
 
     handle
 }
@@ -111,6 +117,7 @@ async fn updater_loop(
     mut connected: bool,
     mut telemetry_enabled: bool,
     sync_enabled_init: bool,
+    initial_synced_items: std::collections::HashSet<String>,
     data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
 ) {
@@ -127,10 +134,26 @@ async fn updater_loop(
     // The authoritative state is owned by main.rs (in UserProfile); this copy
     // lets the updater loop track the last-sync timestamp without needing a
     // channel back to main.rs on every tick.
+    //
+    // `synced_items` is seeded from the persisted profile so tombstone detection
+    // works across restarts: if an item was pushed last session and is gone now,
+    // the next cycle will detect it and push a tombstone.
     let mut sync_state = cloud_sync::SyncState {
         enabled: sync_enabled_init,
+        synced_items: initial_synced_items,
         ..cloud_sync::SyncState::default()
     };
+
+    // In-memory E2E key — set via SetE2EKey command when the user sets up or
+    // unlocks E2E encryption.  Never written to disk.
+    let mut e2e_key: Option<[u8; 32]> = None;
+
+    // Pending conflict map: sync_id → SyncConflict.
+    //
+    // Populated whenever a sync cycle returns conflicts.  Entries are removed
+    // when the user resolves them via UpdaterCommand::ResolveConflict.
+    let mut pending_conflicts: std::collections::HashMap<String, state::SyncConflict> =
+        std::collections::HashMap::new();
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -185,7 +208,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
                         }
                     }
                 }
@@ -248,7 +271,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -282,7 +305,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts).await;
                                 }
                             }
                         }
@@ -296,6 +319,181 @@ async fn updater_loop(
                     state::UpdaterCommand::SetSyncEnabled(enabled) => {
                         sync_state.enabled = enabled;
                         log::info!("[Updater] Cloud sync enabled: {}", sync_state.enabled);
+                    }
+                    state::UpdaterCommand::SetE2EKey(key) => {
+                        e2e_key = key;
+                        log::info!("[Updater] E2E key updated: {}", if e2e_key.is_some() { "set" } else { "cleared" });
+                    }
+                    state::UpdaterCommand::ReEncryptAll => {
+                        if !connected {
+                            log::warn!("[Updater] ReEncryptAll ignored — running in standalone mode");
+                        } else if e2e_key.is_none() {
+                            log::warn!("[Updater] ReEncryptAll ignored — no E2E key set");
+                        } else {
+                            let token = token_store::load_token();
+                            if let Some(ref td) = token {
+                                log::info!("[Updater] Re-encrypting all cloud data with E2E key");
+                                sync_status_tx.send_replace(state::SyncStatus::Syncing);
+                                match do_re_encrypt_all(&http_client, UPDATE_SERVER, &td.token, &sync_state, &data_dir, &build_attest, e2e_key).await {
+                                    Ok(pushed) => {
+                                        log::info!("[Updater] ReEncryptAll complete: {} item(s) re-pushed", pushed);
+                                        sync_status_tx.send_replace(state::SyncStatus::Completed { pushed, pulled: 0 });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] ReEncryptAll failed: {}", e);
+                                        sync_status_tx.send_replace(state::SyncStatus::Error(e));
+                                    }
+                                }
+                            } else {
+                                log::warn!("[Updater] ReEncryptAll ignored — not logged in");
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::ResolveConflict { sync_id, resolution } => {
+                        let conflict = match pending_conflicts.remove(&sync_id) {
+                            Some(c) => c,
+                            None => {
+                                log::warn!("[Updater] ResolveConflict: unknown sync_id '{}'", sync_id);
+                                continue;
+                            }
+                        };
+
+                        if !connected {
+                            log::warn!("[Updater] ResolveConflict ignored — running in standalone mode");
+                            // Put the conflict back so it isn't silently lost.
+                            pending_conflicts.insert(sync_id, conflict);
+                            continue;
+                        }
+
+                        let token = token_store::load_token();
+                        let td = match token {
+                            Some(ref t) => t,
+                            None => {
+                                log::warn!("[Updater] ResolveConflict ignored — not logged in");
+                                pending_conflicts.insert(sync_id, conflict);
+                                continue;
+                            }
+                        };
+
+                        match resolution {
+                            state::ConflictResolution::KeepLocal => {
+                                // Push local version to the server.
+                                log::info!(
+                                    "[Updater] Resolving conflict '{}' — KeepLocal: pushing local version",
+                                    conflict.sync_id
+                                );
+                                let item = cloud_sync::SyncItem {
+                                    sync_id: conflict.sync_id.clone(),
+                                    category: conflict.category.clone(),
+                                    name: conflict.name.clone(),
+                                    content: conflict.local_content.clone(),
+                                    checksum: conflict.local_checksum.clone(),
+                                    modified_at: conflict.local_modified,
+                                    deleted: false,
+                                };
+                                match cloud_sync::push_items(
+                                    &http_client,
+                                    UPDATE_SERVER,
+                                    &td.token,
+                                    &[item],
+                                    &build_attest,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "[Updater] Conflict resolved (KeepLocal): '{}'",
+                                            conflict.sync_id
+                                        );
+                                        // Update last-synced checksum.
+                                        sync_state
+                                            .last_synced_checksums
+                                            .insert(conflict.sync_id.clone(), conflict.local_checksum.clone());
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[Updater] KeepLocal push failed for '{}': {}",
+                                            conflict.sync_id,
+                                            e
+                                        );
+                                        // Re-queue so user can retry.
+                                        pending_conflicts.insert(conflict.sync_id.clone(), conflict);
+                                    }
+                                }
+                            }
+                            state::ConflictResolution::KeepCloud => {
+                                // Pull full item from server and write to disk.
+                                log::info!(
+                                    "[Updater] Resolving conflict '{}' — KeepCloud: pulling server version",
+                                    conflict.sync_id
+                                );
+                                let conflict_id = conflict.sync_id.clone();
+                                match cloud_sync::pull_all(
+                                    &http_client,
+                                    UPDATE_SERVER,
+                                    &td.token,
+                                    &build_attest,
+                                )
+                                .await
+                                {
+                                    Ok(all_items) => {
+                                        let found: Vec<cloud_sync::SyncItem> = all_items
+                                            .into_iter()
+                                            .filter(|i| i.sync_id == conflict_id)
+                                            .collect();
+
+                                        if found.is_empty() {
+                                            log::warn!(
+                                                "[Updater] KeepCloud: server item '{}' not found in pull response",
+                                                conflict_id
+                                            );
+                                        } else {
+                                            match cloud_sync::write_sync_items_to_disk(
+                                                &data_dir,
+                                                &found,
+                                            ) {
+                                                Ok(()) => {
+                                                    log::info!(
+                                                        "[Updater] Conflict resolved (KeepCloud): '{}'",
+                                                        conflict_id
+                                                    );
+                                                    // Update last-synced checksum to cloud value.
+                                                    sync_state
+                                                        .last_synced_checksums
+                                                        .insert(conflict_id.clone(), conflict.cloud_checksum.clone());
+                                                }
+                                                Err(e) => {
+                                                    log::warn!(
+                                                        "[Updater] KeepCloud write failed for '{}': {}",
+                                                        conflict_id,
+                                                        e
+                                                    );
+                                                    // Re-queue.
+                                                    pending_conflicts.insert(conflict_id, conflict);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[Updater] KeepCloud pull failed for '{}': {}",
+                                            conflict_id,
+                                            e
+                                        );
+                                        pending_conflicts.insert(conflict_id, conflict);
+                                    }
+                                }
+                            }
+                        }
+
+                        // After resolution, re-broadcast remaining conflicts (or Idle if none).
+                        if pending_conflicts.is_empty() {
+                            sync_status_tx.send_replace(state::SyncStatus::Idle);
+                        } else {
+                            let remaining: Vec<state::SyncConflict> =
+                                pending_conflicts.values().cloned().collect();
+                            sync_status_tx.send_replace(state::SyncStatus::ConflictsDetected(remaining));
+                        }
                     }
                     state::UpdaterCommand::Shutdown => {
                         log::info!("Updater shutdown requested");
@@ -312,6 +510,11 @@ async fn updater_loop(
 /// Best-effort: a sync failure is logged and broadcast but never fatal.
 /// The sync state is updated in-place on success so the next cycle is
 /// incremental (only items changed since the last run are fetched).
+///
+/// If conflicts are detected they are inserted into `pending_conflicts` and
+/// broadcast via `SyncStatus::ConflictsDetected`.  Conflicted items are NOT
+/// written to disk or pushed; `last_sync_timestamp` is still updated so that
+/// the non-conflicted items move forward.
 async fn do_cloud_sync(
     client: &reqwest::Client,
     auth_token: &str,
@@ -319,20 +522,120 @@ async fn do_cloud_sync(
     sync_state: &mut cloud_sync::SyncState,
     data_dir: &std::path::Path,
     build_attest: &state::BuildAttestation,
+    e2e_key: Option<[u8; 32]>,
+    pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
 ) {
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
-    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest).await {
-        Ok((pushed, pulled, new_state)) => {
-            log::debug!("[Updater] Cloud sync: pushed={} pulled={}", pushed, pulled);
-            *sync_state = new_state;
-            sync_status_tx.send_replace(state::SyncStatus::Completed { pushed, pulled });
+    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key).await {
+        Ok(result) => {
+            log::debug!(
+                "[Updater] Cloud sync: pushed={} pulled={} conflicts={}",
+                result.pushed, result.pulled, result.conflicts.len()
+            );
+            *sync_state = result.new_state;
+
+            if result.conflicts.is_empty() {
+                sync_status_tx.send_replace(state::SyncStatus::Completed {
+                    pushed: result.pushed,
+                    pulled: result.pulled,
+                });
+            } else {
+                // Merge new conflicts into the pending map.
+                for conflict in &result.conflicts {
+                    log::warn!(
+                        "[Updater] Conflict detected: {} (local_cs={} cloud_cs={})",
+                        conflict.sync_id,
+                        &conflict.local_checksum[..8.min(conflict.local_checksum.len())],
+                        &conflict.cloud_checksum[..8.min(conflict.cloud_checksum.len())]
+                    );
+                    pending_conflicts.insert(conflict.sync_id.clone(), conflict.clone());
+                }
+                let all_pending: Vec<state::SyncConflict> = pending_conflicts.values().cloned().collect();
+                sync_status_tx.send_replace(state::SyncStatus::ConflictsDetected(all_pending));
+            }
         }
         Err(e) => {
             log::warn!("[Updater] Cloud sync failed: {}", e);
             sync_status_tx.send_replace(state::SyncStatus::Error(e));
         }
     }
+}
+
+/// Re-encrypt all local sync items and push them to the server unconditionally.
+///
+/// Unlike the normal sync cycle (which skips items whose server checksum
+/// already matches), this function pushes every local item regardless —
+/// replacing any previously-plaintext server content with ciphertext.
+///
+/// Used immediately after E2E setup to ensure the server holds no plaintext.
+async fn do_re_encrypt_all(
+    client: &reqwest::Client,
+    server_url: &str,
+    auth_token: &str,
+    sync_state: &cloud_sync::SyncState,
+    data_dir: &std::path::Path,
+    build_attest: &state::BuildAttestation,
+    e2e_key: Option<[u8; 32]>,
+) -> Result<usize, String> {
+    use base64::Engine as _;
+
+    let key = match e2e_key {
+        Some(k) => k,
+        None => return Err("no E2E key set".to_string()),
+    };
+
+    // Collect ALL local items (no change-detection, push everything).
+    let local_items = cloud_sync::collect_local_sync_items(data_dir, &sync_state.category_prefs);
+
+    if local_items.is_empty() {
+        log::debug!("[Updater] ReEncryptAll: no local items to push");
+        return Ok(0);
+    }
+
+    // Encrypt every item.
+    let mut encrypted_items = Vec::with_capacity(local_items.len());
+    for item in &local_items {
+        match crate::e2e_crypto::encrypt(&key, item.content.as_bytes()) {
+            Ok(ciphertext) => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
+                let enc_checksum = {
+                    use sha2::{Digest, Sha256};
+                    let mut h = Sha256::new();
+                    h.update(encoded.as_bytes());
+                    format!("{:x}", h.finalize())
+                };
+                encrypted_items.push(cloud_sync::SyncItem {
+                    sync_id: item.sync_id.clone(),
+                    category: item.category.clone(),
+                    name: item.name.clone(),
+                    content: encoded,
+                    checksum: enc_checksum,
+                    modified_at: item.modified_at,
+                    deleted: item.deleted,
+                });
+            }
+            Err(e) => {
+                log::warn!("[Updater] ReEncryptAll: encrypt failed for {}: {} — skipping", item.sync_id, e);
+            }
+        }
+    }
+
+    // Push in batches of 50.
+    let mut total_pushed = 0usize;
+    for batch in encrypted_items.chunks(50) {
+        match cloud_sync::push_items(client, server_url, auth_token, batch, build_attest).await {
+            Ok(n) => {
+                total_pushed += n;
+                log::debug!("[Updater] ReEncryptAll batch pushed: {} item(s)", n);
+            }
+            Err(e) => {
+                log::warn!("[Updater] ReEncryptAll batch push failed: {}", e);
+            }
+        }
+    }
+
+    Ok(total_pushed)
 }
 
 /// Fetch key hashes from the server and broadcast them via the watch channel.
