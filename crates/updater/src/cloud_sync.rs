@@ -384,39 +384,70 @@ fn cleanup_old_backups(backup_dir: &Path, original_name: &str, keep: usize) -> s
 /// are created as needed.  Unknown categories are logged and skipped rather
 /// than returning an error, so a single unrecognised item does not abort the
 /// whole write pass.
+///
+/// Each item's content is verified against its `checksum` field before writing.
+/// Items whose checksum does not match are skipped with a warning — this
+/// prevents corrupted server data from being persisted locally.
+///
+/// Writes are performed atomically via a `.tmp` side-file that is renamed into
+/// place after a successful `write`, so a crash mid-write cannot produce a
+/// half-written file.
 pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io::Result<()> {
     for item in items {
+        // N10: Verify checksum before writing — skip corrupted items.
+        let actual_checksum = sha256_hex(&item.content);
+        if actual_checksum != item.checksum {
+            log::warn!(
+                "[CloudSync] Checksum mismatch for '{}' (category='{}') — expected {} got {} — skipping write",
+                item.sync_id,
+                item.category,
+                item.checksum,
+                actual_checksum
+            );
+            continue;
+        }
+
         match item.category.as_str() {
             "watchlist" => {
                 let target = data_dir.join("watchlists.json");
                 backup_file(&target)?;
-                std::fs::write(target, &item.content)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
             }
             "settings_snapshot" => {
                 let target = data_dir.join("settings_snapshots.json");
                 backup_file(&target)?;
-                std::fs::write(target, &item.content)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
             }
             "preset" => {
                 let dir = data_dir.join("presets");
                 std::fs::create_dir_all(&dir)?;
                 let target = dir.join(format!("{}.json", item.name));
                 backup_file(&target)?;
-                std::fs::write(target, &item.content)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
             }
             "template_primitive" => {
                 let dir = data_dir.join("templates").join("primitives");
                 std::fs::create_dir_all(&dir)?;
                 let target = dir.join(format!("{}.json", item.name));
                 backup_file(&target)?;
-                std::fs::write(target, &item.content)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
             }
             "template_indicator" => {
                 let dir = data_dir.join("templates").join("indicators");
                 std::fs::create_dir_all(&dir)?;
                 let target = dir.join(format!("{}.json", item.name));
                 backup_file(&target)?;
-                std::fs::write(target, &item.content)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
             }
             other => {
                 log::warn!("[CloudSync] Unknown sync category '{}' — skipping write", other);
@@ -466,13 +497,17 @@ pub async fn check_status(
 /// Pass `since = 0` to receive metadata for all items (full catalogue).
 /// The returned list may include items marked `deleted = true`; callers
 /// should handle soft-deletes when they write to local storage.
+///
+/// Returns `(items, server_timestamp)` where `server_timestamp` is the
+/// authoritative server-side timestamp for this response (milliseconds).
+/// Falls back to `0` if the server does not include a timestamp field.
 pub async fn fetch_changes(
     client: &reqwest::Client,
     server_url: &str,
     token: &str,
     since: i64,
     build_attest: &BuildAttestation,
-) -> Result<Vec<SyncItemMeta>, String> {
+) -> Result<(Vec<SyncItemMeta>, i64), String> {
     let builder = client
         .get(format!("{}/api/sync/changes?since={}", server_url, since))
         .bearer_auth(token)
@@ -492,6 +527,8 @@ pub async fn fetch_changes(
     #[derive(Deserialize)]
     struct Resp {
         items: Vec<SyncItemMeta>,
+        #[serde(default)]
+        server_timestamp: i64,
     }
 
     let data: Resp = resp
@@ -499,7 +536,7 @@ pub async fn fetch_changes(
         .await
         .map_err(|e| format!("sync changes parse: {}", e))?;
 
-    Ok(data.items)
+    Ok((data.items, data.server_timestamp))
 }
 
 /// Push a batch of items to the server.
@@ -684,7 +721,7 @@ pub async fn do_sync_cycle(
 
     // Step 2: fetch server change metadata.
     // On the very first sync (last_sync_timestamp == 0) we fetch everything.
-    let server_changes = fetch_changes(client, server_url, token, state.last_sync_timestamp, build_attest).await?;
+    let (server_changes, server_timestamp) = fetch_changes(client, server_url, token, state.last_sync_timestamp, build_attest).await?;
 
     log::debug!(
         "[CloudSync] Cycle start: {} local item(s), {} server change(s) since ts={}",
@@ -894,13 +931,10 @@ pub async fn do_sync_cycle(
                 pulled_count = to_write.len();
 
                 if !to_write.is_empty() {
-                    if let Err(e) = write_sync_items_to_disk(data_dir, &to_write) {
-                        log::warn!("[CloudSync] Failed to write pulled items to disk: {}", e);
-                        // Don't update checksum state for items that failed to write.
-                    } else {
-                        log::debug!("[CloudSync] Wrote {} pulled item(s) to disk", pulled_count);
-                        written_items = to_write;
-                    }
+                    write_sync_items_to_disk(data_dir, &to_write)
+                        .map_err(|e| format!("write pulled items to disk: {}", e))?;
+                    log::debug!("[CloudSync] Wrote {} pulled item(s) to disk", pulled_count);
+                    written_items = to_write;
                 }
             }
             Err(e) => {
@@ -914,10 +948,17 @@ pub async fn do_sync_cycle(
     // Only update `last_synced_checksums` for items that were *actually*
     // successfully synced (pushed or pulled).  Conflicted items are left
     // untouched so the next cycle still sees them as conflicts.
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
+    //
+    // Use the server's authoritative timestamp when available (> 0); fall back
+    // to local clock only when the server did not supply one (older server build).
+    let sync_timestamp = if server_timestamp > 0 {
+        server_timestamp
+    } else {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+    };
 
     let mut new_checksums = state.last_synced_checksums.clone();
 
@@ -963,7 +1004,7 @@ pub async fn do_sync_cycle(
     }
 
     let new_state = SyncState {
-        last_sync_timestamp: now_ms,
+        last_sync_timestamp: sync_timestamp,
         enabled: state.enabled,
         e2e_enabled: state.e2e_enabled,
         e2e_salt: state.e2e_salt.clone(),

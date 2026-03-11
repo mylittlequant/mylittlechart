@@ -515,6 +515,12 @@ async fn updater_loop(
 /// broadcast via `SyncStatus::ConflictsDetected`.  Conflicted items are NOT
 /// written to disk or pushed; `last_sync_timestamp` is still updated so that
 /// the non-conflicted items move forward.
+///
+/// When this is the very first sync attempt (`last_sync_timestamp == 0`) and
+/// the server already holds data for this user, the status is set to
+/// `SyncStatus::NeedsSetup` so the UI can prompt the user before overwriting
+/// local data.  The caller should re-invoke this function (or let the periodic
+/// timer do it) once the user has decided.
 async fn do_cloud_sync(
     client: &reqwest::Client,
     auth_token: &str,
@@ -525,6 +531,42 @@ async fn do_cloud_sync(
     e2e_key: Option<[u8; 32]>,
     pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
 ) {
+    // On the very first sync attempt, check whether the server already has
+    // data.  If it does, emit NeedsSetup so the UI can prompt the user
+    // instead of silently pulling and potentially overwriting local data.
+    if sync_state.last_sync_timestamp == 0 {
+        match cloud_sync::check_status(client, UPDATE_SERVER, auth_token, build_attest).await {
+            Ok(server_status) if server_status.has_cloud_data => {
+                log::info!(
+                    "[Updater] First sync: server has {} item(s) — emitting NeedsSetup",
+                    server_status.item_count
+                );
+                sync_status_tx.send_replace(state::SyncStatus::NeedsSetup);
+                // Do not proceed with the full sync cycle yet; wait for the
+                // user to acknowledge via the UI.  The periodic timer will
+                // call us again; once the user confirms, the caller should
+                // advance last_sync_timestamp or the UI should trigger a
+                // ForceSync to continue.
+                return;
+            }
+            Ok(_) => {
+                // Server has no data — safe to proceed with the normal cycle
+                // (we will push local items on first sync).
+                log::debug!("[Updater] First sync: server is empty — proceeding with normal push");
+            }
+            Err(e) => {
+                // Could not reach the server.  Emit an error and bail out;
+                // the loop will retry on the next periodic tick.
+                log::warn!("[Updater] First sync status check failed: {}", e);
+                sync_status_tx.send_replace(state::SyncStatus::Error(format!(
+                    "Sync unavailable: {}",
+                    e
+                )));
+                return;
+            }
+        }
+    }
+
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
     match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key).await {
@@ -556,6 +598,10 @@ async fn do_cloud_sync(
             }
         }
         Err(e) => {
+            // Network error or server-side failure.  Log it and broadcast the
+            // error status, but do NOT update sync_state — the next periodic
+            // tick will retry from the same checkpoint.  The loop itself
+            // continues normally; this function just returns here.
             log::warn!("[Updater] Cloud sync failed: {}", e);
             sync_status_tx.send_replace(state::SyncStatus::Error(e));
         }
