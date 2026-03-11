@@ -3056,6 +3056,29 @@ impl ChartPanelApp {
             ));
         }
 
+        // Welcome Wizard — rendered on top of everything when active.
+        // This is shown on first launch (no profile.json existed at startup).
+        // It is non-closeable: the user must pick a mode to proceed.
+        if self.user_settings_state.show_welcome_wizard {
+            use crate::layout::modals::welcome_wizard::render_welcome_wizard;
+            let text_color = &toolbar_theme.item_text.clone();
+            if result.user_settings.is_none() {
+                result.user_settings = Some(Default::default());
+            }
+            if let Some(ref mut ws_result) = result.user_settings {
+                render_welcome_wizard(
+                    ctx,
+                    modal_layout.prim_screen_w,
+                    modal_layout.prim_screen_h,
+                    &self.user_settings_state,
+                    text_color,
+                    toolbar_theme,
+                    input_coordinator,
+                    ws_result,
+                );
+            }
+        }
+
         result
     }
 

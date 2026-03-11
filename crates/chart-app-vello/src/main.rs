@@ -495,6 +495,10 @@ struct App<'s> {
     /// Always false in standalone builds (no server connection anyway).
     #[cfg(all(feature = "updater", not(feature = "standalone")))]
     is_unofficial_build: bool,
+
+    /// True when `profile.json` did not exist at startup (first-run).
+    /// Causes the Welcome Wizard overlay to appear on the first window created.
+    is_first_run: bool,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -1630,6 +1634,7 @@ impl App<'_> {
         profile: zengeld_chart::UserProfile,
         user_manager: zengeld_chart::UserManager,
         app_connector_ready_rx: live_data::ConnectorReadyReceiver,
+        is_first_run: bool,
     ) -> Self {
         let app_state = AppState::from_profile(&profile, user_manager.presets.clone(), user_manager.snapshots.clone(), user_manager.template_manager.clone());
 
@@ -1947,6 +1952,7 @@ impl App<'_> {
             #[cfg(all(feature = "updater", not(feature = "standalone")))]
             is_unofficial_build,
             telemetry_shared,
+            is_first_run,
         }
     }
 
@@ -2111,6 +2117,12 @@ impl App<'_> {
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
         {
             chart.panel_app.user_settings_state.is_unofficial_build = self.is_unofficial_build;
+        }
+
+        // Show the welcome wizard on the first window when this is a first-run launch.
+        // The wizard is non-closeable until the user makes a mode choice.
+        if self.is_first_run {
+            chart.panel_app.user_settings_state.show_welcome_wizard = true;
         }
 
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
@@ -5458,6 +5470,16 @@ fn main() {
     let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new();
     let bridge = std::sync::Arc::new(bridge);
 
+    // Detect first-run BEFORE loading the user manager.
+    // A missing `profile.json` means this is the first launch — show the welcome wizard.
+    let is_first_run = {
+        let profile_path = zengeld_chart::get_user_data_dir().join("profile.json");
+        !profile_path.exists()
+    };
+    if is_first_run {
+        eprintln!("[App] first-run detected — welcome wizard will be shown");
+    }
+
     // Load UserManager (profile + templates + presets + snapshots) once at startup.
     // All windows share this loaded state — no per-window disk reads.
     let mut user_manager = zengeld_chart::UserManager::load();
@@ -5471,6 +5493,6 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx);
+    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx, is_first_run);
     event_loop.run_app(&mut app).expect("Event loop error");
 }

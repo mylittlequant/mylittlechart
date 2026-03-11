@@ -3306,6 +3306,18 @@ pub struct UserSettingsState {
     pub e2e_restore_mode: bool,
     /// Salt hex string fetched from server for E2E restore flow.
     pub e2e_server_salt: String,
+
+    // ── WELCOME WIZARD ──────────────────────────────────────────────────
+    /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
+    pub show_welcome_wizard: bool,
+    /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
+    pub wizard_page: u8,
+    /// 8-char device code for device linking displayed on page 1.
+    pub wizard_device_code: String,
+    /// Status message shown on page 1 while polling for link: "Waiting..." / "Linked as {name}".
+    pub wizard_linking_status: String,
+    /// True if the user selected the E2E option (so page 2 is shown after linking).
+    pub wizard_e2e_chosen: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3359,6 +3371,11 @@ impl Default for UserSettingsState {
             server_has_e2e: false,
             e2e_restore_mode: false,
             e2e_server_salt: String::new(),
+            show_welcome_wizard: false,
+            wizard_page: 0,
+            wizard_device_code: String::new(),
+            wizard_linking_status: String::new(),
+            wizard_e2e_chosen: false,
         }
     }
 }

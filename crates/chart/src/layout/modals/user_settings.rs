@@ -281,7 +281,7 @@ fn render_general_tab(
     if state.sync_transition_pending {
         // ── Confirmation: Standalone → Connected ─────────────────────────────
         cy = render_sync_connect_dialog(
-            ctx, x, cy, available_w, toolbar_theme,
+            ctx, x, cy, available_w, state, toolbar_theme,
             input_coordinator, layer_id, result,
         );
         cy += 16.0;
@@ -848,6 +848,80 @@ fn render_sync_tab(
         cy += btn_h + 8.0;
     }
 
+    // ── Sync Conflicts Banner ─────────────────────────────────────────────────
+    if state.sync_has_conflicts {
+        let banner_h = 72.0;
+        ctx.set_fill_color("rgba(244,205,99,0.07)");
+        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_stroke_color("rgba(244,150,0,0.35)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_fill_color("rgba(244,150,0,0.90)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("SYNC CONFLICTS", x, cy);
+        cy += 16.0;
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.60)");
+        ctx.fill_text("Sync conflicts detected — items need manual resolution.", x, cy);
+        cy += 16.0;
+
+        // Bulk-resolve buttons
+        let half_w = (available_w - 6.0) / 2.0;
+        let btn_h = 24.0;
+
+        // "Keep All Local"
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, half_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, half_w, btn_h, 4.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(effective_text_color);
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text("Keep All Local", x + half_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        let local_rect = uzor::types::Rect::new(x, cy, half_w, btn_h);
+        result.content_items.push(("resolve_all_keep_local".to_string(), WidgetRect::new(x, cy, half_w, btn_h)));
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:resolve_all_keep_local",
+                local_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        // "Keep All Cloud"
+        let cloud_x = x + half_w + 6.0;
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(cloud_x, cy, half_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cloud_x, cy, half_w, btn_h, 4.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(effective_text_color);
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text("Keep All Cloud", cloud_x + half_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        let cloud_rect = uzor::types::Rect::new(cloud_x, cy, half_w, btn_h);
+        result.content_items.push(("resolve_all_keep_cloud".to_string(), WidgetRect::new(cloud_x, cy, half_w, btn_h)));
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:resolve_all_keep_cloud",
+                cloud_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += btn_h + 8.0;
+    }
+
     // ── NeedsSetup Prompt ─────────────────────────────────────────────────────
     if state.sync_needs_setup {
         let box_h = 110.0;
@@ -964,11 +1038,30 @@ fn render_sync_tab(
             ctx.fill_text("E2E Active", x, cy);
             cy += 18.0;
 
-            // Note text
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.35)");
-            ctx.fill_text("Your passphrase is never stored or transmitted. Keep it safe.", x, cy);
-            cy += 18.0;
+            // Zero-Trust Notice — shown when E2E is active
+            {
+                let notice_h = 82.0;
+                ctx.set_fill_color("rgba(244,205,99,0.07)");
+                ctx.fill_rounded_rect(x - 4.0, cy - 2.0, available_w + 8.0, notice_h, 4.0);
+                ctx.set_stroke_color("rgba(244,205,99,0.30)");
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(x - 4.0, cy - 2.0, available_w + 8.0, notice_h, 4.0);
+
+                ctx.set_font("600 11px sans-serif");
+                ctx.set_fill_color("rgba(244,205,99,0.90)");
+                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+                ctx.fill_text("Zero-trust mode active", x, cy + 2.0);
+                cy += 16.0;
+
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.55)");
+                ctx.fill_text("Your data is encrypted before leaving this device.", x, cy + 2.0);
+                cy += 14.0;
+                ctx.fill_text("If you lose your passphrase, cloud data is permanently unrecoverable.", x, cy + 2.0);
+                cy += 14.0;
+                ctx.fill_text("To sync to another device, enter your passphrase in E2E Restore.", x, cy + 2.0);
+                cy += 16.0;
+            }
         } else if state.e2e_restore_mode {
             // ── E2E Restore Flow ──────────────────────────────────────────────
             ctx.set_font("600 11px sans-serif");
@@ -1053,6 +1146,32 @@ fn render_sync_tab(
             }
         } else {
             // ── Normal E2E Setup Flow ─────────────────────────────────────────
+
+            // Zero-Trust Notice — shown when the user has just toggled E2E on (setup mode)
+            {
+                let notice_h = 82.0;
+                ctx.set_fill_color("rgba(244,205,99,0.07)");
+                ctx.fill_rounded_rect(x - 4.0, cy - 2.0, available_w + 8.0, notice_h, 4.0);
+                ctx.set_stroke_color("rgba(244,205,99,0.30)");
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(x - 4.0, cy - 2.0, available_w + 8.0, notice_h, 4.0);
+
+                ctx.set_font("600 11px sans-serif");
+                ctx.set_fill_color("rgba(244,205,99,0.90)");
+                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+                ctx.fill_text("Zero-trust mode active", x, cy + 2.0);
+                cy += 16.0;
+
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.55)");
+                ctx.fill_text("Your data is encrypted before leaving this device.", x, cy + 2.0);
+                cy += 14.0;
+                ctx.fill_text("If you lose your passphrase, cloud data is permanently unrecoverable.", x, cy + 2.0);
+                cy += 14.0;
+                ctx.fill_text("To sync to another device, enter your passphrase in E2E Restore.", x, cy + 2.0);
+                cy += 16.0;
+            }
+
             // Passphrase label
             ctx.set_font("12px sans-serif");
             ctx.set_fill_color(effective_text_color);
@@ -1783,12 +1902,61 @@ fn render_sync_connect_dialog(
     x: f64,
     y: f64,
     available_w: f64,
+    state: &UserSettingsState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) -> f64 {
     let mut cy = y;
+
+    // ── Gate: not logged in ───────────────────────────────────────────────────
+    if !state.is_logged_in {
+        let box_h = 80.0;
+        ctx.set_fill_color("rgba(244,205,99,0.06)");
+        ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, box_h, 6.0);
+        ctx.set_stroke_color("rgba(244,205,99,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, box_h, 6.0);
+
+        ctx.set_font("600 12px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.9)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("CONNECT TO MYLITTLECHART.ORG?", x, cy);
+        cy += 22.0;
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.55)");
+        ctx.fill_text("Link your account first.", x, cy);
+        cy += 14.0;
+        ctx.fill_text("Go to the General tab and sign in with GitHub or Google.", x, cy);
+        cy += 20.0;
+
+        // Cancel button
+        let btn_h = 26.0;
+        ctx.set_fill_color("rgba(239,83,80,0.10)");
+        ctx.fill_rounded_rect(x, cy, available_w, btn_h, 4.0);
+        ctx.set_stroke_color("rgba(239,83,80,0.35)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, available_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(239,83,80,0.8)");
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text("Cancel", x + available_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        result.content_items.push(("sync_cancel".to_string(), WidgetRect::new(x, cy, available_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:sync_cancel",
+            uzor::types::Rect::new(x, cy, available_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h;
+
+        return cy;
+    }
 
     // Dialog box background
     ctx.set_fill_color("rgba(244,205,99,0.06)");
