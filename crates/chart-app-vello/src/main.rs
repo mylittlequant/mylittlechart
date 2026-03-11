@@ -4003,7 +4003,7 @@ impl ApplicationHandler for App<'_> {
                                 "Connecting to server\u{2026}".to_string();
                         }
 
-                        tokio::spawn(async move {
+                        self.bridge.runtime().spawn(async move {
                             let client = reqwest::Client::builder()
                                 .timeout(std::time::Duration::from_secs(15))
                                 .build()
@@ -4205,7 +4205,7 @@ impl ApplicationHandler for App<'_> {
                             // Clone the sender so the async task can trigger re-encryption
                             // once the server has recorded the salt.
                             let cmd_tx_for_spawn = handle.cmd_tx.clone();
-                            tokio::spawn(async move {
+                            self.bridge.runtime().spawn(async move {
                                 match zengeld_updater::e2e_crypto::setup_e2e_on_server(
                                     &client,
                                     &server_url,
