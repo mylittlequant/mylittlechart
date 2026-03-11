@@ -7221,8 +7221,8 @@ impl ChartApp {
                     }
                 }
                 "sign_in" => {
-                    self.pending_open_url = Some("https://chart.example/login".to_string());
-                    eprintln!("[ChartApp] sign_in: opening browser to chart.example/login");
+                    self.pending_updater_cmd = Some("start_device_auth".to_string());
+                    eprintln!("[ChartApp] sign_in: starting device auth link flow");
                 }
                 "open_dashboard" => {
                     self.pending_open_url = Some("https://chart.example/dashboard".to_string());
@@ -7327,9 +7327,9 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: finished, standalone={}", standalone);
                 }
                 "wizard_open_browser" => {
-                    // Open browser for account sign-in
-                    self.pending_open_url = Some("https://chart.example/login".to_string());
-                    eprintln!("[ChartApp] wizard: opening browser to chart.example/login");
+                    // Start device auth link flow (same as sign_in button)
+                    self.pending_updater_cmd = Some("start_device_auth".to_string());
+                    eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
                 "wizard_enable_e2e" => {
                     // User confirmed E2E passphrase — apply mode + E2E and close wizard
