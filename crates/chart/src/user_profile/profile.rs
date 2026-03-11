@@ -229,6 +229,18 @@ pub struct UserProfile {
     pub agent_api_keys: Vec<StoredApiKey>,
 
     // -------------------------------------------------------------------------
+    // Exchange API credentials (keychain-backed)
+    // -------------------------------------------------------------------------
+
+    /// Persisted exchange API key entries.
+    ///
+    /// Each entry holds the public API key and either a plaintext secret
+    /// (legacy) or a [`CredentialRef`] pointing to the OS keychain (preferred).
+    /// An empty vec means no exchange credentials have been saved yet.
+    #[serde(default)]
+    pub exchange_keys: Vec<StoredExchangeKey>,
+
+    // -------------------------------------------------------------------------
     // Connector enable/disable state
     // -------------------------------------------------------------------------
 
@@ -353,6 +365,14 @@ pub struct SyncState {
     /// Per-category sync preferences — which data categories to include in sync.
     #[serde(default)]
     pub category_prefs: SyncCategoryPrefs,
+    /// Set of sync item keys (`"category:sync_id"`) that have been successfully
+    /// pushed to the server at least once.
+    ///
+    /// Used for tombstone detection: if an item disappears from local storage
+    /// but is present in this set, a tombstone (`deleted: true`) is pushed on
+    /// the next sync cycle so the server marks the item as deleted.
+    #[serde(default)]
+    pub synced_items: std::collections::HashSet<String>,
 }
 
 impl UserProfile {
@@ -380,6 +400,7 @@ impl UserProfile {
             server_port: default_server_port(),
             agent_api_key: String::new(),
             agent_api_keys: Vec::new(),
+            exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
             telemetry_enabled: false,
             telemetry: TelemetryData::default(),
@@ -408,6 +429,106 @@ impl Default for UserProfile {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// =============================================================================
+// CredentialRef — pointer to a secret stored in the OS keychain
+// =============================================================================
+
+/// A reference to a secret stored in the OS keychain.
+///
+/// The actual secret value is NEVER written to `profile.json`. Only this
+/// lightweight pointer is persisted. The app resolves the real value at
+/// runtime by calling into the OS keychain (Windows Credential Manager,
+/// macOS Keychain, Linux libsecret).
+///
+/// Key naming conventions:
+/// - Exchange API secrets: `service = "nemo-exchange-{exchange_id}"`,
+///   `username = "{api_key}"` (so multiple accounts per exchange are supported)
+/// - E2E master key:       `service = "nemo-e2e-master"`,
+///   `username = "default"`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CredentialRef {
+    /// Keychain service name (e.g. `"nemo-exchange-binance"`).
+    pub service: String,
+    /// Keychain username / key identifier
+    /// (e.g. the API key string itself, acting as the account name).
+    pub username: String,
+}
+
+impl CredentialRef {
+    /// Construct a new `CredentialRef`.
+    pub fn new(service: impl Into<String>, username: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+            username: username.into(),
+        }
+    }
+
+    /// Convenience constructor for an exchange API secret reference.
+    ///
+    /// `exchange_id` should be the lowercase exchange identifier,
+    /// e.g. `"binance"`, `"bybit"`.
+    /// `api_key` is the public API key string used as the account identifier.
+    pub fn for_exchange_secret(exchange_id: &str, api_key: &str) -> Self {
+        Self::new(format!("nemo-exchange-{}", exchange_id), api_key)
+    }
+
+    /// Convenience constructor for the E2E encryption master key.
+    pub fn for_e2e_master() -> Self {
+        Self::new("nemo-e2e-master", "default")
+    }
+}
+
+// =============================================================================
+// StoredExchangeKey — persisted exchange API key entry (scaffold)
+// =============================================================================
+
+/// Persisted representation of an exchange API key pair.
+///
+/// The `api_secret` field stores the plaintext secret for backward
+/// compatibility. When `keychain_ref` is `Some`, the app MUST read the
+/// secret from the OS keychain instead, and `api_secret` should be an
+/// empty string.
+///
+/// Migration path (future step):
+/// 1. On load: if `api_secret` is non-empty and `keychain_ref` is `None`,
+///    migrate — store to keychain, set `keychain_ref`, clear `api_secret`.
+/// 2. On save: never write `api_secret` when `keychain_ref` is `Some`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredExchangeKey {
+    /// Lowercase exchange identifier (e.g. `"binance"`, `"bybit"`).
+    pub exchange_id: String,
+    /// Human-readable label for this key pair (e.g. `"main account"`).
+    #[serde(default)]
+    pub label: String,
+    /// Public API key (not a secret; safe to store in profile.json).
+    pub api_key: String,
+    /// Plaintext API secret — kept for backward compatibility ONLY.
+    ///
+    /// When `keychain_ref` is `Some` this field MUST be an empty string.
+    /// New code should always prefer `keychain_ref`.
+    #[serde(default)]
+    pub api_secret: String,
+    /// Optional passphrase (OKX, KuCoin style) — plaintext fallback.
+    ///
+    /// When `passphrase_keychain_ref` is `Some` this field MUST be empty.
+    #[serde(default)]
+    pub passphrase: Option<String>,
+    /// Reference to the API secret stored in the OS keychain.
+    /// When present, `api_secret` must be empty and this takes precedence.
+    #[serde(default)]
+    pub keychain_ref: Option<CredentialRef>,
+    /// Reference to the passphrase stored in the OS keychain (OKX/KuCoin).
+    /// When present, `passphrase` must be `None` and this takes precedence.
+    #[serde(default)]
+    pub passphrase_keychain_ref: Option<CredentialRef>,
+    /// Whether to connect to the testnet / sandbox endpoint.
+    #[serde(default)]
+    pub testnet: bool,
+    /// Unix timestamp (seconds) when this entry was created.
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 // =============================================================================

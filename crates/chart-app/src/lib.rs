@@ -5560,6 +5560,7 @@ impl ChartApp {
             server_port: self.panel_app.user_settings_state.server_port,
             agent_api_key: self.panel_app.user_settings_state.api_key.clone(),
             agent_api_keys: existing.agent_api_keys.clone(),
+            exchange_keys: existing.exchange_keys.clone(),
             connector_enabled: self.sidebar_state.connector_enabled.clone(),
             telemetry_enabled: self.panel_app.user_settings_state.telemetry_enabled,
             notification_settings: existing.notification_settings.clone(),
@@ -5577,6 +5578,9 @@ impl ChartApp {
                         templates: ui.sync_templates,
                         settings_snapshots: ui.sync_snapshots,
                     },
+                    // Preserve the synced_items set — it is managed by the updater
+                    // loop and must not be reset when the user changes settings.
+                    synced_items: existing.sync_state.synced_items.clone(),
                 }
             },
         }
