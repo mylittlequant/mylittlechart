@@ -3234,6 +3234,10 @@ pub struct UserSettingsState {
     pub new_key_label_focused: bool,
     /// Scroll state for the registered keys list in the Server tab.
     pub server_keys_scroll: ScrollState,
+    /// Scroll state for the General tab content.
+    pub general_tab_scroll: ScrollState,
+    /// Scroll state for the Sync tab content.
+    pub sync_tab_scroll: ScrollState,
 
     // ── Auth / Account ────────────────────────────────────────────────────────
     /// Whether the user is currently logged in to chart.example.
@@ -3320,6 +3324,8 @@ pub struct UserSettingsState {
     pub wizard_linking_status: String,
     /// True if the user selected the E2E option (so page 2 is shown after linking).
     pub wizard_e2e_chosen: bool,
+    /// True = Standalone mode chosen, false = Connected mode chosen.
+    pub wizard_mode_standalone: bool,
 
     // ── Profile ──────────────────────────────────────────────────────────
     /// Display name of the active profile.
@@ -3364,6 +3370,8 @@ impl Default for UserSettingsState {
             last_created_key: None,
             new_key_label_focused: false,
             server_keys_scroll: ScrollState::default(),
+            general_tab_scroll: ScrollState::default(),
+            sync_tab_scroll: ScrollState::default(),
             is_logged_in: false,
             auth_display_name: String::new(),
             auth_provider: String::new(),
@@ -3399,6 +3407,7 @@ impl Default for UserSettingsState {
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),
             wizard_e2e_chosen: false,
+            wizard_mode_standalone: true,
             profile_display_name: "Default".to_string(),
             profile_avatar: "chart".to_string(),
             profile_id: String::new(),

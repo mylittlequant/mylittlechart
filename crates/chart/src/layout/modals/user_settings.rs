@@ -186,31 +186,61 @@ pub fn render_user_settings_modal(
     ctx.fill_text(state.active_tab.label(), content_x + padding, content_y + padding);
 
     let settings_y = content_y + padding + 30.0;
+    let scroll_viewport_h = modal_h - header_h - padding - 30.0;
+
+    // WidgetTheme used for scrollbar rendering in General / Sync tabs
+    let scroll_widget_theme = WidgetTheme {
+        bg_normal:      toolbar_theme.item_bg_hover.clone(),
+        bg_hover:       toolbar_theme.item_bg_hover.clone(),
+        bg_pressed:     toolbar_theme.item_bg_active.clone(),
+        bg_disabled:    toolbar_theme.item_bg_hover.clone(),
+        text_normal:    toolbar_theme.item_text.clone(),
+        text_hover:     toolbar_theme.item_text_active.clone(),
+        text_disabled:  toolbar_theme.item_text_muted.clone(),
+        border_normal:  toolbar_theme.separator.clone(),
+        border_hover:   toolbar_theme.separator.clone(),
+        border_focused: toolbar_theme.accent.clone(),
+        accent:         toolbar_theme.accent.clone(),
+        accent_hover:   toolbar_theme.accent.clone(),
+        success:        "#26a69a".to_string(),
+        warning:        "#ff9800".to_string(),
+        danger:         "#ef5350".to_string(),
+    };
 
     match state.active_tab {
         UserSettingsTab::General => {
-            render_general_tab(
-                ctx,
+            let viewport_rect = WidgetRect::new(
                 content_x + padding,
                 settings_y,
                 content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_general_tab(
+                ctx,
+                viewport_rect,
                 state,
                 text_color,
                 toolbar_theme,
+                &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
                 &mut result,
             );
         }
         UserSettingsTab::Sync => {
-            render_sync_tab(
-                ctx,
+            let viewport_rect = WidgetRect::new(
                 content_x + padding,
                 settings_y,
                 content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_sync_tab(
+                ctx,
+                viewport_rect,
                 state,
                 text_color,
                 toolbar_theme,
+                &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
                 &mut result,
@@ -258,17 +288,24 @@ pub fn render_user_settings_modal(
 #[allow(clippy::too_many_arguments)]
 fn render_general_tab(
     ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
+    viewport_rect: WidgetRect,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
-    let mut cy = y;
+    let container = ScrollableContainer::new(
+        viewport_rect,
+        &state.general_tab_scroll,
+        None,
+    );
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
 
     // ── Section: PROFILE ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
@@ -402,11 +439,8 @@ fn render_general_tab(
 
     if state.is_logged_in {
         // ── Logged in state ───────────────────────────────────────────────────
-        // Display name — slightly muted when in Standalone mode (info only, no action).
-        let name_alpha = if state.client_mode_connected { "1.0" } else { "0.5" };
-        let name_color = format!("rgba(254,255,238,{})", name_alpha);
         ctx.set_font("700 18px sans-serif");
-        ctx.set_fill_color(name_color.as_str());
+        ctx.set_fill_color(text_color);
         ctx.fill_text(&state.auth_display_name, x, cy);
         cy += 26.0;
 
@@ -421,77 +455,61 @@ fn render_general_tab(
         ctx.fill_text(&provider_text, x, cy);
         cy += 30.0;
 
-        // Only show interactive buttons when in Connected mode.
-        if state.client_mode_connected {
-            // "Open Dashboard" button
-            let btn_h = 28.0;
-            let btn_w = available_w.min(180.0);
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(text_color);
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
-            ctx.set_text_align(TextAlign::Left);
+        let btn_h = 28.0;
+        let btn_w = available_w.min(180.0);
 
-            result.content_items.push(("open_dashboard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-            input_coordinator.register_on_layer(
-                "user_settings:open_dashboard",
-                uzor::types::Rect::new(x, cy, btn_w, btn_h),
-                Sense::CLICK,
-                layer_id,
-            );
-            cy += btn_h + 8.0;
-
-            // "Sign Out" button
-            ctx.set_fill_color("rgba(239,83,80,0.15)");
-            ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-            ctx.set_stroke_color("rgba(239,83,80,0.5)");
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color("#ef5350");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Sign Out", x + btn_w / 2.0, cy + btn_h / 2.0);
-            ctx.set_text_align(TextAlign::Left);
-
-            result.content_items.push(("sign_out".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-            input_coordinator.register_on_layer(
-                "user_settings:sign_out",
-                uzor::types::Rect::new(x, cy, btn_w, btn_h),
-                Sense::CLICK,
-                layer_id,
-            );
-            cy += btn_h + 24.0;
-        } else {
-            // Standalone while logged in — show grayed note
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.35)");
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text("Switch to Connected mode to access account actions.", x, cy);
-            cy += 20.0;
-        }
-    } else if !state.client_mode_connected {
-        // ── Standalone, not logged in ─────────────────────────────────────────
+        // "Open Dashboard" button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.35)");
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Sign in is available in Connected mode.", x, cy);
-        cy += 28.0;
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("open_dashboard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:open_dashboard",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h + 8.0;
+
+        // "Log Out" button — always shown when logged in (works in any mode)
+        ctx.set_fill_color("rgba(239,83,80,0.15)");
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color("rgba(239,83,80,0.5)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#ef5350");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Log Out", x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("logout".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:logout",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+        cy += btn_h + 24.0;
     } else {
-        // ── Connected, not logged in ──────────────────────────────────────────
+        // ── Not logged in — show Sign In button in all modes ──────────────────
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.5)");
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Sign in to sync your settings and link devices.", x, cy);
+        ctx.fill_text("Sign in to link your account.", x, cy);
         cy += 28.0;
 
-        // "Sign In via Browser" button
+        // "Sign In via Browser" button — works in both modes
         let btn_h = 28.0;
         let btn_w = available_w.min(200.0);
         ctx.set_fill_color(&toolbar_theme.item_bg_hover);
@@ -605,7 +623,10 @@ fn render_general_tab(
         Sense::CLICK,
         layer_id,
     );
-    let _ = cy; // suppress unused variable warning
+    cy += btn_h + 8.0;
+
+    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let _scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
 }
 
 // =============================================================================
@@ -1136,17 +1157,24 @@ fn render_checkbox_row(
 #[allow(clippy::too_many_arguments)]
 fn render_sync_tab(
     ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
+    viewport_rect: WidgetRect,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
-    let mut cy = y;
+    let container = ScrollableContainer::new(
+        viewport_rect,
+        &state.sync_tab_scroll,
+        None,
+    );
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
     let section_gap = 20.0;
     let row_gap = 26.0;
 
@@ -1794,7 +1822,9 @@ fn render_sync_tab(
         }
     }
 
-    let _ = cy;
+    cy += 8.0;
+    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let _scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
 }
 
 #[allow(clippy::too_many_arguments)]
