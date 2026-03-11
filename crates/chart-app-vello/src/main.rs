@@ -429,7 +429,12 @@ struct App<'s> {
     active_toasts: Vec<alert_delivery::ToastNotification>,
 
     /// Handle for the OTA updater background task.
+    /// Present only when the `updater` feature is enabled and `standalone` is not.
+    #[cfg(all(feature = "updater", not(feature = "standalone")))]
     updater_handle: Option<zengeld_updater::UpdaterHandle>,
+    /// Stub when updater feature is disabled or standalone mode is active.
+    #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
+    updater_handle: Option<()>,
 
     /// Frame timing — last frame's Instant for FPS calculation.
     last_frame_instant: std::time::Instant,
@@ -1808,6 +1813,9 @@ impl App<'_> {
         let telemetry_shared = std::sync::Arc::new(TelemetryShared::new());
 
         // Start the OTA updater background task.
+        // Disabled entirely when the `standalone` feature is active — standalone
+        // builds have no cloud connection and no update checks by design.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
         let updater_handle = {
             struct AppTelemetry {
                 start_time: std::time::Instant,
@@ -1871,6 +1879,9 @@ impl App<'_> {
                 build_attest,
             ))
         };
+        // No updater when the crate feature is absent, or when standalone mode is active.
+        #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
+        let updater_handle: Option<()> = None;
 
         Self {
             render_cx: RenderContext::new(),
@@ -3068,6 +3079,7 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── OTA updater status check ─────────────────────────────────────────
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
         if let Some(ref handle) = self.updater_handle {
             if handle.status_rx.has_changed().unwrap_or(false) {
                 let status = handle.status_rx.borrow().clone();
@@ -3527,6 +3539,7 @@ impl ApplicationHandler for App<'_> {
                 let _ = tx.send(GpuCommand::Shutdown);
             }
             // Shutdown the updater background task cleanly.
+            #[cfg(all(feature = "updater", not(feature = "standalone")))]
             if let Some(ref handle) = self.updater_handle {
                 let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::Shutdown);
             }
@@ -3769,6 +3782,7 @@ impl ApplicationHandler for App<'_> {
                     self.user_manager.profile.client_mode =
                         zengeld_chart::user_profile::profile::ClientMode::Standalone;
                 }
+                #[cfg(all(feature = "updater", not(feature = "standalone")))]
                 if let Some(ref handle) = self.updater_handle {
                     use zengeld_updater::UpdaterCommand;
                     let command = if cmd_str == "logout" {
@@ -3874,6 +3888,7 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Poll auth_rx → sync to all windows ───────────────────────────
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
         {
             if let Some(ref handle) = self.updater_handle {
                 if handle.auth_rx.has_changed().unwrap_or(false) {
@@ -3929,6 +3944,7 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Poll synced_keys_rx → merge server keys into Agent API registry ─
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
         {
             let should_merge = self.updater_handle
                 .as_ref()
@@ -5256,6 +5272,8 @@ impl ApplicationHandler for App<'_> {
 
 fn main() {
     // OTA: if launched with --wait-pid, wait for old process to exit first.
+    // Disabled in standalone builds — no OTA update process to wait for.
+    #[cfg(all(feature = "updater", not(feature = "standalone")))]
     zengeld_updater::wait_for_parent_exit_if_needed();
 
     println!("chart-app-vello");

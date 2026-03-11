@@ -127,6 +127,12 @@ pub struct SyncCategoryPrefs {
     /// Whether settings snapshots are included in cloud sync.
     #[serde(default = "default_true")]
     pub settings_snapshots: bool,
+    /// Whether the active theme identifier is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub theme: bool,
+    /// Whether notification/alert delivery settings are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub notification_settings: bool,
 }
 
 fn default_true() -> bool { true }
@@ -138,6 +144,8 @@ impl Default for SyncCategoryPrefs {
             watchlists: true,
             templates: true,
             settings_snapshots: true,
+            theme: true,
+            notification_settings: true,
         }
     }
 }
@@ -190,6 +198,16 @@ pub struct SyncState {
     /// after each successful push.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
+    /// When `true` and E2E is enabled, the `name` field of each `SyncItem` is
+    /// also encrypted before being sent to the server.  Encrypted names are
+    /// base64-encoded in the same format as encrypted content so the server
+    /// can store and return them opaquely.
+    ///
+    /// On pull, names are decrypted before the items are written to disk.
+    /// Defaults to `false` (names are sent in plaintext) for backward
+    /// compatibility with existing data.
+    #[serde(default)]
+    pub sync_e2e_encrypt_names: bool,
 }
 
 // =============================================================================
@@ -320,6 +338,40 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
         }
     }
 
+    // Category: "theme" — single value stored in theme.json
+    if category_prefs.theme {
+        let path = data_dir.join("theme.json");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let checksum = sha256_hex(&content);
+            items.push(SyncItem {
+                sync_id: "theme".to_string(),
+                category: "theme".to_string(),
+                name: "active_theme".to_string(),
+                content,
+                checksum,
+                modified_at: file_modified_ms(&path),
+                deleted: false,
+            });
+        }
+    }
+
+    // Category: "notification_settings" — single blob stored in notification_settings.json
+    if category_prefs.notification_settings {
+        let path = data_dir.join("notification_settings.json");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let checksum = sha256_hex(&content);
+            items.push(SyncItem {
+                sync_id: "notification_settings".to_string(),
+                category: "notification_settings".to_string(),
+                name: "notification_settings".to_string(),
+                content,
+                checksum,
+                modified_at: file_modified_ms(&path),
+                deleted: false,
+            });
+        }
+    }
+
     items
 }
 
@@ -444,6 +496,20 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 let dir = data_dir.join("templates").join("indicators");
                 std::fs::create_dir_all(&dir)?;
                 let target = dir.join(format!("{}.json", item.name));
+                backup_file(&target)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "theme" => {
+                let target = data_dir.join("theme.json");
+                backup_file(&target)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "notification_settings" => {
+                let target = data_dir.join("notification_settings.json");
                 backup_file(&target)?;
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &item.content)?;
@@ -688,6 +754,10 @@ pub async fn do_sync_cycle(
                 ("watchlist".to_string(), "watchlists".to_string())
             } else if id == "settings_snapshots" {
                 ("settings_snapshot".to_string(), "settings_snapshots".to_string())
+            } else if id == "theme" {
+                ("theme".to_string(), "active_theme".to_string())
+            } else if id == "notification_settings" {
+                ("notification_settings".to_string(), "notification_settings".to_string())
             } else if let Some(rest) = id.strip_prefix("template_indicator_") {
                 ("template_indicator".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("template_primitive_") {
@@ -828,7 +898,11 @@ pub async fn do_sync_cycle(
     // for change-detection, not integrity verification (the GCM tag handles that).
     // Tombstones (`deleted: true`) are passed through as-is: their content is empty
     // and their checksum is already SHA-256(""), so no encryption is needed.
+    //
+    // When `sync_e2e_encrypt_names` is `true`, the `name` field is also encrypted
+    // using the same AES-GCM scheme so the server stores no plaintext metadata.
     let items_to_push: Vec<SyncItem> = if let Some(ref key) = e2e_key {
+        let encrypt_names = state.sync_e2e_encrypt_names;
         let mut enc_items = Vec::with_capacity(to_push.len());
         for item in &to_push {
             if item.deleted {
@@ -840,10 +914,30 @@ pub async fn do_sync_cycle(
                 Ok(ciphertext) => {
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
                     let enc_checksum = sha256_hex(&encoded);
+
+                    // Optionally encrypt the name field so the server holds no
+                    // plaintext metadata when full E2E privacy is requested.
+                    let enc_name = if encrypt_names {
+                        match crate::e2e_crypto::encrypt(key, item.name.as_bytes()) {
+                            Ok(name_ct) => {
+                                base64::engine::general_purpose::STANDARD.encode(&name_ct)
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[CloudSync] E2E name-encrypt failed for {}: {} — using plaintext name",
+                                    item.sync_id, e
+                                );
+                                item.name.clone()
+                            }
+                        }
+                    } else {
+                        item.name.clone()
+                    };
+
                     enc_items.push(SyncItem {
                         sync_id: item.sync_id.clone(),
                         category: item.category.clone(),
-                        name: item.name.clone(),
+                        name: enc_name,
                         content: encoded,
                         checksum: enc_checksum,
                         modified_at: item.modified_at,
@@ -895,9 +989,11 @@ pub async fn do_sync_cycle(
                     .collect();
 
                 // If E2E is active, base64-decode then decrypt each item's content
-                // before writing to disk.  Items that fail to decrypt are skipped
-                // with a warning so a single bad blob does not abort the whole pull.
+                // (and optionally the name) before writing to disk.  Items that fail
+                // to decrypt are skipped with a warning so a single bad blob does not
+                // abort the whole pull.
                 let to_write: Vec<SyncItem> = if let Some(ref key) = e2e_key {
+                    let decrypt_names = state.sync_e2e_encrypt_names;
                     let mut dec_items = Vec::with_capacity(filtered.len());
                     for item in filtered {
                         match base64::engine::general_purpose::STANDARD.decode(&item.content) {
@@ -906,7 +1002,32 @@ pub async fn do_sync_cycle(
                                     Ok(plaintext_bytes) => {
                                         match String::from_utf8(plaintext_bytes) {
                                             Ok(plaintext) => {
-                                                dec_items.push(SyncItem { content: plaintext, ..item });
+                                                // Optionally decrypt the name field.
+                                                let dec_name = if decrypt_names {
+                                                    match base64::engine::general_purpose::STANDARD.decode(&item.name) {
+                                                        Ok(name_ct) => {
+                                                            match crate::e2e_crypto::decrypt(key, &name_ct) {
+                                                                Ok(name_bytes) => {
+                                                                    String::from_utf8(name_bytes).unwrap_or_else(|_| {
+                                                                        log::warn!("[CloudSync] Decrypted name is not valid UTF-8 for {} — using raw value", item.sync_id);
+                                                                        item.name.clone()
+                                                                    })
+                                                                }
+                                                                Err(e) => {
+                                                                    log::warn!("[CloudSync] E2E name-decrypt failed for {}: {} — using raw value", item.sync_id, e);
+                                                                    item.name.clone()
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(_) => {
+                                                            // Not base64 — treat as plaintext (mixed data or flag mismatch).
+                                                            item.name.clone()
+                                                        }
+                                                    }
+                                                } else {
+                                                    item.name.clone()
+                                                };
+                                                dec_items.push(SyncItem { content: plaintext, name: dec_name, ..item });
                                             }
                                             Err(e) => {
                                                 log::warn!("[CloudSync] Decrypted content is not valid UTF-8 for {}: {} — skipping", item.sync_id, e);
@@ -1011,6 +1132,7 @@ pub async fn do_sync_cycle(
         category_prefs: state.category_prefs.clone(),
         last_synced_checksums: new_checksums,
         synced_items: new_synced_items,
+        sync_e2e_encrypt_names: state.sync_e2e_encrypt_names,
     };
 
     log::info!(

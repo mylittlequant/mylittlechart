@@ -141,6 +141,15 @@ pub fn app_data_dir() -> PathBuf {
     // Best-effort creation; callers receive an Io error on the actual
     // read/write if the directory cannot be created.
     let _ = fs::create_dir_all(&dir);
+    // Restrict directory permissions to owner-only on Unix (rwx------).
+    // This prevents other local users from reading stored API keys and
+    // profile data.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
+    // TODO: Windows ACL via icacls or windows-sys
     dir
 }
 

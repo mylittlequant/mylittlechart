@@ -5577,10 +5577,13 @@ impl ChartApp {
                         watchlists: ui.sync_watchlists,
                         templates: ui.sync_templates,
                         settings_snapshots: ui.sync_snapshots,
+                        theme: existing.sync_state.category_prefs.theme,
+                        notification_settings: existing.sync_state.category_prefs.notification_settings,
                     },
                     // Preserve the synced_items set — it is managed by the updater
                     // loop and must not be reset when the user changes settings.
                     synced_items: existing.sync_state.synced_items.clone(),
+                    sync_e2e_encrypt_names: existing.sync_state.sync_e2e_encrypt_names,
                 }
             },
         }

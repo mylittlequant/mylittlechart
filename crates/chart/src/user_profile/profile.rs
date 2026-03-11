@@ -319,6 +319,12 @@ pub struct SyncCategoryPrefs {
     /// Whether settings snapshots are included in cloud sync.
     #[serde(default = "default_true")]
     pub settings_snapshots: bool,
+    /// Whether the active theme identifier is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub theme: bool,
+    /// Whether notification/alert delivery settings are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub notification_settings: bool,
 }
 
 impl Default for SyncCategoryPrefs {
@@ -328,6 +334,8 @@ impl Default for SyncCategoryPrefs {
             watchlists: true,
             templates: true,
             settings_snapshots: true,
+            theme: true,
+            notification_settings: true,
         }
     }
 }
@@ -373,6 +381,11 @@ pub struct SyncState {
     /// the next sync cycle so the server marks the item as deleted.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
+    /// When `true` and E2E is enabled, the `name` field of each `SyncItem` is
+    /// also encrypted before being sent to the server.  Defaults to `false`
+    /// (names are sent in plaintext) for backward compatibility.
+    #[serde(default)]
+    pub sync_e2e_encrypt_names: bool,
 }
 
 impl UserProfile {

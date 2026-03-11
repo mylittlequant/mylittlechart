@@ -34,7 +34,7 @@ vello-hybrid-context = { path = "../vello-hybrid-context" }
 uzor-backend-vello-hybrid = "1.0.6"
 vello_hybrid = { version = "0.0.6", features = ["wgpu"] }
 tiny-skia-context = { path = "../tiny-skia-context" }
-zengeld-updater = { path = "../updater" }
+zengeld-updater = { path = "../updater", optional = true }
 keyring = "3"
 
 [build-dependencies]
@@ -42,5 +42,6 @@ ed25519-dalek = { workspace = true }
 base64 = { workspace = true }
 
 [features]
-default = []
+default = ["updater"]
+updater = ["dep:zengeld-updater"]
 standalone = []

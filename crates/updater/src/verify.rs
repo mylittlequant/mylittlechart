@@ -19,7 +19,7 @@
 //! rather than hard errors. See [`VerifyResult::Unsigned`].
 
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 
 // =============================================================================
 // Trusted public keys
@@ -122,7 +122,7 @@ pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> Verif
             }
         };
 
-        if verifying_key.verify(binary_data, &signature).is_ok() {
+        if verifying_key.verify_strict(binary_data, &signature).is_ok() {
             return VerifyResult::Valid;
         }
     }
@@ -238,7 +238,7 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify(data, &signature).is_ok());
+        assert!(verifying_key.verify_strict(data, &signature).is_ok());
     }
 
     #[test]
@@ -253,7 +253,7 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify(data, &signature).is_err());
+        assert!(verifying_key.verify_strict(data, &signature).is_err());
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify(tampered, &signature).is_err());
+        assert!(verifying_key.verify_strict(tampered, &signature).is_err());
     }
 
     #[test]
