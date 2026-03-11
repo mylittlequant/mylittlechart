@@ -687,6 +687,59 @@ fn render_sync_tab(
     let section_gap = 20.0;
     let row_gap = 26.0;
 
+    // ── Gate: Standalone Mode / Unofficial Build / Attestation Rejected ───────
+    let sync_tab_locked = !state.client_mode_connected || state.is_unofficial_build;
+
+    // Effective text color — dimmed when the sync tab is locked
+    let effective_text_color: &str = if sync_tab_locked { "#666666" } else { text_color };
+
+    // Banner: Offline / Standalone mode
+    if !state.client_mode_connected {
+        let banner_h = 34.0;
+        ctx.set_fill_color("rgba(244,205,99,0.08)");
+        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_stroke_color("rgba(244,205,99,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.75)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("Offline mode — sync disabled. Switch to Connected in General tab.", x, cy + 4.0);
+        ctx.fill_text("", x, cy + 4.0); // keep text baseline state clean
+        cy += banner_h + 8.0;
+    } else if state.is_unofficial_build {
+        // Banner: development / unofficial build
+        let banner_h = 34.0;
+        ctx.set_fill_color("rgba(244,205,99,0.08)");
+        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_stroke_color("rgba(244,205,99,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.75)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("Development build — cloud sync disabled.", x, cy + 4.0);
+        cy += banner_h + 8.0;
+    }
+
+    // Banner: attestation rejected by server
+    if state.attestation_rejected {
+        let banner_h = 34.0;
+        ctx.set_fill_color("rgba(239,83,80,0.08)");
+        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_stroke_color("rgba(239,83,80,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(239,83,80,0.85)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("Server rejected this build. Only official releases can sync.", x, cy + 4.0);
+        cy += banner_h + 8.0;
+    }
+
     // ── Section: CLOUD SYNC ───────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
@@ -697,34 +750,45 @@ fn render_sync_tab(
 
     // Toggle: Enable Cloud Sync
     {
-        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Enable Cloud Sync", state.sync_enabled, text_color, toolbar_theme);
+        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Enable Cloud Sync", state.sync_enabled, effective_text_color, toolbar_theme);
         result.content_items.push(("sync_toggle".to_string(), row_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:sync_toggle",
-            row_rect,
-            uzor::input::sense::Sense::CLICK,
-            layer_id,
-        );
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:sync_toggle",
+                row_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
     }
     cy += row_gap;
 
-    // Status: last sync time
+    // ── Live Sync Status Row ──────────────────────────────────────────────────
     {
+        // Colored status dot (●) + status label
+        let dot_char = "\u{25CF}"; // filled circle ●
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(&state.sync_status_color);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text(dot_char, x, cy);
+
+        ctx.set_fill_color(effective_text_color);
+        ctx.fill_text(&state.sync_status_label, x + 14.0, cy);
+        cy += 16.0;
+
+        // Below: muted "Last synced: X" relative time
         let ts_str = if state.last_sync_timestamp > 0 {
-            // Format as "YYYY-MM-DD HH:MM" from unix seconds
             let secs = state.last_sync_timestamp as u64;
             let mins = secs / 60;
             let hours = mins / 60;
             let days = hours / 24;
-            // Simple formatting without external crate
             format!("Last synced: {}d {}h ago", days, hours % 24)
         } else {
             "Last synced: Never".to_string()
         };
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.45)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
         ctx.fill_text(&ts_str, x, cy);
         cy += 18.0;
     }
@@ -739,6 +803,136 @@ fn render_sync_tab(
         cy += 24.0;
     }
 
+    // ── "Sync Now" Button ─────────────────────────────────────────────────────
+    {
+        let btn_w = available_w;
+        let btn_h = 28.0;
+        let is_syncing = state.sync_is_active;
+        let btn_label = if is_syncing { "Syncing\u{2026}" } else { "Sync Now" };
+        let btn_disabled = sync_tab_locked || is_syncing;
+
+        let btn_bg = if btn_disabled {
+            "rgba(254,255,238,0.05)"
+        } else {
+            &toolbar_theme.item_bg_hover
+        };
+        let btn_stroke = if btn_disabled {
+            "rgba(254,255,238,0.12)"
+        } else {
+            &toolbar_theme.separator
+        };
+        let btn_text = if btn_disabled { "#555555" } else { effective_text_color };
+
+        ctx.set_fill_color(btn_bg);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_stroke_color(btn_stroke);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(btn_text);
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text(btn_label, x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+
+        let btn_rect = uzor::types::Rect::new(x, cy, btn_w, btn_h);
+        result.content_items.push(("force_sync".to_string(), btn_rect));
+        if !btn_disabled {
+            input_coordinator.register_on_layer(
+                "user_settings:force_sync",
+                btn_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += btn_h + 8.0;
+    }
+
+    // ── NeedsSetup Prompt ─────────────────────────────────────────────────────
+    if state.sync_needs_setup {
+        let box_h = 110.0;
+        ctx.set_fill_color("rgba(244,205,99,0.08)");
+        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, box_h, 4.0);
+        ctx.set_stroke_color("rgba(244,205,99,0.3)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, box_h, 4.0);
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.85)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("Cloud data found for this account. Choose how to proceed:", x, cy);
+        cy += 18.0;
+
+        let btn_h = 24.0;
+        let third_w = (available_w - 8.0) / 2.0;
+
+        // "Upload Local Data" button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, third_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, third_w, btn_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.accent);
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text("Upload Local Data", x + third_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        let upload_rect = uzor::types::Rect::new(x, cy, third_w, btn_h);
+        result.content_items.push(("needs_setup_upload".to_string(), upload_rect));
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:needs_setup_upload",
+                upload_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        // "Download Cloud Data" button
+        let dl_x = x + third_w + 8.0;
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(dl_x, cy, third_w, btn_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(dl_x, cy, third_w, btn_h, 4.0);
+        ctx.set_fill_color(text_color);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text("Download Cloud Data", dl_x + third_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        let download_rect = uzor::types::Rect::new(dl_x, cy, third_w, btn_h);
+        result.content_items.push(("needs_setup_download".to_string(), download_rect));
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:needs_setup_download",
+                download_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += btn_h + 8.0;
+
+        // "Dismiss" link
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.4)");
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("Dismiss", x, cy);
+        let dismiss_rect = uzor::types::Rect::new(x, cy, 50.0, 16.0);
+        result.content_items.push(("needs_setup_dismiss".to_string(), dismiss_rect));
+        if !sync_tab_locked {
+            input_coordinator.register_on_layer(
+                "user_settings:needs_setup_dismiss",
+                dismiss_rect,
+                uzor::input::sense::Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += 24.0;
+    }
+
     // ── Section: ENCRYPTION (only when sync enabled) ──────────────────────────
     if state.sync_enabled {
         ctx.set_font("600 11px sans-serif");
@@ -749,26 +943,52 @@ fn render_sync_tab(
 
         // Toggle: End-to-End Encryption
         {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "End-to-End Encryption", state.e2e_enabled, text_color, toolbar_theme);
+            let row_rect = render_toggle_row(ctx, x, cy, available_w, "End-to-End Encryption", state.e2e_enabled, effective_text_color, toolbar_theme);
             result.content_items.push(("e2e_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:e2e_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
+            if !sync_tab_locked {
+                input_coordinator.register_on_layer(
+                    "user_settings:e2e_toggle",
+                    row_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
         }
         cy += row_gap;
 
         if state.e2e_enabled {
+            // E2E Active — no passphrase input needed
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color("#5cb85c");
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("E2E Active", x, cy);
+            cy += 18.0;
+
+            // Note text
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.fill_text("Your passphrase is never stored or transmitted. Keep it safe.", x, cy);
+            cy += 18.0;
+        } else if state.e2e_restore_mode {
+            // ── E2E Restore Flow ──────────────────────────────────────────────
+            ctx.set_font("600 11px sans-serif");
+            ctx.set_fill_color("rgba(244,205,99,0.85)");
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("E2E RESTORE", x, cy);
+            cy += 18.0;
+
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.55)");
+            ctx.fill_text("This account has E2E encryption. Enter your passphrase to decrypt.", x, cy);
+            cy += 18.0;
+
             // Passphrase label
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(text_color);
-            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.set_fill_color(effective_text_color);
             ctx.fill_text("Passphrase", x, cy);
             cy += 18.0;
 
-            // Passphrase input box (read-only display)
+            // Passphrase input box
             let input_h = 24.0;
             let masked: String = if state.e2e_passphrase.is_empty() {
                 "Click to type passphrase...".to_string()
@@ -778,7 +998,7 @@ fn render_sync_tab(
             let input_color = if state.e2e_passphrase.is_empty() {
                 "rgba(254,255,238,0.25)"
             } else {
-                text_color
+                effective_text_color
             };
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
             ctx.fill_rounded_rect(x, cy, available_w, input_h, 3.0);
@@ -798,16 +1018,90 @@ fn render_sync_tab(
 
             let input_rect = uzor::types::Rect::new(x, cy, available_w, input_h);
             result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:e2e_passphrase_input",
-                input_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
+            if !sync_tab_locked {
+                input_coordinator.register_on_layer(
+                    "user_settings:e2e_passphrase_input",
+                    input_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
             cy += input_h + 8.0;
 
-            // Setup E2E button (only when passphrase is non-empty)
-            if !state.e2e_passphrase.is_empty() {
+            // "Restore E2E" button (only when passphrase is non-empty)
+            if !state.e2e_passphrase.is_empty() && !sync_tab_locked {
+                let btn_w = 120.0;
+                let btn_h = 26.0;
+                ctx.set_fill_color(&toolbar_theme.accent);
+                ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+                ctx.set_font("bold 12px sans-serif");
+                ctx.set_fill_color("rgba(0,0,0,0.85)");
+                ctx.set_text_align(uzor::render::TextAlign::Center);
+                ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+                ctx.fill_text("Restore E2E", x + btn_w / 2.0, cy + btn_h / 2.0);
+                ctx.set_text_align(uzor::render::TextAlign::Left);
+
+                let btn_rect = uzor::types::Rect::new(x, cy, btn_w, btn_h);
+                result.content_items.push(("e2e_restore".to_string(), btn_rect));
+                input_coordinator.register_on_layer(
+                    "user_settings:e2e_restore",
+                    btn_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+                cy += btn_h + 8.0;
+            }
+        } else {
+            // ── Normal E2E Setup Flow ─────────────────────────────────────────
+            // Passphrase label
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(effective_text_color);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("Passphrase", x, cy);
+            cy += 18.0;
+
+            // Passphrase input box (read-only display)
+            let input_h = 24.0;
+            let masked: String = if state.e2e_passphrase.is_empty() {
+                "Click to type passphrase...".to_string()
+            } else {
+                "*".repeat(state.e2e_passphrase.chars().count().min(20))
+            };
+            let input_color = if state.e2e_passphrase.is_empty() {
+                "rgba(254,255,238,0.25)"
+            } else {
+                effective_text_color
+            };
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(x, cy, available_w, input_h, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(x, cy);
+            ctx.line_to(x + available_w, cy);
+            ctx.line_to(x + available_w, cy + input_h);
+            ctx.line_to(x, cy + input_h);
+            ctx.close_path();
+            ctx.stroke();
+            ctx.set_font("13px sans-serif");
+            ctx.set_fill_color(input_color);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+            ctx.fill_text(&masked, x + 8.0, cy + input_h / 2.0);
+
+            let input_rect = uzor::types::Rect::new(x, cy, available_w, input_h);
+            result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
+            if !sync_tab_locked {
+                input_coordinator.register_on_layer(
+                    "user_settings:e2e_passphrase_input",
+                    input_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
+            cy += input_h + 8.0;
+
+            // Setup E2E button (only when passphrase is non-empty and not locked)
+            if !state.e2e_passphrase.is_empty() && !sync_tab_locked {
                 let btn_w = 100.0;
                 let btn_h = 26.0;
                 ctx.set_fill_color(&toolbar_theme.accent);
@@ -855,15 +1149,17 @@ fn render_sync_tab(
         ];
 
         for (action_id, label, is_checked) in categories {
-            let row_rect = render_checkbox_row(ctx, x, cy, label, *is_checked, text_color, toolbar_theme);
+            let row_rect = render_checkbox_row(ctx, x, cy, label, *is_checked, effective_text_color, toolbar_theme);
             result.content_items.push((action_id.to_string(), row_rect));
-            let hit_id = format!("user_settings:{}", action_id);
-            input_coordinator.register_on_layer(
-                hit_id.as_str(),
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
+            if !sync_tab_locked {
+                let hit_id = format!("user_settings:{}", action_id);
+                input_coordinator.register_on_layer(
+                    hit_id.as_str(),
+                    row_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
             cy += row_gap - 6.0;
         }
     }

@@ -3280,6 +3280,32 @@ pub struct UserSettingsState {
     pub last_sync_timestamp: i64,
     /// Quota used in bytes (from server status response, 0 = unknown).
     pub quota_used_bytes: i64,
+
+    // ── SYNC STATUS (P0) ──────────────────────────────────────────────────
+    /// Human-readable sync status: "Idle" / "Syncing…" / "Synced — ↑3 ↓1" / "Error: …"
+    pub sync_status_label: String,
+    /// Hex color for the status label: "#888888" muted, "#f0ad4e" yellow, "#5cb85c" green, "#d9534f" red
+    pub sync_status_color: String,
+    /// True while SyncStatus::Syncing — drives a spinner or progress indicator.
+    pub sync_is_active: bool,
+    /// True when the updater emits NeedsSetup (server has data, but local has never synced).
+    pub sync_needs_setup: bool,
+    /// True when the updater emits Error.
+    pub sync_has_error: bool,
+    /// Error detail string when sync_has_error is true.
+    pub sync_error_msg: String,
+    /// True when the updater emits ConflictsDetected.
+    pub sync_has_conflicts: bool,
+    /// True when BUILD_ATTESTATION env var was empty at compile time (dev / unofficial build).
+    pub is_unofficial_build: bool,
+    /// True when the server returned a 403 attestation-rejected error.
+    pub attestation_rejected: bool,
+    /// True when the server has E2E params but the local profile does not.
+    pub server_has_e2e: bool,
+    /// True when the user needs to restore E2E passphrase from server salt.
+    pub e2e_restore_mode: bool,
+    /// Salt hex string fetched from server for E2E restore flow.
+    pub e2e_server_salt: String,
 }
 
 impl Default for UserSettingsState {
@@ -3321,6 +3347,18 @@ impl Default for UserSettingsState {
             sync_snapshots: true,
             last_sync_timestamp: 0,
             quota_used_bytes: 0,
+            sync_status_label: "Idle".to_string(),
+            sync_status_color: "#888888".to_string(),
+            sync_is_active: false,
+            sync_needs_setup: false,
+            sync_has_error: false,
+            sync_error_msg: String::new(),
+            sync_has_conflicts: false,
+            is_unofficial_build: false,
+            attestation_rejected: false,
+            server_has_e2e: false,
+            e2e_restore_mode: false,
+            e2e_server_salt: String::new(),
         }
     }
 }

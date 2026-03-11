@@ -490,6 +490,11 @@ struct App<'s> {
 
     /// Shared atomics written each second so the telemetry thread can read live values.
     telemetry_shared: std::sync::Arc<TelemetryShared>,
+
+    /// True when BUILD_ATTESTATION was empty at compile time (dev / unofficial build).
+    /// Always false in standalone builds (no server connection anyway).
+    #[cfg(all(feature = "updater", not(feature = "standalone")))]
+    is_unofficial_build: bool,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -1883,6 +1888,11 @@ impl App<'_> {
         #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
         let updater_handle: Option<()> = None;
 
+        // Detect unofficial / dev build (empty attestation = no release signing key).
+        // Only meaningful in connected builds; standalone never contacts the server.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        let is_unofficial_build: bool = env!("BUILD_ATTESTATION").is_empty();
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -1934,6 +1944,8 @@ impl App<'_> {
             gpu_thread: None,
             gpu_frame_pending: false,
             updater_handle,
+            #[cfg(all(feature = "updater", not(feature = "standalone")))]
+            is_unofficial_build,
             telemetry_shared,
         }
     }
@@ -2095,6 +2107,11 @@ impl App<'_> {
             "{} key(s) registered",
             self.app_state.agent_api_keys.len()
         );
+        // Propagate build attestation status to new windows.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        {
+            chart.panel_app.user_settings_state.is_unofficial_build = self.is_unofficial_build;
+        }
 
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
         chart.resize(size.width, size.height.saturating_sub(chrome_px));
@@ -3821,6 +3838,23 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str == "set_sync_enabled:false" {
                         self.user_manager.profile.sync_state.enabled = false;
                         Some(UpdaterCommand::SetSyncEnabled(false))
+                    } else if cmd_str == "force_sync" {
+                        Some(UpdaterCommand::ForceSync)
+                    } else if let Some(rest) = cmd_str.strip_prefix("resolve_conflict:") {
+                        if let Some((sync_id, resolution_str)) = rest.rsplit_once(':') {
+                            let resolution = if resolution_str == "keep_local" {
+                                zengeld_updater::ConflictResolution::KeepLocal
+                            } else {
+                                zengeld_updater::ConflictResolution::KeepCloud
+                            };
+                            Some(UpdaterCommand::ResolveConflict {
+                                sync_id: sync_id.to_string(),
+                                resolution,
+                            })
+                        } else {
+                            eprintln!("[App] malformed resolve_conflict command: {}", cmd_str);
+                            None
+                        }
                     } else if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
                         // Derive the E2E key and register it with the updater immediately,
                         // then spawn an async task to push the salt to the server.
@@ -4054,6 +4088,120 @@ impl ApplicationHandler for App<'_> {
                         eprintln!("[App] Key sync: merged {} key(s) into Agent API registry", merged_count);
                     }
                 }
+            }
+        }
+
+        // ── Poll sync_status_rx → update all windows' user_settings_state ─
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        if let Some(ref handle) = self.updater_handle {
+            if handle.sync_status_rx.has_changed().unwrap_or(false) {
+                let sync_status = handle.sync_status_rx.borrow().clone();
+
+                let (label, color, is_active, needs_setup, has_error, error_msg, has_conflicts) =
+                    match &sync_status {
+                        zengeld_updater::SyncStatus::Idle => (
+                            "Idle".to_string(),
+                            "#888888".to_string(),
+                            false,
+                            false,
+                            false,
+                            String::new(),
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::Syncing => (
+                            "Syncing\u{2026}".to_string(),
+                            "#f0ad4e".to_string(),
+                            true,
+                            false,
+                            false,
+                            String::new(),
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::Completed { pushed, pulled } => {
+                            let lbl = if *pushed == 0 && *pulled == 0 {
+                                "Synced \u{2014} no changes".to_string()
+                            } else {
+                                format!("Synced \u{2014} \u{2191}{} \u{2193}{}", pushed, pulled)
+                            };
+                            (lbl, "#5cb85c".to_string(), false, false, false, String::new(), false)
+                        }
+                        zengeld_updater::SyncStatus::Error(msg) => {
+                            let truncated = if msg.len() > 60 {
+                                let safe_end = msg.char_indices()
+                                    .take_while(|(i, _)| *i <= 57)
+                                    .last()
+                                    .map(|(i, c)| i + c.len_utf8())
+                                    .unwrap_or(msg.len());
+                                format!("{}\u{2026}", &msg[..safe_end])
+                            } else {
+                                msg.clone()
+                            };
+                            (
+                                format!("Error: {}", truncated),
+                                "#d9534f".to_string(),
+                                false,
+                                false,
+                                true,
+                                msg.clone(),
+                                false,
+                            )
+                        }
+                        zengeld_updater::SyncStatus::NeedsSetup => (
+                            "Cloud data found".to_string(),
+                            "#f0ad4e".to_string(),
+                            false,
+                            true,
+                            false,
+                            String::new(),
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::ConflictsDetected(conflicts) => (
+                            format!("{} conflict(s)", conflicts.len()),
+                            "#e67e22".to_string(),
+                            false,
+                            false,
+                            false,
+                            String::new(),
+                            true,
+                        ),
+                    };
+
+                let is_completed = matches!(
+                    &sync_status,
+                    zengeld_updater::SyncStatus::Completed { .. }
+                );
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                for pw in self.windows.values_mut() {
+                    let uss = &mut pw.chart.panel_app.user_settings_state;
+                    uss.sync_status_label = label.clone();
+                    uss.sync_status_color = color.clone();
+                    uss.sync_is_active = is_active;
+                    uss.sync_needs_setup = needs_setup;
+                    uss.sync_has_error = has_error;
+                    uss.sync_error_msg = error_msg.clone();
+                    uss.sync_has_conflicts = has_conflicts;
+
+                    if is_completed {
+                        uss.last_sync_timestamp = now_ts;
+                    }
+
+                    // Reset attestation_rejected on any non-error status
+                    if !has_error {
+                        uss.attestation_rejected = false;
+                    }
+                    if has_error
+                        && (error_msg.contains("build attestation")
+                            || error_msg.contains("attestation failed"))
+                    {
+                        uss.attestation_rejected = true;
+                    }
+                }
+
+                eprintln!("[App] sync_status: {}", label);
             }
         }
 

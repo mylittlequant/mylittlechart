@@ -7049,6 +7049,38 @@ impl ChartApp {
                     self.panel_app.user_settings_state.sync_snapshots = new_val;
                     eprintln!("[ChartApp] sync_snapshots = {}", new_val);
                 }
+                "force_sync" => {
+                    if !self.panel_app.user_settings_state.sync_is_active {
+                        self.pending_updater_cmd = Some("force_sync".to_string());
+                        eprintln!("[ChartApp] force_sync requested");
+                    }
+                }
+                "needs_setup_upload" => {
+                    self.panel_app.user_settings_state.sync_needs_setup = false;
+                    self.pending_updater_cmd = Some("set_connected_upload".to_string());
+                    eprintln!("[ChartApp] needs_setup_upload: switching to connected+upload");
+                }
+                "needs_setup_download" => {
+                    self.panel_app.user_settings_state.sync_needs_setup = false;
+                    self.pending_updater_cmd = Some("set_connected_download".to_string());
+                    eprintln!("[ChartApp] needs_setup_download: switching to connected+download");
+                }
+                "needs_setup_dismiss" => {
+                    self.panel_app.user_settings_state.sync_needs_setup = false;
+                    eprintln!("[ChartApp] needs_setup_dismiss: dismissed");
+                }
+                "e2e_restore" => {
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    if !passphrase.is_empty() {
+                        // Use the same e2e_setup command — the updater handles both setup and restore.
+                        // For restore, the server's existing salt is used (handled by the updater's
+                        // SetE2EKey path when a salt already exists on the server).
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        self.panel_app.user_settings_state.e2e_restore_mode = false;
+                        // e2e_enabled will be set by updater response via sync_status_rx
+                        eprintln!("[ChartApp] e2e_restore requested");
+                    }
+                }
                 "server_toggle" => {
                     self.panel_app.user_settings_state.server_enabled =
                         !self.panel_app.user_settings_state.server_enabled;
