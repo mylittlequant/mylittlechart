@@ -294,6 +294,26 @@ pub struct UserProfile {
     /// items changed since the last successful sync.
     #[serde(default)]
     pub sync_state: SyncState,
+
+    // -------------------------------------------------------------------------
+    // Multi-profile identity
+    // -------------------------------------------------------------------------
+
+    /// Unique profile identifier (UUID v4). Empty on legacy profiles.
+    #[serde(default)]
+    pub profile_id: String,
+
+    /// User-visible profile name ("Default", "Trading", "Debug", etc.)
+    #[serde(default = "default_profile_name")]
+    pub display_name: String,
+
+    /// Avatar emoji key ("chart", "rocket", "shield", "fire", "star", "moon", "sun", "ghost")
+    #[serde(default = "default_avatar")]
+    pub avatar: String,
+
+    /// Profile creation timestamp (unix seconds)
+    #[serde(default)]
+    pub profile_created_at: i64,
 }
 
 // =============================================================================
@@ -420,6 +440,10 @@ impl UserProfile {
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
             sync_state: SyncState::default(),
+            profile_id: String::new(),
+            display_name: "Default".to_string(),
+            avatar: "chart".to_string(),
+            profile_created_at: 0,
         }
     }
 
@@ -654,6 +678,34 @@ pub struct TelemetryData {
 }
 
 // =============================================================================
+// ProfileMeta / ProfileIndex — multi-profile index
+// =============================================================================
+
+/// Metadata for one profile entry in the index.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProfileMeta {
+    /// UUID v4 identifier for this profile.
+    pub id: String,
+    /// User-visible display name.
+    pub display_name: String,
+    /// Avatar emoji key.
+    pub avatar: String,
+    /// Unix timestamp (seconds) when this profile was created.
+    pub created_at: i64,
+    /// Relative subdirectory name under `profiles/` (e.g. "default" or a UUID).
+    pub dir_name: String,
+}
+
+/// The profile index file — lists all profiles and which is active.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProfileIndex {
+    /// UUID of the currently active profile.
+    pub active_profile_id: String,
+    /// Ordered list of all profile metadata entries.
+    pub profiles: Vec<ProfileMeta>,
+}
+
+// =============================================================================
 // serde defaults
 // =============================================================================
 
@@ -687,4 +739,12 @@ fn default_server_enabled() -> bool {
 
 fn default_server_port() -> u16 {
     17420
+}
+
+fn default_profile_name() -> String {
+    "Default".to_string()
+}
+
+fn default_avatar() -> String {
+    "chart".to_string()
 }

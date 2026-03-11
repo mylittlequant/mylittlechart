@@ -447,12 +447,19 @@ pub use user_profile::{
     WindowState,
     StoredApiKey,
     ProfileError,
+    ProfileMeta,
+    ProfileIndex,
     app_data_dir,
     get_user_data_dir,
+    active_profile_data_dir,
+    migrate_legacy_profile_if_needed,
     save_profile,
     load_profile,
     save_json,
     load_json,
+    load_profile_index,
+    save_profile_index,
+    create_profile,
 };
 
 // Unified user state manager

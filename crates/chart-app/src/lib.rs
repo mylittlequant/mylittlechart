@@ -5619,6 +5619,11 @@ impl ChartApp {
             inline_bar_x: Some(inline.x),
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
+            // Preserve profile identity fields managed by the profile system
+            profile_id: existing.profile_id.clone(),
+            display_name: existing.display_name.clone(),
+            avatar: existing.avatar.clone(),
+            profile_created_at: existing.profile_created_at,
             // Preserve fields managed by the profile itself
             device_name: existing.device_name.clone(),
             app_version: existing.app_version.clone(),

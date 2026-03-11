@@ -1885,7 +1885,7 @@ impl App<'_> {
                 profile.telemetry_enabled,
                 profile.sync_state.enabled,
                 profile.sync_state.synced_items.clone(),
-                zengeld_chart::get_user_data_dir(),
+                zengeld_chart::active_profile_data_dir(),
                 build_attest,
             ))
         };
@@ -2106,6 +2106,26 @@ impl App<'_> {
             uss.sync_templates = ss.category_prefs.templates;
             uss.sync_snapshots = ss.category_prefs.settings_snapshots;
             uss.last_sync_timestamp = ss.last_sync_timestamp;
+        }
+        // Sync profile data into the user settings state.
+        {
+            let uss = &mut chart.panel_app.user_settings_state;
+            uss.profile_id = self.user_manager.profile.profile_id.clone();
+            uss.profile_display_name = self.user_manager.profile.display_name.clone();
+            uss.profile_avatar = self.user_manager.profile.avatar.clone();
+            // Load available profiles from the index.
+            if let Some(index) = zengeld_chart::load_profile_index() {
+                uss.available_profiles = index.profiles.iter().map(|m| {
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone())
+                }).collect();
+            } else {
+                // No index yet — synthesize a single entry from the current profile.
+                uss.available_profiles = vec![(
+                    uss.profile_id.clone(),
+                    uss.profile_display_name.clone(),
+                    uss.profile_avatar.clone(),
+                )];
+            }
         }
         // API keys are now managed via /api/v1/keys REST endpoint.
         // Show key count in the UI instead of the raw key string.
@@ -2416,7 +2436,7 @@ impl App<'_> {
 
         // 7. Save settings snapshots from AppState (single canonical source of truth).
         {
-            let path = zengeld_chart::get_user_data_dir().join("settings_snapshots.json");
+            let path = zengeld_chart::active_profile_data_dir().join("settings_snapshots.json");
             if let Err(e) = zengeld_chart::save_json(&path, &self.app_state.snapshots) {
                 eprintln!("[App] Failed to save settings snapshots: {}", e);
             }
@@ -3811,6 +3831,97 @@ impl ApplicationHandler for App<'_> {
                     self.user_manager.profile.client_mode =
                         zengeld_chart::user_profile::profile::ClientMode::Standalone;
                 }
+
+                // ── Profile commands (all build configs) ─────────────────────
+                if let Some(new_name) = cmd_str.strip_prefix("profile_rename:") {
+                    self.user_manager.profile.display_name = new_name.to_string();
+                    // Also sync the index entry if one exists.
+                    if let Some(mut index) = zengeld_chart::load_profile_index() {
+                        let active_id = self.user_manager.profile.profile_id.clone();
+                        if let Some(meta) = index.profiles.iter_mut().find(|m| m.id == active_id) {
+                            meta.display_name = new_name.to_string();
+                        }
+                        if let Err(e) = zengeld_chart::save_profile_index(&index) {
+                            eprintln!("[App] profile_rename: failed to save index: {}", e);
+                        }
+                    }
+                    if let Err(e) = zengeld_chart::save_profile(&self.user_manager.profile) {
+                        eprintln!("[App] profile_rename: failed to save profile: {}", e);
+                    }
+                    // Reflect change in all windows.
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.user_settings_state.profile_display_name = new_name.to_string();
+                        if let Some(entry) = pw.chart.panel_app.user_settings_state.available_profiles.iter_mut()
+                            .find(|(id, _, _)| *id == self.user_manager.profile.profile_id)
+                        {
+                            entry.1 = new_name.to_string();
+                        }
+                    }
+                    eprintln!("[App] profile renamed to: {}", new_name);
+                } else if let Some(avatar) = cmd_str.strip_prefix("profile_set_avatar:") {
+                    self.user_manager.profile.avatar = avatar.to_string();
+                    // Also sync the index entry if one exists.
+                    if let Some(mut index) = zengeld_chart::load_profile_index() {
+                        let active_id = self.user_manager.profile.profile_id.clone();
+                        if let Some(meta) = index.profiles.iter_mut().find(|m| m.id == active_id) {
+                            meta.avatar = avatar.to_string();
+                        }
+                        if let Err(e) = zengeld_chart::save_profile_index(&index) {
+                            eprintln!("[App] profile_set_avatar: failed to save index: {}", e);
+                        }
+                    }
+                    if let Err(e) = zengeld_chart::save_profile(&self.user_manager.profile) {
+                        eprintln!("[App] profile_set_avatar: failed to save profile: {}", e);
+                    }
+                    // Reflect change in all windows.
+                    let avatar_str = avatar.to_string();
+                    let active_id = self.user_manager.profile.profile_id.clone();
+                    for pw in self.windows.values_mut() {
+                        let uss = &mut pw.chart.panel_app.user_settings_state;
+                        uss.profile_avatar = avatar_str.clone();
+                        if let Some(entry) = uss.available_profiles.iter_mut()
+                            .find(|(id, _, _)| *id == active_id)
+                        {
+                            entry.2 = avatar_str.clone();
+                        }
+                    }
+                    eprintln!("[App] profile avatar set to: {}", avatar);
+                } else if let Some(name) = cmd_str.strip_prefix("profile_create:") {
+                    match zengeld_chart::create_profile(name, "chart") {
+                        Ok(meta) => {
+                            eprintln!("[App] profile created: {} ({})", meta.display_name, meta.id);
+                            // Reload index and refresh all windows.
+                            if let Some(index) = zengeld_chart::load_profile_index() {
+                                let profiles: Vec<(String, String, String)> = index.profiles.iter()
+                                    .map(|m| (m.id.clone(), m.display_name.clone(), m.avatar.clone()))
+                                    .collect();
+                                for pw in self.windows.values_mut() {
+                                    pw.chart.panel_app.user_settings_state.available_profiles = profiles.clone();
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("[App] profile_create failed: {}", e),
+                    }
+                } else if let Some(id) = cmd_str.strip_prefix("profile_switch:") {
+                    // Update the index to make this the active profile, then save.
+                    if let Some(mut index) = zengeld_chart::load_profile_index() {
+                        if index.profiles.iter().any(|m| m.id == id) {
+                            index.active_profile_id = id.to_string();
+                            if let Err(e) = zengeld_chart::save_profile_index(&index) {
+                                eprintln!("[App] profile_switch: failed to save index: {}", e);
+                            } else {
+                                eprintln!("[App] profile_switch: active profile set to {}, restart required", id);
+                                // Notify the user via UI (restart needed to load new profile).
+                                for pw in self.windows.values_mut() {
+                                    pw.chart.panel_app.user_settings_state.profile_id = id.to_string();
+                                }
+                            }
+                        } else {
+                            eprintln!("[App] profile_switch: unknown profile id: {}", id);
+                        }
+                    }
+                }
+
                 #[cfg(all(feature = "updater", not(feature = "standalone")))]
                 if let Some(ref handle) = self.updater_handle {
                     use zengeld_updater::UpdaterCommand;
@@ -5563,10 +5674,19 @@ fn main() {
     let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new();
     let bridge = std::sync::Arc::new(bridge);
 
+    // Migrate legacy single-profile layout to profiles/ directory.
+    // Must run BEFORE first-run detection so that active_profile_data_dir() resolves
+    // correctly even on existing installations upgrading from the old layout.
+    match zengeld_chart::migrate_legacy_profile_if_needed() {
+        Ok(true) => eprintln!("[App] Legacy profile migrated to profiles/default/"),
+        Ok(false) => {} // already migrated or fresh install
+        Err(e) => eprintln!("[App] Profile migration failed: {}", e),
+    }
+
     // Detect first-run BEFORE loading the user manager.
     // A missing `profile.json` means this is the first launch — show the welcome wizard.
     let is_first_run = {
-        let profile_path = zengeld_chart::get_user_data_dir().join("profile.json");
+        let profile_path = zengeld_chart::active_profile_data_dir().join("profile.json");
         !profile_path.exists()
     };
     if is_first_run {

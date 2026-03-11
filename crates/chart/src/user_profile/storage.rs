@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::profile::UserProfile;
+use super::profile::{ProfileIndex, ProfileMeta, UserProfile};
 
 // =============================================================================
 // ProfileError
@@ -165,11 +165,12 @@ pub fn get_user_data_dir() -> PathBuf {
 // profile.json helpers
 // =============================================================================
 
-/// Serialize `profile` as pretty JSON and write it to `user_data/profile.json`.
+/// Serialize `profile` as pretty JSON and write it to the active profile's
+/// `profile.json` (routed through `active_profile_data_dir()`).
 ///
-/// The `user_data/` directory is created automatically if it does not exist.
+/// The directory is created automatically if it does not exist.
 pub fn save_profile(profile: &UserProfile) -> Result<(), ProfileError> {
-    let dir = get_user_data_dir();
+    let dir = active_profile_data_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join("profile.json");
     let json = serde_json::to_string_pretty(profile)?;
@@ -177,12 +178,13 @@ pub fn save_profile(profile: &UserProfile) -> Result<(), ProfileError> {
     Ok(())
 }
 
-/// Load and deserialize the user profile from `user_data/profile.json`.
+/// Load and deserialize the user profile from the active profile's
+/// `profile.json` (routed through `active_profile_data_dir()`).
 ///
 /// Returns a default [`UserProfile`] if the file does not exist, so startup
 /// always succeeds even without prior data.
 pub fn load_profile() -> Result<UserProfile, ProfileError> {
-    let path = get_user_data_dir().join("profile.json");
+    let path = active_profile_data_dir().join("profile.json");
     if !path.exists() {
         return Ok(UserProfile::new());
     }
@@ -223,7 +225,201 @@ pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T, ProfileError> {
 // Convenience path builders
 // =============================================================================
 
-/// Returns the path to `user_data/watchlists.json`.
+/// Returns the path to `watchlists.json` inside the active profile directory.
 pub fn watchlists_path() -> PathBuf {
-    get_user_data_dir().join("watchlists.json")
+    active_profile_data_dir().join("watchlists.json")
+}
+
+// =============================================================================
+// Multi-profile directory helpers
+// =============================================================================
+
+/// Returns `{app_data_dir}/profiles/`, creating it if it does not exist.
+pub fn profiles_dir() -> PathBuf {
+    let dir = app_data_dir().join("profiles");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// Load the profile index from `profiles/index.json`.
+///
+/// Returns `None` if the file does not exist or cannot be parsed.
+pub fn load_profile_index() -> Option<ProfileIndex> {
+    let path = profiles_dir().join("index.json");
+    if !path.exists() {
+        return None;
+    }
+    let json = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&json).ok()
+}
+
+/// Save the profile index to `profiles/index.json`.
+pub fn save_profile_index(index: &ProfileIndex) -> Result<(), String> {
+    let path = profiles_dir().join("index.json");
+    let json = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Returns the data directory for the currently active profile.
+///
+/// - If a `profiles/index.json` exists, reads the active profile's `dir_name`
+///   and returns `profiles/{dir_name}/`.
+/// - If no index exists (legacy install or fresh install), falls back to
+///   `app_data_dir()` so existing code continues to work unchanged.
+pub fn active_profile_data_dir() -> PathBuf {
+    if let Some(index) = load_profile_index() {
+        if let Some(meta) = index
+            .profiles
+            .iter()
+            .find(|m| m.id == index.active_profile_id)
+        {
+            let dir = profiles_dir().join(&meta.dir_name);
+            let _ = fs::create_dir_all(&dir);
+            return dir;
+        }
+    }
+    // Legacy fallback — root app data dir
+    app_data_dir()
+}
+
+// =============================================================================
+// Legacy profile migration
+// =============================================================================
+
+/// Migrate an existing flat-layout profile into the new `profiles/` structure.
+///
+/// Returns `Ok(true)` if migration was performed, `Ok(false)` if it was
+/// skipped (already migrated or no existing data to migrate).
+///
+/// Migration steps:
+/// 1. Copy `profile.json` → `profiles/default/profile.json`
+/// 2. Move `presets/`, `watchlists.json`, `templates/`, `snapshots/` into
+///    `profiles/default/`
+/// 3. Assign a UUID and creation timestamp to the migrated profile.
+/// 4. Write `profiles/index.json` with this profile as active.
+pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
+    let index_path = profiles_dir().join("index.json");
+    if index_path.exists() {
+        // Already migrated.
+        return Ok(false);
+    }
+
+    let root = app_data_dir();
+    let legacy_profile = root.join("profile.json");
+    if !legacy_profile.exists() {
+        // Fresh install — nothing to migrate.
+        return Ok(false);
+    }
+
+    // Create the default profile subdirectory.
+    let default_dir = profiles_dir().join("default");
+    fs::create_dir_all(&default_dir).map_err(|e| e.to_string())?;
+
+    // Move profile.json.
+    fs::rename(&legacy_profile, default_dir.join("profile.json")).map_err(|e| e.to_string())?;
+
+    // Move optional data files/dirs (best effort — ignore missing).
+    let moves: &[(&str, &str)] = &[
+        ("presets", "presets"),
+        ("watchlists.json", "watchlists.json"),
+        ("templates", "templates"),
+        ("snapshots", "snapshots"),
+    ];
+    for (src_name, dst_name) in moves {
+        let src = root.join(src_name);
+        if src.exists() {
+            let dst = default_dir.join(dst_name);
+            let _ = fs::rename(&src, &dst);
+        }
+    }
+
+    // Load the migrated profile, assign UUID + timestamp, save back.
+    let profile_path = default_dir.join("profile.json");
+    let mut profile: UserProfile = fs::read_to_string(&profile_path)
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_else(UserProfile::new);
+
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    profile.profile_id = new_id.clone();
+    profile.profile_created_at = now;
+    if profile.display_name.is_empty() || profile.display_name == "Default" {
+        profile.display_name = "Default".to_string();
+    }
+    if profile.avatar.is_empty() {
+        profile.avatar = "chart".to_string();
+    }
+
+    let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
+    fs::write(&profile_path, json).map_err(|e| e.to_string())?;
+
+    // Write the index.
+    let meta = ProfileMeta {
+        id: new_id.clone(),
+        display_name: profile.display_name.clone(),
+        avatar: profile.avatar.clone(),
+        created_at: now,
+        dir_name: "default".to_string(),
+    };
+    let index = ProfileIndex {
+        active_profile_id: new_id,
+        profiles: vec![meta],
+    };
+    save_profile_index(&index)?;
+
+    Ok(true)
+}
+
+// =============================================================================
+// Profile creation
+// =============================================================================
+
+/// Create a new profile with the given display name and avatar.
+///
+/// Creates `profiles/{uuid}/profile.json` and adds the entry to the index.
+/// Does NOT switch the active profile.
+pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    // Use the UUID string as the directory name for uniqueness.
+    let dir_name = id.clone();
+    let profile_dir = profiles_dir().join(&dir_name);
+    fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
+
+    // Build and persist a new profile.
+    let mut profile = UserProfile::new();
+    profile.profile_id = id.clone();
+    profile.display_name = name.to_string();
+    profile.avatar = avatar.to_string();
+    profile.profile_created_at = now;
+
+    let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
+    fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
+
+    let meta = ProfileMeta {
+        id: id.clone(),
+        display_name: name.to_string(),
+        avatar: avatar.to_string(),
+        created_at: now,
+        dir_name,
+    };
+
+    // Append to existing index (or create one if it doesn't exist yet).
+    let mut index = load_profile_index().unwrap_or_else(|| ProfileIndex {
+        active_profile_id: id.clone(),
+        profiles: Vec::new(),
+    });
+    index.profiles.push(meta.clone());
+    save_profile_index(&index)?;
+
+    Ok(meta)
 }

@@ -3320,6 +3320,26 @@ pub struct UserSettingsState {
     pub wizard_linking_status: String,
     /// True if the user selected the E2E option (so page 2 is shown after linking).
     pub wizard_e2e_chosen: bool,
+
+    // ── Profile ──────────────────────────────────────────────────────────
+    /// Display name of the active profile.
+    pub profile_display_name: String,
+    /// Avatar key of the active profile (e.g. "chart", "rocket").
+    pub profile_avatar: String,
+    /// UUID of the active profile.
+    pub profile_id: String,
+    /// All available profiles as (id, display_name, avatar) tuples.
+    pub available_profiles: Vec<(String, String, String)>,
+    /// Whether the profile name is currently being edited inline.
+    pub profile_rename_mode: bool,
+    /// Text buffer for the inline rename input.
+    pub profile_rename_buffer: String,
+    /// Whether the avatar picker popover is open.
+    pub show_avatar_picker: bool,
+    /// Whether the "New Profile" inline dialog is open.
+    pub show_new_profile_dialog: bool,
+    /// Text buffer for new profile name input.
+    pub new_profile_name: String,
 }
 
 impl Default for UserSettingsState {
@@ -3379,6 +3399,15 @@ impl Default for UserSettingsState {
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),
             wizard_e2e_chosen: false,
+            profile_display_name: "Default".to_string(),
+            profile_avatar: "chart".to_string(),
+            profile_id: String::new(),
+            available_profiles: Vec::new(),
+            profile_rename_mode: false,
+            profile_rename_buffer: String::new(),
+            show_avatar_picker: false,
+            show_new_profile_dialog: false,
+            new_profile_name: String::new(),
         }
     }
 }

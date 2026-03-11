@@ -80,10 +80,10 @@ impl From<serde_json::Error> for TemplateError {
 
 /// Returns the root `templates/` directory, creating it if necessary.
 ///
-/// Located under the OS application data directory:
-/// `{APP_DATA_DIR}/zengeld/templates/`
+/// Located under the active profile's data directory:
+/// `{APP_DATA_DIR}/zengeld/profiles/{active}/templates/`
 pub fn templates_root() -> PathBuf {
-    let dir = crate::user_profile::storage::app_data_dir().join("templates");
+    let dir = crate::user_profile::storage::active_profile_data_dir().join("templates");
     let _ = fs::create_dir_all(&dir);
     dir
 }

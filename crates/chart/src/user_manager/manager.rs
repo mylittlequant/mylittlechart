@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::preset::preset::ChartPreset;
 use crate::preset::storage::{list_presets, load_preset};
 use crate::templates::TemplateManager;
-use crate::user_profile::storage::{get_user_data_dir, load_json, load_profile, save_profile};
+use crate::user_profile::storage::{active_profile_data_dir, load_json, load_profile, save_profile};
 use crate::user_profile::UserProfile;
 
 // =============================================================================
@@ -105,8 +105,8 @@ impl UserManager {
     /// snapshots. Errors are logged but not fatal — missing data results in
     /// defaults.
     pub fn load() -> Self {
-        let data_dir = crate::user_profile::storage::app_data_dir();
-        eprintln!("[UserManager] data directory: {}", data_dir.display());
+        let data_dir = active_profile_data_dir();
+        eprintln!("[UserManager] profile data directory: {}", data_dir.display());
 
         let profile = match load_profile() {
             Ok(p) => {
@@ -163,7 +163,7 @@ impl UserManager {
         }
 
         // Load settings snapshots.
-        let snapshots_path = get_user_data_dir().join("settings_snapshots.json");
+        let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
         let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path) {
             Ok(s) => {
                 eprintln!("[UserManager] loaded settings snapshots");

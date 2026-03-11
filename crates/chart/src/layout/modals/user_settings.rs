@@ -32,7 +32,7 @@ pub fn render_user_settings_modal(
     let mut result = UserSettingsResult::default();
 
     let modal_w = 540.0;
-    let modal_h = 400.0;
+    let modal_h = 500.0;
     let header_h = 44.0;
     let sidebar_w = 48.0;
     let padding = 20.0;
@@ -269,6 +269,20 @@ fn render_general_tab(
     result: &mut UserSettingsResult,
 ) {
     let mut cy = y;
+
+    // ── Section: PROFILE ─────────────────────────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("PROFILE", x, cy);
+    cy += 20.0;
+
+    cy = render_profile_section(
+        ctx, x, cy, available_w, state, text_color, toolbar_theme,
+        input_coordinator, layer_id, result,
+    );
+    cy += 16.0;
 
     // ── Section: CONNECTION MODE ──────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
@@ -592,6 +606,431 @@ fn render_general_tab(
         layer_id,
     );
     let _ = cy; // suppress unused variable warning
+}
+
+// =============================================================================
+// Profile section renderer
+// =============================================================================
+
+/// Maps an avatar key string to a short display tag used as a colored label.
+fn avatar_tag(key: &str) -> &'static str {
+    match key {
+        "chart"  => "CH",
+        "rocket" => "RK",
+        "shield" => "SH",
+        "fire"   => "FR",
+        "star"   => "ST",
+        "moon"   => "MN",
+        "sun"    => "SN",
+        "ghost"  => "GH",
+        _        => "??",
+    }
+}
+
+/// Returns a CSS-style hex color string for an avatar key.
+fn avatar_color(key: &str) -> &'static str {
+    match key {
+        "chart"  => "#4a8fe7",
+        "rocket" => "#f07030",
+        "shield" => "#4caf50",
+        "fire"   => "#e53935",
+        "star"   => "#fdd835",
+        "moon"   => "#9c6dd8",
+        "sun"    => "#ffb300",
+        "ghost"  => "#90a4ae",
+        _        => "#888888",
+    }
+}
+
+/// Renders a small colored dot (circle) for a profile avatar.
+fn draw_avatar_dot(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+    ctx.fill();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_profile_section(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let mut cy = y;
+    let dot_r = 6.0;
+    let avatar_color_str = avatar_color(&state.profile_avatar);
+
+    // ── Current profile header row ────────────────────────────────────────────
+    // [avatar dot] [display name | rename input] [Rename] [Avatar]
+    let header_h = 28.0;
+
+    // Avatar dot
+    draw_avatar_dot(ctx, x + dot_r, cy + header_h / 2.0, dot_r, avatar_color_str);
+
+    let name_x = x + dot_r * 2.0 + 8.0;
+    let btn_w = 52.0;
+    let btn_h = 22.0;
+    let btn_gap = 6.0;
+    let avatar_btn_x = x + available_w - btn_w;
+    let rename_btn_x = avatar_btn_x - btn_w - btn_gap;
+
+    if state.profile_rename_mode {
+        // Inline text input for rename
+        let input_w = rename_btn_x - name_x - btn_gap;
+        let input_h = 22.0;
+        let input_y = cy + (header_h - input_h) / 2.0;
+
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(name_x, input_y, input_w, input_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(name_x, input_y, input_w, input_h, 3.0);
+
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&state.profile_rename_buffer, name_x + 6.0, input_y + input_h / 2.0);
+
+        // Confirm / Cancel buttons
+        let confirm_btn_w = 52.0;
+        let cancel_btn_w = 52.0;
+        let confirm_x = rename_btn_x;
+        let cancel_x = avatar_btn_x;
+        let btn_y = cy + (header_h - btn_h) / 2.0;
+
+        // Confirm button (green tint)
+        ctx.set_fill_color("rgba(76,175,80,0.2)");
+        ctx.fill_rounded_rect(confirm_x, btn_y, confirm_btn_w, btn_h, 3.0);
+        ctx.set_stroke_color("rgba(76,175,80,0.6)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(confirm_x, btn_y, confirm_btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("#81c784");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Save", confirm_x + confirm_btn_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_rename_confirm".to_string(), WidgetRect::new(confirm_x, btn_y, confirm_btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename_confirm",
+            uzor::types::Rect::new(confirm_x, btn_y, confirm_btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        // Cancel button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(cancel_x, btn_y, cancel_btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cancel_x, btn_y, cancel_btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Cancel", cancel_x + cancel_btn_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_rename_cancel".to_string(), WidgetRect::new(cancel_x, btn_y, cancel_btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename_cancel",
+            uzor::types::Rect::new(cancel_x, btn_y, cancel_btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    } else {
+        // Display name text
+        ctx.set_font("700 14px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&state.profile_display_name, name_x, cy + header_h / 2.0);
+
+        let btn_y = cy + (header_h - btn_h) / 2.0;
+
+        // "Rename" button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(rename_btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(rename_btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Rename", rename_btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_rename".to_string(), WidgetRect::new(rename_btn_x, btn_y, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename",
+            uzor::types::Rect::new(rename_btn_x, btn_y, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        // "Avatar" button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(avatar_btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(avatar_btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Avatar", avatar_btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_avatar_toggle".to_string(), WidgetRect::new(avatar_btn_x, btn_y, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_avatar_toggle",
+            uzor::types::Rect::new(avatar_btn_x, btn_y, btn_w, btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += header_h + 4.0;
+
+    // ── Avatar picker popover ─────────────────────────────────────────────────
+    if state.show_avatar_picker {
+        let avatars = [
+            "chart", "rocket", "shield", "fire",
+            "star",  "moon",   "sun",    "ghost",
+        ];
+        let cell_size = 28.0;
+        let picker_cols = 8;
+        let picker_w = cell_size * picker_cols as f64;
+        let picker_h = cell_size + 8.0;
+        let picker_x = x;
+        let picker_y = cy;
+
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(picker_x, picker_y, picker_w, picker_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(picker_x, picker_y, picker_w, picker_h, 4.0);
+
+        for (i, av) in avatars.iter().enumerate() {
+            let cell_x = picker_x + i as f64 * cell_size;
+            let cell_cx = cell_x + cell_size / 2.0;
+            let cell_cy = picker_y + picker_h / 2.0;
+            let is_selected = *av == state.profile_avatar;
+
+            if is_selected {
+                ctx.set_fill_color(&toolbar_theme.item_bg_active);
+                ctx.fill_rounded_rect(cell_x + 2.0, picker_y + 2.0, cell_size - 4.0, picker_h - 4.0, 3.0);
+            }
+
+            draw_avatar_dot(ctx, cell_cx, cell_cy, 7.0, avatar_color(av));
+
+            let hit_id = format!("user_settings:profile_avatar:{}", av);
+            result.content_items.push((format!("profile_avatar:{}", av), WidgetRect::new(cell_x, picker_y, cell_size, picker_h)));
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                uzor::types::Rect::new(cell_x, picker_y, cell_size, picker_h),
+                Sense::CLICK,
+                layer_id,
+            );
+        }
+        cy += picker_h + 6.0;
+    }
+
+    // ── Separator ─────────────────────────────────────────────────────────────
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, cy);
+    ctx.line_to(x + available_w, cy);
+    ctx.stroke();
+    cy += 8.0;
+
+    // ── Profile list ──────────────────────────────────────────────────────────
+    let profile_row_h = 28.0;
+    let switch_btn_w = 50.0;
+
+    for (id, name, avatar) in &state.available_profiles {
+        let is_active = *id == state.profile_id;
+        let row_dot_r = 5.0;
+        let row_dot_cx = x + row_dot_r + 4.0;
+        let row_dot_cy = cy + profile_row_h / 2.0;
+
+        if is_active {
+            // Filled dot for active profile
+            draw_avatar_dot(ctx, row_dot_cx, row_dot_cy, row_dot_r, avatar_color(avatar));
+        } else {
+            // Empty ring for inactive profiles
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.5);
+            ctx.begin_path();
+            ctx.arc(row_dot_cx, row_dot_cy, row_dot_r, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+        }
+
+        // Profile name
+        let name_alpha = if is_active { "1.0" } else { "0.65" };
+        let row_name_color = format!("rgba(254,255,238,{})", name_alpha);
+        ctx.set_font(if is_active { "600 13px sans-serif" } else { "13px sans-serif" });
+        ctx.set_fill_color(row_name_color.as_str());
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let name_x2 = x + row_dot_r * 2.0 + 12.0;
+        ctx.fill_text(name.as_str(), name_x2, row_dot_cy);
+
+        if is_active {
+            // "(active)" label
+            let tag_x = name_x2 + name.chars().count() as f64 * 7.5 + 6.0;
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.fill_text("(active)", tag_x, row_dot_cy);
+        } else {
+            // "Switch" button
+            let sw_x = x + available_w - switch_btn_w;
+            let sw_y = cy + (profile_row_h - 20.0) / 2.0;
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(sw_x, sw_y, switch_btn_w, 20.0, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(sw_x, sw_y, switch_btn_w, 20.0, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.7)");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Switch", sw_x + switch_btn_w / 2.0, sw_y + 10.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            let hit_id = format!("user_settings:profile_switch:{}", id);
+            result.content_items.push((format!("profile_switch:{}", id), WidgetRect::new(sw_x, sw_y, switch_btn_w, 20.0)));
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                uzor::types::Rect::new(sw_x, sw_y, switch_btn_w, 20.0),
+                Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        cy += profile_row_h;
+    }
+
+    // ── Separator ─────────────────────────────────────────────────────────────
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, cy);
+    ctx.line_to(x + available_w, cy);
+    ctx.stroke();
+    cy += 8.0;
+
+    // ── "New Profile" dialog / button ─────────────────────────────────────────
+    if state.show_new_profile_dialog {
+        let input_h = 24.0;
+        let input_w = available_w - 60.0 - 6.0;
+
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, input_w, input_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, input_w, input_h, 3.0);
+
+        let placeholder = if state.new_profile_name.is_empty() {
+            "Profile name..."
+        } else {
+            ""
+        };
+        ctx.set_font("13px sans-serif");
+        ctx.set_text_baseline(TextBaseline::Middle);
+        if state.new_profile_name.is_empty() {
+            ctx.set_fill_color("rgba(254,255,238,0.3)");
+            ctx.fill_text(placeholder, x + 6.0, cy + input_h / 2.0);
+        } else {
+            ctx.set_fill_color(text_color);
+            ctx.fill_text(&state.new_profile_name, x + 6.0, cy + input_h / 2.0);
+        }
+
+        // Create button
+        let create_x = x + input_w + 6.0;
+        ctx.set_fill_color("rgba(76,175,80,0.2)");
+        ctx.fill_rounded_rect(create_x, cy, 54.0, input_h, 3.0);
+        ctx.set_stroke_color("rgba(76,175,80,0.6)");
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(create_x, cy, 54.0, input_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("#81c784");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Create", create_x + 27.0, cy + input_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_new_confirm".to_string(), WidgetRect::new(create_x, cy, 54.0, input_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_new_confirm",
+            uzor::types::Rect::new(create_x, cy, 54.0, input_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        // Cancel (X) button
+        let cancel_x = create_x + 54.0 + 4.0;
+        if cancel_x + 24.0 <= x + available_w {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(cancel_x, cy, 24.0, input_h, 3.0);
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.5)");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("✕", cancel_x + 12.0, cy + input_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push(("profile_new_cancel".to_string(), WidgetRect::new(cancel_x, cy, 24.0, input_h)));
+            input_coordinator.register_on_layer(
+                "user_settings:profile_new_cancel",
+                uzor::types::Rect::new(cancel_x, cy, 24.0, input_h),
+                Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        cy += input_h + 6.0;
+    } else {
+        // "+ New Profile" button
+        let new_btn_h = 24.0;
+        let new_btn_w = available_w.min(140.0);
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.7)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("+ New Profile", x + new_btn_w / 2.0, cy + new_btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_new".to_string(), WidgetRect::new(x, cy, new_btn_w, new_btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_new",
+            uzor::types::Rect::new(x, cy, new_btn_w, new_btn_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        cy += new_btn_h;
+    }
+
+    // Suppress unused variable warning for avatar_tag helper (used for future text-only rendering).
+    let _ = avatar_tag;
+
+    cy
 }
 
 // =============================================================================

@@ -6,7 +6,7 @@
 //!
 //! # Directory resolution
 //!
-//! [`presets_dir`] delegates to [`crate::user_profile::storage::app_data_dir`]
+//! [`presets_dir`] delegates to [`crate::user_profile::storage::active_profile_data_dir`]
 //! and appends `presets/`.  The directory is created automatically on first
 //! access.
 
@@ -96,10 +96,10 @@ impl From<serde_json::Error> for PresetError {
 
 /// Returns the path to the `presets/` directory, creating it if necessary.
 ///
-/// Located under the OS application data directory:
-/// `{APP_DATA_DIR}/zengeld/presets/`
+/// Located under the active profile's data directory:
+/// `{APP_DATA_DIR}/zengeld/profiles/{active}/presets/`
 pub fn presets_dir() -> PathBuf {
-    let dir = crate::user_profile::storage::app_data_dir().join("presets");
+    let dir = crate::user_profile::storage::active_profile_data_dir().join("presets");
     // Best-effort creation; callers will receive an Io error on the actual
     // read/write if the directory cannot be created.
     let _ = fs::create_dir_all(&dir);

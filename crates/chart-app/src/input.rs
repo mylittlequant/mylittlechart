@@ -7301,6 +7301,63 @@ impl ChartApp {
                     self.panel_app.user_settings_state.show_welcome_wizard = false;
                     eprintln!("[ChartApp] wizard: E2E skipped, closing wizard");
                 }
+                // ── Profile handlers ───────────────────────────────────────────
+                "profile_rename" => {
+                    self.panel_app.user_settings_state.profile_rename_mode = true;
+                    self.panel_app.user_settings_state.profile_rename_buffer =
+                        self.panel_app.user_settings_state.profile_display_name.clone();
+                    eprintln!("[ChartApp] profile_rename: entering rename mode");
+                }
+                "profile_rename_confirm" => {
+                    let new_name = self.panel_app.user_settings_state.profile_rename_buffer.trim().to_string();
+                    if !new_name.is_empty() {
+                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        self.panel_app.user_settings_state.profile_rename_mode = false;
+                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
+                        eprintln!("[ChartApp] profile_rename_confirm: new name = {}", new_name);
+                    }
+                }
+                "profile_rename_cancel" => {
+                    self.panel_app.user_settings_state.profile_rename_mode = false;
+                    eprintln!("[ChartApp] profile_rename_cancel");
+                }
+                "profile_avatar_toggle" => {
+                    self.panel_app.user_settings_state.show_avatar_picker =
+                        !self.panel_app.user_settings_state.show_avatar_picker;
+                    eprintln!(
+                        "[ChartApp] profile_avatar_toggle: open = {}",
+                        self.panel_app.user_settings_state.show_avatar_picker
+                    );
+                }
+                "profile_new" => {
+                    self.panel_app.user_settings_state.show_new_profile_dialog = true;
+                    self.panel_app.user_settings_state.new_profile_name = String::new();
+                    eprintln!("[ChartApp] profile_new: opening dialog");
+                }
+                "profile_new_confirm" => {
+                    let name = self.panel_app.user_settings_state.new_profile_name.trim().to_string();
+                    if !name.is_empty() {
+                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
+                        self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
+                    }
+                }
+                "profile_new_cancel" => {
+                    self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                    eprintln!("[ChartApp] profile_new_cancel");
+                }
+                rest if rest.starts_with("profile_switch:") => {
+                    let id = &rest["profile_switch:".len()..];
+                    self.pending_updater_cmd = Some(format!("profile_switch:{}", id));
+                    eprintln!("[ChartApp] profile_switch: switching to profile id = {}", id);
+                }
+                rest if rest.starts_with("profile_avatar:") => {
+                    let avatar = &rest["profile_avatar:".len()..];
+                    self.panel_app.user_settings_state.profile_avatar = avatar.to_string();
+                    self.panel_app.user_settings_state.show_avatar_picker = false;
+                    self.pending_updater_cmd = Some(format!("profile_set_avatar:{}", avatar));
+                    eprintln!("[ChartApp] profile_avatar: selected = {}", avatar);
+                }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);
                 }
