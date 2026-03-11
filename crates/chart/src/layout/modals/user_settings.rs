@@ -793,14 +793,56 @@ fn render_sync_tab(
         cy += 18.0;
     }
 
-    // Status: quota usage
+    // ── Storage Usage Bar ─────────────────────────────────────────────────────
     {
-        let quota_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
-        let quota_str = format!("Storage: {:.1} MB / 50 MB", quota_mb);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.45)");
-        ctx.fill_text(&quota_str, x, cy);
-        cy += 24.0;
+        const QUOTA_LIMIT_BYTES: i64 = 50 * 1024 * 1024; // 50 MB
+
+        if state.quota_used_bytes == 0 {
+            // Never synced or unknown — show muted placeholder
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.30)");
+            ctx.set_text_align(uzor::render::TextAlign::Left);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("Storage: \u{2014}", x, cy);
+            cy += 20.0;
+        } else {
+            let used_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
+            let limit_mb = QUOTA_LIMIT_BYTES as f64 / (1024.0 * 1024.0);
+            let used_pct = (state.quota_used_bytes as f64 / QUOTA_LIMIT_BYTES as f64).min(1.0);
+
+            // Label row: "Storage" left, "X.X MB / 50 MB" right
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.55)");
+            ctx.set_text_align(uzor::render::TextAlign::Left);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("Storage", x, cy);
+
+            let used_str = format!("{:.1} MB / {:.0} MB", used_mb, limit_mb);
+            ctx.set_text_align(uzor::render::TextAlign::Right);
+            ctx.fill_text(&used_str, x + available_w, cy);
+            ctx.set_text_align(uzor::render::TextAlign::Left);
+            cy += 14.0;
+
+            // Progress bar background
+            let bar_h = 8.0;
+            ctx.set_fill_color("#333333");
+            ctx.fill_rounded_rect(x, cy, available_w, bar_h, 3.0);
+
+            // Progress bar fill — color based on usage level
+            let fill_color = if used_pct >= 0.90 {
+                "#d9534f" // red > 90%
+            } else if used_pct >= 0.70 {
+                "#f0ad4e" // yellow 70–90%
+            } else {
+                "#5cb85c" // green < 70%
+            };
+            let fill_w = available_w * used_pct;
+            if fill_w > 0.0 {
+                ctx.set_fill_color(fill_color);
+                ctx.fill_rounded_rect(x, cy, fill_w, bar_h, 3.0);
+            }
+            cy += bar_h + 8.0;
+        }
     }
 
     // ── "Sync Now" Button ─────────────────────────────────────────────────────

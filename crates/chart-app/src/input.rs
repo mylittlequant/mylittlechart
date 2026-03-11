@@ -5568,6 +5568,13 @@ impl ChartApp {
     /// but not fully wired — modal input routing would require a handle_input()
     /// on ChartPanelApp which does not exist at this checkpoint.
     fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        // === Launch banner dismiss ===
+        if widget_id == "dismiss_launch_banner" {
+            self.launch_banner_visible = false;
+            eprintln!("[ChartApp] launch banner dismissed");
+            return;
+        }
+
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
