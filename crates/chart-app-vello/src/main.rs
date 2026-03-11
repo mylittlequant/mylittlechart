@@ -1866,6 +1866,7 @@ impl App<'_> {
                 connected,
                 profile.telemetry_enabled,
                 profile.sync_state.enabled,
+                profile.sync_state.synced_items.clone(),
                 zengeld_chart::get_user_data_dir(),
                 build_attest,
             ))
@@ -3807,8 +3808,10 @@ impl ApplicationHandler for App<'_> {
                         self.user_manager.profile.sync_state.enabled = false;
                         Some(UpdaterCommand::SetSyncEnabled(false))
                     } else if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
-                        // Spawn an async task to call setup_e2e_on_server.
-                        // The passphrase is consumed here and never stored.
+                        // Derive the E2E key and register it with the updater immediately,
+                        // then spawn an async task to push the salt to the server.
+                        // On success the updater is told to re-encrypt all existing cloud
+                        // data so the server never holds plaintext after E2E is enabled.
                         let passphrase = passphrase.to_string();
                         let token = zengeld_updater::token_store::load_token();
                         if let Some(tok) = token {
@@ -3821,7 +3824,17 @@ impl ApplicationHandler for App<'_> {
                             let (key, params) = zengeld_updater::e2e_crypto::setup_e2e(&passphrase);
                             let salt_hex = params.salt.clone();
                             let salt_hex_for_spawn = salt_hex.clone();
-                            let _ = key; // held in memory only during this session
+
+                            // Immediately arm the updater with the new key so that the
+                            // re-encrypt command (sent below after the server call) can
+                            // use it.
+                            if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(key))) {
+                                eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
+                            }
+
+                            // Clone the sender so the async task can trigger re-encryption
+                            // once the server has recorded the salt.
+                            let cmd_tx_for_spawn = handle.cmd_tx.clone();
                             tokio::spawn(async move {
                                 match zengeld_updater::e2e_crypto::setup_e2e_on_server(
                                     &client,
@@ -3831,7 +3844,12 @@ impl ApplicationHandler for App<'_> {
                                     params.iterations,
                                 )
                                 .await {
-                                    Ok(_) => eprintln!("[App] E2E setup on server succeeded"),
+                                    Ok(_) => {
+                                        eprintln!("[App] E2E setup on server succeeded — triggering re-encryption");
+                                        if let Err(e) = cmd_tx_for_spawn.send(UpdaterCommand::ReEncryptAll) {
+                                            eprintln!("[App] e2e_setup: ReEncryptAll send failed: {}", e);
+                                        }
+                                    }
                                     Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
                                 }
                             });
