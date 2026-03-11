@@ -65,6 +65,11 @@ cargo build --release --features standalone
 - **API key management** via dashboard + agent-initiated device code flow
 - **Build attestation** — server rejects unofficial/modified builds
 - **Telemetry** — opt-in usage analytics (toggleable in Settings)
+- **Sync status watch channel** (`sync_status_rx`) — `about_to_wait()` polls `has_changed()` each frame and pushes `SyncStatus` enum (Idle / Syncing / Completed / Error / NeedsSetup / ConflictsDetected) into every window's `UserSettingsState`; surfaces progress indicators, error toasts, and conflict modals without blocking the render thread
+- **Conflict resolution** — when local and server versions diverge, `SyncStatus::ConflictsDetected` carries a `Vec<SyncConflict>`; each conflict is resolved via `UpdaterCommand::ResolveConflict { sync_id, resolution: KeepLocal | KeepCloud }`; bulk resolve is available from the UI
+- **Launch banner** — transient 30 px overlay shown on first sync completion for connected users; auto-dismisses after 10 s; displays current version and sync summary
+- **Welcome wizard** — first-run 3-page overlay (`chart/src/layout/modals/welcome_wizard.rs`): mode selection (Standalone / Connected / E2E) → account linking → E2E passphrase setup; triggered when `profile.json` does not exist
+- **Mode gates** — Standalone and unofficial build configurations call `ToolbarConfig::standalone()` across all windows; sync controls and connected-only toolbar actions are greyed out with explanatory banners/tooltips
 
 ## Agent API
 
@@ -81,11 +86,14 @@ Permissions: `read_bars`, `read_indicators`, `read_viewport`, `read_config`, `ex
 | `chart-app/src/input.rs` | All user interaction handlers |
 | `chart/src/panel_app.rs` | ChartPanelApp, chart rendering |
 | `chart/src/user_profile/profile.rs` | UserProfile, ClientMode, SyncState |
+| `chart/src/layout/modals/welcome_wizard.rs` | First-run onboarding wizard (3-page overlay) |
 | `updater/src/lib.rs` | Updater loop, OTA check, cloud sync |
 | `updater/src/verify.rs` | Ed25519 OTA signature verification |
 | `updater/src/cloud_sync.rs` | Push/pull sync pipeline |
 | `updater/src/e2e_crypto.rs` | E2E encryption primitives |
 | `updater/src/attest.rs` | Build attestation headers |
+| `updater/src/state.rs` | SyncStatus, UpdaterCommand, UpdaterHandle, SyncConflict, ConflictResolution enums |
+| `updater/src/key_sync.rs` | Agent API key synchronization (SyncedKeyEntry, server polling) |
 | `live-data/src/bridge.rs` | DataBridge, broadcast channel |
 
 ## Dependencies
