@@ -6,8 +6,7 @@
 //!
 //! Pages:
 //!   0 — Connection Mode  (Standalone / Connected)
-//!   1 — Encryption Mode  (Standard / Zero-Trust E2E)
-//!   2 — Finalize         (varies by mode combination)
+//!   1 — Set Passphrase   (mandatory for both modes; Connected also shows sign-in)
 
 use crate::engine::render::RenderContext;
 use uzor::render::{TextAlign, TextBaseline};
@@ -52,8 +51,7 @@ pub fn render_welcome_wizard(
     // ── Modal dimensions ─────────────────────────────────────────────────────
     let modal_w: f64 = 580.0;
     let modal_h: f64 = match state.wizard_page {
-        1 => 360.0,
-        2 => page2_height(state),
+        1 => page1_height(state),
         _ => 380.0, // page 0
     };
     let modal_x = (window_w - modal_w) / 2.0;
@@ -81,19 +79,17 @@ pub fn render_welcome_wizard(
 
     match state.wizard_page {
         0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        2 => render_page2(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        1 => render_page1_passphrase(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
         _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 }
 
-/// Compute the height for page 2 based on the selected mode combination.
-fn page2_height(state: &UserSettingsState) -> f64 {
-    match (state.wizard_mode_standalone, state.wizard_e2e_chosen) {
-        (true, false) => 200.0,  // Standalone + Standard: just "You're all set!"
-        (true, true)  => 320.0,  // Standalone + Zero-Trust: passphrase input
-        (false, false) => 280.0, // Connected + Standard: sign in + skip
-        (false, true)  => 380.0, // Connected + Zero-Trust: sign in + passphrase
+/// Compute the height for page 1 based on the selected connection mode.
+fn page1_height(state: &UserSettingsState) -> f64 {
+    if state.wizard_mode_standalone {
+        320.0 // Standalone: passphrase only
+    } else {
+        420.0 // Connected: passphrase + sign-in section
     }
 }
 
@@ -156,11 +152,11 @@ fn render_page0(
 }
 
 // =============================================================================
-// Page 1 — Encryption Mode selection
+// Page 1 — Set Passphrase (mandatory; Connected mode also shows sign-in)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page1(
+fn render_page1_passphrase(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -183,140 +179,17 @@ fn render_page1(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Choose Encryption", x + w / 2.0, *cy);
+    ctx.fill_text("Set Passphrase", x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
     *cy += 26.0;
 
     // Step indicator
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.35)");
-    let mode_label = if state.wizard_mode_standalone { "Standalone" } else { "Connected" };
-    ctx.fill_text(&format!("Step 2 of 2 — Mode: {}", mode_label), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 32.0;
-
-    // ── Card A: Standard ──────────────────────────────────────────────────────
-    render_mode_card(
-        ctx, x, *cy, w, toolbar_theme, layer_id, input_coordinator, result,
-        "Standard",
-        "Your data is stored normally. Simple and fast.",
-        "Standard",
-        "wizard_standard",
-        false,
-        hovered,
-    );
-    *cy += 102.0;
-
-    // ── Card B: Zero-Trust ────────────────────────────────────────────────────
-    render_mode_card(
-        ctx, x, *cy, w, toolbar_theme, layer_id, input_coordinator, result,
-        "Zero-Trust (E2E Encrypted)",
-        "All data encrypted before leaving this device. Server cannot read your data.",
-        "Zero-Trust",
-        "wizard_zerotrust",
-        true,
-        hovered,
-    );
-}
-
-// =============================================================================
-// Page 2 — Finalize (varies by mode combination)
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_page2(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-    match (state.wizard_mode_standalone, state.wizard_e2e_chosen) {
-        (true, false) => render_page2_standalone_standard(ctx, x, w, cy, text_color, toolbar_theme, layer_id, input_coordinator, result, hovered),
-        (true, true)  => render_page2_standalone_e2e(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
-        (false, false) => render_page2_connected_standard(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
-        (false, true)  => render_page2_connected_e2e(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result),
-    }
-}
-
-/// Standalone + Standard: just show "You're all set!"
-#[allow(clippy::too_many_arguments)]
-fn render_page2_standalone_standard(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-    hovered_item_id: Option<&str>,
-) {
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered_item_id);
-    *cy += 16.0;
-
-    ctx.set_font("bold 22px sans-serif");
-    ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("You're all set!", x + w / 2.0, *cy);
-    *cy += 28.0;
-
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
-    ctx.fill_text("Standalone mode — all data stays on this device.", x + w / 2.0, *cy);
-    *cy += 48.0;
-
-    // Start button
-    let btn_w = 160.0;
-    let btn_h = 36.0;
-    let btn_x = x + (w - btn_w) / 2.0;
-    let is_finish_hovered = hovered_item_id == Some("wizard_finish");
-    let finish_bg = if is_finish_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-    ctx.set_fill_color(finish_bg);
-    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 5.0);
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Start", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text("Step 2 of 2 — Set Passphrase", x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
-
-    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_finish".to_string(), btn_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_finish", btn_rect, Sense::CLICK, layer_id);
-}
-
-/// Standalone + Zero-Trust: passphrase input
-#[allow(clippy::too_many_arguments)]
-fn render_page2_standalone_e2e(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Set Up Encryption", x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 32.0;
+    *cy += 24.0;
 
     // Warning box
     let warn_h = 52.0;
@@ -332,180 +205,52 @@ fn render_page2_standalone_e2e(
     ctx.fill_text("data cannot be recovered. Keep it somewhere safe.", x + 10.0, *cy + 24.0);
     *cy += warn_h + 16.0;
 
-    // Passphrase input
+    // Passphrase input (mandatory)
     *cy = render_passphrase_input(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result);
 
-    // Enable E2E button
-    let btn_h = 32.0;
-    let enable_btn_w = w.min(200.0);
-    let enable_disabled = state.e2e_passphrase.is_empty();
-    let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
-    let enable_bg = if enable_disabled {
-        "rgba(244,205,99,0.20)"
-    } else if is_e2e_hovered {
-        "rgba(255,255,255,0.92)"
-    } else {
-        toolbar_theme.accent.as_str()
-    };
-    let enable_text = if enable_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
-    ctx.set_fill_color(enable_bg);
-    ctx.fill_rounded_rect(x, *cy, enable_btn_w, btn_h, 4.0);
-    ctx.set_font("bold 12px sans-serif");
-    ctx.set_fill_color(enable_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Enable E2E Encryption", x + enable_btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    if !enable_disabled {
-        let btn_rect = WidgetRect::new(x, *cy, enable_btn_w, btn_h);
-        result.content_items.push(("wizard_enable_e2e".to_string(), btn_rect));
-        input_coordinator.register_on_layer("user_settings:wizard_enable_e2e", btn_rect, Sense::CLICK, layer_id);
-    }
-}
-
-/// Connected + Standard: sign in button + skip
-#[allow(clippy::too_many_arguments)]
-fn render_page2_connected_standard(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Sign In to Link Your Account", x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 28.0;
-
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Open chart.example/login in your browser to sign in.", x, *cy);
-    *cy += 36.0;
-
-    // Open Browser button
-    let btn_h = 32.0;
-    let btn_w = w.min(200.0);
-    let is_browser_hovered = hovered == Some("wizard_open_browser");
-    let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-    ctx.set_fill_color(browser_bg);
-    ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 12px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Open Browser", x + btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let open_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_open_browser".to_string(), open_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_open_browser", open_rect, Sense::CLICK, layer_id);
-    *cy += btn_h + 16.0;
-
-    // Linking status
-    if !state.wizard_linking_status.is_empty() {
-        let status_color = if state.wizard_linking_status.starts_with("Linked") { "#5cb85c" } else { "rgba(254,255,238,0.45)" };
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(status_color);
+    // ── Connected mode: sign-in section ──────────────────────────────────────
+    if !state.wizard_mode_standalone {
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_fill_color("rgba(244,205,99,0.7)");
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&state.wizard_linking_status, x, *cy);
-        *cy += 20.0;
-    }
-    *cy += 16.0;
-
-    // "Skip for now" link
-    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result, hovered);
-}
-
-/// Connected + Zero-Trust: sign in + passphrase
-#[allow(clippy::too_many_arguments)]
-fn render_page2_connected_e2e(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Complete Setup", x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 28.0;
-
-    // Sign in section
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("SIGN IN", x, *cy);
-    *cy += 16.0;
-
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
-    ctx.fill_text("Open chart.example/login to link your account.", x, *cy);
-    *cy += 20.0;
-
-    let btn_h = 28.0;
-    let btn_w = w.min(160.0);
-    let is_browser_hovered = hovered == Some("wizard_open_browser");
-    let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-    ctx.set_fill_color(browser_bg);
-    ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 11px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Open Browser", x + btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let open_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_open_browser".to_string(), open_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_open_browser", open_rect, Sense::CLICK, layer_id);
-    *cy += btn_h + 8.0;
-
-    if !state.wizard_linking_status.is_empty() {
-        let status_color = if state.wizard_linking_status.starts_with("Linked") { "#5cb85c" } else { "rgba(254,255,238,0.45)" };
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(status_color);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&state.wizard_linking_status, x, *cy);
+        ctx.fill_text("SIGN IN", x, *cy);
         *cy += 16.0;
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.55)");
+        ctx.fill_text("Open chart.example/login to link your account.", x, *cy);
+        *cy += 20.0;
+
+        let btn_h = 28.0;
+        let btn_w = w.min(160.0);
+        let is_browser_hovered = hovered == Some("wizard_open_browser");
+        let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+        ctx.set_fill_color(browser_bg);
+        ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
+        ctx.set_font("bold 11px sans-serif");
+        ctx.set_fill_color("rgba(0,0,0,0.85)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Open Browser", x + btn_w / 2.0, *cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        let open_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
+        result.content_items.push(("wizard_open_browser".to_string(), open_rect));
+        input_coordinator.register_on_layer("user_settings:wizard_open_browser", open_rect, Sense::CLICK, layer_id);
+        *cy += btn_h + 8.0;
+
+        if !state.wizard_linking_status.is_empty() {
+            let status_color = if state.wizard_linking_status.starts_with("Linked") { "#5cb85c" } else { "rgba(254,255,238,0.45)" };
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(status_color);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text(&state.wizard_linking_status, x, *cy);
+            *cy += 16.0;
+        }
+        *cy += 12.0;
     }
-    *cy += 12.0;
 
-    // Passphrase section
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("PASSPHRASE (E2E)", x, *cy);
-    *cy += 16.0;
-
-    *cy = render_passphrase_input(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result);
-
-    // Complete Setup button
+    // ── Complete Setup button (disabled until passphrase is entered) ──────────
     let enable_disabled = state.e2e_passphrase.is_empty();
     let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
     let enable_bg = if enable_disabled {
@@ -532,9 +277,6 @@ fn render_page2_connected_e2e(
         result.content_items.push(("wizard_enable_e2e".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:wizard_enable_e2e", btn_rect, Sense::CLICK, layer_id);
     }
-    *cy += cbtn_h + 12.0;
-
-    render_skip_link(ctx, x, cy, layer_id, input_coordinator, result, hovered);
 }
 
 // =============================================================================
@@ -704,6 +446,10 @@ fn render_passphrase_input(
 }
 
 /// Render a "Skip for now" link button.
+///
+/// Not used in the main wizard flow (passphrase is mandatory) but kept as a
+/// helper in case it is needed by other UI paths.
+#[allow(dead_code)]
 fn render_skip_link(
     ctx: &mut dyn RenderContext,
     x: f64,

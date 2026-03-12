@@ -4331,8 +4331,8 @@ impl ChartApp {
             return;
         }
 
-        // Handle E2E passphrase input in User Settings Sync tab
-        if self.panel_app.user_settings_state.is_open
+        // Handle E2E passphrase input in User Settings Sync tab or Welcome Wizard
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.e2e_passphrase_focused
         {
             match ch {
@@ -7281,29 +7281,17 @@ impl ChartApp {
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 "wizard_standalone" => {
-                    // Step 1: user chose Standalone mode — go to page 1 (encryption choice)
+                    // Page 0: user chose Standalone — go to page 1 (passphrase)
                     self.panel_app.user_settings_state.wizard_mode_standalone = true;
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    eprintln!("[ChartApp] wizard: chose Standalone, going to page 1");
+                    eprintln!("[ChartApp] wizard: chose Standalone, going to page 1 (passphrase)");
                 }
                 "wizard_connected" => {
-                    // Step 1: user chose Connected mode — go to page 1 (encryption choice)
+                    // Page 0: user chose Connected — go to page 1 (passphrase + sign-in)
                     self.panel_app.user_settings_state.wizard_mode_standalone = false;
                     self.panel_app.user_settings_state.wizard_page = 1;
                     self.panel_app.user_settings_state.wizard_linking_status = String::new();
-                    eprintln!("[ChartApp] wizard: chose Connected, going to page 1");
-                }
-                "wizard_standard" => {
-                    // Step 2: Standard encryption chosen — go to page 2 (finalize)
-                    self.panel_app.user_settings_state.wizard_e2e_chosen = false;
-                    self.panel_app.user_settings_state.wizard_page = 2;
-                    eprintln!("[ChartApp] wizard: chose Standard, going to page 2");
-                }
-                "wizard_zerotrust" => {
-                    // Step 2: Zero-Trust E2E chosen — go to page 2 (finalize)
-                    self.panel_app.user_settings_state.wizard_e2e_chosen = true;
-                    self.panel_app.user_settings_state.wizard_page = 2;
-                    eprintln!("[ChartApp] wizard: chose Zero-Trust, going to page 2");
+                    eprintln!("[ChartApp] wizard: chose Connected, going to page 1 (passphrase)");
                 }
                 "wizard_back" => {
                     // Back arrow — go to previous page
@@ -7313,26 +7301,13 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] wizard: back to page {}", current_page.saturating_sub(1));
                 }
-                "wizard_finish" => {
-                    // Standalone + Standard: apply mode and close wizard
-                    let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
-                    self.panel_app.user_settings_state.show_welcome_wizard = false;
-                    if standalone {
-                        self.panel_app.user_settings_state.client_mode_connected = false;
-                        self.pending_updater_cmd = Some("set_standalone".to_string());
-                    } else {
-                        self.panel_app.user_settings_state.client_mode_connected = true;
-                        self.pending_updater_cmd = Some("set_connected".to_string());
-                    }
-                    eprintln!("[ChartApp] wizard: finished, standalone={}", standalone);
-                }
                 "wizard_open_browser" => {
                     // Start device auth link flow (same as sign_in button)
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
                 "wizard_enable_e2e" => {
-                    // User confirmed E2E passphrase — apply mode + E2E and close wizard
+                    // Page 1: user confirmed passphrase — apply mode + E2E and close wizard
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
                     if !passphrase.is_empty() {
                         let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
@@ -7346,21 +7321,8 @@ impl ChartApp {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
                         self.panel_app.user_settings_state.e2e_passphrase.clear();
-                        eprintln!("[ChartApp] wizard: E2E setup complete, closing wizard");
+                        eprintln!("[ChartApp] wizard: setup complete (E2E), closing wizard, standalone={}", standalone);
                     }
-                }
-                "wizard_skip" | "wizard_skip_e2e" => {
-                    // Skip for now — apply connection mode but skip E2E, close wizard
-                    let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
-                    self.panel_app.user_settings_state.show_welcome_wizard = false;
-                    if standalone {
-                        self.panel_app.user_settings_state.client_mode_connected = false;
-                        self.pending_updater_cmd = Some("set_standalone".to_string());
-                    } else {
-                        self.panel_app.user_settings_state.client_mode_connected = true;
-                        self.pending_updater_cmd = Some("set_connected".to_string());
-                    }
-                    eprintln!("[ChartApp] wizard: skipped E2E, closing wizard");
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {
