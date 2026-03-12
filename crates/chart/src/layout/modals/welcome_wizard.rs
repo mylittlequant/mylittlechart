@@ -445,6 +445,114 @@ fn render_passphrase_input(
     *cy
 }
 
+/// Render the Vault Unlock overlay.
+///
+/// Shown at startup when the profile is encrypted (salt.hex exists) but no vault key has
+/// been derived yet.  The user must enter their passphrase to unlock their data.
+/// Like the Welcome Wizard this is a full-screen, non-closeable overlay.
+#[allow(clippy::too_many_arguments)]
+pub fn render_vault_unlock(
+    ctx: &mut dyn RenderContext,
+    window_w: f64,
+    window_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    // ── Full-screen dimmer ────────────────────────────────────────────────────
+    ctx.set_fill_color("rgba(0,0,0,0.72)");
+    ctx.fill_rect(0.0, 0.0, window_w, window_h);
+
+    // Push a high-z modal layer so the dialog absorbs all input
+    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "vault_unlock");
+
+    // Block all clicks on the dimmer (dialog is non-closeable)
+    input_coordinator.register_on_layer(
+        "vault_unlock:dimmer",
+        WidgetRect::new(0.0, 0.0, window_w, window_h),
+        Sense::CLICK,
+        &layer_id,
+    );
+
+    // ── Modal dimensions ─────────────────────────────────────────────────────
+    let modal_w: f64 = 480.0;
+    let modal_h: f64 = 260.0;
+    let modal_x = (window_w - modal_w) / 2.0;
+    let modal_y = (window_h - modal_h) / 2.0;
+
+    // Modal background + border
+    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+
+    // Absorb modal background clicks
+    input_coordinator.register_on_layer(
+        "vault_unlock:modal_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        &layer_id,
+    );
+
+    let padding = 32.0;
+    let inner_x = modal_x + padding;
+    let inner_w = modal_w - padding * 2.0;
+    let mut cy = modal_y + 30.0;
+
+    // Title
+    ctx.set_font("bold 20px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Unlock Your Data", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 28.0;
+
+    // Subtitle
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Enter your passphrase to decrypt your profile", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 24.0;
+
+    // Passphrase input (reuse the shared helper)
+    cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, &layer_id, input_coordinator, result);
+
+    // Unlock button (disabled until passphrase is entered)
+    let unlock_disabled = state.e2e_passphrase.is_empty();
+    let hovered = state.hovered_item_id.as_deref();
+    let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
+    let btn_bg = if unlock_disabled {
+        "rgba(244,205,99,0.20)"
+    } else if is_unlock_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    let btn_text_col = if unlock_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_h = 32.0;
+    let btn_w = inner_w.min(180.0);
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(btn_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Unlock", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    if !unlock_disabled {
+        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        result.content_items.push(("vault_unlock_btn".to_string(), btn_rect));
+        input_coordinator.register_on_layer("user_settings:vault_unlock_btn", btn_rect, Sense::CLICK, &layer_id);
+    }
+}
+
 /// Render a "Skip for now" link button.
 ///
 /// Not used in the main wizard flow (passphrase is mandatory) but kept as a

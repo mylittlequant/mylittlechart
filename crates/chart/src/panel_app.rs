@@ -3079,6 +3079,29 @@ impl ChartPanelApp {
             }
         }
 
+        // Vault Unlock overlay — shown when the profile is encrypted (salt.hex exists)
+        // but the vault key has not yet been derived.  Like the wizard, this is
+        // non-closeable: the user must supply their passphrase to proceed.
+        if self.user_settings_state.needs_vault_unlock && !self.user_settings_state.show_welcome_wizard {
+            use crate::layout::modals::welcome_wizard::render_vault_unlock;
+            let text_color = &toolbar_theme.item_text.clone();
+            if result.user_settings.is_none() {
+                result.user_settings = Some(Default::default());
+            }
+            if let Some(ref mut ws_result) = result.user_settings {
+                render_vault_unlock(
+                    ctx,
+                    modal_layout.prim_screen_w,
+                    modal_layout.prim_screen_h,
+                    &self.user_settings_state,
+                    text_color,
+                    toolbar_theme,
+                    input_coordinator,
+                    ws_result,
+                );
+            }
+        }
+
         result
     }
 

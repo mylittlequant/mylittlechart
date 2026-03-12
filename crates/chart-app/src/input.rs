@@ -7324,6 +7324,21 @@ impl ChartApp {
                         eprintln!("[ChartApp] wizard: setup complete (E2E), closing wizard, standalone={}", standalone);
                     }
                 }
+                // ── Vault unlock handler (returning encrypted users) ──────────
+                "vault_unlock_btn" => {
+                    // The user entered their passphrase on the vault-unlock overlay.
+                    // Emit the same e2e_setup: command so that main.rs derives the key
+                    // and calls save_all() to load the encrypted data.
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    if !passphrase.is_empty() {
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        // Dismiss the overlay immediately — if the key is wrong the
+                        // app will continue without decrypted data (plaintext fallback).
+                        self.panel_app.user_settings_state.needs_vault_unlock = false;
+                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        eprintln!("[ChartApp] vault_unlock: passphrase submitted");
+                    }
+                }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {
                     self.panel_app.user_settings_state.wizard_mode_standalone = false;

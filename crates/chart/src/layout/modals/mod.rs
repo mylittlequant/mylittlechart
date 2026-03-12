@@ -32,6 +32,7 @@ pub mod user_settings;
 pub use user_settings::render_user_settings_modal;
 pub mod welcome_wizard;
 pub use welcome_wizard::render_welcome_wizard;
+pub use welcome_wizard::render_vault_unlock;
 
 pub use indicator_settings::*;
 pub use context_menu::*;

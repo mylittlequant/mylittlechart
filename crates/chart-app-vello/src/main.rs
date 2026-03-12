@@ -519,6 +519,10 @@ struct App<'s> {
     /// Causes the Welcome Wizard overlay to appear on the first window created.
     is_first_run: bool,
 
+    /// True when `salt.hex` exists (encrypted profile) but no vault key has been derived yet.
+    /// Causes the Vault Unlock overlay to appear on the first window created.
+    needs_vault_unlock: bool,
+
     /// Receiver for status updates from the OAuth link-poll task.
     ///
     /// Set when `start_device_auth` spawns a poll loop; `None` when no link
@@ -1661,6 +1665,7 @@ impl App<'_> {
         user_manager: zengeld_chart::UserManager,
         app_connector_ready_rx: live_data::ConnectorReadyReceiver,
         is_first_run: bool,
+        needs_vault_unlock: bool,
     ) -> Self {
         let app_state = AppState::from_profile(&profile, user_manager.presets.clone(), user_manager.snapshots.clone(), user_manager.template_manager.clone(), user_manager.vault_key);
 
@@ -1979,6 +1984,7 @@ impl App<'_> {
             is_unofficial_build,
             telemetry_shared,
             is_first_run,
+            needs_vault_unlock,
             link_poll_rx: None,
         }
     }
@@ -2189,6 +2195,12 @@ impl App<'_> {
         // The wizard is non-closeable until the user makes a mode choice.
         if self.is_first_run {
             chart.panel_app.user_settings_state.show_welcome_wizard = true;
+        }
+
+        // Show the vault unlock overlay when the profile is encrypted but no key has
+        // been derived yet (returning user with encrypted data).
+        if self.needs_vault_unlock {
+            chart.panel_app.user_settings_state.needs_vault_unlock = true;
         }
 
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
@@ -3973,6 +3985,31 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
 
+                // ── Local vault key derivation (e2e_setup — all build configs) ──
+                // This runs BEFORE the updater-handle block so that we can call
+                // save_all() without holding an immutable borrow of updater_handle.
+                if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
+                    let profile_dir = zengeld_chart::active_profile_data_dir();
+                    let salt_path = profile_dir.join("salt.hex");
+                    match zengeld_chart::vault::load_or_create_salt(&salt_path) {
+                        Ok(salt) => {
+                            let key = zengeld_chart::vault::derive_key(passphrase, &salt);
+                            self.app_state.vault_key = Some(key);
+                            self.user_manager.vault_key = Some(key);
+                            self.app_state.template_manager.vault_key = Some(key);
+                            // Clear the startup flag so new windows don't show the overlay.
+                            self.needs_vault_unlock = false;
+                            eprintln!("[App] vault key derived and set (salt at {})", salt_path.display());
+                            // Re-save all current data encrypted (plaintext → encrypted migration).
+                            self.save_all(&[]);
+                            eprintln!("[App] all data re-saved as encrypted");
+                        }
+                        Err(e) => {
+                            eprintln!("[App] vault salt error: {}", e);
+                        }
+                    }
+                }
+
                 #[cfg(all(feature = "updater", not(feature = "standalone")))]
                 if let Some(ref handle) = self.updater_handle {
                     use zengeld_updater::UpdaterCommand;
@@ -4217,10 +4254,10 @@ impl ApplicationHandler for App<'_> {
                             None
                         }
                     } else if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
-                        // Derive the E2E key and register it with the updater immediately,
-                        // then spawn an async task to push the salt to the server.
-                        // On success the updater is told to re-encrypt all existing cloud
-                        // data so the server never holds plaintext after E2E is enabled.
+                        // Server-specific E2E: push the salt to the server, then trigger
+                        // cloud re-encryption via the updater channel.
+                        // NOTE: Local vault key derivation (save_all) is done OUTSIDE this
+                        // block to avoid holding the `handle` borrow while calling save_all.
                         let passphrase = passphrase.to_string();
                         let token = zengeld_updater::token_store::load_token();
                         if let Some(tok) = token {
@@ -4265,8 +4302,6 @@ impl ApplicationHandler for App<'_> {
                             // Update profile so e2e_salt is persisted
                             self.user_manager.profile.sync_state.e2e_enabled = true;
                             self.user_manager.profile.sync_state.e2e_salt = salt_hex;
-                        } else {
-                            eprintln!("[App] e2e_setup: not logged in");
                         }
                         None
                     } else {
@@ -5993,12 +6028,24 @@ fn main() {
 
     // Detect first-run BEFORE loading the user manager.
     // A missing `profile.json` means this is the first launch — show the welcome wizard.
+    let profile_dir = zengeld_chart::active_profile_data_dir();
     let is_first_run = {
-        let profile_path = zengeld_chart::active_profile_data_dir().join("profile.json");
+        let profile_path = profile_dir.join("profile.json");
         !profile_path.exists()
     };
     if is_first_run {
         eprintln!("[App] first-run detected — welcome wizard will be shown");
+    }
+
+    // Detect whether this is an encrypted profile that needs the user to unlock it.
+    // salt.hex exists means the user previously set a passphrase; if we don't have a
+    // vault key yet (we never do at startup), show the unlock overlay.
+    let needs_vault_unlock = {
+        let salt_path = profile_dir.join("salt.hex");
+        !is_first_run && salt_path.exists()
+    };
+    if needs_vault_unlock {
+        eprintln!("[App] encrypted profile detected — vault unlock overlay will be shown");
     }
 
     // Load UserManager (profile + templates + presets + snapshots) once at startup.
@@ -6014,6 +6061,6 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx, is_first_run);
+    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx, is_first_run, needs_vault_unlock);
     event_loop.run_app(&mut app).expect("Event loop error");
 }
