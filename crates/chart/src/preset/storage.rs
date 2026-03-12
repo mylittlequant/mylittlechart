@@ -111,108 +111,11 @@ pub fn presets_dir() -> PathBuf {
 // CRUD operations
 // =============================================================================
 
-/// Serialize `preset` to pretty JSON and write it to `{presets_dir}/{id}.json`.
-///
-/// Returns the path of the file that was written.
-pub fn save_preset(preset: &ChartPreset) -> Result<PathBuf, PresetError> {
-    let dir = presets_dir();
-    // Ensure the directory exists (may have been deleted since startup).
-    fs::create_dir_all(&dir)?;
-
-    let path = dir.join(format!("{}.json", preset.id));
-    let json = serde_json::to_string_pretty(preset)?;
-    fs::write(&path, json)?;
-    Ok(path)
-}
-
-/// Load and deserialize a preset from `{presets_dir}/{id}.json`.
-pub fn load_preset(id: &str) -> Result<ChartPreset, PresetError> {
-    let path = presets_dir().join(format!("{}.json", id));
-
-    if !path.exists() {
-        return Err(PresetError::NotFound(id.to_string()));
-    }
-
-    let json = fs::read_to_string(&path)?;
-    let preset: ChartPreset = serde_json::from_str(&json)?;
-    Ok(preset)
-}
-
-/// Scan the presets directory and return lightweight metadata for every
-/// `*.json` file found.
-///
-/// Files that cannot be parsed are silently skipped so that a single corrupt
-/// file does not prevent listing the rest.
-pub fn list_presets() -> Result<Vec<PresetMeta>, PresetError> {
-    let dir = presets_dir();
-
-    // If the directory does not exist yet, return an empty list rather than
-    // an error — the user simply has no saved presets.
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut metas: Vec<PresetMeta> = Vec::new();
-
-    for entry in fs::read_dir(&dir)? {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-
-        // Only process *.json files.
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        // Deserialize the full preset to extract meta fields.
-        // This is acceptable for the typical number of presets a user will
-        // have (tens, not thousands).
-        let contents = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let preset: ChartPreset = match serde_json::from_str(&contents) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        metas.push(PresetMeta::from(&preset));
-    }
-
-    // Sort by creation time, oldest first.
-    metas.sort_by_key(|m| m.created_at);
-
-    Ok(metas)
-}
-
-/// Delete the preset file for `id`.
-///
-/// Returns `Ok(())` if the file was removed successfully.
-/// Returns [`PresetError::NotFound`] if no file exists for that `id`.
-pub fn delete_preset(id: &str) -> Result<(), PresetError> {
-    let path = presets_dir().join(format!("{}.json", id));
-
-    if !path.exists() {
-        return Err(PresetError::NotFound(id.to_string()));
-    }
-
-    fs::remove_file(&path)?;
-    Ok(())
-}
-
-// =============================================================================
-// Encrypted v2 CRUD
-// =============================================================================
-
 /// Save preset — encrypted if key provided, plaintext otherwise.
 ///
 /// When `key` is `Some` the preset is written as `{id}.enc` and any existing
 /// `{id}.json` is removed.  Returns the path that was written.
-pub fn save_preset_v2(preset: &ChartPreset, key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
+pub fn save_preset(preset: &ChartPreset, key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     fs::create_dir_all(&dir)?;
     match key {
@@ -234,7 +137,7 @@ pub fn save_preset_v2(preset: &ChartPreset, key: Option<&VaultKey>) -> Result<Pa
 }
 
 /// Load preset — tries `.enc` first, falls back to `.json`.
-pub fn load_preset_v2(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, PresetError> {
+pub fn load_preset(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, PresetError> {
     let dir = presets_dir();
     let enc_path = dir.join(format!("{}.enc", id));
     let json_path = dir.join(format!("{}.json", id));
@@ -263,7 +166,7 @@ pub fn load_preset_v2(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, P
 ///
 /// Encrypted files without a key are silently skipped.  Corrupted files are
 /// logged and skipped so that one bad file does not prevent listing the rest.
-pub fn list_presets_v2(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetError> {
+pub fn list_presets(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetError> {
     let dir = presets_dir();
     if !dir.exists() {
         return Ok(Vec::new());
@@ -319,7 +222,7 @@ pub fn list_presets_v2(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, Preset
 }
 
 /// Delete preset — removes both `.json` and `.enc` variants if present.
-pub fn delete_preset_v2(id: &str) -> Result<(), PresetError> {
+pub fn delete_preset(id: &str) -> Result<(), PresetError> {
     let dir = presets_dir();
     let _ = fs::remove_file(dir.join(format!("{}.json", id)));
     let _ = fs::remove_file(dir.join(format!("{}.enc", id)));

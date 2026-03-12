@@ -293,7 +293,7 @@ impl AppState {
         let watchlist_manager = {
             let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
             if watchlists_path.exists() {
-                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path)
+                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, None)
                     .unwrap_or_else(|e| {
                         eprintln!("[AppState] Failed to load watchlists: {}", e);
                         default_wl()
@@ -2495,7 +2495,7 @@ impl App<'_> {
 
         // 5. Save profile.json once.
         let vault_key = self.app_state.vault_key.as_ref();
-        if let Err(e) = zengeld_chart::save_profile_v2(&profile, vault_key) {
+        if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
             eprintln!("[App] Failed to save profile: {}", e);
         } else {
             // Keep in-memory profile up to date.
@@ -2505,7 +2505,7 @@ impl App<'_> {
         // 6. Save watchlists.json from AppState (single source of truth).
         {
             let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
-            if let Err(e) = zengeld_chart::save_json_v2(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
+            if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
                 eprintln!("[App] Failed to save watchlists: {}", e);
             }
         }
@@ -2513,13 +2513,13 @@ impl App<'_> {
         // 7. Save settings snapshots from AppState (single canonical source of truth).
         {
             let path = zengeld_chart::active_profile_data_dir().join("settings_snapshots.json");
-            if let Err(e) = zengeld_chart::save_json_v2(&path, &self.app_state.snapshots, vault_key) {
+            if let Err(e) = zengeld_chart::save_json(&path, &self.app_state.snapshots, vault_key) {
                 eprintln!("[App] Failed to save settings snapshots: {}", e);
             }
         }
 
         // 8. Save templates from AppState (single canonical source of truth).
-        if let Err(e) = self.app_state.template_manager.save_to_default_dir_v2(vault_key) {
+        if let Err(e) = self.app_state.template_manager.save_to_default_dir(vault_key) {
             eprintln!("[App] Failed to save templates: {:?}", e);
         }
         // Call save_user_state() for any remaining per-window state (snapshots compat).
@@ -2531,7 +2531,7 @@ impl App<'_> {
 
         // 9. Save all presets from AppState (single canonical source of truth).
         for preset in self.app_state.presets.values() {
-            if let Err(e) = zengeld_chart::preset::storage::save_preset_v2(preset, vault_key) {
+            if let Err(e) = zengeld_chart::preset::storage::save_preset(preset, vault_key) {
                 eprintln!("[App] failed to save preset {}: {}", preset.id, e);
             }
         }
@@ -3030,7 +3030,7 @@ impl App<'_> {
         profile.agent_api_keys = self.app_state.agent_api_keys.clone();
         profile.agent_api_key = String::new();
         let vault_key = self.app_state.vault_key.as_ref();
-        if let Err(e) = zengeld_chart::save_profile_v2(&profile, vault_key) {
+        if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
             eprintln!("[App] Failed to persist keys: {}", e);
         } else {
             self.profile = profile;
@@ -3398,7 +3398,7 @@ impl ApplicationHandler for App<'_> {
                     }
                     chart_app::PresetAction::Delete { id } => {
                         self.app_state.presets.remove(&id);
-                        if let Err(e) = zengeld_chart::preset::storage::delete_preset_v2(&id) {
+                        if let Err(e) = zengeld_chart::preset::storage::delete_preset(&id) {
                             eprintln!("[App] failed to delete preset file {}: {}", id, e);
                         }
                         self.app_state.preset_dirty_ids.remove(&id);
@@ -3548,7 +3548,7 @@ impl ApplicationHandler for App<'_> {
             let vault_key = self.app_state.vault_key.as_ref();
             for id in ids {
                 if let Some(preset) = self.app_state.presets.get(&id) {
-                    if let Err(e) = zengeld_chart::preset::storage::save_preset_v2(preset, vault_key) {
+                    if let Err(e) = zengeld_chart::preset::storage::save_preset(preset, vault_key) {
                         eprintln!("[App] failed to save preset {}: {}", id, e);
                     }
                 }
@@ -3627,7 +3627,7 @@ impl ApplicationHandler for App<'_> {
                 }
 
                 let vault_key = self.app_state.vault_key.as_ref();
-                if let Err(e) = zengeld_chart::save_profile_v2(&profile, vault_key) {
+                if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
                     eprintln!("[App] Failed to save profile: {}", e);
                 } else {
                     self.profile = profile;
@@ -3642,7 +3642,7 @@ impl ApplicationHandler for App<'_> {
             if any_watchlists_dirty {
                 let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
                 let vault_key = self.app_state.vault_key.as_ref();
-                if let Err(e) = zengeld_chart::save_json_v2(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
+                if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
                 }
                 // Clear dirty flags.
@@ -3925,7 +3925,7 @@ impl ApplicationHandler for App<'_> {
                             eprintln!("[App] profile_rename: failed to save index: {}", e);
                         }
                     }
-                    if let Err(e) = zengeld_chart::save_profile_v2(&self.user_manager.profile, self.app_state.vault_key.as_ref()) {
+                    if let Err(e) = zengeld_chart::save_profile(&self.user_manager.profile, self.app_state.vault_key.as_ref()) {
                         eprintln!("[App] profile_rename: failed to save profile: {}", e);
                     }
                     // Reflect change in all windows.
@@ -3950,7 +3950,7 @@ impl ApplicationHandler for App<'_> {
                             eprintln!("[App] profile_set_avatar: failed to save index: {}", e);
                         }
                     }
-                    if let Err(e) = zengeld_chart::save_profile_v2(&self.user_manager.profile, self.app_state.vault_key.as_ref()) {
+                    if let Err(e) = zengeld_chart::save_profile(&self.user_manager.profile, self.app_state.vault_key.as_ref()) {
                         eprintln!("[App] profile_set_avatar: failed to save profile: {}", e);
                     }
                     // Reflect change in all windows.
@@ -4890,7 +4890,7 @@ impl ApplicationHandler for App<'_> {
                     }
                     // Persist to profile on disk
                     self.profile.notification_settings = ns;
-                    if let Err(e) = zengeld_chart::save_profile_v2(&self.profile, self.app_state.vault_key.as_ref()) {
+                    if let Err(e) = zengeld_chart::save_profile(&self.profile, self.app_state.vault_key.as_ref()) {
                         eprintln!("[App] Failed to persist notification settings: {}", e);
                     }
                 }

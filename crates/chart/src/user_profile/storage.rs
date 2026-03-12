@@ -11,7 +11,8 @@
 //!
 //! - [`app_data_dir`] — resolve (and create) the OS app-data root.
 //! - [`get_user_data_dir`] — backward-compatible alias for [`app_data_dir`].
-//! - [`save_profile`] / [`load_profile`] — write/read `profile.json`.
+//! - [`save_profile`] / [`load_profile`] — write/read `profile.enc` (or
+//!   `profile.json` when no encryption key is available).
 //! - [`save_json`] / [`load_json`] — generic helpers for any `Serialize` /
 //!   `DeserializeOwned` type at an arbitrary path inside the data dir.
 //!
@@ -163,71 +164,11 @@ pub fn get_user_data_dir() -> PathBuf {
 }
 
 // =============================================================================
-// profile.json helpers
-// =============================================================================
-
-/// Serialize `profile` as pretty JSON and write it to the active profile's
-/// `profile.json` (routed through `active_profile_data_dir()`).
-///
-/// The directory is created automatically if it does not exist.
-pub fn save_profile(profile: &UserProfile) -> Result<(), ProfileError> {
-    let dir = active_profile_data_dir();
-    fs::create_dir_all(&dir)?;
-    let path = dir.join("profile.json");
-    let json = serde_json::to_string_pretty(profile)?;
-    fs::write(&path, json)?;
-    Ok(())
-}
-
-/// Load and deserialize the user profile from the active profile's
-/// `profile.json` (routed through `active_profile_data_dir()`).
-///
-/// Returns a default [`UserProfile`] if the file does not exist, so startup
-/// always succeeds even without prior data.
-pub fn load_profile() -> Result<UserProfile, ProfileError> {
-    let path = active_profile_data_dir().join("profile.json");
-    if !path.exists() {
-        return Ok(UserProfile::new());
-    }
-    let json = fs::read_to_string(&path)?;
-    let mut profile: UserProfile = serde_json::from_str(&json)?;
-    // Migrate legacy single chat_id to subscribers list.
-    profile.notification_settings.telegram.migrate_legacy();
-    Ok(profile)
-}
-
-// =============================================================================
-// Generic JSON helpers
-// =============================================================================
-
-/// Serialize `data` as pretty JSON and write it to `path`.
-///
-/// The parent directory is created automatically if it does not exist.
-pub fn save_json<T: Serialize>(path: &Path, data: &T) -> Result<(), ProfileError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(data)?;
-    fs::write(path, json)?;
-    Ok(())
-}
-
-/// Load and deserialize a value of type `T` from `path`.
-///
-/// Returns `Err(ProfileError::Io)` if the file does not exist (use the calling
-/// code to decide on a fallback default).
-pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T, ProfileError> {
-    let json = fs::read_to_string(path)?;
-    let value: T = serde_json::from_str(&json)?;
-    Ok(value)
-}
-
-// =============================================================================
-// Encrypted v2 helpers
+// profile.json / profile.enc helpers
 // =============================================================================
 
 /// Save profile — encrypted if key provided, plaintext otherwise (migration).
-pub fn save_profile_v2(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
+pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
     let dir = active_profile_data_dir();
     fs::create_dir_all(&dir)?;
     match key {
@@ -248,7 +189,7 @@ pub fn save_profile_v2(profile: &UserProfile, key: Option<&VaultKey>) -> Result<
 }
 
 /// Load profile — tries `.enc` first, falls back to `.json` for migration.
-pub fn load_profile_v2(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
+pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
     let dir = active_profile_data_dir();
     let enc_path = dir.join("profile.enc");
     let json_path = dir.join("profile.json");
@@ -284,7 +225,7 @@ pub fn load_profile_v2(key: Option<&VaultKey>) -> Result<UserProfile, ProfileErr
 /// When `key` is `Some`, the file is written with a `.enc` extension and any
 /// existing plaintext file at `path` is removed.  When `key` is `None` the
 /// value is written as pretty JSON at `path` unchanged.
-pub fn save_json_v2<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) -> Result<(), ProfileError> {
+pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) -> Result<(), ProfileError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -311,7 +252,7 @@ pub fn save_json_v2<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>)
 ///
 /// If an `.enc` file is found but no key is provided, returns a
 /// `PermissionDenied` error rather than silently returning corrupted data.
-pub fn load_json_v2<T: DeserializeOwned>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
+pub fn load_json<T: DeserializeOwned>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
     let enc_path = path.with_extension("enc");
 
     if enc_path.exists() {

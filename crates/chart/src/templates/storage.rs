@@ -18,7 +18,7 @@
 //! # Error handling
 //!
 //! All public functions return [`Result<_, TemplateError>`].  Corrupted files
-//! are skipped silently in [`list_templates`] so a single bad file does not
+//! are skipped silently in [`load_all_templates`] so a single bad file does not
 //! prevent loading the rest.
 
 use std::fs;
@@ -104,133 +104,11 @@ pub fn category_dir(category: &str) -> PathBuf {
 // Generic CRUD operations
 // =============================================================================
 
-/// Serialize `template` to pretty JSON and write it to `{dir}/{id}.json`.
-///
-/// Returns the path of the file that was written.
-pub fn save_template<T: Serialize>(
-    template: &T,
-    id: &str,
-    dir: &Path,
-) -> Result<PathBuf, TemplateError> {
-    fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.json", id));
-    let json = serde_json::to_string_pretty(template)?;
-    fs::write(&path, json)?;
-    Ok(path)
-}
-
-/// Load and deserialize a template from `{dir}/{id}.json`.
-pub fn load_template<T: DeserializeOwned>(
-    id: &str,
-    dir: &Path,
-) -> Result<T, TemplateError> {
-    let path = dir.join(format!("{}.json", id));
-
-    if !path.exists() {
-        return Err(TemplateError::NotFound(id.to_string()));
-    }
-
-    let json = fs::read_to_string(&path)?;
-    let value: T = serde_json::from_str(&json)?;
-    Ok(value)
-}
-
-/// Scan `dir` and return the `id` (stem) of every `*.json` file found.
-///
-/// Files that cannot be read are silently skipped.
-pub fn list_templates(dir: &Path) -> Result<Vec<String>, TemplateError> {
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut ids: Vec<String> = Vec::new();
-
-    for entry in fs::read_dir(dir)? {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            ids.push(stem.to_string());
-        }
-    }
-
-    ids.sort();
-    Ok(ids)
-}
-
-/// Load all templates of type `T` from `dir`.
-///
-/// Files that fail to deserialize are silently skipped so that a single
-/// corrupt file does not prevent loading the rest.
-pub fn load_all_templates<T: DeserializeOwned>(dir: &Path) -> Vec<T> {
-    if !dir.exists() {
-        return Vec::new();
-    }
-
-    let mut items: Vec<T> = Vec::new();
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return items,
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        let contents = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        if let Ok(item) = serde_json::from_str::<T>(&contents) {
-            items.push(item);
-        }
-    }
-
-    items
-}
-
-/// Delete the template file `{dir}/{id}.json`.
-///
-/// Returns `Ok(())` if the file was removed successfully.
-/// Returns [`TemplateError::NotFound`] if no file exists for that `id`.
-pub fn delete_template(id: &str, dir: &Path) -> Result<(), TemplateError> {
-    let path = dir.join(format!("{}.json", id));
-
-    if !path.exists() {
-        return Err(TemplateError::NotFound(id.to_string()));
-    }
-
-    fs::remove_file(&path)?;
-    Ok(())
-}
-
-// =============================================================================
-// Encrypted v2 helpers
-// =============================================================================
-
 /// Save a template — encrypted if key provided, plaintext otherwise.
 ///
 /// When `key` is `Some`, writes `{dir}/{id}.enc` and removes any existing
 /// `{dir}/{id}.json`.
-pub fn save_template_v2<T: Serialize>(
+pub fn save_template<T: Serialize>(
     template: &T,
     id: &str,
     dir: &Path,
@@ -255,7 +133,7 @@ pub fn save_template_v2<T: Serialize>(
 }
 
 /// Load a template — tries `.enc` first, falls back to `.json`.
-pub fn load_template_v2<T: DeserializeOwned>(
+pub fn load_template<T: DeserializeOwned>(
     id: &str,
     dir: &Path,
     key: Option<&VaultKey>,
@@ -286,7 +164,7 @@ pub fn load_template_v2<T: DeserializeOwned>(
 ///
 /// Encrypted files without a key are silently skipped.  Corrupted or
 /// unreadable files are logged and skipped.
-pub fn load_all_templates_v2<T: DeserializeOwned>(dir: &Path, key: Option<&VaultKey>) -> Vec<T> {
+pub fn load_all_templates<T: DeserializeOwned>(dir: &Path, key: Option<&VaultKey>) -> Vec<T> {
     let mut results = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -320,7 +198,7 @@ pub fn load_all_templates_v2<T: DeserializeOwned>(dir: &Path, key: Option<&Vault
 }
 
 /// Delete a template — removes both `.json` and `.enc` variants if present.
-pub fn delete_template_v2(id: &str, dir: &Path) -> Result<(), TemplateError> {
+pub fn delete_template(id: &str, dir: &Path) -> Result<(), TemplateError> {
     let _ = fs::remove_file(dir.join(format!("{}.json", id)));
     let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
     Ok(())

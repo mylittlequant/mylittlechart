@@ -5746,7 +5746,7 @@ impl ChartApp {
 
     /// Persist templates to disk.
     pub fn persist_templates(&self) {
-        if let Err(e) = self.panel_app.template_manager.save_to_default_dir() {
+        if let Err(e) = self.panel_app.template_manager.save_to_default_dir(None) {
             eprintln!("[persist] templates: {:?}", e);
         }
     }
@@ -5760,7 +5760,7 @@ impl ChartApp {
     /// saved data still starts correctly.
     pub fn load_user_profile(&mut self) {
         // Load profile metadata.
-        match zengeld_chart::load_profile() {
+        match zengeld_chart::load_profile(None) {
             Ok(profile) => {
                 // Restore active preset id.
                 self.panel_app.active_preset_id = profile.active_preset_id;
@@ -5807,7 +5807,7 @@ impl ChartApp {
         // Restore watchlist manager.
         let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match zengeld_chart::load_json::<sidebar_content::watchlist::WatchlistManager>(&watchlists_path) {
+            match zengeld_chart::load_json::<sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
                     self.sidebar_state.watchlist_manager = manager;
                 }
@@ -5826,7 +5826,7 @@ impl ChartApp {
     pub fn load_watchlists(&mut self) {
         let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
-            match zengeld_chart::load_json::<sidebar_content::watchlist::WatchlistManager>(&watchlists_path) {
+            match zengeld_chart::load_json::<sidebar_content::watchlist::WatchlistManager>(&watchlists_path, None) {
                 Ok(manager) => {
                     self.sidebar_state.watchlist_manager = manager;
                 }

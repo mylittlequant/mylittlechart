@@ -12,8 +12,8 @@ use super::indicator_template::IndicatorTemplate;
 use super::primitive_template::PrimitiveTemplate;
 use super::set_manager::IndicatorSetManager;
 use super::storage::{
-    category_dir, delete_template_v2, load_all_templates, load_all_templates_v2,
-    save_template, save_template_v2, templates_root, TemplateError,
+    category_dir, delete_template, load_all_templates,
+    save_template, templates_root, TemplateError,
 };
 use crate::vault::VaultKey;
 
@@ -36,8 +36,8 @@ const INDICATOR_SET_MANAGER_FILE: &str = "indicator_set_manager.json";
 
 /// Central registry for all template types.
 ///
-/// Load from disk once at startup with [`TemplateManager::load_from_dir`], then
-/// use the CRUD methods.  Call [`TemplateManager::save_to_dir`] to flush all
+/// Load from disk once at startup with [`TemplateManager::load_from_default_dir`], then
+/// use the CRUD methods.  Call [`TemplateManager::save_to_default_dir`] to flush all
 /// in-memory templates back to disk (e.g. before quitting).
 ///
 /// Individual template adds/removes are also persisted immediately via the
@@ -79,76 +79,27 @@ impl TemplateManager {
     // Load / Save (bulk)
     // =========================================================================
 
-    /// Load all templates from the standard `templates/` directory tree next to
-    /// the executable.
-    ///
-    /// Corrupted files are skipped silently.  If a category directory does not
-    /// exist yet it is created.
-    pub fn load_from_default_dir() -> Self {
-        let root = templates_root();
-        Self {
-            primitive_templates: load_all_templates(&category_dir(CAT_PRIMITIVES)),
-            indicator_templates: load_all_templates(&category_dir(CAT_INDICATORS)),
-            compare_templates: load_all_templates(&category_dir(CAT_COMPARE)),
-            chart_templates: load_all_templates(&category_dir(CAT_CHART)),
-            indicator_sets: load_all_templates(&category_dir(CAT_INDICATOR_SETS)),
-            indicator_set_manager: load_indicator_set_manager(&root),
-            vault_key: None,
-        }
-    }
-
     /// Load all templates with optional encryption key.
     ///
     /// Handles both `.enc` and `.json` files in each category directory.
-    pub fn load_from_default_dir_v2(key: Option<&VaultKey>) -> Self {
+    pub fn load_from_default_dir(key: Option<&VaultKey>) -> Self {
         let root = templates_root();
         Self {
-            primitive_templates: load_all_templates_v2(&category_dir(CAT_PRIMITIVES), key),
-            indicator_templates: load_all_templates_v2(&category_dir(CAT_INDICATORS), key),
-            compare_templates: load_all_templates_v2(&category_dir(CAT_COMPARE), key),
-            chart_templates: load_all_templates_v2(&category_dir(CAT_CHART), key),
-            indicator_sets: load_all_templates_v2(&category_dir(CAT_INDICATOR_SETS), key),
+            primitive_templates: load_all_templates(&category_dir(CAT_PRIMITIVES), key),
+            indicator_templates: load_all_templates(&category_dir(CAT_INDICATORS), key),
+            compare_templates: load_all_templates(&category_dir(CAT_COMPARE), key),
+            chart_templates: load_all_templates(&category_dir(CAT_CHART), key),
+            indicator_sets: load_all_templates(&category_dir(CAT_INDICATOR_SETS), key),
             indicator_set_manager: load_indicator_set_manager(&root),
             vault_key: key.copied(),
         }
     }
 
-    /// Load all templates from a custom base directory.
-    ///
-    /// The four category sub-directories are resolved relative to `base`.
-    pub fn load_from_dir(base: &Path) -> Self {
-        Self {
-            primitive_templates: load_all_templates(&base.join(CAT_PRIMITIVES)),
-            indicator_templates: load_all_templates(&base.join(CAT_INDICATORS)),
-            compare_templates: load_all_templates(&base.join(CAT_COMPARE)),
-            chart_templates: load_all_templates(&base.join(CAT_CHART)),
-            indicator_sets: load_all_templates(&base.join(CAT_INDICATOR_SETS)),
-            indicator_set_manager: load_indicator_set_manager(base),
-            vault_key: None,
-        }
-    }
-
-    /// Serialize all in-memory templates to the standard `templates/` directory.
-    ///
-    /// Returns the first error encountered, if any.  Successful writes before
-    /// that point are not rolled back.
-    pub fn save_to_default_dir(&self) -> Result<(), TemplateError> {
-        let root = templates_root();
-        self.save_to_dir_internal(
-            &category_dir(CAT_PRIMITIVES),
-            &category_dir(CAT_INDICATORS),
-            &category_dir(CAT_COMPARE),
-            &category_dir(CAT_CHART),
-            &category_dir(CAT_INDICATOR_SETS),
-            &root,
-        )
-    }
-
     /// Serialize all in-memory templates with optional encryption.
     ///
-    /// Uses `save_template_v2` for each template so that encrypted installs
+    /// Uses `save_template` for each template so that encrypted installs
     /// write `.enc` files and plain installs write `.json` files.
-    pub fn save_to_default_dir_v2(&self, key: Option<&VaultKey>) -> Result<(), TemplateError> {
+    pub fn save_to_default_dir(&self, key: Option<&VaultKey>) -> Result<(), TemplateError> {
         let root = templates_root();
         let prim_dir = category_dir(CAT_PRIMITIVES);
         let ind_dir = category_dir(CAT_INDICATORS);
@@ -157,61 +108,21 @@ impl TemplateManager {
         let sets_dir = category_dir(CAT_INDICATOR_SETS);
 
         for t in &self.primitive_templates {
-            save_template_v2(t, &t.id, &prim_dir, key)?;
+            save_template(t, &t.id, &prim_dir, key)?;
         }
         for t in &self.indicator_templates {
-            save_template_v2(t, &t.id, &ind_dir, key)?;
+            save_template(t, &t.id, &ind_dir, key)?;
         }
         for t in &self.compare_templates {
-            save_template_v2(t, &t.id, &cmp_dir, key)?;
+            save_template(t, &t.id, &cmp_dir, key)?;
         }
         for t in &self.chart_templates {
-            save_template_v2(t, &t.id, &chart_dir, key)?;
+            save_template(t, &t.id, &chart_dir, key)?;
         }
         for t in &self.indicator_sets {
-            save_template_v2(t, &t.id, &sets_dir, key)?;
+            save_template(t, &t.id, &sets_dir, key)?;
         }
         save_indicator_set_manager(&self.indicator_set_manager, &root)?;
-        Ok(())
-    }
-
-    /// Serialize all in-memory templates to a custom base directory.
-    pub fn save_to_dir(&self, base: &Path) -> Result<(), TemplateError> {
-        self.save_to_dir_internal(
-            &base.join(CAT_PRIMITIVES),
-            &base.join(CAT_INDICATORS),
-            &base.join(CAT_COMPARE),
-            &base.join(CAT_CHART),
-            &base.join(CAT_INDICATOR_SETS),
-            base,
-        )
-    }
-
-    fn save_to_dir_internal(
-        &self,
-        prim_dir: &Path,
-        ind_dir: &Path,
-        cmp_dir: &Path,
-        chart_dir: &Path,
-        sets_dir: &Path,
-        mgr_dir: &Path,
-    ) -> Result<(), TemplateError> {
-        for t in &self.primitive_templates {
-            save_template(t, &t.id, prim_dir)?;
-        }
-        for t in &self.indicator_templates {
-            save_template(t, &t.id, ind_dir)?;
-        }
-        for t in &self.compare_templates {
-            save_template(t, &t.id, cmp_dir)?;
-        }
-        for t in &self.chart_templates {
-            save_template(t, &t.id, chart_dir)?;
-        }
-        for t in &self.indicator_sets {
-            save_template(t, &t.id, sets_dir)?;
-        }
-        save_indicator_set_manager(&self.indicator_set_manager, mgr_dir)?;
         Ok(())
     }
 
@@ -225,7 +136,7 @@ impl TemplateManager {
         template: PrimitiveTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_PRIMITIVES);
-        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
+        save_template(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.primitive_templates.push(template);
         Ok(())
     }
@@ -238,7 +149,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.primitive_templates.remove(i);
             let dir = category_dir(CAT_PRIMITIVES);
-            delete_template_v2(id, &dir)?;
+            delete_template(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -268,7 +179,7 @@ impl TemplateManager {
         template: IndicatorTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_INDICATORS);
-        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
+        save_template(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.indicator_templates.push(template);
         Ok(())
     }
@@ -281,7 +192,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.indicator_templates.remove(i);
             let dir = category_dir(CAT_INDICATORS);
-            delete_template_v2(id, &dir)?;
+            delete_template(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -311,7 +222,7 @@ impl TemplateManager {
         template: CompareTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_COMPARE);
-        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
+        save_template(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.compare_templates.push(template);
         Ok(())
     }
@@ -324,7 +235,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.compare_templates.remove(i);
             let dir = category_dir(CAT_COMPARE);
-            delete_template_v2(id, &dir)?;
+            delete_template(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -346,7 +257,7 @@ impl TemplateManager {
         template: ChartTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_CHART);
-        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
+        save_template(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.chart_templates.push(template);
         Ok(())
     }
@@ -359,7 +270,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.chart_templates.remove(i);
             let dir = category_dir(CAT_CHART);
-            delete_template_v2(id, &dir)?;
+            delete_template(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -378,7 +289,7 @@ impl TemplateManager {
     /// Add an indicator set and immediately persist it to disk.
     pub fn add_indicator_set(&mut self, set: IndicatorSet) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_INDICATOR_SETS);
-        save_template_v2(&set, &set.id, &dir, self.vault_key.as_ref())?;
+        save_template(&set, &set.id, &dir, self.vault_key.as_ref())?;
         self.indicator_sets.push(set);
         Ok(())
     }
@@ -391,7 +302,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.indicator_sets.remove(i);
             let dir = category_dir(CAT_INDICATOR_SETS);
-            delete_template_v2(id, &dir)?;
+            delete_template(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
