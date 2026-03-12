@@ -7439,7 +7439,7 @@ impl ChartApp {
                     let target_id = uss.profile_avatar_target_id.clone();
                     // If targeting the active profile (or no explicit target), update active avatar
                     let is_active_target = target_id.as_deref()
-                        .map(|tid| tid == uss.profile_id.as_str())
+                        .map(|tid| tid == uss.runtime_profile_id.as_str())
                         .unwrap_or(true);
                     if is_active_target {
                         uss.profile_avatar = avatar.to_string();
@@ -7451,7 +7451,7 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("profile_delete:") => {
                     let id = &rest["profile_delete:".len()..];
-                    let active_id = self.panel_app.user_settings_state.profile_id.clone();
+                    let active_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
                     if id != active_id.as_str() {
                         self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
                         eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);

@@ -3338,6 +3338,13 @@ pub struct UserSettingsState {
     pub profile_avatar: String,
     /// UUID of the active profile.
     pub profile_id: String,
+    /// UUID of the profile that is ACTUALLY loaded and running in this session.
+    /// Set once at window creation from `user_manager.profile.profile_id` and never
+    /// updated mid-session.  `profile_id` may diverge from this after a
+    /// `profile_switch` (pending restart), but `runtime_profile_id` always reflects
+    /// the truly-active profile so that Rename/Avatar/Delete buttons appear on the
+    /// correct row.
+    pub runtime_profile_id: String,
     /// All available profiles as (id, display_name, avatar, client_mode) tuples.
     pub available_profiles: Vec<(String, String, String, ClientMode)>,
     /// Whether the profile name is currently being edited inline.
@@ -3428,6 +3435,7 @@ impl Default for UserSettingsState {
             profile_display_name: "Default".to_string(),
             profile_avatar: "chart".to_string(),
             profile_id: String::new(),
+            runtime_profile_id: String::new(),
             available_profiles: Vec::new(),
             profile_rename_mode: false,
             profile_rename_buffer: String::new(),

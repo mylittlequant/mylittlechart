@@ -597,7 +597,9 @@ fn render_profile_section(
     let small_btn_w = 46.0;
 
     for (id, name, avatar, mode) in &state.available_profiles {
-        let is_active = *id == state.profile_id;
+        // Use runtime_profile_id (the ACTUALLY loaded profile) so that buttons
+        // remain on the correct row even after a pending profile_switch.
+        let is_active = *id == state.runtime_profile_id;
         let is_renaming = state.profile_rename_mode
             && state.profile_rename_target_id.as_deref() == Some(id.as_str());
         let is_avatar_open = state.show_avatar_picker
@@ -650,17 +652,13 @@ fn render_profile_section(
         let row_name_color = format!("rgba(254,255,238,{})", name_alpha);
 
         // Right-side buttons layout (computed from right edge)
-        // Active row: [Rename] [Avatar]
-        // Inactive row: [Delete]
+        // All rows: [Rename] [Avatar] [Delete]
+        // Active row: Delete is hidden (can't delete the running profile).
+        // Inactive row: all three buttons visible + whole-row click area for switch.
         let right_edge = x + available_w;
-        let (rename_btn_x, avatar_btn_x, delete_btn_x) = if is_active {
-            let av_x = right_edge - small_btn_w;
-            let rn_x = av_x - small_btn_w - btn_gap;
-            (rn_x, av_x, 0.0)
-        } else {
-            let del_x = right_edge - small_btn_w;
-            (0.0, 0.0, del_x)
-        };
+        let delete_btn_x = right_edge - small_btn_w;
+        let avatar_btn_x = delete_btn_x - small_btn_w - btn_gap;
+        let rename_btn_x = avatar_btn_x - small_btn_w - btn_gap;
 
         if is_renaming {
             // Inline rename input replaces name text
@@ -744,8 +742,8 @@ fn render_profile_section(
 
             let btn_y = cy + (profile_row_h - btn_h) / 2.0;
 
-            if is_active {
-                // Rename button
+            // ── Rename button (shown on every row) ──
+            {
                 let rename_hover_id = format!("profile_rename:{}", id);
                 let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
                 let rename_bg = if is_rename_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
@@ -769,8 +767,10 @@ fn render_profile_section(
                     Sense::CLICK,
                     layer_id,
                 );
+            }
 
-                // Avatar button
+            // ── Avatar button (shown on every row) ──
+            {
                 let avatar_toggle_hover_id = format!("profile_avatar_toggle:{}", id);
                 let is_avatar_hovered = state.hovered_item_id.as_deref() == Some(avatar_toggle_hover_id.as_str());
                 let avatar_bg = if is_avatar_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
@@ -794,8 +794,10 @@ fn render_profile_section(
                     Sense::CLICK,
                     layer_id,
                 );
-            } else {
-                // Delete button (only on inactive rows)
+            }
+
+            if !is_active {
+                // ── Delete button (only on inactive rows — can't delete the running profile) ──
                 let delete_hover_id = format!("profile_delete:{}", id);
                 let is_delete_hovered = state.hovered_item_id.as_deref() == Some(delete_hover_id.as_str());
                 let delete_bg = if is_delete_hovered { "rgba(229,57,53,0.2)" } else { &toolbar_theme.item_bg_hover };
@@ -820,8 +822,8 @@ fn render_profile_section(
                     layer_id,
                 );
 
-                // Whole-row click area for switching (excludes delete button area)
-                let row_click_w = delete_btn_x - x - btn_gap;
+                // Whole-row click area for switching (excludes button area on the right)
+                let row_click_w = rename_btn_x - x - btn_gap;
                 let switch_hit_id = format!("user_settings:profile_switch:{}", id);
                 result.content_items.push((format!("profile_switch:{}", id), WidgetRect::new(x, cy, row_click_w, profile_row_h)));
                 input_coordinator.register_on_layer(
