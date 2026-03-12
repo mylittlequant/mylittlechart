@@ -8,7 +8,7 @@ edition.workspace = true
 zengeld-chart = { path = "../chart" }
 
 # V5 connectors (async exchange API) — separate workspace, use path
-digdigdig3 = "0.1.3"
+digdigdig3 = "0.1.5"
 
 # Async runtime for background tasks
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }

@@ -4011,7 +4011,7 @@ impl ApplicationHandler for App<'_> {
                         // 4. Send status updates via an mpsc channel to about_to_wait
                         eprintln!("[App] start_device_auth requested — starting link flow");
 
-                        let profile_id = self.user_manager.profile.profile_id.clone();
+                        let device_id = zengeld_updater::telemetry::get_or_create_device_id();
                         let device_name = self.app_state.device_name.clone();
                         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<LinkPollStatus>();
                         self.link_poll_rx = Some(rx);
@@ -4033,7 +4033,7 @@ impl ApplicationHandler for App<'_> {
                                 .post("https://chart.example/api/auth/link/init")
                                 .json(&serde_json::json!({
                                     "device_name": device_name,
-                                    "device_id": profile_id,
+                                    "device_id": device_id,
                                 }))
                                 .send()
                                 .await;

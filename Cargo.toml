@@ -29,7 +29,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.2.10"
+version = "0.2.11"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -51,4 +51,3 @@ uzor-backend-wgpu-instanced = { path = "../uzor/uzor-backend-wgpu-instanced" }
 uzor-backend-vello-hybrid = { path = "../uzor/uzor-backend-vello-hybrid" }
 uzor-backend-vello-cpu = { path = "../uzor/uzor-backend-vello-cpu" }
 uzor-backend-tiny-skia = { path = "../uzor/uzor-backend-tiny-skia" }
-digdigdig3 = { path = "../digdigdig3" }
