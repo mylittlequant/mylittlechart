@@ -499,7 +499,8 @@ pub fn render_vault_unlock(
 
     // ── Modal dimensions ─────────────────────────────────────────────────────
     let modal_w: f64 = 480.0;
-    let modal_h: f64 = 260.0;
+    // Expand the modal slightly when an error message is present so it doesn't overflow.
+    let modal_h: f64 = if state.vault_unlock_error.is_some() { 296.0 } else { 260.0 };
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
@@ -571,6 +572,17 @@ pub fn render_vault_unlock(
         let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
         result.content_items.push(("vault_unlock_btn".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:vault_unlock_btn", btn_rect, Sense::CLICK, &layer_id);
+    }
+    cy += btn_h + 10.0;
+
+    // ── Error message ────────────────────────────────────────────────────────
+    if let Some(ref err_msg) = state.vault_unlock_error {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.set_text_align(TextAlign::Left);
     }
 }
 

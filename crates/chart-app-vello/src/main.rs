@@ -4131,6 +4131,51 @@ impl ApplicationHandler for App<'_> {
                     match zengeld_chart::vault::load_or_create_salt(&salt_path) {
                         Ok(salt) => {
                             let key = zengeld_chart::vault::derive_key(passphrase, &salt);
+
+                            // ── Passphrase validation (vault unlock path only) ──────────
+                            // When needs_vault_unlock is true the user is returning to an
+                            // already-encrypted profile.  We MUST validate the key before
+                            // replacing any in-memory state; a wrong passphrase would
+                            // cause save_all() to overwrite real encrypted data with the
+                            // default/empty state derived under the wrong key.
+                            //
+                            // Validation: try to decrypt profile.enc with the derived key.
+                            // If decryption fails, reject and keep the overlay open.
+                            let passphrase_valid = if self.needs_vault_unlock {
+                                let enc_path = profile_dir.join("profile.enc");
+                                if enc_path.exists() {
+                                    match zengeld_chart::user_profile::storage::load_profile(Some(&key)) {
+                                        Ok(_) => {
+                                            eprintln!("[App] vault passphrase validated OK");
+                                            true
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
+                                            // Show the error on all windows — keep the overlay open.
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                    Some("Wrong passphrase — please try again".to_string());
+                                            }
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    // No profile.enc found — first-time encryption setup.
+                                    // Nothing to validate; proceed normally.
+                                    true
+                                }
+                            } else {
+                                // Not a vault-unlock attempt (fresh E2E setup or re-key).
+                                // No validation needed.
+                                true
+                            };
+
+                            if !passphrase_valid {
+                                // Wrong passphrase — stop processing this command.
+                                // The overlay stays visible with an error message.
+                            } else {
+
                             eprintln!("[App] vault key derived and set (salt at {})", salt_path.display());
 
                             // Re-load all encrypted user data now that we have the key.
@@ -4222,8 +4267,16 @@ impl ApplicationHandler for App<'_> {
                                 == zengeld_chart::user_profile::profile::ClientMode::Connected;
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                 pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
+                                // Clear the passphrase field now that unlock succeeded.
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
                             }
+
+                            } // end `if passphrase_valid`
                         }
                         Err(e) => {
                             eprintln!("[App] vault salt error: {}", e);

@@ -212,10 +212,18 @@ impl UserManager {
                 p
             }
             Err(e) => {
-                eprintln!(
-                    "[UserManager] failed to load profile: {}, using defaults",
-                    e
-                );
+                if key_ref.is_some() {
+                    eprintln!(
+                        "[UserManager] WARNING: decryption failed with provided key, falling back to defaults \
+                        — this should not happen after passphrase validation: {}",
+                        e
+                    );
+                } else {
+                    eprintln!(
+                        "[UserManager] failed to load profile: {}, using defaults",
+                        e
+                    );
+                }
                 UserProfile::new()
             }
         };

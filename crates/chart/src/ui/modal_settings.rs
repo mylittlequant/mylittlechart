@@ -3320,6 +3320,9 @@ pub struct UserSettingsState {
     /// True when the profile is encrypted (salt.hex exists) but no vault key has been derived
     /// yet — the user must enter their passphrase to unlock their data before the app is usable.
     pub needs_vault_unlock: bool,
+    /// Error message shown on the vault unlock overlay when the passphrase is wrong.
+    /// Cleared when the user starts typing a new passphrase.
+    pub vault_unlock_error: Option<String>,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
     /// 8-char device code for device linking displayed on page 1.
@@ -3427,6 +3430,7 @@ impl Default for UserSettingsState {
             e2e_server_salt: String::new(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
+            vault_unlock_error: None,
             wizard_page: 0,
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),

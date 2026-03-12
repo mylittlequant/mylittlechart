@@ -4354,7 +4354,8 @@ impl ChartApp {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                 }
                 '\x08' => {
-                    // Backspace
+                    // Backspace — clear the error so the user knows they can retry.
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
                     if editing.has_selection() {
                         editing.delete_selection();
                     } else if editing.cursor > 0 {
@@ -4365,6 +4366,8 @@ impl ChartApp {
                     }
                 }
                 c if !c.is_control() => {
+                    // Any character typed — clear the error so the user can retry.
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
                     if editing.has_selection() {
                         editing.delete_selection();
                     }
@@ -7335,18 +7338,16 @@ impl ChartApp {
                 // ── Vault unlock handler (returning encrypted users) ──────────
                 "vault_unlock_btn" => {
                     // The user entered their passphrase on the vault-unlock overlay.
-                    // Emit the same e2e_setup: command so that main.rs derives the key
-                    // and calls save_all() to load the encrypted data.
+                    // Emit the e2e_setup: command so that main.rs derives the key and
+                    // VALIDATES it before proceeding.  Do NOT dismiss the overlay here —
+                    // main.rs will dismiss it on success, or set vault_unlock_error on
+                    // failure so the user can retry with the correct passphrase.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
+                        // Clear any previous error while the request is in flight.
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        // Dismiss the overlay immediately — if the key is wrong the
-                        // app will continue without decrypted data (plaintext fallback).
-                        self.panel_app.user_settings_state.needs_vault_unlock = false;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        eprintln!("[ChartApp] vault_unlock: passphrase submitted");
+                        eprintln!("[ChartApp] vault_unlock: passphrase submitted, awaiting validation");
                     }
                 }
                 // Legacy handler — kept for backwards compat
