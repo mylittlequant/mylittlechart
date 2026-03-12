@@ -2152,6 +2152,11 @@ impl App<'_> {
         {
             let uss = &mut chart.panel_app.user_settings_state;
             uss.profile_id = self.user_manager.profile.profile_id.clone();
+            // runtime_profile_id tracks the ACTUALLY loaded profile for the life of
+            // this session.  It is set once here and never changed — even if the user
+            // switches the pending active profile, the running profile stays the same
+            // until the app is restarted.
+            uss.runtime_profile_id = self.user_manager.profile.profile_id.clone();
             uss.profile_display_name = self.user_manager.profile.display_name.clone();
             uss.profile_avatar = self.user_manager.profile.avatar.clone();
             // Load available profiles from the index.
@@ -4015,6 +4020,10 @@ impl ApplicationHandler for App<'_> {
                         Err(e) => eprintln!("[App] profile_create failed: {}", e),
                     }
                 } else if let Some(id) = cmd_str.strip_prefix("profile_switch:") {
+                    // Guard: if the requested profile is already the running one, do nothing.
+                    if id == self.user_manager.profile.profile_id.as_str() {
+                        eprintln!("[App] profile_switch: already on this profile, ignoring");
+                    } else {
                     // Update the index to make this the active profile, then save.
                     if let Some(mut index) = zengeld_chart::load_profile_index() {
                         if index.profiles.iter().any(|m| m.id == id) {
@@ -4023,7 +4032,10 @@ impl ApplicationHandler for App<'_> {
                                 eprintln!("[App] profile_switch: failed to save index: {}", e);
                             } else {
                                 eprintln!("[App] profile_switch: active profile set to {}, restart required", id);
-                                // Notify the user via UI (restart needed to load new profile).
+                                // Update profile_id to reflect the pending next-startup profile.
+                                // NOTE: runtime_profile_id is NOT updated — it always reflects
+                                // the currently loaded/running profile, so the UI continues to
+                                // show Rename/Avatar/Delete on the correct (running) row.
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.profile_id = id.to_string();
                                 }
@@ -4031,6 +4043,7 @@ impl ApplicationHandler for App<'_> {
                         } else {
                             eprintln!("[App] profile_switch: unknown profile id: {}", id);
                         }
+                    }
                     }
                 } else if let Some(id) = cmd_str.strip_prefix("profile_delete:") {
                     // Guard: never delete the active profile.
@@ -4134,6 +4147,42 @@ impl ApplicationHandler for App<'_> {
                             self.app_state.template_manager.vault_key = Some(key);
                             self.app_state.presets = self.user_manager.presets.clone();
                             self.app_state.snapshots = self.user_manager.snapshots.clone();
+
+                            // Sync loaded presets immediately to all open windows.
+                            // Without this, save_all() (called below) runs autosave_snapshot()
+                            // on each window while panel_app.presets still contains only the
+                            // ephemeral "Untitled" preset created at startup.  autosave_snapshot()
+                            // looks up active_preset_id in panel_app.presets — not app_state.presets
+                            // — so it hits the "preset id not found" early-return and saves nothing.
+                            // This is the same pattern used for watchlists below.
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.presets = self.app_state.presets.clone();
+                                pw.chart.panel_app.template_manager = self.app_state.template_manager.clone();
+                                // If the window's active_preset_id is not in the loaded presets,
+                                // switch to the most recently created preset so autosave has a
+                                // valid target and the window state persists correctly.
+                                let active = pw.chart.panel_app.active_preset_id.clone();
+                                if !pw.chart.panel_app.presets.contains_key(&active) {
+                                    if let Some((best_id, _)) = pw.chart.panel_app.presets.iter()
+                                        .max_by_key(|(_, p)| p.created_at)
+                                    {
+                                        let best_id = best_id.clone();
+                                        eprintln!(
+                                            "[App] e2e_setup: active_preset_id '{}' not in loaded presets, switching to '{}'",
+                                            active, best_id
+                                        );
+                                        pw.chart.panel_app.active_preset_id = best_id.clone();
+                                        if pw.chart.panel_app.open_tabs.is_empty()
+                                            || !pw.chart.panel_app.open_tabs.contains(&best_id)
+                                        {
+                                            pw.chart.panel_app.open_tabs = vec![best_id];
+                                        }
+                                    }
+                                }
+                            }
+                            // Also mark both dirty so the frame-loop sync fires on the next frame.
+                            self.app_state.presets_dirty = true;
+                            self.app_state.templates_dirty = true;
 
                             // Reload watchlists with the vault key now that it is available.
                             // At startup AppState::from_profile loaded watchlists with key=None,
