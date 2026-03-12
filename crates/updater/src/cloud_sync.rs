@@ -211,9 +211,8 @@ pub struct SyncState {
     /// can store and return them opaquely.
     ///
     /// On pull, names are decrypted before the items are written to disk.
-    /// Defaults to `false` (names are sent in plaintext) for backward
-    /// compatibility with existing data.
-    #[serde(default)]
+    /// Defaults to `true` (names are encrypted by default for maximum privacy).
+    #[serde(default = "default_true")]
     pub sync_e2e_encrypt_names: bool,
 }
 

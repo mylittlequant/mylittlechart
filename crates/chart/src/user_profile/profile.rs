@@ -368,7 +368,7 @@ impl Default for SyncCategoryPrefs {
 ///
 /// Stored inside [`UserProfile`] so it is automatically persisted to and
 /// loaded from `profile.json` via the existing save/load infrastructure.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncState {
     /// Unix timestamp (seconds) of the last successful sync.
     /// `0` means the client has never completed a sync.
@@ -402,10 +402,24 @@ pub struct SyncState {
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
     /// When `true` and E2E is enabled, the `name` field of each `SyncItem` is
-    /// also encrypted before being sent to the server.  Defaults to `false`
-    /// (names are sent in plaintext) for backward compatibility.
-    #[serde(default)]
+    /// also encrypted before being sent to the server.  Defaults to `true`
+    /// (names are encrypted by default for maximum privacy).
+    #[serde(default = "default_true")]
     pub sync_e2e_encrypt_names: bool,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            last_sync_timestamp: 0,
+            enabled: false,
+            e2e_enabled: false,
+            e2e_salt: String::new(),
+            category_prefs: SyncCategoryPrefs::default(),
+            synced_items: std::collections::HashSet::new(),
+            sync_e2e_encrypt_names: true,
+        }
+    }
 }
 
 impl UserProfile {
