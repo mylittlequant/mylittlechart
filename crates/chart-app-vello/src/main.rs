@@ -523,6 +523,10 @@ struct App<'s> {
     /// Causes the Vault Unlock overlay to appear on the first window created.
     needs_vault_unlock: bool,
 
+    /// True when a plaintext profile exists without `salt.hex` — user must set a passphrase
+    /// to migrate to encrypted storage.  Shows wizard at page 1 (passphrase).
+    needs_migration: bool,
+
     /// Receiver for status updates from the OAuth link-poll task.
     ///
     /// Set when `start_device_auth` spawns a poll loop; `None` when no link
@@ -1666,6 +1670,7 @@ impl App<'_> {
         app_connector_ready_rx: live_data::ConnectorReadyReceiver,
         is_first_run: bool,
         needs_vault_unlock: bool,
+        needs_migration: bool,
     ) -> Self {
         let app_state = AppState::from_profile(&profile, user_manager.presets.clone(), user_manager.snapshots.clone(), user_manager.template_manager.clone(), user_manager.vault_key);
 
@@ -1985,6 +1990,7 @@ impl App<'_> {
             telemetry_shared,
             is_first_run,
             needs_vault_unlock,
+            needs_migration,
             link_poll_rx: None,
         }
     }
@@ -2201,6 +2207,17 @@ impl App<'_> {
         // been derived yet (returning user with encrypted data).
         if self.needs_vault_unlock {
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
+        }
+
+        // Migration: existing plaintext profile without salt.hex.
+        // Show the wizard at page 1 (passphrase) so the user sets a passphrase.
+        // Their existing data will be encrypted on completion via save_all().
+        if self.needs_migration {
+            chart.panel_app.user_settings_state.show_welcome_wizard = true;
+            chart.panel_app.user_settings_state.wizard_page = 1;
+            // Determine standalone vs connected from the existing profile's sync state.
+            chart.panel_app.user_settings_state.wizard_mode_standalone =
+                !self.user_manager.profile.sync_state.enabled;
         }
 
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
@@ -6026,26 +6043,27 @@ fn main() {
         Err(e) => eprintln!("[App] Profile migration failed: {}", e),
     }
 
-    // Detect first-run BEFORE loading the user manager.
-    // A missing `profile.json` means this is the first launch — show the welcome wizard.
+    // Detect startup mode BEFORE loading the user manager.
     let profile_dir = zengeld_chart::active_profile_data_dir();
-    let is_first_run = {
-        let profile_path = profile_dir.join("profile.json");
-        !profile_path.exists()
-    };
+    let has_profile = profile_dir.join("profile.json").exists() || profile_dir.join("profile.enc").exists();
+    let has_salt = profile_dir.join("salt.hex").exists();
+
+    // Three startup scenarios:
+    // 1. First run: no profile exists → show full wizard (page 0)
+    // 2. Returning encrypted: profile + salt exist → show unlock dialog
+    // 3. Migration: profile exists but NO salt → show wizard at page 1 (passphrase)
+    let is_first_run = !has_profile;
+    let needs_vault_unlock = has_profile && has_salt;
+    let needs_migration = has_profile && !has_salt;
+
     if is_first_run {
         eprintln!("[App] first-run detected — welcome wizard will be shown");
     }
-
-    // Detect whether this is an encrypted profile that needs the user to unlock it.
-    // salt.hex exists means the user previously set a passphrase; if we don't have a
-    // vault key yet (we never do at startup), show the unlock overlay.
-    let needs_vault_unlock = {
-        let salt_path = profile_dir.join("salt.hex");
-        !is_first_run && salt_path.exists()
-    };
     if needs_vault_unlock {
         eprintln!("[App] encrypted profile detected — vault unlock overlay will be shown");
+    }
+    if needs_migration {
+        eprintln!("[App] plaintext profile detected — migration wizard will be shown");
     }
 
     // Load UserManager (profile + templates + presets + snapshots) once at startup.
@@ -6061,6 +6079,6 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx, is_first_run, needs_vault_unlock);
+    let mut app = App::new(&symbol, bridge, saved_windows, profile, user_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     event_loop.run_app(&mut app).expect("Event loop error");
 }
