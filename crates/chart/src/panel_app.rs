@@ -3073,6 +3073,8 @@ impl ChartPanelApp {
                     &self.user_settings_state,
                     text_color,
                     toolbar_theme,
+                    frame_theme,
+                    current_time_ms,
                     input_coordinator,
                     ws_result,
                 );
@@ -3096,6 +3098,8 @@ impl ChartPanelApp {
                     &self.user_settings_state,
                     text_color,
                     toolbar_theme,
+                    frame_theme,
+                    current_time_ms,
                     input_coordinator,
                     ws_result,
                 );

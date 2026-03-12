@@ -16,6 +16,10 @@ use crate::ui::modal_settings::UserSettingsState;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
+use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
+use crate::ui::widgets::types::WidgetState;
+use crate::layout::render_ui::toolbar_to_widget_theme;
+use crate::layout::render_chart::FrameTheme;
 
 /// Render the Welcome Wizard overlay.
 ///
@@ -30,6 +34,8 @@ pub fn render_welcome_wizard(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
@@ -79,7 +85,7 @@ pub fn render_welcome_wizard(
 
     match state.wizard_page {
         0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1_passphrase(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        1 => render_page1_passphrase(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
         _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 }
@@ -164,6 +170,8 @@ fn render_page1_passphrase(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -206,7 +214,7 @@ fn render_page1_passphrase(
     *cy += warn_h + 16.0;
 
     // Passphrase input (mandatory)
-    *cy = render_passphrase_input(ctx, x, w, cy, state, text_color, toolbar_theme, layer_id, input_coordinator, result);
+    *cy = render_passphrase_input(ctx, x, w, cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, layer_id, input_coordinator, result);
 
     // ── Connected mode: sign-in section ──────────────────────────────────────
     if !state.wizard_mode_standalone {
@@ -251,7 +259,7 @@ fn render_page1_passphrase(
     }
 
     // ── Complete Setup button (disabled until passphrase is entered) ──────────
-    let enable_disabled = state.e2e_passphrase.is_empty();
+    let enable_disabled = state.e2e_passphrase_editing.text.is_empty();
     let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
     let enable_bg = if enable_disabled {
         "rgba(244,205,99,0.20)"
@@ -394,7 +402,7 @@ fn render_back_button(
     *cy += btn_h;
 }
 
-/// Render the passphrase input box. Returns new cy after the input.
+/// Render the passphrase input box using the canonical `draw_input` widget. Returns new cy after the input.
 #[allow(clippy::too_many_arguments)]
 fn render_passphrase_input(
     ctx: &mut dyn RenderContext,
@@ -404,6 +412,8 @@ fn render_passphrase_input(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
@@ -415,32 +425,41 @@ fn render_passphrase_input(
     ctx.fill_text("Passphrase", x, *cy);
     *cy += 18.0;
 
-    // Input box
-    let input_h = 30.0;
-    let masked: String = if state.e2e_passphrase.is_empty() {
-        "Click to type passphrase\u{2026}".to_string()
-    } else {
-        "\u{2022}".repeat(state.e2e_passphrase.chars().count().min(24))
-    };
-    let input_text_color = if state.e2e_passphrase.is_empty() {
-        "rgba(254,255,238,0.25)"
-    } else {
-        text_color
-    };
-
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-    ctx.fill_rounded_rect(x, *cy, w, input_h, 3.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, *cy, w, input_h, 3.0);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(input_text_color);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&masked, x + 8.0, *cy + input_h / 2.0);
-
+    // Input box using canonical draw_input
+    let input_h = 32.0;
     let input_rect = WidgetRect::new(x, *cy, w, input_h);
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let editing = &state.e2e_passphrase_editing;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let input_config = InputConfig::new(&editing.text)
+        .with_focused(state.e2e_passphrase_focused)
+        .with_cursor(editing.cursor)
+        .with_placeholder("Click to type passphrase\u{2026}")
+        .with_type(InputType::Password)
+        .with_selection(sel_start, sel_end);
+
+    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+
+    // Register for click-to-focus
     result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
     input_coordinator.register_on_layer("user_settings:e2e_passphrase_input", input_rect, Sense::CLICK, layer_id);
+
+    // Blinking cursor (only when focused)
+    if state.e2e_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            input_result.cursor_x,
+            input_result.cursor_y,
+            input_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+
     *cy += input_h + 16.0;
     *cy
 }
@@ -458,6 +477,8 @@ pub fn render_vault_unlock(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
@@ -521,10 +542,10 @@ pub fn render_vault_unlock(
     cy += 24.0;
 
     // Passphrase input (reuse the shared helper)
-    cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, &layer_id, input_coordinator, result);
+    cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, &layer_id, input_coordinator, result);
 
     // Unlock button (disabled until passphrase is entered)
-    let unlock_disabled = state.e2e_passphrase.is_empty();
+    let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
     let hovered = state.hovered_item_id.as_deref();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
     let btn_bg = if unlock_disabled {
