@@ -447,6 +447,7 @@ pub use i18n::{
 // User profile (aggregate persistent state — active selections, UI state)
 pub use user_profile::{
     UserProfile,
+    VaultSecrets,
     WindowState,
     StoredApiKey,
     ProfileError,

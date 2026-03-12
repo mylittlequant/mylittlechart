@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::profile::{ClientMode, ProfileIndex, ProfileMeta, UserProfile};
+use super::profile::{ClientMode, ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use crate::vault::{self, VaultKey};
 
 // =============================================================================
@@ -167,57 +167,131 @@ pub fn get_user_data_dir() -> PathBuf {
 // profile.json / profile.enc helpers
 // =============================================================================
 
-/// Save profile — encrypted if key provided, plaintext otherwise (migration).
+/// Save profile using the new split model.
+///
+/// `profile.json` is **always** written as plaintext (no credentials).
+/// Credential fields (`agent_api_keys`, `exchange_keys`, `notification_settings`,
+/// `agent_api_key`) are extracted into a [`VaultSecrets`] struct and saved
+/// separately:
+/// - When `key` is `Some`: written as `vault.enc` (AES-GCM encrypted).
+/// - When `key` is `None`: written as `vault.json` (plaintext — same security
+///   level as the legacy no-passphrase mode).
+///
+/// Any legacy `profile.enc` from the old all-or-nothing scheme is removed
+/// after a successful write so future loads use the new split files.
 pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
     let dir = active_profile_data_dir();
     fs::create_dir_all(&dir)?;
+
+    // Clone so we can strip credentials without mutating the caller's value.
+    let mut plaintext_profile = profile.clone();
+
+    // Extract credentials from the clone → VaultSecrets.
+    let secrets = VaultSecrets::extract_from(&mut plaintext_profile);
+
+    // Always write profile.json (plaintext, no credentials).
+    let json_path = dir.join("profile.json");
+    let json = serde_json::to_string_pretty(&plaintext_profile)?;
+    fs::write(&json_path, &json)?;
+
+    // Write vault (encrypted or plaintext depending on whether we have a key).
     match key {
         Some(k) => {
-            let path = dir.join("profile.enc");
-            vault::save_encrypted(k, &path, profile)
+            let vault_path = dir.join("vault.enc");
+            vault::save_encrypted(k, &vault_path, &secrets)
                 .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            // Remove plaintext if it exists (migration cleanup).
-            let _ = fs::remove_file(dir.join("profile.json"));
+            // Remove plaintext vault if it exists (upgrade from no-passphrase).
+            let _ = fs::remove_file(dir.join("vault.json"));
         }
         None => {
-            let path = dir.join("profile.json");
-            let json = serde_json::to_string_pretty(profile)?;
-            fs::write(&path, json)?;
+            let vault_path = dir.join("vault.json");
+            let vault_json = serde_json::to_string_pretty(&secrets)?;
+            fs::write(&vault_path, &vault_json)?;
         }
     }
+
+    // Remove legacy profile.enc so future loads go through the new split path.
+    let _ = fs::remove_file(dir.join("profile.enc"));
+
     Ok(())
 }
 
-/// Load profile — tries `.enc` first, falls back to `.json` for migration.
+/// Load profile using the new split model.
+///
+/// Always loads `profile.json` (plaintext) first.  If a vault file exists
+/// (`vault.enc` or `vault.json`), the credentials are decrypted and merged
+/// back into the returned [`UserProfile`].
+///
+/// **Migration from legacy `profile.enc`:**
+/// If `profile.enc` exists but `profile.json` does not, this function
+/// decrypts `profile.enc` (key required), writes the split files to disk,
+/// then returns the profile with secrets already populated in memory.
+///
+/// If `profile.enc` exists without a key, returns
+/// `Err(ProfileError::Io(PermissionDenied))` so the caller can show the
+/// vault unlock overlay.
 pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
     let dir = active_profile_data_dir();
     let enc_path = dir.join("profile.enc");
     let json_path = dir.join("profile.json");
+    let vault_enc_path = dir.join("vault.enc");
+    let vault_json_path = dir.join("vault.json");
 
-    // Try encrypted first.
-    if enc_path.exists() {
+    // ── Migration: legacy profile.enc → split files ──────────────────────────
+    // Only migrate when profile.json does not yet exist so we do this once.
+    if enc_path.exists() && !json_path.exists() {
         if let Some(k) = key {
+            // Decrypt the old monolithic profile.
             let mut profile: UserProfile = vault::load_encrypted(k, &enc_path)
                 .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
             profile.notification_settings.telegram.migrate_legacy();
+            // Write split files and remove profile.enc.
+            save_profile(&profile, Some(k))?;
+            eprintln!("[storage] Migrated profile.enc → profile.json + vault.enc");
             return Ok(profile);
         }
-        // `.enc` exists but no key — cannot decrypt.
+        // profile.enc exists but no key — caller must provide one.
         return Err(ProfileError::Io(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "Encrypted profile found but no key provided",
         )));
     }
 
-    // Fall back to plaintext (legacy / migration).
-    if json_path.exists() {
+    // ── Normal load: profile.json + optional vault ────────────────────────────
+    let mut profile = if json_path.exists() {
         let json = fs::read_to_string(&json_path)?;
-        let mut profile: UserProfile = serde_json::from_str(&json)?;
-        profile.notification_settings.telegram.migrate_legacy();
-        return Ok(profile);
+        serde_json::from_str::<UserProfile>(&json)?
+    } else {
+        UserProfile::new()
+    };
+
+    // Load and merge vault secrets if available.
+    if vault_enc_path.exists() {
+        if let Some(k) = key {
+            match vault::load_encrypted::<VaultSecrets>(k, &vault_enc_path) {
+                Ok(secrets) => secrets.merge_into(&mut profile),
+                Err(e) => {
+                    eprintln!("[storage] Failed to decrypt vault.enc: {}", e);
+                    // Profile is still usable — just without credentials.
+                }
+            }
+        }
+        // No key but vault.enc exists: profile loads fine, secrets stay empty.
+        // This is expected if the user has not unlocked the vault yet.
+    } else if vault_json_path.exists() {
+        // No-passphrase install — secrets are in plaintext vault.json.
+        match fs::read_to_string(&vault_json_path) {
+            Ok(vault_json) => {
+                match serde_json::from_str::<VaultSecrets>(&vault_json) {
+                    Ok(secrets) => secrets.merge_into(&mut profile),
+                    Err(e) => eprintln!("[storage] Failed to parse vault.json: {}", e),
+                }
+            }
+            Err(e) => eprintln!("[storage] Failed to read vault.json: {}", e),
+        }
     }
 
-    Ok(UserProfile::new())
+    Ok(profile)
 }
 
 /// Generic save — encrypted or plaintext.

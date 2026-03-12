@@ -255,9 +255,12 @@ pub struct UserProfile {
     // -------------------------------------------------------------------------
 
     /// Whether to send anonymized usage metrics to chart.example.
-    /// Defaults to `true` (opt-in).  Requires Connected mode to have any effect.
-    /// Changing this at runtime sends `UpdaterCommand::SetTelemetryEnabled`.
-    #[serde(default = "default_true")]
+    ///
+    /// Never serialized — derived at runtime from `client_mode` and a
+    /// UI-only toggle stored in `UserSettingsState`.  Kept as a runtime
+    /// field so existing call sites (updater, input handler) compile without
+    /// changes while the profile.json stays free of this redundant flag.
+    #[serde(skip)]
     pub telemetry_enabled: bool,
 
     // -------------------------------------------------------------------------
@@ -721,6 +724,70 @@ pub struct ProfileIndex {
     pub active_profile_id: String,
     /// Ordered list of all profile metadata entries.
     pub profiles: Vec<ProfileMeta>,
+}
+
+// =============================================================================
+// VaultSecrets — encrypted credential store (vault.enc)
+// =============================================================================
+
+/// Sensitive credentials that must be encrypted at rest.
+///
+/// Stored separately in `vault.enc`, never in plaintext `profile.json`.
+/// When a vault key is present, these fields are extracted from
+/// [`UserProfile`] before writing `profile.json` and saved encrypted.
+/// On load, they are decrypted from `vault.enc` and merged back into
+/// the in-memory `UserProfile`.
+///
+/// When no vault key is set (no-passphrase install), `vault.json` is
+/// written instead — same security level as the legacy all-plaintext mode.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct VaultSecrets {
+    /// Legacy single API key — kept for backward-compat migration only.
+    #[serde(default)]
+    pub agent_api_key: String,
+
+    /// Registered API keys with permission tiers (contains `key_hash`).
+    #[serde(default)]
+    pub agent_api_keys: Vec<StoredApiKey>,
+
+    /// Exchange API key entries (contains `api_secret` and `passphrase`).
+    #[serde(default)]
+    pub exchange_keys: Vec<StoredExchangeKey>,
+
+    /// Alert notification delivery settings.
+    ///
+    /// Stored here because it contains `telegram.bot_token`,
+    /// `telegram.subscribers` (PII — chat IDs), and `webhook.url`
+    /// (may embed auth tokens).
+    #[serde(default)]
+    pub notification_settings: alert_delivery::NotificationSettings,
+}
+
+impl VaultSecrets {
+    /// Extract credential fields from a [`UserProfile`], returning a
+    /// `VaultSecrets` and clearing those fields in the profile so they
+    /// are not written to plaintext storage.
+    pub fn extract_from(profile: &mut UserProfile) -> Self {
+        let secrets = Self {
+            agent_api_key: std::mem::take(&mut profile.agent_api_key),
+            agent_api_keys: std::mem::take(&mut profile.agent_api_keys),
+            exchange_keys: std::mem::take(&mut profile.exchange_keys),
+            notification_settings: std::mem::replace(
+                &mut profile.notification_settings,
+                alert_delivery::NotificationSettings::default(),
+            ),
+        };
+        secrets
+    }
+
+    /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
+    pub fn merge_into(self, profile: &mut UserProfile) {
+        profile.agent_api_key = self.agent_api_key;
+        profile.agent_api_keys = self.agent_api_keys;
+        profile.exchange_keys = self.exchange_keys;
+        profile.notification_settings = self.notification_settings;
+        profile.notification_settings.telegram.migrate_legacy();
+    }
 }
 
 // =============================================================================

@@ -293,7 +293,8 @@ impl AppState {
         let watchlist_manager = {
             let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
             if watchlists_path.exists() {
-                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, vault_key.as_ref())
+                // Watchlists are always plaintext — pass None regardless of vault key.
+                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, None)
                     .unwrap_or_else(|e| {
                         eprintln!("[AppState] Failed to load watchlists: {}", e);
                         default_wl()
@@ -2510,18 +2511,18 @@ impl App<'_> {
             self.profile = profile;
         }
 
-        // 6. Save watchlists.json from AppState (single source of truth).
+        // 6. Save watchlists.json from AppState (always plaintext — no vault key).
         {
             let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
-            if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
+            if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
                 eprintln!("[App] Failed to save watchlists: {}", e);
             }
         }
 
-        // 7. Save settings snapshots from AppState (single canonical source of truth).
+        // 7. Save settings snapshots from AppState (always plaintext — no vault key).
         {
             let path = zengeld_chart::active_profile_data_dir().join("settings_snapshots.json");
-            if let Err(e) = zengeld_chart::save_json(&path, &self.app_state.snapshots, vault_key) {
+            if let Err(e) = zengeld_chart::save_json(&path, &self.app_state.snapshots, None) {
                 eprintln!("[App] Failed to save settings snapshots: {}", e);
             }
         }
@@ -3169,19 +3170,14 @@ impl ApplicationHandler for App<'_> {
             return;
         }
 
-        if self.needs_vault_unlock {
-            // Vault is locked — create ONE bare shell window to host the unlock UI.
-            // Saved window state cannot be restored yet (data is encrypted).
-            // After the user unlocks, the e2e_setup handler will close this shell
-            // and recreate the real windows from the decrypted profile.
-            eprintln!("[App] vault locked — creating bare unlock window (saved state deferred)");
-            self.create_window(event_loop, None, None);
-        } else if self.saved_windows.is_empty() {
+        // profile.json is always readable now (plaintext split model).
+        // Windows are always restored from saved state regardless of vault lock status.
+        // The vault unlock overlay will appear on the restored window(s) when needed.
+        if self.saved_windows.is_empty() {
             eprintln!("[App] No saved windows — creating default");
-            // No saved windows — create one with defaults
             self.create_window(event_loop, None, None);
         } else {
-            // Restore ALL windows equally from saved state — no "primary" distinction
+            // Restore ALL windows from saved state — vault overlay appears on top if needed.
             let windows_to_restore = self.saved_windows.clone();
             for ws in &windows_to_restore {
                 eprintln!("[App] Restoring window: id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
@@ -3558,9 +3554,8 @@ impl ApplicationHandler for App<'_> {
         let _t2 = std::time::Instant::now();
 
         // ── Flush dirty presets to disk ──────────────────────────────────
-        // Skip all disk writes while the vault has not been unlocked yet.
-        // Writing with vault_key=None would overwrite encrypted data with defaults.
-        // The e2e_setup handler calls save_all() after successful unlock.
+        // Presets are encrypted — skip writes while the vault key is not yet available.
+        // After unlock, save_all() is called with the real key.
         if !self.needs_vault_unlock && !self.app_state.preset_dirty_ids.is_empty() {
             let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
             let vault_key = self.app_state.vault_key.as_ref();
@@ -3577,19 +3572,10 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Dirty-flag persistence ──────────────────────────────────────
-        // If any window marked profile or watchlists dirty, save now
-        // with full multi-window context.
-        // Guard: skip all disk writes while vault is locked to prevent overwriting
-        // encrypted data with default/empty state before the key is available.
-        if self.needs_vault_unlock {
-            // Clear dirty flags so they don't accumulate endlessly, but do NOT
-            // write anything to disk. save_all() after e2e_setup will persist
-            // the correct state once the vault is unlocked.
-            for pw in self.windows.values_mut() {
-                pw.chart.profile_dirty = false;
-                pw.chart.watchlists_dirty = false;
-            }
-        } else {
+        // profile.json and watchlists.json are always plaintext — they can
+        // be written regardless of vault lock status.
+        // Only preset/template writes require the vault key (guarded above).
+        {
             let any_profile_dirty = self.windows.values().any(|pw| pw.chart.profile_dirty);
             let any_watchlists_dirty = self.windows.values().any(|pw| pw.chart.watchlists_dirty);
 
@@ -3672,8 +3658,8 @@ impl ApplicationHandler for App<'_> {
 
             if any_watchlists_dirty {
                 let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
-                let vault_key = self.app_state.vault_key.as_ref();
-                if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, vault_key) {
+                // Watchlists are always plaintext — pass None regardless of vault key.
+                if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
                 }
                 // Clear dirty flags.
@@ -4141,24 +4127,45 @@ impl ApplicationHandler for App<'_> {
 
                             // ── Passphrase validation (vault unlock path only) ──────────
                             // When needs_vault_unlock is true the user is returning to an
-                            // already-encrypted profile.  We MUST validate the key before
+                            // already-encrypted vault.  We MUST validate the key before
                             // replacing any in-memory state; a wrong passphrase would
                             // cause save_all() to overwrite real encrypted data with the
                             // default/empty state derived under the wrong key.
                             //
-                            // Validation: try to decrypt profile.enc with the derived key.
+                            // Validation: try to decrypt vault.enc (new split model) or
+                            // profile.enc (legacy) with the derived key.
                             // If decryption fails, reject and keep the overlay open.
                             let passphrase_valid = if self.needs_vault_unlock {
-                                let enc_path = profile_dir.join("profile.enc");
-                                if enc_path.exists() {
-                                    match zengeld_chart::user_profile::storage::load_profile(Some(&key)) {
+                                // New split model: vault.enc contains credentials.
+                                let vault_enc = profile_dir.join("vault.enc");
+                                // Legacy model: profile.enc contains the full profile.
+                                let profile_enc = profile_dir.join("profile.enc");
+                                if vault_enc.exists() {
+                                    match zengeld_chart::vault::load_encrypted::<zengeld_chart::user_profile::profile::VaultSecrets>(&key, &vault_enc) {
                                         Ok(_) => {
-                                            eprintln!("[App] vault passphrase validated OK");
+                                            eprintln!("[App] vault passphrase validated OK (vault.enc)");
                                             true
                                         }
                                         Err(e) => {
                                             eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
-                                            // Show the error on all windows — keep the overlay open.
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                    Some("Wrong passphrase — please try again".to_string());
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
+                                            }
+                                            false
+                                        }
+                                    }
+                                } else if profile_enc.exists() {
+                                    // Legacy profile.enc — validate by attempting full load.
+                                    match zengeld_chart::user_profile::storage::load_profile(Some(&key)) {
+                                        Ok(_) => {
+                                            eprintln!("[App] vault passphrase validated OK (legacy profile.enc)");
+                                            true
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error =
@@ -4169,8 +4176,7 @@ impl ApplicationHandler for App<'_> {
                                         }
                                     }
                                 } else {
-                                    // No profile.enc found — first-time encryption setup.
-                                    // Nothing to validate; proceed normally.
+                                    // Neither vault.enc nor profile.enc found — first-time setup.
                                     true
                                 }
                             } else {
@@ -4237,29 +4243,8 @@ impl ApplicationHandler for App<'_> {
                             self.app_state.presets_dirty = true;
                             self.app_state.templates_dirty = true;
 
-                            // Reload watchlists with the vault key now that it is available.
-                            // At startup AppState::from_profile loaded watchlists with key=None,
-                            // so encrypted watchlists fell back to the default (BTC-only).
-                            // We must restore the real watchlist data here before save_all()
-                            // writes it back, or the user's watchlists would be permanently lost.
-                            {
-                                let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
-                                if watchlists_path.exists() {
-                                    match zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, Some(&key)) {
-                                        Ok(wm) => {
-                                            eprintln!("[App] e2e_setup: reloaded watchlists ({} lists)", wm.lists.len());
-                                            self.app_state.watchlist_manager = wm.clone();
-                                            // Sync the reloaded watchlists to all open windows.
-                                            for pw in self.windows.values_mut() {
-                                                pw.chart.sidebar_state.watchlist_manager = wm.clone();
-                                            }
-                                        }
-                                        Err(e) => {
-                                            eprintln!("[App] e2e_setup: failed to reload watchlists: {}", e);
-                                        }
-                                    }
-                                }
-                            }
+                            // Watchlists are always plaintext — already loaded correctly at
+                            // startup via AppState::from_profile with key=None.  No reload needed.
 
                             eprintln!("[App] reloaded encrypted user data: {} presets, profile.client_mode={:?}",
                                 self.user_manager.presets.len(), self.profile.client_mode);
@@ -4284,34 +4269,12 @@ impl ApplicationHandler for App<'_> {
                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
                             }
 
-                            // ── Recreate windows from saved profile state ──────────────────
-                            // The window(s) created at startup were bare shells (vault was
-                            // locked, so saved_windows was empty and create_window was called
-                            // with None restore state).  Now that we have the real decrypted
-                            // profile, close all existing windows and recreate from the saved
-                            // WindowState entries so the user's layout is properly restored.
-                            let saved_windows_after_unlock = self.profile.windows.clone();
-                            if !saved_windows_after_unlock.is_empty() {
-                                eprintln!("[App] vault unlocked — recreating {} window(s) from saved state",
-                                    saved_windows_after_unlock.len());
-                                // Wait for any in-flight GPU frame before touching GPU-owned
-                                // fields in PerWindowState (surface, renderer, gpu_scene).
-                                self.wait_for_gpu_frame();
-                                // Remove the bare unlock shell window(s).
-                                let existing_ids: Vec<winit::window::WindowId> =
-                                    self.windows.keys().cloned().collect();
-                                for wid in existing_ids {
-                                    self.windows.remove(&wid);
-                                }
-                                // Recreate from saved state.
-                                for ws in &saved_windows_after_unlock {
-                                    eprintln!("[App] vault unlock restore: id={} tabs={} active={}",
-                                        ws.window_id, ws.open_tabs.len(), ws.active_preset_id);
-                                    self.create_window(event_loop, Some(ws), None);
-                                }
-                            } else {
-                                eprintln!("[App] vault unlocked — no saved windows in profile, keeping current window");
-                            }
+                            // Windows were already created from profile.json at startup
+                            // (profile.json is always plaintext in the new split model).
+                            // No window recreation needed — just dismiss the overlay on
+                            // the already-open windows (done above).
+                            eprintln!("[App] vault unlocked — {} window(s) already open with correct layout",
+                                self.windows.len());
 
                             } // end `if passphrase_valid`
                         }
@@ -6427,12 +6390,14 @@ fn main() {
     // Record this launch (was previously done per-window
     // in load_user_state(); now done once here at the application level).
     user_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
-    // Only save at startup when there is no encrypted profile waiting for a key.
-    // For encrypted profiles, record_launch will be persisted by save_all() after
-    // the vault unlock completes in the e2e_setup handler.
-    if !needs_vault_unlock {
-        user_manager.save_profile();
-    }
+    // profile.json is always plaintext in the new split model.
+    // Save at startup so launch counters are recorded regardless of vault state.
+    // When needs_vault_unlock is true the vault key is not yet available, so
+    // save_profile uses key=None which writes vault.json with empty secrets.
+    // If vault.enc already exists it takes precedence on the next load, so the
+    // real credentials are not lost. After unlock, save_all() writes vault.enc
+    // with the real key, and the empty vault.json is removed.
+    user_manager.save_profile();
 
     let profile = user_manager.profile.clone();
     let saved_windows = profile.windows.clone();
