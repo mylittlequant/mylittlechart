@@ -3169,7 +3169,14 @@ impl ApplicationHandler for App<'_> {
             return;
         }
 
-        if self.saved_windows.is_empty() {
+        if self.needs_vault_unlock {
+            // Vault is locked — create ONE bare shell window to host the unlock UI.
+            // Saved window state cannot be restored yet (data is encrypted).
+            // After the user unlocks, the e2e_setup handler will close this shell
+            // and recreate the real windows from the decrypted profile.
+            eprintln!("[App] vault locked — creating bare unlock window (saved state deferred)");
+            self.create_window(event_loop, None, None);
+        } else if self.saved_windows.is_empty() {
             eprintln!("[App] No saved windows — creating default");
             // No saved windows — create one with defaults
             self.create_window(event_loop, None, None);
@@ -4275,6 +4282,35 @@ impl ApplicationHandler for App<'_> {
                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                            }
+
+                            // ── Recreate windows from saved profile state ──────────────────
+                            // The window(s) created at startup were bare shells (vault was
+                            // locked, so saved_windows was empty and create_window was called
+                            // with None restore state).  Now that we have the real decrypted
+                            // profile, close all existing windows and recreate from the saved
+                            // WindowState entries so the user's layout is properly restored.
+                            let saved_windows_after_unlock = self.profile.windows.clone();
+                            if !saved_windows_after_unlock.is_empty() {
+                                eprintln!("[App] vault unlocked — recreating {} window(s) from saved state",
+                                    saved_windows_after_unlock.len());
+                                // Wait for any in-flight GPU frame before touching GPU-owned
+                                // fields in PerWindowState (surface, renderer, gpu_scene).
+                                self.wait_for_gpu_frame();
+                                // Remove the bare unlock shell window(s).
+                                let existing_ids: Vec<winit::window::WindowId> =
+                                    self.windows.keys().cloned().collect();
+                                for wid in existing_ids {
+                                    self.windows.remove(&wid);
+                                }
+                                // Recreate from saved state.
+                                for ws in &saved_windows_after_unlock {
+                                    eprintln!("[App] vault unlock restore: id={} tabs={} active={}",
+                                        ws.window_id, ws.open_tabs.len(), ws.active_preset_id);
+                                    self.create_window(event_loop, Some(ws), None);
+                                }
+                            } else {
+                                eprintln!("[App] vault unlocked — no saved windows in profile, keeping current window");
                             }
 
                             } // end `if passphrase_valid`
