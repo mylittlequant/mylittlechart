@@ -383,8 +383,8 @@ impl TelemetryShared {
 enum LinkPollStatus {
     /// Poll responded — waiting for user to click the link.
     Pending,
-    /// Successfully linked — carry display name and provider.
-    Linked { display_name: String, provider: String },
+    /// Successfully linked — carry display name, provider, auth token and user id.
+    Linked { display_name: String, provider: String, auth_token: String, user_id: i64 },
     /// Token expired or network error.
     Expired(String),
     /// Display the token/URL so the user can see it in the wizard.
@@ -2159,6 +2159,25 @@ impl App<'_> {
         {
             chart.panel_app.user_settings_state.is_unofficial_build = self.is_unofficial_build;
         }
+        // Sync auth state from updater watch channel into the new window.
+        // `has_changed()` never fires for the initial value, so we read it
+        // directly here to restore logged-in state on startup.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        {
+            if let Some(ref handle) = self.updater_handle {
+                let status = handle.auth_rx.borrow().clone();
+                match &status {
+                    zengeld_updater::AuthStatus::LoggedIn { display_name, provider, user_id } => {
+                        let s = &mut chart.panel_app.user_settings_state;
+                        s.is_logged_in = true;
+                        s.auth_display_name = display_name.clone();
+                        s.auth_provider = provider.clone();
+                        s.auth_user_id = *user_id;
+                    }
+                    zengeld_updater::AuthStatus::NotLoggedIn => {}
+                }
+            }
+        }
 
         // Show the welcome wizard on the first window when this is a first-run launch.
         // The wizard is non-closeable until the user makes a mode choice.
@@ -3150,9 +3169,9 @@ impl ApplicationHandler for App<'_> {
 
         // ── OTA updater status check ─────────────────────────────────────────
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref handle) = self.updater_handle {
+        if let Some(ref mut handle) = self.updater_handle {
             if handle.status_rx.has_changed().unwrap_or(false) {
-                let status = handle.status_rx.borrow().clone();
+                let status = handle.status_rx.borrow_and_update().clone();
                 match &status {
                     zengeld_updater::UpdateStatus::UpdateAvailable(info) => {
                         eprintln!("[Updater] Update available: v{}", info.version);
@@ -4096,9 +4115,18 @@ impl ApplicationHandler for App<'_> {
                                                             .as_str()
                                                             .unwrap_or("")
                                                             .to_string();
+                                                        let auth_token = body["auth_token"]
+                                                            .as_str()
+                                                            .unwrap_or("")
+                                                            .to_string();
+                                                        let user_id = body["user_id"]
+                                                            .as_i64()
+                                                            .unwrap_or(0);
                                                         let _ = tx.send(LinkPollStatus::Linked {
                                                             display_name,
                                                             provider,
+                                                            auth_token,
+                                                            user_id,
                                                         });
                                                         return;
                                                     }
@@ -4246,9 +4274,9 @@ impl ApplicationHandler for App<'_> {
         // ── Poll auth_rx → sync to all windows ───────────────────────────
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
         {
-            if let Some(ref handle) = self.updater_handle {
+            if let Some(ref mut handle) = self.updater_handle {
                 if handle.auth_rx.has_changed().unwrap_or(false) {
-                    let status = handle.auth_rx.borrow().clone();
+                    let status = handle.auth_rx.borrow_and_update().clone();
                     match &status {
                         zengeld_updater::AuthStatus::LoggedIn { display_name, provider, user_id } => {
                             let dn = display_name.clone();
@@ -4368,14 +4396,48 @@ impl ApplicationHandler for App<'_> {
                         LinkPollStatus::Pending => {
                             // Keep showing "Waiting…" — no change needed unless UI is stale
                         }
-                        LinkPollStatus::Linked { display_name, provider } => {
-                            eprintln!("[App] link flow: linked as {} ({})", display_name, provider);
+                        LinkPollStatus::Linked { display_name, provider, auth_token, user_id } => {
+                            eprintln!("[App] link flow: linked as {} ({}) auth_token_len={} user_id={}", display_name, provider, auth_token.len(), user_id);
+
+                            // Persist auth token to disk
+                            if !auth_token.is_empty() {
+                                let stored = zengeld_updater::token_store::StoredToken {
+                                    token: auth_token.clone(),
+                                    provider: provider.clone(),
+                                    display_name: display_name.clone(),
+                                    saved_at: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    user_id,
+                                };
+                                if let Err(e) = zengeld_updater::token_store::save_token(&stored) {
+                                    eprintln!("[App] failed to save auth token: {}", e);
+                                } else {
+                                    eprintln!("[App] auth token saved to disk");
+                                }
+                            }
+
+                            // Mirror auth state into profile so it persists across restarts.
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            self.user_manager.profile.linked_account =
+                                Some(zengeld_chart::user_profile::profile::LinkedAccount {
+                                    provider: provider.clone(),
+                                    provider_user_id: user_id.to_string(),
+                                    display_name: display_name.clone(),
+                                    linked_at: now,
+                                });
+
                             for pw in self.windows.values_mut() {
                                 let uss = &mut pw.chart.panel_app.user_settings_state;
                                 uss.wizard_linking_status = "Linked!".to_string();
                                 uss.is_logged_in = true;
                                 uss.auth_display_name = display_name.clone();
                                 uss.auth_provider = provider.clone();
+                                uss.auth_user_id = user_id;
                                 // Advance wizard on successful link
                                 if uss.show_welcome_wizard && uss.wizard_page == 1 {
                                     if uss.wizard_e2e_chosen {
@@ -4414,10 +4476,10 @@ impl ApplicationHandler for App<'_> {
                 .unwrap_or(false);
 
             if should_merge {
-                if let (Some(ref handle), Some(ref agent_state)) =
-                    (&self.updater_handle, &self.agent_state)
+                if let (Some(ref mut handle), Some(ref agent_state)) =
+                    (&mut self.updater_handle, &self.agent_state)
                 {
-                    let synced = handle.synced_keys_rx.borrow().clone();
+                    let synced = handle.synced_keys_rx.borrow_and_update().clone();
                     if !synced.is_empty() {
                         // Merge strategy (source-aware):
                         //   - Keys with source=Local are NEVER removed by cloud sync.
@@ -4508,9 +4570,9 @@ impl ApplicationHandler for App<'_> {
 
         // ── Poll sync_status_rx → update all windows' user_settings_state ─
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref handle) = self.updater_handle {
+        if let Some(ref mut handle) = self.updater_handle {
             if handle.sync_status_rx.has_changed().unwrap_or(false) {
-                let sync_status = handle.sync_status_rx.borrow().clone();
+                let sync_status = handle.sync_status_rx.borrow_and_update().clone();
 
                 let (label, color, is_active, needs_setup, has_error, error_msg, has_conflicts) =
                     match &sync_status {
