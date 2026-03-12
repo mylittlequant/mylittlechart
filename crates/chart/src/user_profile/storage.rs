@@ -28,6 +28,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::profile::{ProfileIndex, ProfileMeta, UserProfile};
+use crate::vault::{self, VaultKey};
 
 // =============================================================================
 // ProfileError
@@ -216,6 +217,115 @@ pub fn save_json<T: Serialize>(path: &Path, data: &T) -> Result<(), ProfileError
 /// Returns `Err(ProfileError::Io)` if the file does not exist (use the calling
 /// code to decide on a fallback default).
 pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T, ProfileError> {
+    let json = fs::read_to_string(path)?;
+    let value: T = serde_json::from_str(&json)?;
+    Ok(value)
+}
+
+// =============================================================================
+// Encrypted v2 helpers
+// =============================================================================
+
+/// Save profile — encrypted if key provided, plaintext otherwise (migration).
+pub fn save_profile_v2(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
+    let dir = active_profile_data_dir();
+    fs::create_dir_all(&dir)?;
+    match key {
+        Some(k) => {
+            let path = dir.join("profile.enc");
+            vault::save_encrypted(k, &path, profile)
+                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            // Remove plaintext if it exists (migration cleanup).
+            let _ = fs::remove_file(dir.join("profile.json"));
+        }
+        None => {
+            let path = dir.join("profile.json");
+            let json = serde_json::to_string_pretty(profile)?;
+            fs::write(&path, json)?;
+        }
+    }
+    Ok(())
+}
+
+/// Load profile — tries `.enc` first, falls back to `.json` for migration.
+pub fn load_profile_v2(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
+    let dir = active_profile_data_dir();
+    let enc_path = dir.join("profile.enc");
+    let json_path = dir.join("profile.json");
+
+    // Try encrypted first.
+    if enc_path.exists() {
+        if let Some(k) = key {
+            let mut profile: UserProfile = vault::load_encrypted(k, &enc_path)
+                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            profile.notification_settings.telegram.migrate_legacy();
+            return Ok(profile);
+        }
+        // `.enc` exists but no key — cannot decrypt.
+        return Err(ProfileError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Encrypted profile found but no key provided",
+        )));
+    }
+
+    // Fall back to plaintext (legacy / migration).
+    if json_path.exists() {
+        let json = fs::read_to_string(&json_path)?;
+        let mut profile: UserProfile = serde_json::from_str(&json)?;
+        profile.notification_settings.telegram.migrate_legacy();
+        return Ok(profile);
+    }
+
+    Ok(UserProfile::new())
+}
+
+/// Generic save — encrypted or plaintext.
+///
+/// When `key` is `Some`, the file is written with a `.enc` extension and any
+/// existing plaintext file at `path` is removed.  When `key` is `None` the
+/// value is written as pretty JSON at `path` unchanged.
+pub fn save_json_v2<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) -> Result<(), ProfileError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match key {
+        Some(k) => {
+            // Change extension to `.enc`.
+            let enc_path = path.with_extension("enc");
+            vault::save_encrypted(k, &enc_path, data)
+                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            // Remove plaintext if it exists.
+            if path.exists() {
+                let _ = fs::remove_file(path);
+            }
+        }
+        None => {
+            let json = serde_json::to_string_pretty(data)?;
+            fs::write(path, json)?;
+        }
+    }
+    Ok(())
+}
+
+/// Generic load — tries `.enc` first, falls back to the original path.
+///
+/// If an `.enc` file is found but no key is provided, returns a
+/// `PermissionDenied` error rather than silently returning corrupted data.
+pub fn load_json_v2<T: DeserializeOwned>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
+    let enc_path = path.with_extension("enc");
+
+    if enc_path.exists() {
+        if let Some(k) = key {
+            return vault::load_encrypted(k, &enc_path)
+                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+        }
+        return Err(ProfileError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Encrypted file found but no key provided",
+        )));
+    }
+
+    // Fall back to plaintext.
     let json = fs::read_to_string(path)?;
     let value: T = serde_json::from_str(&json)?;
     Ok(value)

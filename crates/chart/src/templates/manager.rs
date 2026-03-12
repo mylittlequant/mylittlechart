@@ -12,8 +12,10 @@ use super::indicator_template::IndicatorTemplate;
 use super::primitive_template::PrimitiveTemplate;
 use super::set_manager::IndicatorSetManager;
 use super::storage::{
-    category_dir, delete_template, load_all_templates, save_template, templates_root, TemplateError,
+    category_dir, delete_template_v2, load_all_templates, load_all_templates_v2,
+    save_template, save_template_v2, templates_root, TemplateError,
 };
+use crate::vault::VaultKey;
 
 // =============================================================================
 // Category constants
@@ -55,6 +57,8 @@ pub struct TemplateManager {
     /// Manager for named collections of indicator sets (active-set selection,
     /// ordering, add/remove/rename operations).
     pub indicator_set_manager: IndicatorSetManager,
+    /// Encryption key for write-through persistence.  `None` means plaintext.
+    pub vault_key: Option<VaultKey>,
 }
 
 impl TemplateManager {
@@ -67,6 +71,7 @@ impl TemplateManager {
             chart_templates: Vec::new(),
             indicator_sets: Vec::new(),
             indicator_set_manager: IndicatorSetManager::new(),
+            vault_key: None,
         }
     }
 
@@ -88,6 +93,23 @@ impl TemplateManager {
             chart_templates: load_all_templates(&category_dir(CAT_CHART)),
             indicator_sets: load_all_templates(&category_dir(CAT_INDICATOR_SETS)),
             indicator_set_manager: load_indicator_set_manager(&root),
+            vault_key: None,
+        }
+    }
+
+    /// Load all templates with optional encryption key.
+    ///
+    /// Handles both `.enc` and `.json` files in each category directory.
+    pub fn load_from_default_dir_v2(key: Option<&VaultKey>) -> Self {
+        let root = templates_root();
+        Self {
+            primitive_templates: load_all_templates_v2(&category_dir(CAT_PRIMITIVES), key),
+            indicator_templates: load_all_templates_v2(&category_dir(CAT_INDICATORS), key),
+            compare_templates: load_all_templates_v2(&category_dir(CAT_COMPARE), key),
+            chart_templates: load_all_templates_v2(&category_dir(CAT_CHART), key),
+            indicator_sets: load_all_templates_v2(&category_dir(CAT_INDICATOR_SETS), key),
+            indicator_set_manager: load_indicator_set_manager(&root),
+            vault_key: key.copied(),
         }
     }
 
@@ -102,6 +124,7 @@ impl TemplateManager {
             chart_templates: load_all_templates(&base.join(CAT_CHART)),
             indicator_sets: load_all_templates(&base.join(CAT_INDICATOR_SETS)),
             indicator_set_manager: load_indicator_set_manager(base),
+            vault_key: None,
         }
     }
 
@@ -119,6 +142,37 @@ impl TemplateManager {
             &category_dir(CAT_INDICATOR_SETS),
             &root,
         )
+    }
+
+    /// Serialize all in-memory templates with optional encryption.
+    ///
+    /// Uses `save_template_v2` for each template so that encrypted installs
+    /// write `.enc` files and plain installs write `.json` files.
+    pub fn save_to_default_dir_v2(&self, key: Option<&VaultKey>) -> Result<(), TemplateError> {
+        let root = templates_root();
+        let prim_dir = category_dir(CAT_PRIMITIVES);
+        let ind_dir = category_dir(CAT_INDICATORS);
+        let cmp_dir = category_dir(CAT_COMPARE);
+        let chart_dir = category_dir(CAT_CHART);
+        let sets_dir = category_dir(CAT_INDICATOR_SETS);
+
+        for t in &self.primitive_templates {
+            save_template_v2(t, &t.id, &prim_dir, key)?;
+        }
+        for t in &self.indicator_templates {
+            save_template_v2(t, &t.id, &ind_dir, key)?;
+        }
+        for t in &self.compare_templates {
+            save_template_v2(t, &t.id, &cmp_dir, key)?;
+        }
+        for t in &self.chart_templates {
+            save_template_v2(t, &t.id, &chart_dir, key)?;
+        }
+        for t in &self.indicator_sets {
+            save_template_v2(t, &t.id, &sets_dir, key)?;
+        }
+        save_indicator_set_manager(&self.indicator_set_manager, &root)?;
+        Ok(())
     }
 
     /// Serialize all in-memory templates to a custom base directory.
@@ -171,7 +225,7 @@ impl TemplateManager {
         template: PrimitiveTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_PRIMITIVES);
-        save_template(&template, &template.id, &dir)?;
+        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.primitive_templates.push(template);
         Ok(())
     }
@@ -184,11 +238,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.primitive_templates.remove(i);
             let dir = category_dir(CAT_PRIMITIVES);
-            // Ignore NotFound — the file may already be gone.
-            match delete_template(id, &dir) {
-                Ok(()) | Err(TemplateError::NotFound(_)) => {}
-                Err(e) => return Err(e),
-            }
+            delete_template_v2(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -218,7 +268,7 @@ impl TemplateManager {
         template: IndicatorTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_INDICATORS);
-        save_template(&template, &template.id, &dir)?;
+        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.indicator_templates.push(template);
         Ok(())
     }
@@ -231,10 +281,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.indicator_templates.remove(i);
             let dir = category_dir(CAT_INDICATORS);
-            match delete_template(id, &dir) {
-                Ok(()) | Err(TemplateError::NotFound(_)) => {}
-                Err(e) => return Err(e),
-            }
+            delete_template_v2(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -264,7 +311,7 @@ impl TemplateManager {
         template: CompareTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_COMPARE);
-        save_template(&template, &template.id, &dir)?;
+        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.compare_templates.push(template);
         Ok(())
     }
@@ -277,10 +324,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.compare_templates.remove(i);
             let dir = category_dir(CAT_COMPARE);
-            match delete_template(id, &dir) {
-                Ok(()) | Err(TemplateError::NotFound(_)) => {}
-                Err(e) => return Err(e),
-            }
+            delete_template_v2(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -302,7 +346,7 @@ impl TemplateManager {
         template: ChartTemplate,
     ) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_CHART);
-        save_template(&template, &template.id, &dir)?;
+        save_template_v2(&template, &template.id, &dir, self.vault_key.as_ref())?;
         self.chart_templates.push(template);
         Ok(())
     }
@@ -315,10 +359,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.chart_templates.remove(i);
             let dir = category_dir(CAT_CHART);
-            match delete_template(id, &dir) {
-                Ok(()) | Err(TemplateError::NotFound(_)) => {}
-                Err(e) => return Err(e),
-            }
+            delete_template_v2(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)
@@ -337,7 +378,7 @@ impl TemplateManager {
     /// Add an indicator set and immediately persist it to disk.
     pub fn add_indicator_set(&mut self, set: IndicatorSet) -> Result<(), TemplateError> {
         let dir = category_dir(CAT_INDICATOR_SETS);
-        save_template(&set, &set.id, &dir)?;
+        save_template_v2(&set, &set.id, &dir, self.vault_key.as_ref())?;
         self.indicator_sets.push(set);
         Ok(())
     }
@@ -350,10 +391,7 @@ impl TemplateManager {
         if let Some(i) = pos {
             self.indicator_sets.remove(i);
             let dir = category_dir(CAT_INDICATOR_SETS);
-            match delete_template(id, &dir) {
-                Ok(()) | Err(TemplateError::NotFound(_)) => {}
-                Err(e) => return Err(e),
-            }
+            delete_template_v2(id, &dir)?;
             Ok(true)
         } else {
             Ok(false)

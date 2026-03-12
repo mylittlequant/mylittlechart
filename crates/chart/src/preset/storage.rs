@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::preset::ChartPreset;
+use crate::vault::{self, VaultKey};
 
 // =============================================================================
 // PresetMeta
@@ -200,5 +201,127 @@ pub fn delete_preset(id: &str) -> Result<(), PresetError> {
     }
 
     fs::remove_file(&path)?;
+    Ok(())
+}
+
+// =============================================================================
+// Encrypted v2 CRUD
+// =============================================================================
+
+/// Save preset — encrypted if key provided, plaintext otherwise.
+///
+/// When `key` is `Some` the preset is written as `{id}.enc` and any existing
+/// `{id}.json` is removed.  Returns the path that was written.
+pub fn save_preset_v2(preset: &ChartPreset, key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
+    let dir = presets_dir();
+    fs::create_dir_all(&dir)?;
+    match key {
+        Some(k) => {
+            let path = dir.join(format!("{}.enc", preset.id));
+            vault::save_encrypted(k, &path, preset)
+                .map_err(|e| PresetError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            // Remove plaintext version if it exists.
+            let _ = fs::remove_file(dir.join(format!("{}.json", preset.id)));
+            Ok(path)
+        }
+        None => {
+            let path = dir.join(format!("{}.json", preset.id));
+            let json = serde_json::to_string_pretty(preset)?;
+            fs::write(&path, json)?;
+            Ok(path)
+        }
+    }
+}
+
+/// Load preset — tries `.enc` first, falls back to `.json`.
+pub fn load_preset_v2(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, PresetError> {
+    let dir = presets_dir();
+    let enc_path = dir.join(format!("{}.enc", id));
+    let json_path = dir.join(format!("{}.json", id));
+
+    if enc_path.exists() {
+        if let Some(k) = key {
+            return vault::load_encrypted(k, &enc_path)
+                .map_err(|e| PresetError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+        }
+        return Err(PresetError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Encrypted preset but no key",
+        )));
+    }
+
+    if json_path.exists() {
+        let json = fs::read_to_string(&json_path)?;
+        let preset: ChartPreset = serde_json::from_str(&json)?;
+        return Ok(preset);
+    }
+
+    Err(PresetError::NotFound(id.to_string()))
+}
+
+/// List presets — handles both `.enc` and `.json` files.
+///
+/// Encrypted files without a key are silently skipped.  Corrupted files are
+/// logged and skipped so that one bad file does not prevent listing the rest.
+pub fn list_presets_v2(key: Option<&VaultKey>) -> Result<Vec<PresetMeta>, PresetError> {
+    let dir = presets_dir();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut metas = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+        if stem.is_empty() {
+            continue;
+        }
+
+        match ext {
+            "enc" => {
+                if let Some(k) = key {
+                    match vault::load_encrypted::<ChartPreset>(k, &path) {
+                        Ok(p) => metas.push(PresetMeta {
+                            id: p.id.clone(),
+                            name: p.name.clone(),
+                            created_at: p.created_at,
+                        }),
+                        Err(e) => eprintln!("[presets] failed to load encrypted preset {}: {}", stem, e),
+                    }
+                }
+            }
+            "json" => {
+                match fs::read_to_string(&path) {
+                    Ok(json) => match serde_json::from_str::<ChartPreset>(&json) {
+                        Ok(p) => metas.push(PresetMeta {
+                            id: p.id.clone(),
+                            name: p.name.clone(),
+                            created_at: p.created_at,
+                        }),
+                        Err(e) => eprintln!("[presets] failed to parse {}: {}", path.display(), e),
+                    },
+                    Err(e) => eprintln!("[presets] failed to read {}: {}", path.display(), e),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Sort by creation time, oldest first.
+    metas.sort_by_key(|m| m.created_at);
+    Ok(metas)
+}
+
+/// Delete preset — removes both `.json` and `.enc` variants if present.
+pub fn delete_preset_v2(id: &str) -> Result<(), PresetError> {
+    let dir = presets_dir();
+    let _ = fs::remove_file(dir.join(format!("{}.json", id)));
+    let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
     Ok(())
 }

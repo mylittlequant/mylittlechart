@@ -5,10 +5,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::preset::preset::ChartPreset;
-use crate::preset::storage::{list_presets, load_preset};
+use crate::preset::storage::{list_presets, list_presets_v2, load_preset, load_preset_v2};
 use crate::templates::TemplateManager;
-use crate::user_profile::storage::{active_profile_data_dir, load_json, load_profile, save_profile};
+use crate::user_profile::storage::{
+    active_profile_data_dir, load_json, load_json_v2, load_profile, load_profile_v2,
+    save_profile_v2,
+};
 use crate::user_profile::UserProfile;
+use crate::vault::VaultKey;
 
 // =============================================================================
 // SettingsSnapshots
@@ -75,6 +79,10 @@ pub struct UserManager {
     /// Transferred into `AppState` at startup; per-window copies are synced
     /// each frame from `AppState`.
     pub snapshots: SettingsSnapshots,
+
+    /// Encryption key derived from the user's passphrase.  `None` during
+    /// migration or when running without a passphrase (plaintext mode).
+    pub vault_key: Option<VaultKey>,
 }
 
 impl Clone for UserManager {
@@ -84,6 +92,7 @@ impl Clone for UserManager {
             template_manager: self.template_manager.clone(),
             presets: self.presets.clone(),
             snapshots: self.snapshots.clone(),
+            vault_key: self.vault_key,
         }
     }
 }
@@ -96,6 +105,7 @@ impl UserManager {
             template_manager: TemplateManager::new(),
             presets: HashMap::new(),
             snapshots: SettingsSnapshots::default(),
+            vault_key: None,
         }
     }
 
@@ -180,6 +190,92 @@ impl UserManager {
             template_manager,
             presets,
             snapshots,
+            vault_key: None,
+        }
+    }
+
+    /// Load all user state with optional encryption key.
+    ///
+    /// Pass `Some(key)` for encrypted installs, `None` for plaintext / migration.
+    /// Tries `.enc` files first and falls back to `.json` automatically.
+    pub fn load_with_key(key: Option<VaultKey>) -> Self {
+        let data_dir = active_profile_data_dir();
+        eprintln!("[UserManager] profile data directory: {}", data_dir.display());
+
+        let key_ref = key.as_ref();
+
+        let profile = match load_profile_v2(key_ref) {
+            Ok(p) => {
+                eprintln!(
+                    "[UserManager] loaded profile (active_preset={})",
+                    p.active_preset_id
+                );
+                p
+            }
+            Err(e) => {
+                eprintln!(
+                    "[UserManager] failed to load profile: {}, using defaults",
+                    e
+                );
+                UserProfile::new()
+            }
+        };
+
+        // Templates — pass key so encrypted files are loaded correctly.
+        let template_manager = {
+            let tm = TemplateManager::load_from_default_dir_v2(key_ref);
+            eprintln!(
+                "[UserManager] loaded templates: {} prim, {} ind, {} cmp, {} chart, {} sets",
+                tm.primitive_templates.len(),
+                tm.indicator_templates.len(),
+                tm.compare_templates.len(),
+                tm.chart_templates.len(),
+                tm.indicator_sets.len(),
+            );
+            tm
+        };
+
+        // Presets — use v2 functions.
+        let mut presets = HashMap::new();
+        match list_presets_v2(key_ref) {
+            Ok(metas) => {
+                for meta in &metas {
+                    match load_preset_v2(&meta.id, key_ref) {
+                        Ok(preset) => {
+                            presets.insert(meta.id.clone(), preset);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[UserManager] failed to load preset {}: {}",
+                                meta.id, e
+                            );
+                        }
+                    }
+                }
+                eprintln!("[UserManager] loaded {} presets", presets.len());
+            }
+            Err(e) => eprintln!("[UserManager] failed to list presets: {}", e),
+        }
+
+        // Settings snapshots.
+        let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
+        let snapshots = match load_json_v2::<SettingsSnapshots>(&snapshots_path, key_ref) {
+            Ok(s) => {
+                eprintln!("[UserManager] loaded settings snapshots");
+                s
+            }
+            Err(_) => {
+                eprintln!("[UserManager] no settings snapshots found, using defaults");
+                SettingsSnapshots::default()
+            }
+        };
+
+        Self {
+            profile,
+            template_manager,
+            presets,
+            snapshots,
+            vault_key: key,
         }
     }
 
@@ -193,7 +289,7 @@ impl UserManager {
     /// device identity (`device_id`).  All other saves are handled by
     /// `App::save_all()` in `main.rs`, which has full multi-window context.
     pub fn save_profile(&self) {
-        if let Err(e) = save_profile(&self.profile) {
+        if let Err(e) = save_profile_v2(&self.profile, self.vault_key.as_ref()) {
             eprintln!("[UserManager] failed to save profile: {}", e);
         }
     }

@@ -8,6 +8,9 @@
 //!
 //! Blob format: [12-byte nonce][ciphertext][16-byte GCM tag]
 
+/// The derived AES-256 encryption key held in memory for the session.
+pub type VaultKey = [u8; 32];
+
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use aes_gcm::aead::Aead;
 use hkdf::Hkdf;
