@@ -708,6 +708,10 @@ pub struct ProfileMeta {
     pub created_at: i64,
     /// Relative subdirectory name under `profiles/` (e.g. "default" or a UUID).
     pub dir_name: String,
+    /// Client mode fixed at profile creation time — immutable afterwards.
+    /// Old index.json files without this field default to Standalone.
+    #[serde(default)]
+    pub client_mode: ClientMode,
 }
 
 /// The profile index file — lists all profiles and which is active.

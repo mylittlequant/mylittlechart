@@ -23,6 +23,8 @@ use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
 
+use crate::state::BuildAttestation;
+
 /// Number of PBKDF2 iterations.  600 000 matches OWASP 2023 recommendations
 /// for PBKDF2-HMAC-SHA256.
 const PBKDF2_ITERATIONS: u32 = 600_000;
@@ -225,6 +227,7 @@ pub async fn setup_e2e_on_server(
     token: &str,
     salt: &str,
     iterations: i32,
+    build_attest: &BuildAttestation,
 ) -> Result<(), String> {
     #[derive(serde::Serialize)]
     struct E2ESetupRequest<'a> {
@@ -232,11 +235,15 @@ pub async fn setup_e2e_on_server(
         iterations: i32,
     }
 
-    let resp = client
+    let builder = client
         .post(format!("{}/api/sync/e2e-setup", server_url))
         .bearer_auth(token)
         .json(&E2ESetupRequest { salt, iterations })
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(10));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
         .send()
         .await
         .map_err(|e| format!("e2e-setup request: {}", e))?;

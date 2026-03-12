@@ -293,7 +293,7 @@ impl AppState {
         let watchlist_manager = {
             let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
             if watchlists_path.exists() {
-                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, None)
+                zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, vault_key.as_ref())
                     .unwrap_or_else(|e| {
                         eprintln!("[AppState] Failed to load watchlists: {}", e);
                         default_wl()
@@ -2127,9 +2127,11 @@ impl App<'_> {
         } else {
             "stopped".to_string()
         };
-        // Sync connection mode from the loaded profile.
+        // Sync connection mode from the authoritative profile (self.profile is
+        // the copy serialised by save_all; user_manager.profile is only the
+        // seed used during startup loading).
         chart.panel_app.user_settings_state.client_mode_connected =
-            self.user_manager.profile.client_mode
+            self.profile.client_mode
                 == zengeld_chart::user_profile::profile::ClientMode::Connected;
         // Sync telemetry opt-out from the loaded profile.
         chart.panel_app.user_settings_state.telemetry_enabled =
@@ -2155,7 +2157,7 @@ impl App<'_> {
             // Load available profiles from the index.
             if let Some(index) = zengeld_chart::load_profile_index() {
                 uss.available_profiles = index.profiles.iter().map(|m| {
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone())
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode)
                 }).collect();
             } else {
                 // No index yet — synthesize a single entry from the current profile.
@@ -2163,6 +2165,7 @@ impl App<'_> {
                     uss.profile_id.clone(),
                     uss.profile_display_name.clone(),
                     uss.profile_avatar.clone(),
+                    zengeld_chart::ClientMode::default(),
                 )];
             }
         }
@@ -3543,7 +3546,10 @@ impl ApplicationHandler for App<'_> {
         let _t2 = std::time::Instant::now();
 
         // ── Flush dirty presets to disk ──────────────────────────────────
-        if !self.app_state.preset_dirty_ids.is_empty() {
+        // Skip all disk writes while the vault has not been unlocked yet.
+        // Writing with vault_key=None would overwrite encrypted data with defaults.
+        // The e2e_setup handler calls save_all() after successful unlock.
+        if !self.needs_vault_unlock && !self.app_state.preset_dirty_ids.is_empty() {
             let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
             let vault_key = self.app_state.vault_key.as_ref();
             for id in ids {
@@ -3553,12 +3559,25 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
             }
+        } else if self.needs_vault_unlock {
+            // Vault is locked — discard dirty preset IDs to prevent stale queuing.
+            self.app_state.preset_dirty_ids.clear();
         }
 
         // ── Dirty-flag persistence ──────────────────────────────────────
         // If any window marked profile or watchlists dirty, save now
         // with full multi-window context.
-        {
+        // Guard: skip all disk writes while vault is locked to prevent overwriting
+        // encrypted data with default/empty state before the key is available.
+        if self.needs_vault_unlock {
+            // Clear dirty flags so they don't accumulate endlessly, but do NOT
+            // write anything to disk. save_all() after e2e_setup will persist
+            // the correct state once the vault is unlocked.
+            for pw in self.windows.values_mut() {
+                pw.chart.profile_dirty = false;
+                pw.chart.watchlists_dirty = false;
+            }
+        } else {
             let any_profile_dirty = self.windows.values().any(|pw| pw.chart.profile_dirty);
             let any_watchlists_dirty = self.windows.values().any(|pw| pw.chart.watchlists_dirty);
 
@@ -3907,8 +3926,12 @@ impl ApplicationHandler for App<'_> {
                 if is_connected_cmd {
                     self.user_manager.profile.client_mode =
                         zengeld_chart::user_profile::profile::ClientMode::Connected;
+                    self.profile.client_mode =
+                        zengeld_chart::user_profile::profile::ClientMode::Connected;
                 } else if cmd_str == "set_standalone" {
                     self.user_manager.profile.client_mode =
+                        zengeld_chart::user_profile::profile::ClientMode::Standalone;
+                    self.profile.client_mode =
                         zengeld_chart::user_profile::profile::ClientMode::Standalone;
                 }
 
@@ -3932,7 +3955,7 @@ impl ApplicationHandler for App<'_> {
                     for pw in self.windows.values_mut() {
                         pw.chart.panel_app.user_settings_state.profile_display_name = new_name.to_string();
                         if let Some(entry) = pw.chart.panel_app.user_settings_state.available_profiles.iter_mut()
-                            .find(|(id, _, _)| *id == self.user_manager.profile.profile_id)
+                            .find(|(id, _, _, _)| *id == self.user_manager.profile.profile_id)
                         {
                             entry.1 = new_name.to_string();
                         }
@@ -3960,20 +3983,29 @@ impl ApplicationHandler for App<'_> {
                         let uss = &mut pw.chart.panel_app.user_settings_state;
                         uss.profile_avatar = avatar_str.clone();
                         if let Some(entry) = uss.available_profiles.iter_mut()
-                            .find(|(id, _, _)| *id == active_id)
+                            .find(|(id, _, _, _)| *id == active_id)
                         {
                             entry.2 = avatar_str.clone();
                         }
                     }
                     eprintln!("[App] profile avatar set to: {}", avatar);
-                } else if let Some(name) = cmd_str.strip_prefix("profile_create:") {
-                    match zengeld_chart::create_profile(name, "chart") {
+                } else if let Some(rest) = cmd_str.strip_prefix("profile_create:") {
+                    // Format: "profile_create:{mode}:{name}" where mode is "connected" or "standalone".
+                    let (client_mode, name) = if let Some(name) = rest.strip_prefix("connected:") {
+                        (zengeld_chart::ClientMode::Connected, name)
+                    } else if let Some(name) = rest.strip_prefix("standalone:") {
+                        (zengeld_chart::ClientMode::Standalone, name)
+                    } else {
+                        // Fallback: legacy format without mode prefix — treat as standalone.
+                        (zengeld_chart::ClientMode::Standalone, rest)
+                    };
+                    match zengeld_chart::create_profile(name, "chart", client_mode) {
                         Ok(meta) => {
-                            eprintln!("[App] profile created: {} ({})", meta.display_name, meta.id);
+                            eprintln!("[App] profile created: {} ({}) mode={:?}", meta.display_name, meta.id, meta.client_mode);
                             // Reload index and refresh all windows.
                             if let Some(index) = zengeld_chart::load_profile_index() {
-                                let profiles: Vec<(String, String, String)> = index.profiles.iter()
-                                    .map(|m| (m.id.clone(), m.display_name.clone(), m.avatar.clone()))
+                                let profiles: Vec<(String, String, String, zengeld_chart::ClientMode)> = index.profiles.iter()
+                                    .map(|m| (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode))
                                     .collect();
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.available_profiles = profiles.clone();
@@ -4000,6 +4032,81 @@ impl ApplicationHandler for App<'_> {
                             eprintln!("[App] profile_switch: unknown profile id: {}", id);
                         }
                     }
+                } else if let Some(id) = cmd_str.strip_prefix("profile_delete:") {
+                    // Guard: never delete the active profile.
+                    let active_id = &self.user_manager.profile.profile_id;
+                    if id == active_id.as_str() {
+                        eprintln!("[App] profile_delete: refusing to delete active profile");
+                    } else {
+                        match zengeld_chart::delete_profile(id) {
+                            Ok(()) => {
+                                eprintln!("[App] profile_delete: deleted profile id = {}", id);
+                                // Reload index and refresh available_profiles in all windows.
+                                if let Some(index) = zengeld_chart::load_profile_index() {
+                                    let profiles: Vec<(String, String, String, zengeld_chart::ClientMode)> = index.profiles.iter()
+                                        .map(|m| (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode))
+                                        .collect();
+                                    for pw in self.windows.values_mut() {
+                                        pw.chart.panel_app.user_settings_state.available_profiles = profiles.clone();
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("[App] profile_delete failed: {}", e),
+                        }
+                    }
+                }
+
+                // ── Wizard complete: mode + passphrase in a single command ──
+                // Format: "wizard_complete:{standalone|connected}:{passphrase}"
+                if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
+                    if let Some(colon_pos) = rest.find(':') {
+                        let mode = &rest[..colon_pos];
+                        let passphrase = &rest[colon_pos + 1..];
+                        // Derive vault key + encrypt
+                        let profile_dir = zengeld_chart::active_profile_data_dir();
+                        let salt_path = profile_dir.join("salt.hex");
+                        match zengeld_chart::vault::load_or_create_salt(&salt_path) {
+                            Ok(salt) => {
+                                let key = zengeld_chart::vault::derive_key(passphrase, &salt);
+                                self.app_state.vault_key = Some(key);
+                                self.user_manager.vault_key = Some(key);
+                                self.app_state.template_manager.vault_key = Some(key);
+                                self.needs_vault_unlock = false;
+                                // Set mode on profile
+                                let connected = mode == "connected";
+                                self.user_manager.profile.sync_state.enabled = connected;
+                                if connected {
+                                    self.user_manager.profile.client_mode =
+                                        zengeld_chart::user_profile::profile::ClientMode::Connected;
+                                    self.profile.client_mode =
+                                        zengeld_chart::user_profile::profile::ClientMode::Connected;
+                                } else {
+                                    self.user_manager.profile.client_mode =
+                                        zengeld_chart::user_profile::profile::ClientMode::Standalone;
+                                    self.profile.client_mode =
+                                        zengeld_chart::user_profile::profile::ClientMode::Standalone;
+                                }
+                                eprintln!("[App] wizard_complete: vault key derived, mode={}, saving", mode);
+                                self.save_all(&[]);
+                                eprintln!("[App] wizard_complete: all data encrypted");
+                                // Dismiss wizard/unlock on ALL windows + sync mode
+                                for pw in self.windows.values_mut() {
+                                    pw.chart.panel_app.user_settings_state.show_welcome_wizard = false;
+                                    pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                    pw.chart.panel_app.user_settings_state.client_mode_connected = connected;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[App] wizard_complete: vault salt error: {}", e);
+                            }
+                        }
+                        // Also send mode to updater
+                        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                        if let Some(ref handle) = self.updater_handle {
+                            use zengeld_updater::UpdaterCommand;
+                            let _ = handle.cmd_tx.send(UpdaterCommand::SetConnectedMode(mode == "connected"));
+                        }
+                    }
                 }
 
                 // ── Local vault key derivation (e2e_setup — all build configs) ──
@@ -4011,15 +4118,63 @@ impl ApplicationHandler for App<'_> {
                     match zengeld_chart::vault::load_or_create_salt(&salt_path) {
                         Ok(salt) => {
                             let key = zengeld_chart::vault::derive_key(passphrase, &salt);
-                            self.app_state.vault_key = Some(key);
+                            eprintln!("[App] vault key derived and set (salt at {})", salt_path.display());
+
+                            // Re-load all encrypted user data now that we have the key.
+                            // At startup the profile/presets/templates couldn't be read
+                            // (encrypted, no key), so UserManager fell back to defaults.
+                            // We must reload before save_all() to avoid overwriting real
+                            // data with defaults.
+                            let reloaded = zengeld_chart::UserManager::load_with_key(Some(key));
+                            self.user_manager = reloaded;
                             self.user_manager.vault_key = Some(key);
+                            self.profile = self.user_manager.profile.clone();
+                            self.app_state.vault_key = Some(key);
+                            self.app_state.template_manager = self.user_manager.template_manager.clone();
                             self.app_state.template_manager.vault_key = Some(key);
+                            self.app_state.presets = self.user_manager.presets.clone();
+                            self.app_state.snapshots = self.user_manager.snapshots.clone();
+
+                            // Reload watchlists with the vault key now that it is available.
+                            // At startup AppState::from_profile loaded watchlists with key=None,
+                            // so encrypted watchlists fell back to the default (BTC-only).
+                            // We must restore the real watchlist data here before save_all()
+                            // writes it back, or the user's watchlists would be permanently lost.
+                            {
+                                let watchlists_path = zengeld_chart::user_profile::storage::watchlists_path();
+                                if watchlists_path.exists() {
+                                    match zengeld_chart::load_json::<chart_app::WatchlistManager>(&watchlists_path, Some(&key)) {
+                                        Ok(wm) => {
+                                            eprintln!("[App] e2e_setup: reloaded watchlists ({} lists)", wm.lists.len());
+                                            self.app_state.watchlist_manager = wm.clone();
+                                            // Sync the reloaded watchlists to all open windows.
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.sidebar_state.watchlist_manager = wm.clone();
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[App] e2e_setup: failed to reload watchlists: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            eprintln!("[App] reloaded encrypted user data: {} presets, profile.client_mode={:?}",
+                                self.user_manager.presets.len(), self.profile.client_mode);
+
                             // Clear the startup flag so new windows don't show the overlay.
                             self.needs_vault_unlock = false;
-                            eprintln!("[App] vault key derived and set (salt at {})", salt_path.display());
                             // Re-save all current data encrypted (plaintext → encrypted migration).
                             self.save_all(&[]);
                             eprintln!("[App] all data re-saved as encrypted");
+
+                            // Sync UI state from reloaded profile on ALL windows.
+                            let is_connected = self.profile.client_mode
+                                == zengeld_chart::user_profile::profile::ClientMode::Connected;
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
+                            }
                         }
                         Err(e) => {
                             eprintln!("[App] vault salt error: {}", e);
@@ -4298,6 +4453,12 @@ impl ApplicationHandler for App<'_> {
                             // Clone the sender so the async task can trigger re-encryption
                             // once the server has recorded the salt.
                             let cmd_tx_for_spawn = handle.cmd_tx.clone();
+                            let build_attest_for_spawn = zengeld_updater::BuildAttestation {
+                                attestation: env!("BUILD_ATTESTATION").to_string(),
+                                version: env!("CARGO_PKG_VERSION").to_string(),
+                                platform: env!("BUILD_PLATFORM").to_string(),
+                                timestamp: env!("BUILD_TIMESTAMP").to_string(),
+                            };
                             self.bridge.runtime().spawn(async move {
                                 match zengeld_updater::e2e_crypto::setup_e2e_on_server(
                                     &client,
@@ -4305,6 +4466,7 @@ impl ApplicationHandler for App<'_> {
                                     &token_str,
                                     &salt_hex_for_spawn,
                                     params.iterations,
+                                    &build_attest_for_spawn,
                                 )
                                 .await {
                                     Ok(_) => {
@@ -4367,6 +4529,8 @@ impl ApplicationHandler for App<'_> {
                             // Auto-switch to Connected mode when user logs in.
                             self.user_manager.profile.client_mode =
                                 zengeld_chart::user_profile::profile::ClientMode::Connected;
+                            self.profile.client_mode =
+                                zengeld_chart::user_profile::profile::ClientMode::Connected;
                             // Reflect the mode change in all open windows immediately.
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.client_mode_connected = true;
@@ -4380,21 +4544,12 @@ impl ApplicationHandler for App<'_> {
                                     eprintln!("[App] keychain: failed to mirror auth token: {}", e);
                                 }
                             }
-                            // Wizard transition on successful account linking.
-                            // If the wizard is still open on page 1 (linking page):
-                            //   - E2E chosen → advance to page 2 (E2E setup)
-                            //   - Connected only → close wizard and activate connected mode
+                            // Wizard: update linking status but do NOT close the wizard.
+                            // The user must still enter a passphrase (mandatory zero-trust).
                             for pw in self.windows.values_mut() {
                                 let uss = &mut pw.chart.panel_app.user_settings_state;
                                 if uss.show_welcome_wizard && uss.wizard_page == 1 {
-                                    uss.wizard_linking_status = "Linked!".to_string();
-                                    if uss.wizard_e2e_chosen {
-                                        uss.wizard_page = 2;
-                                    } else {
-                                        uss.show_welcome_wizard = false;
-                                        pw.chart.pending_updater_cmd =
-                                            Some("set_connected".to_string());
-                                    }
+                                    uss.wizard_linking_status = format!("Linked as {}", dn);
                                 }
                             }
                             eprintln!("[App] auth: logged in as {} ({})", dn, prov);
@@ -4501,16 +4656,8 @@ impl ApplicationHandler for App<'_> {
                                 uss.auth_display_name = display_name.clone();
                                 uss.auth_provider = provider.clone();
                                 uss.auth_user_id = user_id;
-                                // Advance wizard on successful link
-                                if uss.show_welcome_wizard && uss.wizard_page == 1 {
-                                    if uss.wizard_e2e_chosen {
-                                        uss.wizard_page = 2;
-                                    } else {
-                                        uss.show_welcome_wizard = false;
-                                        pw.chart.pending_updater_cmd =
-                                            Some("set_connected".to_string());
-                                    }
-                                }
+                                // Do NOT close wizard on link — passphrase still required (zero-trust).
+                                // Just update linking status for visual feedback.
                             }
                             link_done = true;
                         }
@@ -6073,7 +6220,12 @@ fn main() {
     // Record this launch (was previously done per-window
     // in load_user_state(); now done once here at the application level).
     user_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
-    user_manager.save_profile();
+    // Only save at startup when there is no encrypted profile waiting for a key.
+    // For encrypted profiles, record_launch will be persisted by save_all() after
+    // the vault unlock completes in the e2e_setup handler.
+    if !needs_vault_unlock {
+        user_manager.save_profile();
+    }
 
     let profile = user_manager.profile.clone();
     let saved_windows = profile.windows.clone();
