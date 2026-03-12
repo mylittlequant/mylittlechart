@@ -4266,9 +4266,9 @@ impl ApplicationHandler for App<'_> {
 
                             // Clear the startup flag so new windows don't show the overlay.
                             self.needs_vault_unlock = false;
-                            // Re-save all current data encrypted (plaintext → encrypted migration).
-                            self.save_all(&[]);
-                            eprintln!("[App] all data re-saved as encrypted");
+                            // NOTE: No save_all() here — data was just loaded from disk,
+                            // there is nothing new to save. The bare shell window state
+                            // must NOT overwrite the real saved window layout.
 
                             // Sync UI state from reloaded profile on ALL windows.
                             let is_connected = self.profile.client_mode
