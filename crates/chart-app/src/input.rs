@@ -4158,6 +4158,15 @@ impl ChartApp {
     /// Routes to active text editing state (primitive settings text_content).
     /// On Enter, commits the edited text back to the primitive.
     pub fn on_char_input(&mut self, ch: char) {
+        // While the vault is locked, only the passphrase input field may receive
+        // keyboard events.  All other char routing is blocked to prevent data leaking
+        // into hidden inputs or triggering chart keyboard shortcuts.
+        if self.panel_app.user_settings_state.needs_vault_unlock
+            && !self.panel_app.user_settings_state.e2e_passphrase_focused
+        {
+            return;
+        }
+
         // Handle chart browser modal search input
         if self.panel_app.chart_browser.is_open {
             match ch {
@@ -4906,6 +4915,15 @@ impl ChartApp {
     pub fn on_key_press(&mut self, key: super::input::KeyPress) {
         use super::input::KeyPress;
 
+        // While the vault is locked, only allow key events to reach the passphrase field.
+        // This prevents keyboard shortcuts (Escape, arrow keys, etc.) from operating on
+        // the hidden chart UI while the unlock overlay is displayed.
+        if self.panel_app.user_settings_state.needs_vault_unlock
+            && !self.panel_app.user_settings_state.e2e_passphrase_focused
+        {
+            return;
+        }
+
         // ── Telegram input fields: intercept Paste for focused tg fields ──
         if self.panel_app.alert_settings_state.is_open() {
             if let KeyPress::Paste(ref text) = key {
@@ -5642,6 +5660,22 @@ impl ChartApp {
     /// but not fully wired — modal input routing would require a handle_input()
     /// on ChartPanelApp which does not exist at this checkpoint.
     fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        // === Vault lock guard — block everything while the vault is locked ===
+        // While `needs_vault_unlock` is true the ONLY interactive elements must
+        // be the vault unlock overlay: passphrase input, unlock button, and (after
+        // 3 failures) the "create new profile" link.  All other UI is silently
+        // swallowed so the user cannot reach the chart, toolbar, or settings until
+        // their data is unlocked (or they choose to start fresh).
+        if self.panel_app.user_settings_state.needs_vault_unlock {
+            let allowed = widget_id.starts_with("vault_unlock:")
+                || widget_id == "user_settings:vault_unlock_btn"
+                || widget_id == "user_settings:vault_unlock_new_profile"
+                || widget_id == "user_settings:e2e_passphrase_input";
+            if !allowed {
+                return;
+            }
+        }
+
         // === Launch banner dismiss ===
         if widget_id == "dismiss_launch_banner" {
             self.launch_banner_visible = false;
@@ -7349,6 +7383,13 @@ impl ChartApp {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         eprintln!("[ChartApp] vault_unlock: passphrase submitted, awaiting validation");
                     }
+                }
+                // ── Vault unlock: forgot passphrase / create new profile ──────
+                "vault_unlock_new_profile" => {
+                    // User has failed too many times and wants to start fresh.
+                    // Signal main.rs to dismiss the vault lock and open the wizard.
+                    self.pending_updater_cmd = Some("vault_skip_to_wizard".to_string());
+                    eprintln!("[ChartApp] vault_unlock: user chose to create a new profile");
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {

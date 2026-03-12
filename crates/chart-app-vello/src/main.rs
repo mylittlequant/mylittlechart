@@ -4156,6 +4156,7 @@ impl ApplicationHandler for App<'_> {
                                                 pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                     Some("Wrong passphrase — please try again".to_string());
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
                                             }
                                             false
                                         }
@@ -4282,6 +4283,27 @@ impl ApplicationHandler for App<'_> {
                             eprintln!("[App] vault salt error: {}", e);
                         }
                     }
+                }
+
+                // ── Vault unlock → new profile wizard ────────────────────────────────────────
+                // Emitted by ChartApp when the user clicks "Forgot passphrase?" after 3 failures.
+                // Dismiss the vault lock overlay and show the welcome wizard so the user can
+                // create a fresh profile from scratch.
+                if cmd_str == "vault_skip_to_wizard" {
+                    self.needs_vault_unlock = false;
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                        pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                        pw.chart.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                        pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
+                        pw.chart.panel_app.user_settings_state.wizard_page = 0;
+                        // Clear the passphrase field so the wizard starts clean.
+                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    }
+                    eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing welcome wizard for new profile");
                 }
 
                 #[cfg(all(feature = "updater", not(feature = "standalone")))]

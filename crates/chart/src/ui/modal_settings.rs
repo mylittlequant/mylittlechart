@@ -3323,6 +3323,9 @@ pub struct UserSettingsState {
     /// Error message shown on the vault unlock overlay when the passphrase is wrong.
     /// Cleared when the user starts typing a new passphrase.
     pub vault_unlock_error: Option<String>,
+    /// Number of consecutive failed vault unlock attempts.
+    /// After 3 failures the "Forgot passphrase? Create new profile" button is shown.
+    pub vault_unlock_attempts: u32,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
     /// 8-char device code for device linking displayed on page 1.
@@ -3431,6 +3434,7 @@ impl Default for UserSettingsState {
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
+            vault_unlock_attempts: 0,
             wizard_page: 0,
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),

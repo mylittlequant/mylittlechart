@@ -499,8 +499,15 @@ pub fn render_vault_unlock(
 
     // ── Modal dimensions ─────────────────────────────────────────────────────
     let modal_w: f64 = 480.0;
-    // Expand the modal slightly when an error message is present so it doesn't overflow.
-    let modal_h: f64 = if state.vault_unlock_error.is_some() { 296.0 } else { 260.0 };
+    // Expand the modal to fit: error message adds height, and after 3 attempts the
+    // "Forgot passphrase?" link requires additional space.
+    let modal_h: f64 = if state.vault_unlock_attempts >= 3 {
+        340.0
+    } else if state.vault_unlock_error.is_some() {
+        296.0
+    } else {
+        260.0
+    };
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
@@ -583,6 +590,34 @@ pub fn render_vault_unlock(
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
+        cy += 20.0;
+    }
+
+    // ── "Forgot passphrase?" link — shown after 3 failed attempts ────────────
+    if state.vault_unlock_attempts >= 3 {
+        let is_hovered = hovered == Some("vault_unlock_new_profile");
+        let link_color = if is_hovered {
+            "rgba(254,255,238,0.70)"
+        } else {
+            "rgba(254,255,238,0.38)"
+        };
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(link_color);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Forgot passphrase? Create a new profile", inner_x + inner_w / 2.0, cy);
+        ctx.set_text_align(TextAlign::Left);
+
+        let link_w = 260.0;
+        let link_h = 18.0;
+        let link_rect = WidgetRect::new(inner_x + (inner_w - link_w) / 2.0, cy, link_w, link_h);
+        result.content_items.push(("vault_unlock_new_profile".to_string(), link_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:vault_unlock_new_profile",
+            link_rect,
+            Sense::CLICK,
+            &layer_id,
+        );
     }
 }
 
