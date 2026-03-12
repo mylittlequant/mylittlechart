@@ -4290,20 +4290,67 @@ impl ApplicationHandler for App<'_> {
                 // Dismiss the vault lock overlay and show the welcome wizard so the user can
                 // create a fresh profile from scratch.
                 if cmd_str == "vault_skip_to_wizard" {
+                    // Create a brand-new profile so the wizard operates on fresh data,
+                    // not the old encrypted profile the user can no longer unlock.
+                    // wizard_complete will set the real client mode after page 0.
+                    let new_profile_mode = zengeld_chart::ClientMode::Standalone;
+                    match zengeld_chart::create_profile("New Profile", "chart", new_profile_mode) {
+                        Ok(meta) => {
+                            eprintln!("[App] vault_skip_to_wizard: created new profile {} ({})", meta.display_name, meta.id);
+                            // Switch the active profile in the index so that
+                            // active_profile_data_dir() resolves to the new empty directory
+                            // from this point forward.  This also means save_all() (with
+                            // vault_key=None) writes plaintext files into the new directory
+                            // rather than alongside the old encrypted profile.
+                            if let Some(mut index) = zengeld_chart::load_profile_index() {
+                                index.active_profile_id = meta.id.clone();
+                                if let Err(e) = zengeld_chart::save_profile_index(&index) {
+                                    eprintln!("[App] vault_skip_to_wizard: failed to update index: {}", e);
+                                }
+                            }
+                            // Reload UserManager from the new empty profile directory.
+                            // No key — new profile has no encrypted data yet.
+                            let new_um = zengeld_chart::UserManager::load_with_key(None);
+                            self.user_manager = new_um;
+                            self.profile = self.user_manager.profile.clone();
+                            // Reset shared app state that came from the old profile.
+                            self.app_state.vault_key = None;
+                            self.app_state.presets.clear();
+                            self.app_state.preset_dirty_ids.clear();
+                            self.app_state.presets_dirty = true;
+                        }
+                        Err(e) => {
+                            eprintln!("[App] vault_skip_to_wizard: failed to create new profile: {}", e);
+                            // Proceed anyway — the wizard will at least let the user set a
+                            // passphrase, even if it ends up re-encrypting the old profile state.
+                        }
+                    }
+
                     self.needs_vault_unlock = false;
+                    // Refresh the profile list from the updated index.
+                    let available_profiles: Vec<(String, String, String, zengeld_chart::ClientMode)> =
+                        zengeld_chart::load_profile_index()
+                            .map(|idx| idx.profiles.iter()
+                                .map(|m| (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode))
+                                .collect())
+                            .unwrap_or_default();
                     for pw in self.windows.values_mut() {
                         pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                         pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                         pw.chart.panel_app.user_settings_state.vault_unlock_attempts = 0;
                         pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
                         pw.chart.panel_app.user_settings_state.wizard_page = 0;
+                        // Refresh available profiles so the profile switcher reflects the new entry.
+                        if !available_profiles.is_empty() {
+                            pw.chart.panel_app.user_settings_state.available_profiles = available_profiles.clone();
+                        }
                         // Clear the passphrase field so the wizard starts clean.
                         pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                         pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                         pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                         pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     }
-                    eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing welcome wizard for new profile");
+                    eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
                 }
 
                 #[cfg(all(feature = "updater", not(feature = "standalone")))]
