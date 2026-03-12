@@ -4331,17 +4331,20 @@ impl ChartApp {
             return;
         }
 
-        // Handle E2E passphrase input in User Settings Sync tab or Welcome Wizard
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard)
+        // Handle E2E passphrase input in User Settings Sync tab, Welcome Wizard, or Vault Unlock
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock)
             && self.panel_app.user_settings_state.e2e_passphrase_focused
         {
+            let editing = &mut self.panel_app.user_settings_state.e2e_passphrase_editing;
             match ch {
                 '\r' | '\n' => {
                     // Enter submits the E2E setup/restore form if passphrase is non-empty
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.trim().to_string();
+                    let passphrase = editing.text.trim().to_string();
                     if !passphrase.is_empty() {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        editing.text.clear();
+                        editing.cursor = 0;
+                        editing.selection_start = None;
                         self.panel_app.user_settings_state.e2e_restore_mode = false;
                     }
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
@@ -4352,13 +4355,22 @@ impl ChartApp {
                 }
                 '\x08' => {
                     // Backspace
-                    let passphrase = &mut self.panel_app.user_settings_state.e2e_passphrase;
-                    if !passphrase.is_empty() {
-                        passphrase.pop();
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
                     }
                 }
                 c if !c.is_control() => {
-                    self.panel_app.user_settings_state.e2e_passphrase.push(c);
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
                 }
                 _ => {}
             }
@@ -7089,7 +7101,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] e2e_enabled = {}", new_val);
                 }
                 "e2e_setup" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         eprintln!("[ChartApp] e2e_setup requested");
@@ -7146,7 +7158,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] needs_setup_dismiss: dismissed");
                 }
                 "e2e_restore" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         // Use the same e2e_setup command — the updater handles both setup and restore.
                         // For restore, the server's existing salt is used (handled by the updater's
@@ -7158,15 +7170,16 @@ impl ChartApp {
                     }
                 }
                 "e2e_passphrase_input" => {
-                    self.panel_app.user_settings_state.e2e_passphrase_focused =
-                        !self.panel_app.user_settings_state.e2e_passphrase_focused;
-                    eprintln!("[ChartApp] e2e_passphrase_input: toggled focus");
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    eprintln!("[ChartApp] e2e_passphrase_input: focused");
                 }
                 "e2e_setup" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                         self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                         eprintln!("[ChartApp] e2e_setup requested");
                     }
@@ -7232,18 +7245,13 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("logout".to_string());
                     eprintln!("[ChartApp] logout: sending logout command to updater");
                 }
-                "mode_connected" => {
-                    // Don't switch immediately — show the sync-choice confirmation dialog.
-                    self.panel_app.user_settings_state.sync_transition_pending = true;
-                    eprintln!("[ChartApp] mode_connected: showing sync transition dialog");
+                "profile_new_mode_connected" => {
+                    self.panel_app.user_settings_state.new_profile_mode_connected = true;
+                    eprintln!("[ChartApp] profile_new_mode_connected: new profile will be Connected");
                 }
-                "mode_standalone" => {
-                    if self.panel_app.user_settings_state.client_mode_connected {
-                        // Already connected — ask for confirmation before disconnecting.
-                        self.panel_app.user_settings_state.disconnect_pending = true;
-                        eprintln!("[ChartApp] mode_standalone: showing disconnect confirmation");
-                    }
-                    // If already standalone, no-op.
+                "profile_new_mode_standalone" => {
+                    self.panel_app.user_settings_state.new_profile_mode_connected = false;
+                    eprintln!("[ChartApp] profile_new_mode_standalone: new profile will be Standalone");
                 }
                 // ── Sync transition choices (Standalone → Connected) ──────────
                 "sync_upload" => {
@@ -7307,21 +7315,21 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
                 "wizard_enable_e2e" => {
-                    // Page 1: user confirmed passphrase — apply mode + E2E and close wizard
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    // Page 1: user confirmed passphrase — apply mode + E2E and close wizard.
+                    // Encode the mode in the command so main.rs can set it after key derivation
+                    // (pending_updater_cmd is a single Option, can't send two commands).
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
-                        if standalone {
-                            self.panel_app.user_settings_state.client_mode_connected = false;
-                            self.pending_updater_cmd = Some("set_standalone".to_string());
-                        } else {
-                            self.panel_app.user_settings_state.client_mode_connected = true;
-                            self.pending_updater_cmd = Some("set_connected".to_string());
-                        }
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        self.panel_app.user_settings_state.client_mode_connected = !standalone;
+                        let mode = if standalone { "standalone" } else { "connected" };
+                        self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", mode, passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
-                        self.panel_app.user_settings_state.e2e_passphrase.clear();
-                        eprintln!("[ChartApp] wizard: setup complete (E2E), closing wizard, standalone={}", standalone);
+                        self.panel_app.user_settings_state.needs_vault_unlock = false;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        eprintln!("[ChartApp] wizard: setup complete, closing wizard, standalone={}", standalone);
                     }
                 }
                 // ── Vault unlock handler (returning encrypted users) ──────────
@@ -7329,13 +7337,15 @@ impl ChartApp {
                     // The user entered their passphrase on the vault-unlock overlay.
                     // Emit the same e2e_setup: command so that main.rs derives the key
                     // and calls save_all() to load the encrypted data.
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase.clone();
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         // Dismiss the overlay immediately — if the key is wrong the
                         // app will continue without decrypted data (plaintext fallback).
                         self.panel_app.user_settings_state.needs_vault_unlock = false;
-                        self.panel_app.user_settings_state.e2e_passphrase.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                         eprintln!("[ChartApp] vault_unlock: passphrase submitted");
                     }
                 }
@@ -7347,32 +7357,22 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: legacy wizard_e2e handler");
                 }
                 // ── Profile handlers ───────────────────────────────────────────
-                "profile_rename" => {
-                    self.panel_app.user_settings_state.profile_rename_mode = true;
-                    self.panel_app.user_settings_state.profile_rename_buffer =
-                        self.panel_app.user_settings_state.profile_display_name.clone();
-                    eprintln!("[ChartApp] profile_rename: entering rename mode");
-                }
                 "profile_rename_confirm" => {
                     let new_name = self.panel_app.user_settings_state.profile_rename_buffer.trim().to_string();
                     if !new_name.is_empty() {
+                        // Update display name for active profile (rename target is always the active profile
+                        // since only the active row shows the Rename button).
                         self.panel_app.user_settings_state.profile_display_name = new_name.clone();
                         self.panel_app.user_settings_state.profile_rename_mode = false;
+                        self.panel_app.user_settings_state.profile_rename_target_id = None;
                         self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
                         eprintln!("[ChartApp] profile_rename_confirm: new name = {}", new_name);
                     }
                 }
                 "profile_rename_cancel" => {
                     self.panel_app.user_settings_state.profile_rename_mode = false;
+                    self.panel_app.user_settings_state.profile_rename_target_id = None;
                     eprintln!("[ChartApp] profile_rename_cancel");
-                }
-                "profile_avatar_toggle" => {
-                    self.panel_app.user_settings_state.show_avatar_picker =
-                        !self.panel_app.user_settings_state.show_avatar_picker;
-                    eprintln!(
-                        "[ChartApp] profile_avatar_toggle: open = {}",
-                        self.panel_app.user_settings_state.show_avatar_picker
-                    );
                 }
                 "profile_new" => {
                     self.panel_app.user_settings_state.show_new_profile_dialog = true;
@@ -7382,14 +7382,51 @@ impl ChartApp {
                 "profile_new_confirm" => {
                     let name = self.panel_app.user_settings_state.new_profile_name.trim().to_string();
                     if !name.is_empty() {
-                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
+                        let mode = if self.panel_app.user_settings_state.new_profile_mode_connected {
+                            "connected"
+                        } else {
+                            "standalone"
+                        };
+                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
                         self.panel_app.user_settings_state.show_new_profile_dialog = false;
-                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
+                        self.panel_app.user_settings_state.new_profile_mode_connected = false;
+                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}' ({})", name, mode);
                     }
                 }
                 "profile_new_cancel" => {
                     self.panel_app.user_settings_state.show_new_profile_dialog = false;
                     eprintln!("[ChartApp] profile_new_cancel");
+                }
+                rest if rest.starts_with("profile_rename:") => {
+                    let id = &rest["profile_rename:".len()..];
+                    let uss = &mut self.panel_app.user_settings_state;
+                    // Find the display name for this profile to pre-fill the buffer
+                    let current_name = uss.available_profiles.iter()
+                        .find(|(pid, _, _, _)| pid == id)
+                        .map(|(_, name, _, _)| name.clone())
+                        .unwrap_or_else(|| uss.profile_display_name.clone());
+                    uss.profile_rename_mode = true;
+                    uss.profile_rename_buffer = current_name;
+                    uss.profile_rename_target_id = Some(id.to_string());
+                    eprintln!("[ChartApp] profile_rename:{}: entering rename mode", id);
+                }
+                rest if rest.starts_with("profile_avatar_toggle:") => {
+                    let id = &rest["profile_avatar_toggle:".len()..];
+                    let uss = &mut self.panel_app.user_settings_state;
+                    let already_open = uss.show_avatar_picker
+                        && uss.profile_avatar_target_id.as_deref() == Some(id);
+                    if already_open {
+                        uss.show_avatar_picker = false;
+                        uss.profile_avatar_target_id = None;
+                    } else {
+                        uss.show_avatar_picker = true;
+                        uss.profile_avatar_target_id = Some(id.to_string());
+                    }
+                    eprintln!(
+                        "[ChartApp] profile_avatar_toggle:{}: open = {}",
+                        id,
+                        uss.show_avatar_picker
+                    );
                 }
                 rest if rest.starts_with("profile_switch:") => {
                     let id = &rest["profile_switch:".len()..];
@@ -7398,10 +7435,29 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("profile_avatar:") => {
                     let avatar = &rest["profile_avatar:".len()..];
-                    self.panel_app.user_settings_state.profile_avatar = avatar.to_string();
-                    self.panel_app.user_settings_state.show_avatar_picker = false;
-                    self.pending_updater_cmd = Some(format!("profile_set_avatar:{}", avatar));
-                    eprintln!("[ChartApp] profile_avatar: selected = {}", avatar);
+                    let uss = &mut self.panel_app.user_settings_state;
+                    let target_id = uss.profile_avatar_target_id.clone();
+                    // If targeting the active profile (or no explicit target), update active avatar
+                    let is_active_target = target_id.as_deref()
+                        .map(|tid| tid == uss.profile_id.as_str())
+                        .unwrap_or(true);
+                    if is_active_target {
+                        uss.profile_avatar = avatar.to_string();
+                        self.pending_updater_cmd = Some(format!("profile_set_avatar:{}", avatar));
+                        eprintln!("[ChartApp] profile_avatar:{}: updated active profile avatar", avatar);
+                    }
+                    uss.show_avatar_picker = false;
+                    uss.profile_avatar_target_id = None;
+                }
+                rest if rest.starts_with("profile_delete:") => {
+                    let id = &rest["profile_delete:".len()..];
+                    let active_id = self.panel_app.user_settings_state.profile_id.clone();
+                    if id != active_id.as_str() {
+                        self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
+                        eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
+                    } else {
+                        eprintln!("[ChartApp] profile_delete: cannot delete active profile");
+                    }
                 }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);

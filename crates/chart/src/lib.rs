@@ -452,6 +452,7 @@ pub use user_profile::{
     ProfileError,
     ProfileMeta,
     ProfileIndex,
+    ClientMode,
     app_data_dir,
     get_user_data_dir,
     active_profile_data_dir,
@@ -463,6 +464,7 @@ pub use user_profile::{
     load_profile_index,
     save_profile_index,
     create_profile,
+    delete_profile,
 };
 
 // Unified user state manager

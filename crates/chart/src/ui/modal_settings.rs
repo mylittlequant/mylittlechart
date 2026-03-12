@@ -10,6 +10,7 @@ use crate::ui::scroll_state::ScrollState;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use uzor::widgets::text_input::state::TextInputState;
 use alert_delivery::NotificationSettings;
+use crate::user_profile::profile::ClientMode;
 
 // =============================================================================
 // Text Editing State
@@ -3271,7 +3272,7 @@ pub struct UserSettingsState {
     /// Whether E2E encryption is enabled (mirrors SyncState.e2e_enabled).
     pub e2e_enabled: bool,
     /// In-memory passphrase input buffer — never persisted to disk.
-    pub e2e_passphrase: String,
+    pub e2e_passphrase_editing: TextEditingState,
     /// Whether the E2E passphrase input field has keyboard focus.
     pub e2e_passphrase_focused: bool,
     /// Whether presets category is enabled for sync (mirrors SyncState.category_prefs.presets).
@@ -3337,18 +3338,24 @@ pub struct UserSettingsState {
     pub profile_avatar: String,
     /// UUID of the active profile.
     pub profile_id: String,
-    /// All available profiles as (id, display_name, avatar) tuples.
-    pub available_profiles: Vec<(String, String, String)>,
+    /// All available profiles as (id, display_name, avatar, client_mode) tuples.
+    pub available_profiles: Vec<(String, String, String, ClientMode)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
     /// Text buffer for the inline rename input.
     pub profile_rename_buffer: String,
+    /// ID of the profile row currently being renamed (None = not renaming).
+    pub profile_rename_target_id: Option<String>,
     /// Whether the avatar picker popover is open.
     pub show_avatar_picker: bool,
+    /// ID of the profile whose avatar picker is open (None = active profile).
+    pub profile_avatar_target_id: Option<String>,
     /// Whether the "New Profile" inline dialog is open.
     pub show_new_profile_dialog: bool,
     /// Text buffer for new profile name input.
     pub new_profile_name: String,
+    /// Mode chosen for new profile creation: false = Standalone (default), true = Connected.
+    pub new_profile_mode_connected: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3385,7 +3392,13 @@ impl Default for UserSettingsState {
             disconnect_pending: false,
             sync_enabled: false,
             e2e_enabled: false,
-            e2e_passphrase: String::new(),
+            e2e_passphrase_editing: TextEditingState {
+                field_id: "e2e_passphrase".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
             e2e_passphrase_focused: false,
             sync_presets: true,
             sync_watchlists: true,
@@ -3418,9 +3431,12 @@ impl Default for UserSettingsState {
             available_profiles: Vec::new(),
             profile_rename_mode: false,
             profile_rename_buffer: String::new(),
+            profile_rename_target_id: None,
             show_avatar_picker: false,
+            profile_avatar_target_id: None,
             show_new_profile_dialog: false,
             new_profile_name: String::new(),
+            new_profile_mode_connected: false,
         }
     }
 }

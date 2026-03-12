@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::profile::{ProfileIndex, ProfileMeta, UserProfile};
+use super::profile::{ClientMode, ProfileIndex, ProfileMeta, UserProfile};
 use crate::vault::{self, VaultKey};
 
 // =============================================================================
@@ -416,6 +416,7 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
         avatar: profile.avatar.clone(),
         created_at: now,
         dir_name: "default".to_string(),
+        client_mode: profile.client_mode,
     };
     let index = ProfileIndex {
         active_profile_id: new_id,
@@ -430,11 +431,12 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 // Profile creation
 // =============================================================================
 
-/// Create a new profile with the given display name and avatar.
+/// Create a new profile with the given display name, avatar, and fixed client mode.
 ///
 /// Creates `profiles/{uuid}/profile.json` and adds the entry to the index.
-/// Does NOT switch the active profile.
-pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
+/// Does NOT switch the active profile.  The `client_mode` is stored in the
+/// ProfileMeta and is immutable after creation.
+pub fn create_profile(name: &str, avatar: &str, client_mode: ClientMode) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -452,6 +454,7 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     profile.display_name = name.to_string();
     profile.avatar = avatar.to_string();
     profile.profile_created_at = now;
+    profile.client_mode = client_mode;
 
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
     fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
@@ -462,6 +465,7 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
         avatar: avatar.to_string(),
         created_at: now,
         dir_name,
+        client_mode,
     };
 
     // Append to existing index (or create one if it doesn't exist yet).
@@ -473,4 +477,45 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     save_profile_index(&index)?;
 
     Ok(meta)
+}
+
+// =============================================================================
+// Profile deletion
+// =============================================================================
+
+/// Delete a profile by ID.
+///
+/// Removes the profile directory from disk and removes the entry from the
+/// index.  Does NOT allow deleting the active profile — callers must check
+/// that `id != index.active_profile_id` before calling this.
+///
+/// Returns `Ok(())` if the profile was deleted or was not found.
+/// Returns `Err` if the index cannot be loaded or saved, or if `id` matches
+/// the active profile (safety guard).
+pub fn delete_profile(id: &str) -> Result<(), String> {
+    let mut index = load_profile_index()
+        .ok_or_else(|| "No profile index found".to_string())?;
+
+    // Safety: never delete the active profile.
+    if index.active_profile_id == id {
+        return Err("Cannot delete the active profile".to_string());
+    }
+
+    // Find the profile metadata so we know its directory name.
+    let meta = index.profiles.iter().find(|m| m.id == id).cloned();
+
+    // Remove from the index.
+    index.profiles.retain(|m| m.id != id);
+    save_profile_index(&index)?;
+
+    // Remove the profile directory (best effort — ignore missing).
+    if let Some(m) = meta {
+        let dir = profiles_dir().join(&m.dir_name);
+        if dir.exists() {
+            fs::remove_dir_all(&dir)
+                .map_err(|e| format!("Failed to remove profile directory: {}", e))?;
+        }
+    }
+
+    Ok(())
 }

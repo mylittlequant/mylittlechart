@@ -18,7 +18,7 @@
 pub mod profile;
 pub mod storage;
 
-pub use profile::{UserProfile, WindowState, StoredApiKey, ProfileMeta, ProfileIndex};
+pub use profile::{UserProfile, WindowState, StoredApiKey, ProfileMeta, ProfileIndex, ClientMode};
 pub use storage::{
     ProfileError,
     app_data_dir,
@@ -33,5 +33,6 @@ pub use storage::{
     active_profile_data_dir,
     migrate_legacy_profile_if_needed,
     create_profile,
+    delete_profile,
     watchlists_path,
 };
