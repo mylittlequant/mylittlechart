@@ -128,6 +128,22 @@ pub fn save_encrypted<T: serde::Serialize>(
     Ok(())
 }
 
+/// Validate a passphrase against a vault at explicit paths (for pre-switch validation).
+///
+/// Returns the derived `VaultKey` on success, or an error string on failure.
+pub fn validate_passphrase_at(
+    salt_path: &std::path::Path,
+    vault_path: &std::path::Path,
+    passphrase: &str,
+) -> Result<VaultKey, String> {
+    let salt = load_or_create_salt(salt_path).map_err(|e| format!("salt: {}", e))?;
+    let key = derive_key(passphrase, &salt);
+    match load_encrypted::<crate::user_profile::VaultSecrets>(&key, vault_path) {
+        Ok(_) => Ok(key),
+        Err(_) => Err("Decryption failed — wrong passphrase or corrupted data".to_string()),
+    }
+}
+
 /// Load salt from a hex file, or generate and save a new one.
 pub fn load_or_create_salt(salt_path: &std::path::Path) -> Result<[u8; 16], VaultError> {
     crypto::load_or_create_salt(salt_path)

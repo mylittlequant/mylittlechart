@@ -181,28 +181,56 @@ fn render_page_profile_list(
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(display_name.as_str(), name_x, row_mid_y);
 
-        // Right-side badges
-        // Vault status badge
-        let vault_label = if *has_vault { "Encrypted" } else { "No encryption" };
-        let vault_color = if *has_vault {
-            "rgba(80,200,120,0.7)"
+        // Right-side badges and actions
+        if *has_vault {
+            // Encrypted badge
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(80,200,120,0.7)");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Encrypted", inner_x + inner_w - 8.0, row_mid_y);
+
+            // Client mode badge
+            let mode_label = if *client_mode { "Cloud" } else { "Offline" };
+            ctx.set_fill_color("rgba(254,255,238,0.30)");
+            ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 8.0, row_mid_y);
+            ctx.set_text_align(TextAlign::Left);
         } else {
-            "rgba(255,180,80,0.7)"
-        };
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(vault_color);
-        ctx.set_text_align(TextAlign::Right);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(vault_label, inner_x + inner_w - 8.0, row_mid_y);
+            // Unencrypted: show warning + delete button
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(255,100,80,0.8)");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Unprotected", inner_x + inner_w - 70.0, row_mid_y);
 
-        // Client mode badge (slightly left of vault badge)
-        let mode_label = if *client_mode { "Cloud" } else { "Offline" };
-        ctx.set_fill_color("rgba(254,255,238,0.30)");
-        let vault_label_approx_w = if *has_vault { 62.0 } else { 90.0 };
-        ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - vault_label_approx_w - 8.0, row_mid_y);
-        ctx.set_text_align(TextAlign::Left);
+            // Delete button
+            let del_w = 54.0;
+            let del_h = 22.0;
+            let del_x = inner_x + inner_w - del_w - 6.0;
+            let del_y = row_mid_y - del_h / 2.0;
+            let del_id = format!("profile_delete:{}", id);
+            let is_del_hovered = hovered == Some(del_id.as_str());
+            let del_bg = if is_del_hovered { "rgba(255,60,60,0.6)" } else { "rgba(255,60,60,0.3)" };
+            ctx.set_fill_color(del_bg);
+            ctx.fill_rounded_rect(del_x, del_y, del_w, del_h, 3.0);
+            ctx.set_font("bold 10px sans-serif");
+            ctx.set_fill_color("rgba(255,255,255,0.9)");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("Delete", del_x + del_w / 2.0, row_mid_y);
+            ctx.set_text_align(TextAlign::Left);
 
-        // Register hit area
+            // Register delete button hit area (on top of row)
+            let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
+            result.content_items.push((del_id.clone(), del_rect));
+            input_coordinator.register_on_layer(
+                format!("user_settings:{}", del_id).as_str(),
+                del_rect,
+                Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        // Register row hit area (for selecting encrypted profiles)
         let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
         result.content_items.push((widget_id.clone(), row_rect));
         let hit_id = format!("user_settings:{}",widget_id);

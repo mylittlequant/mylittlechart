@@ -37,6 +37,8 @@ pub const MIN_PASSPHRASE_LENGTH: usize = 8;
 pub struct ProfileInfo {
     /// UUID v4 identifier.
     pub id: String,
+    /// Directory name on disk (usually same as id, but "default" for legacy).
+    pub dir_name: String,
     /// User-visible display name.
     pub display_name: String,
     /// Avatar emoji key.
@@ -486,6 +488,7 @@ impl ProfileManager {
                 let is_active = m.id == self.index.active_profile_id;
                 ProfileInfo {
                     id: m.id.clone(),
+                    dir_name: m.dir_name.clone(),
                     display_name: m.display_name.clone(),
                     avatar: m.avatar.clone(),
                     cloud_enabled: m.cloud_enabled,

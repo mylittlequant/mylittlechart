@@ -4272,13 +4272,57 @@ impl ApplicationHandler for App<'_> {
                 // This runs BEFORE the updater-handle block so that we can call
                 // save_all() without holding an immutable borrow of updater_handle.
                 if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
-                    // ── Passphrase validation (vault unlock path only) ──────────
-                    // When needs_vault_unlock is true the user is returning to an
-                    // already-encrypted vault.  We MUST validate the key before
-                    // replacing any in-memory state; a wrong passphrase would
-                    // cause save_all() to overwrite real encrypted data with the
-                    // default/empty state derived under the wrong key.
-                    if self.needs_vault_unlock {
+                    // ── Pre-switch validation: unlocking a DIFFERENT profile ──
+                    // If the target profile differs from the running profile, validate
+                    // the passphrase against the target's vault WITHOUT hot-reloading.
+                    // Only switch after successful validation.
+                    let target_id = self.windows.values().next()
+                        .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
+                        .unwrap_or_default();
+                    let current_id = self.profile_manager.profile.profile_id.clone();
+                    if !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock {
+                        // Find the target profile's data dir
+                        let profiles_dir = zengeld_chart::active_profile_data_dir()
+                            .parent()
+                            .map(|p| p.to_path_buf());
+                        if let Some(pd) = profiles_dir {
+                            let target_meta = self.profile_manager.available_profiles()
+                                .iter()
+                                .find(|p| p.id == target_id)
+                                .cloned();
+                            if let Some(meta) = target_meta {
+                                let target_dir = pd.join(&meta.dir_name);
+                                let salt_path = target_dir.join("salt.hex");
+                                let vault_path = target_dir.join("vault.enc");
+                                if salt_path.exists() && vault_path.exists() {
+                                    // Validate passphrase against the target vault
+                                    match zengeld_chart::vault::validate_passphrase_at(&salt_path, &vault_path, passphrase) {
+                                        Ok(_key) => {
+                                            eprintln!("[App] pre-switch: passphrase validated for profile {}", target_id);
+                                            // Now switch
+                                            self.pending_profile_switch = Some(target_id);
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[App] pre-switch: wrong passphrase for profile {} ({})", target_id, e);
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                    Some("Wrong passphrase — please try again".to_string());
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    eprintln!("[App] pre-switch: target profile {} missing salt/vault", target_id);
+                                }
+                            }
+                        }
+                    } else if self.needs_vault_unlock {
                         match self.profile_manager.validate_passphrase(passphrase) {
                             Ok(key) => {
                                 eprintln!("[App] vault passphrase validated OK");

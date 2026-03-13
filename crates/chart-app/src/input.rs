@@ -7619,6 +7619,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] vault_picker: switching to profile {}", profile_id);
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["profile_mgr:select:".len()..];
                     // Check if target profile has vault (encrypted)
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
@@ -7626,6 +7627,11 @@ impl ChartApp {
                         .find(|(id, _, _, _, _)| id == profile_id)
                         .map(|(_, _, _, _, has_vault)| *has_vault)
                         .unwrap_or(false);
+                    let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _)| name.clone())
+                        .unwrap_or_default();
                     if !target_has_vault {
                         // Unencrypted profile — cannot enter, only delete
                         eprintln!("[ChartApp] profile_mgr: blocked entry to unencrypted profile {}", profile_id);
@@ -7639,9 +7645,15 @@ impl ChartApp {
                             eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
                         }
                     } else {
-                        // Switch to the selected encrypted profile
-                        self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
-                        eprintln!("[ChartApp] profile_mgr: switching to profile {}", profile_id);
+                        // Show passphrase prompt BEFORE switching — no hot-reload until validated
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
                     }
                 }
                 rest if rest.starts_with("profile_rename:") => {
