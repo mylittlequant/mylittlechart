@@ -2252,6 +2252,7 @@ impl App<'_> {
         // Their existing data will be encrypted on completion via save_all().
         if self.needs_migration {
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+            chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
             chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
@@ -2405,8 +2406,10 @@ impl App<'_> {
         if self.show_wizard_after_switch {
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
             self.show_wizard_after_switch = false;
+            self.needs_vault_unlock = true;
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
@@ -2440,8 +2443,10 @@ impl App<'_> {
         } else if !has_vault && !has_salt && !self.is_first_run {
             // Existing profile with no encryption — offer to set up
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+            self.needs_vault_unlock = true;
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();

@@ -7483,13 +7483,22 @@ impl ChartApp {
                 // ── Profile Manager handlers ───────────────────────────────────
                 "profile_mgr:back" => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                    eprintln!("[ChartApp] profile_mgr: back to profile list");
+                    let on_mandatory_page = matches!(
+                        self.panel_app.user_settings_state.profile_manager_page,
+                        ProfileManagerPage::CreatePassphrase | ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::ShowRecoveryKey
+                    ) && self.panel_app.user_settings_state.needs_vault_unlock;
+                    if on_mandatory_page {
+                        // Block "Back" — vault must be set up before accessing the app
+                        eprintln!("[ChartApp] profile_mgr: back blocked — vault unlock/setup required");
+                    } else {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        eprintln!("[ChartApp] profile_mgr: back to profile list");
+                    }
                 }
                 "profile_mgr:create_new" => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
@@ -7616,9 +7625,14 @@ impl ChartApp {
                 rest if rest.starts_with("profile_mgr:select:") => {
                     let profile_id = &rest["profile_mgr:select:".len()..];
                     if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
-                        // Already on this profile — just dismiss
-                        self.panel_app.user_settings_state.show_profile_manager = false;
-                        eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                        if self.panel_app.user_settings_state.needs_vault_unlock {
+                            // Vault not set up — can't dismiss, force passphrase page
+                            eprintln!("[ChartApp] profile_mgr: selected current profile but vault not unlocked — blocking");
+                        } else {
+                            // Already on this profile, vault OK — dismiss
+                            self.panel_app.user_settings_state.show_profile_manager = false;
+                            eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                        }
                     } else {
                         // Switch to the selected profile
                         self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
