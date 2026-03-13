@@ -20,6 +20,7 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
+use crate::user_profile::profile::ClientMode;
 
 /// Render the Welcome Wizard overlay.
 ///
@@ -605,7 +606,7 @@ pub fn render_vault_unlock(
         ctx.set_fill_color(link_color);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Forgot passphrase? Create a new profile", inner_x + inner_w / 2.0, cy);
+        ctx.fill_text("Forgot passphrase? Switch or create profile", inner_x + inner_w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
 
         let link_w = 260.0;
@@ -619,6 +620,191 @@ pub fn render_vault_unlock(
             &layer_id,
         );
     }
+}
+
+/// Render the vault profile picker overlay.
+///
+/// Shown after the user clicks "Forgot passphrase?" on the vault unlock screen.
+/// Allows the user to switch to another profile or create a new one.
+#[allow(clippy::too_many_arguments)]
+fn render_vault_profile_picker(
+    ctx: &mut dyn RenderContext,
+    window_w: f64,
+    window_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    // Collect profiles excluding the currently locked one.
+    let other_profiles: Vec<&(String, String, String, ClientMode)> = state
+        .available_profiles
+        .iter()
+        .filter(|(id, _, _, _)| id != &state.profile_id)
+        .collect();
+
+    // ── Modal height calculation ──────────────────────────────────────────────
+    let profile_row_h: f64 = 48.0;
+    let n = other_profiles.len();
+    let calculated_h: f64 = 30.0   // top pad
+        + 28.0                      // title
+        + 24.0                      // subtitle
+        + 12.0                      // gap
+        + n as f64 * profile_row_h  // profile rows
+        + 12.0                      // gap
+        + 1.0                       // separator
+        + 12.0                      // gap
+        + 36.0                      // create button
+        + 12.0                      // gap
+        + 18.0                      // back link
+        + 20.0;                     // bottom pad
+    let modal_h = calculated_h.min(window_h - 80.0);
+    let modal_w: f64 = 480.0;
+    let modal_x = (window_w - modal_w) / 2.0;
+    let modal_y = (window_h - modal_h) / 2.0;
+
+    // Modal background + border
+    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+
+    // Absorb modal background clicks
+    input_coordinator.register_on_layer(
+        "vault_picker:modal_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    let padding = 32.0;
+    let inner_x = modal_x + padding;
+    let inner_w = modal_w - padding * 2.0;
+    let mut cy = modal_y + 30.0;
+
+    // ── Title ─────────────────────────────────────────────────────────────────
+    ctx.set_font("bold 20px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Switch Profile", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 28.0;
+
+    // ── Subtitle ─────────────────────────────────────────────────────────────
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Choose a profile or create a new one", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 24.0 + 12.0; // subtitle + gap
+
+    // ── Profile rows ─────────────────────────────────────────────────────────
+    for (id, name, _avatar, mode) in &other_profiles {
+        let widget_id = format!("vault_picker_profile:{}", id);
+        let is_row_hovered = hovered == Some(widget_id.as_str());
+
+        let row_bg = if is_row_hovered {
+            "rgba(255,255,255,0.08)"
+        } else {
+            "rgba(255,255,255,0.04)"
+        };
+        ctx.set_fill_color(row_bg);
+        ctx.fill_rounded_rect(inner_x, cy, inner_w, profile_row_h - 4.0, 4.0);
+
+        // Display name (bold 14px, left)
+        let row_mid_y = cy + (profile_row_h - 4.0) / 2.0;
+        ctx.set_font("bold 14px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(name.as_str(), inner_x + 12.0, row_mid_y);
+
+        // Client mode badge (10px, dimmed, right-aligned)
+        let badge_label = match mode {
+            ClientMode::Connected => "Connected",
+            ClientMode::Standalone => "Standalone",
+        };
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(badge_label, inner_x + inner_w - 12.0, row_mid_y);
+        ctx.set_text_align(TextAlign::Left);
+
+        // Register click
+        let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h - 4.0);
+        result.content_items.push((widget_id.clone(), row_rect));
+        let hit_id = format!("user_settings:{}", widget_id);
+        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+
+        cy += profile_row_h;
+    }
+
+    cy += 12.0; // gap before separator
+
+    // ── Separator line ────────────────────────────────────────────────────────
+    ctx.set_fill_color("rgba(255,255,255,0.08)");
+    ctx.fill_rect(inner_x, cy, inner_w, 1.0);
+    cy += 1.0 + 12.0; // separator + gap
+
+    // ── "Create New Profile" button ───────────────────────────────────────────
+    let create_btn_h: f64 = 36.0;
+    let is_create_hovered = hovered == Some("vault_picker_create_new");
+    let create_bg = if is_create_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    ctx.set_fill_color(create_bg);
+    ctx.fill_rounded_rect(inner_x, cy, inner_w, create_btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Create New Profile", inner_x + inner_w / 2.0, cy + create_btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let create_rect = WidgetRect::new(inner_x, cy, inner_w, create_btn_h);
+    result.content_items.push(("vault_picker_create_new".to_string(), create_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:vault_picker_create_new",
+        create_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+    cy += create_btn_h + 12.0; // button + gap
+
+    // ── "Back" link ───────────────────────────────────────────────────────────
+    let is_back_hovered = hovered == Some("vault_picker_back");
+    let back_color = if is_back_hovered {
+        "rgba(254,255,238,0.70)"
+    } else {
+        "rgba(254,255,238,0.38)"
+    };
+    let back_h: f64 = 18.0;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(back_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Back to passphrase entry", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+
+    let back_w = 200.0;
+    let back_rect = WidgetRect::new(inner_x + (inner_w - back_w) / 2.0, cy, back_w, back_h);
+    result.content_items.push(("vault_picker_back".to_string(), back_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:vault_picker_back",
+        back_rect,
+        Sense::CLICK,
+        layer_id,
+    );
 }
 
 /// Render a "Skip for now" link button.

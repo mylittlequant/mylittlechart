@@ -58,14 +58,14 @@ impl Default for WatchlistColumnConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WatchlistSymbol {
     pub symbol: String,
-    /// Exchange identifier string (e.g. "Binance", "OKX").
-    /// Defaults to "Binance" for migration of old watchlists.
+    /// Exchange identifier string (e.g. "binance", "okx").
+    /// Defaults to "binance" for migration of old watchlists.
     #[serde(default = "default_exchange")]
     pub exchange: String,
 }
 
 fn default_exchange() -> String {
-    "Binance".to_string()
+    "binance".to_string()
 }
 
 impl WatchlistSymbol {
@@ -80,7 +80,7 @@ impl WatchlistSymbol {
 
 /// Deserializes either a plain string list or a WatchlistSymbol list.
 /// Old format: ["BTCUSDT", "ADAUSDT"]
-/// New format: [{"symbol": "BTCUSDT", "exchange": "Binance"}, ...]
+/// New format: [{"symbol": "BTCUSDT", "exchange": "binance"}, ...]
 fn deserialize_symbols<'de, D>(deserializer: D) -> Result<Vec<WatchlistSymbol>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -97,7 +97,7 @@ where
         .into_iter()
         .map(|item| match item {
             SymbolOrString::Symbol(ws) => ws,
-            SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "Binance".to_string()),
+            SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string()),
         })
         .collect())
 }
@@ -122,7 +122,7 @@ where
             .into_iter()
             .map(|item| match item {
                 SymbolOrString::Symbol(ws) => ws,
-                SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "Binance".to_string()),
+                SymbolOrString::Plain(s) => WatchlistSymbol::new(s, "binance".to_string()),
             })
             .collect()
     }))

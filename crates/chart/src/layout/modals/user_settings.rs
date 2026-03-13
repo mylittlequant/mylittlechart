@@ -13,8 +13,11 @@ use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::user_profile::profile::ClientMode;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
+use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::UserSettingsResult;
+use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
@@ -27,7 +30,7 @@ pub fn render_user_settings_modal(
     state: &UserSettingsState,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-    _current_time_ms: u64,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
 ) -> UserSettingsResult {
     let mut result = UserSettingsResult::default();
@@ -222,7 +225,9 @@ pub fn render_user_settings_modal(
                 state,
                 text_color,
                 toolbar_theme,
+                frame_theme,
                 &scroll_widget_theme,
+                current_time_ms,
                 input_coordinator,
                 &layer_id,
                 &mut result,
@@ -293,7 +298,9 @@ fn render_general_tab(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
     scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -317,8 +324,8 @@ fn render_general_tab(
     cy += 20.0;
 
     cy = render_profile_section(
-        ctx, x, cy, available_w, state, text_color, toolbar_theme,
-        input_coordinator, layer_id, result,
+        ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+        current_time_ms, input_coordinator, layer_id, result,
     );
     cy += 16.0;
 
@@ -582,6 +589,8 @@ fn render_profile_section(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -668,17 +677,40 @@ fn render_profile_section(
             let input_h = 22.0;
             let input_y = cy + (profile_row_h - input_h) / 2.0;
 
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(name_x, input_y, input_w, input_h, 3.0);
-            ctx.set_stroke_color(&toolbar_theme.accent);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(name_x, input_y, input_w, input_h, 3.0);
+            let input_rect = WidgetRect::new(name_x, input_y, input_w, input_h);
+            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-            ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(text_color);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&state.profile_rename_buffer, name_x + 6.0, input_y + input_h / 2.0);
+            let (sel_start, sel_end) = if let Some((lo, hi)) = state.profile_rename_editing.selection_range() {
+                (Some(lo), Some(hi))
+            } else {
+                (None, None)
+            };
+            let rename_input_config = InputConfig::new(&state.profile_rename_editing.text)
+                .with_focused(state.profile_rename_focused)
+                .with_cursor(state.profile_rename_editing.cursor)
+                .with_placeholder("Profile name...")
+                .with_selection(sel_start, sel_end);
+
+            let rename_input_result = draw_input(ctx, &rename_input_config, WidgetState::Normal, input_rect, &widget_theme);
+
+            // Register click target so mouse clicks focus this input
+            input_coordinator.register_on_layer(
+                "user_settings:profile_rename_input",
+                uzor::types::Rect::new(name_x, input_y, input_w, input_h),
+                Sense::CLICK,
+                layer_id,
+            );
+
+            // Draw blinking cursor when focused
+            if state.profile_rename_focused && state.profile_rename_editing.is_cursor_visible(current_time_ms) {
+                draw_input_cursor(
+                    ctx,
+                    rename_input_result.cursor_x,
+                    rename_input_result.cursor_y,
+                    rename_input_result.cursor_height,
+                    text_color,
+                );
+            }
 
             let btn_y = cy + (profile_row_h - btn_h) / 2.0;
 
@@ -902,25 +934,39 @@ fn render_profile_section(
         let input_h = 24.0;
         let input_w = available_w - 60.0 - 6.0;
 
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-        ctx.fill_rounded_rect(x, cy, input_w, input_h, 3.0);
-        ctx.set_stroke_color(&toolbar_theme.accent);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, input_w, input_h, 3.0);
+        let new_name_input_rect = WidgetRect::new(x, cy, input_w, input_h);
+        let widget_theme_new = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-        let placeholder = if state.new_profile_name.is_empty() {
-            "Profile name..."
+        let (new_sel_start, new_sel_end) = if let Some((lo, hi)) = state.new_profile_name_editing.selection_range() {
+            (Some(lo), Some(hi))
         } else {
-            ""
+            (None, None)
         };
-        ctx.set_font("13px sans-serif");
-        ctx.set_text_baseline(TextBaseline::Middle);
-        if state.new_profile_name.is_empty() {
-            ctx.set_fill_color("rgba(254,255,238,0.3)");
-            ctx.fill_text(placeholder, x + 6.0, cy + input_h / 2.0);
-        } else {
-            ctx.set_fill_color(text_color);
-            ctx.fill_text(&state.new_profile_name, x + 6.0, cy + input_h / 2.0);
+        let new_name_input_config = InputConfig::new(&state.new_profile_name_editing.text)
+            .with_focused(state.new_profile_name_focused)
+            .with_cursor(state.new_profile_name_editing.cursor)
+            .with_placeholder("Profile name...")
+            .with_selection(new_sel_start, new_sel_end);
+
+        let new_name_input_result = draw_input(ctx, &new_name_input_config, WidgetState::Normal, new_name_input_rect, &widget_theme_new);
+
+        // Register click target so mouse clicks focus this input
+        input_coordinator.register_on_layer(
+            "user_settings:new_profile_name_input",
+            uzor::types::Rect::new(x, cy, input_w, input_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        // Draw blinking cursor when focused
+        if state.new_profile_name_focused && state.new_profile_name_editing.is_cursor_visible(current_time_ms) {
+            draw_input_cursor(
+                ctx,
+                new_name_input_result.cursor_x,
+                new_name_input_result.cursor_y,
+                new_name_input_result.cursor_height,
+                text_color,
+            );
         }
 
         // Cancel (X) button — on same row as name input

@@ -111,46 +111,53 @@ pub fn presets_dir() -> PathBuf {
 // CRUD operations
 // =============================================================================
 
-/// Save preset — encrypted if key provided, plaintext otherwise.
+/// Save preset — always plaintext JSON.
 ///
-/// When `key` is `Some` the preset is written as `{id}.enc` and any existing
-/// `{id}.json` is removed.  Returns the path that was written.
-pub fn save_preset(preset: &ChartPreset, key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
+/// The `key` parameter is accepted for API compatibility but is ignored.
+/// Presets contain no sensitive data and are always stored as `{id}.json`.
+/// Any existing `{id}.enc` (from a previous encrypted session) is removed.
+pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     fs::create_dir_all(&dir)?;
-    match key {
-        Some(k) => {
-            let path = dir.join(format!("{}.enc", preset.id));
-            vault::save_encrypted(k, &path, preset)
-                .map_err(|e| PresetError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            // Remove plaintext version if it exists.
-            let _ = fs::remove_file(dir.join(format!("{}.json", preset.id)));
-            Ok(path)
-        }
-        None => {
-            let path = dir.join(format!("{}.json", preset.id));
-            let json = serde_json::to_string_pretty(preset)?;
-            fs::write(&path, json)?;
-            Ok(path)
-        }
-    }
+    let path = dir.join(format!("{}.json", preset.id));
+    let json = serde_json::to_string_pretty(preset)?;
+    fs::write(&path, &json)?;
+    // Remove any leftover encrypted version from before the plaintext-only policy.
+    let _ = fs::remove_file(dir.join(format!("{}.enc", preset.id)));
+    Ok(path)
 }
 
-/// Load preset — tries `.enc` first, falls back to `.json`.
+/// Load preset — always plaintext JSON.
+///
+/// If an `.enc` file exists (from a previous encrypted session) and a key is
+/// provided, the file is decrypted, re-saved as `.json`, and the `.enc` file
+/// is deleted (one-time migration).  If no key is available the `.enc` file is
+/// skipped and the `.json` version is tried instead.
 pub fn load_preset(id: &str, key: Option<&VaultKey>) -> Result<ChartPreset, PresetError> {
     let dir = presets_dir();
     let enc_path = dir.join(format!("{}.enc", id));
     let json_path = dir.join(format!("{}.json", id));
 
+    // Migration path: decrypt the legacy .enc file, persist as plaintext, then
+    // fall through to the normal JSON load below.
     if enc_path.exists() {
         if let Some(k) = key {
-            return vault::load_encrypted(k, &enc_path)
-                .map_err(|e| PresetError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+            match vault::load_encrypted::<ChartPreset>(k, &enc_path) {
+                Ok(preset) => {
+                    // Re-save as plaintext and delete the .enc file.
+                    if let Ok(json) = serde_json::to_string_pretty(&preset) {
+                        let _ = fs::write(&json_path, json);
+                    }
+                    let _ = fs::remove_file(&enc_path);
+                    return Ok(preset);
+                }
+                Err(e) => {
+                    eprintln!("[presets] failed to decrypt legacy {}.enc: {}", id, e);
+                    // Fall through to try .json below.
+                }
+            }
         }
-        return Err(PresetError::Io(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Encrypted preset but no key",
-        )));
+        // No key available — skip the .enc file and try .json.
     }
 
     if json_path.exists() {

@@ -718,10 +718,14 @@ impl ChartApp {
         // Initialize WatchlistManager with a minimal default.
         // The full list is restored from persisted user state by load_user_state().
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
-            vec![sidebar_content::watchlist::WatchlistSymbol::new(
-                "BTCUSDT".to_string(),
-                "Binance".to_string(),
-            )],
+            vec![
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+            ],
         );
 
         // Load persisted user state (templates, presets, profile) from disk.
@@ -807,19 +811,6 @@ impl ChartApp {
                 window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
-
-            // Add default indicators.
-            let symbol_str = "BTCUSDT".to_string();
-            let demo_window_id: Option<u64> = app.panel_app.panel_grid.docking().active_leaf()
-                .and_then(|leaf| app.panel_app.panel_grid.chart_id_for_leaf(leaf))
-                .map(|cid| cid.0);
-            for type_id in &["sma", "rsi", "macd"] {
-                if let Some(new_id) = app.indicator_manager.create_instance(type_id, &symbol_str) {
-                    if let (Some(wid), Some(inst)) = (demo_window_id, app.indicator_manager.get_instance_mut(new_id)) {
-                        inst.window_id = Some(wid);
-                    }
-                }
-            }
 
             // Ensure Binance connector and request paginated bars.
             bridge.ensure_connector(exchange_id);
@@ -980,10 +971,14 @@ impl ChartApp {
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
-            vec![sidebar_content::watchlist::WatchlistSymbol::new(
-                "BTCUSDT".to_string(),
-                "Binance".to_string(),
-            )],
+            vec![
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+            ],
         );
 
         // Fresh state — Binance default
@@ -1001,19 +996,6 @@ impl ChartApp {
             window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
         }
         app.panel_app.toolbar_config = ToolbarConfig::standalone();
-
-        // Add default indicators.
-        let symbol_str = "BTCUSDT".to_string();
-        let demo_window_id: Option<u64> = app.panel_app.panel_grid.docking().active_leaf()
-            .and_then(|leaf| app.panel_app.panel_grid.chart_id_for_leaf(leaf))
-            .map(|cid| cid.0);
-        for type_id in &["sma", "rsi", "macd"] {
-            if let Some(new_id) = app.indicator_manager.create_instance(type_id, &symbol_str) {
-                if let (Some(wid), Some(inst)) = (demo_window_id, app.indicator_manager.get_instance_mut(new_id)) {
-                    inst.window_id = Some(wid);
-                }
-            }
-        }
 
         // Create a single "Untitled" preset tab.
         let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
@@ -1056,7 +1038,7 @@ impl ChartApp {
         window_id: String,
         restore: Option<&zengeld_chart::WindowState>,
         profile: &zengeld_chart::UserProfile,
-        user_manager: &zengeld_chart::UserManager,
+        user_manager: &zengeld_chart::ProfileManager,
     ) -> Self {
         let mut app = Self {
             panel_app: ChartPanelApp::new("BTCUSDT"),
@@ -1141,10 +1123,14 @@ impl ChartApp {
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
-            vec![sidebar_content::watchlist::WatchlistSymbol::new(
-                "BTCUSDT".to_string(),
-                "Binance".to_string(),
-            )],
+            vec![
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("ETHUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("SOLUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BNBUSDT".to_string(), "binance".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "bybit".to_string()),
+                sidebar_content::watchlist::WatchlistSymbol::new("BTCUSDT".to_string(), "okx".to_string()),
+            ],
         );
 
         // Phase 4: use app-level UserManager (loaded once in main.rs) instead of
@@ -1274,18 +1260,6 @@ impl ChartApp {
                 window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
-
-            let symbol_str = "BTCUSDT".to_string();
-            let demo_window_id: Option<u64> = app.panel_app.panel_grid.docking().active_leaf()
-                .and_then(|leaf| app.panel_app.panel_grid.chart_id_for_leaf(leaf))
-                .map(|cid| cid.0);
-            for type_id in &["sma", "rsi", "macd"] {
-                if let Some(new_id) = app.indicator_manager.create_instance(type_id, &symbol_str) {
-                    if let (Some(wid), Some(inst)) = (demo_window_id, app.indicator_manager.get_instance_mut(new_id)) {
-                        inst.window_id = Some(wid);
-                    }
-                }
-            }
 
             // Create an "Untitled" preset tab if no restore or no valid preset.
             if restore.map_or(true, |_| !has_saved_preset) {

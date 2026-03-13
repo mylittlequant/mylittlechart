@@ -104,36 +104,33 @@ pub fn category_dir(category: &str) -> PathBuf {
 // Generic CRUD operations
 // =============================================================================
 
-/// Save a template — encrypted if key provided, plaintext otherwise.
+/// Save a template — always plaintext JSON.
 ///
-/// When `key` is `Some`, writes `{dir}/{id}.enc` and removes any existing
-/// `{dir}/{id}.json`.
+/// The `key` parameter is accepted for API compatibility but is ignored.
+/// Templates contain no sensitive data and are always stored as `{id}.json`.
+/// Any existing `{id}.enc` (from a previous encrypted session) is removed.
 pub fn save_template<T: Serialize>(
     template: &T,
     id: &str,
     dir: &Path,
-    key: Option<&VaultKey>,
+    _key: Option<&VaultKey>,
 ) -> Result<(), TemplateError> {
     fs::create_dir_all(dir)?;
-    match key {
-        Some(k) => {
-            let path = dir.join(format!("{}.enc", id));
-            vault::save_encrypted(k, &path, template)
-                .map_err(|e| TemplateError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            // Remove plaintext version.
-            let _ = fs::remove_file(dir.join(format!("{}.json", id)));
-        }
-        None => {
-            let path = dir.join(format!("{}.json", id));
-            let json = serde_json::to_string_pretty(template)?;
-            fs::write(&path, json)?;
-        }
-    }
+    let path = dir.join(format!("{}.json", id));
+    let json = serde_json::to_string_pretty(template)?;
+    fs::write(&path, &json)?;
+    // Remove any leftover encrypted version from before the plaintext-only policy.
+    let _ = fs::remove_file(dir.join(format!("{}.enc", id)));
     Ok(())
 }
 
-/// Load a template — tries `.enc` first, falls back to `.json`.
-pub fn load_template<T: DeserializeOwned>(
+/// Load a template — always plaintext JSON.
+///
+/// If an `.enc` file exists (from a previous encrypted session) and a key is
+/// provided, the file is decrypted, re-saved as `.json`, and the `.enc` file
+/// is deleted (one-time migration).  If no key is available the `.enc` file is
+/// skipped and the `.json` version is tried instead.
+pub fn load_template<T: DeserializeOwned + Serialize>(
     id: &str,
     dir: &Path,
     key: Option<&VaultKey>,
@@ -141,15 +138,25 @@ pub fn load_template<T: DeserializeOwned>(
     let enc_path = dir.join(format!("{}.enc", id));
     let json_path = dir.join(format!("{}.json", id));
 
+    // Migration path: decrypt the legacy .enc file, persist as plaintext, then
+    // fall through to the normal JSON load.
     if enc_path.exists() {
         if let Some(k) = key {
-            return vault::load_encrypted(k, &enc_path)
-                .map_err(|e| TemplateError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+            match vault::load_encrypted::<T>(k, &enc_path) {
+                Ok(value) => {
+                    if let Ok(json) = serde_json::to_string_pretty(&value) {
+                        let _ = fs::write(&json_path, json);
+                    }
+                    let _ = fs::remove_file(&enc_path);
+                    return Ok(value);
+                }
+                Err(e) => {
+                    eprintln!("[templates] failed to decrypt legacy {}.enc: {}", id, e);
+                    // Fall through to try .json.
+                }
+            }
         }
-        return Err(TemplateError::Io(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Encrypted template but no key",
-        )));
+        // No key — skip .enc and try .json.
     }
 
     if !json_path.exists() {
@@ -160,11 +167,13 @@ pub fn load_template<T: DeserializeOwned>(
     Ok(serde_json::from_str(&json)?)
 }
 
-/// Load all templates of type `T` from `dir`, handling both `.enc` and `.json`.
+/// Load all templates of type `T` from `dir`.
 ///
-/// Encrypted files without a key are silently skipped.  Corrupted or
-/// unreadable files are logged and skipped.
-pub fn load_all_templates<T: DeserializeOwned>(dir: &Path, key: Option<&VaultKey>) -> Vec<T> {
+/// Always reads `.json` files as plaintext.  Legacy `.enc` files are migrated
+/// on the fly when a key is provided (decrypt → write `.json` → delete `.enc`).
+/// `.enc` files without a key are silently skipped.  Corrupted or unreadable
+/// files are logged and skipped.
+pub fn load_all_templates<T: DeserializeOwned + Serialize>(dir: &Path, key: Option<&VaultKey>) -> Vec<T> {
     let mut results = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -177,10 +186,19 @@ pub fn load_all_templates<T: DeserializeOwned>(dir: &Path, key: Option<&VaultKey
             "enc" => {
                 if let Some(k) = key {
                     match vault::load_encrypted::<T>(k, &path) {
-                        Ok(t) => results.push(t),
-                        Err(e) => eprintln!("[templates] failed to load encrypted {}: {}", path.display(), e),
+                        Ok(t) => {
+                            // Migrate: write plaintext JSON and remove .enc.
+                            let json_path = path.with_extension("json");
+                            if let Ok(json) = serde_json::to_string_pretty(&t) {
+                                let _ = fs::write(&json_path, json);
+                            }
+                            let _ = fs::remove_file(&path);
+                            results.push(t);
+                        }
+                        Err(e) => eprintln!("[templates] failed to decrypt legacy {}: {}", path.display(), e),
                     }
                 }
+                // No key: silently skip .enc files.
             }
             "json" => {
                 match fs::read_to_string(&path) {

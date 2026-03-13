@@ -4158,11 +4158,12 @@ impl ChartApp {
     /// Routes to active text editing state (primitive settings text_content).
     /// On Enter, commits the edited text back to the primitive.
     pub fn on_char_input(&mut self, ch: char) {
-        // While the vault is locked, only the passphrase input field may receive
-        // keyboard events.  All other char routing is blocked to prevent data leaking
-        // into hidden inputs or triggering chart keyboard shortcuts.
-        if self.panel_app.user_settings_state.needs_vault_unlock
+        // While the profile manager is shown, only the passphrase and name inputs
+        // may receive keyboard events.  All other char routing is blocked to prevent
+        // data leaking into hidden inputs or triggering chart keyboard shortcuts.
+        if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
+            && !self.panel_app.user_settings_state.new_profile_name_focused
         {
             return;
         }
@@ -4340,8 +4341,8 @@ impl ChartApp {
             return;
         }
 
-        // Handle E2E passphrase input in User Settings Sync tab, Welcome Wizard, or Vault Unlock
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock)
+        // Handle E2E passphrase input in User Settings Sync tab, Welcome Wizard, or Profile Manager
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock || self.panel_app.user_settings_state.show_profile_manager)
             && self.panel_app.user_settings_state.e2e_passphrase_focused
         {
             let editing = &mut self.panel_app.user_settings_state.e2e_passphrase_editing;
@@ -4377,6 +4378,101 @@ impl ChartApp {
                 c if !c.is_control() => {
                     // Any character typed — clear the error so the user can retry.
                     self.panel_app.user_settings_state.vault_unlock_error = None;
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle profile rename text input
+        if self.panel_app.user_settings_state.is_open
+            && self.panel_app.user_settings_state.profile_rename_focused
+        {
+            let editing = &mut self.panel_app.user_settings_state.profile_rename_editing;
+            match ch {
+                '\r' | '\n' => {
+                    // Enter submits the rename — fire the same action as clicking Save.
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    let new_name = editing.text.trim().to_string();
+                    if !new_name.is_empty() {
+                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        self.panel_app.user_settings_state.profile_rename_mode = false;
+                        self.panel_app.user_settings_state.profile_rename_target_id = None;
+                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
+                    }
+                }
+                '\x1b' => {
+                    // Escape cancels.
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    self.panel_app.user_settings_state.profile_rename_mode = false;
+                    self.panel_app.user_settings_state.profile_rename_target_id = None;
+                }
+                '\x08' => {
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
+                    }
+                }
+                c if !c.is_control() => {
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle new profile name text input (in settings modal OR profile manager)
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager)
+            && self.panel_app.user_settings_state.new_profile_name_focused
+        {
+            let editing = &mut self.panel_app.user_settings_state.new_profile_name_editing;
+            match ch {
+                '\r' | '\n' => {
+                    // Enter submits the new profile creation.
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    let name = editing.text.trim().to_string();
+                    if !name.is_empty() {
+                        let mode = if self.panel_app.user_settings_state.new_profile_mode_connected {
+                            "connected"
+                        } else {
+                            "standalone"
+                        };
+                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
+                        self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                        self.panel_app.user_settings_state.new_profile_mode_connected = false;
+                    }
+                }
+                '\x1b' => {
+                    // Escape cancels.
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                }
+                '\x08' => {
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
+                    }
+                }
+                c if !c.is_control() => {
                     if editing.has_selection() {
                         editing.delete_selection();
                     }
@@ -4915,11 +5011,12 @@ impl ChartApp {
     pub fn on_key_press(&mut self, key: super::input::KeyPress) {
         use super::input::KeyPress;
 
-        // While the vault is locked, only allow key events to reach the passphrase field.
-        // This prevents keyboard shortcuts (Escape, arrow keys, etc.) from operating on
-        // the hidden chart UI while the unlock overlay is displayed.
-        if self.panel_app.user_settings_state.needs_vault_unlock
+        // While the profile manager is shown, only allow key events to reach the
+        // passphrase or name input fields.  This prevents keyboard shortcuts
+        // (Escape, arrow keys, etc.) from operating on the hidden chart UI.
+        if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
+            && !self.panel_app.user_settings_state.new_profile_name_focused
         {
             return;
         }
@@ -5060,6 +5157,22 @@ impl ChartApp {
                 // ── Undo/Redo — not consumed by text fields ───────────────────
                 KeyPress::Undo | KeyPress::Redo => false,
             }
+        }
+
+        // ── Profile rename text input key events ──────────────────────────────
+        if self.panel_app.user_settings_state.is_open
+            && self.panel_app.user_settings_state.profile_rename_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.profile_rename_editing, key);
+            return;
+        }
+
+        // ── New profile name text input key events (settings modal OR profile manager) ──
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager)
+            && self.panel_app.user_settings_state.new_profile_name_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.new_profile_name_editing, key);
+            return;
         }
 
         // ── Global undo/redo — handled before any modal short-circuits ────────
@@ -5660,17 +5773,15 @@ impl ChartApp {
     /// but not fully wired — modal input routing would require a handle_input()
     /// on ChartPanelApp which does not exist at this checkpoint.
     fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
-        // === Vault lock guard — block everything while the vault is locked ===
-        // While `needs_vault_unlock` is true the ONLY interactive elements must
-        // be the vault unlock overlay: passphrase input, unlock button, and (after
-        // 3 failures) the "create new profile" link.  All other UI is silently
+        // === Profile Manager lock guard — block everything while it is shown ===
+        // While `show_profile_manager` is true the ONLY interactive elements are
+        // those inside the profile manager overlay.  All other UI is silently
         // swallowed so the user cannot reach the chart, toolbar, or settings until
-        // their data is unlocked (or they choose to start fresh).
-        if self.panel_app.user_settings_state.needs_vault_unlock {
-            let allowed = widget_id.starts_with("vault_unlock:")
-                || widget_id == "user_settings:vault_unlock_btn"
-                || widget_id == "user_settings:vault_unlock_new_profile"
-                || widget_id == "user_settings:e2e_passphrase_input";
+        // they select a profile or dismiss the manager.
+        if self.panel_app.user_settings_state.show_profile_manager {
+            let allowed = widget_id.starts_with("profile_manager:")
+                || widget_id == "user_settings:e2e_passphrase_input"
+                || widget_id == "user_settings:profile_mgr:name_input";
             if !allowed {
                 return;
             }
@@ -7069,7 +7180,9 @@ impl ChartApp {
                     eprintln!("[ChartApp] user settings closed via X");
                 }
                 "modal_bg" => {
-                    // Absorb click — no-op.
+                    // Absorb click — defocus any active inline text inputs.
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
                 }
                 "header" => {
                     // Drag start handled in mouse_down.
@@ -7384,12 +7497,67 @@ impl ChartApp {
                         eprintln!("[ChartApp] vault_unlock: passphrase submitted, awaiting validation");
                     }
                 }
-                // ── Vault unlock: forgot passphrase / create new profile ──────
-                "vault_unlock_new_profile" => {
-                    // User has failed too many times and wants to start fresh.
-                    // Signal main.rs to dismiss the vault lock and open the wizard.
-                    self.pending_updater_cmd = Some("vault_skip_to_wizard".to_string());
-                    eprintln!("[ChartApp] vault_unlock: user chose to create a new profile");
+                // ── Profile Manager handlers ───────────────────────────────────
+                "profile_mgr:back" => {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: back to profile list");
+                }
+                "profile_mgr:create_new" => {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreateNew;
+                    self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
+                    self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.new_profile_standalone = true;
+                    eprintln!("[ChartApp] profile_mgr: create new profile page");
+                }
+                "profile_mgr:mode_standalone" => {
+                    self.panel_app.user_settings_state.new_profile_standalone = true;
+                }
+                "profile_mgr:mode_connected" => {
+                    self.panel_app.user_settings_state.new_profile_standalone = false;
+                }
+                "profile_mgr:unlock" => {
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    if !passphrase.is_empty() {
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        eprintln!("[ChartApp] profile_mgr: unlock passphrase submitted");
+                    }
+                }
+                "profile_mgr:create_passphrase" => {
+                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    if !passphrase.is_empty() {
+                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        eprintln!("[ChartApp] profile_mgr: create passphrase submitted");
+                    }
+                }
+                "profile_mgr:skip_encryption" => {
+                    self.panel_app.user_settings_state.show_profile_manager = false;
+                    eprintln!("[ChartApp] profile_mgr: skipped encryption");
+                }
+                "profile_mgr:create_confirm" => {
+                    let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
+                    if !name.is_empty() {
+                        let mode = if self.panel_app.user_settings_state.new_profile_standalone {
+                            "standalone"
+                        } else {
+                            "connected"
+                        };
+                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
+                        eprintln!("[ChartApp] profile_mgr: creating profile '{}' mode={}", name, mode);
+                    }
+                }
+                "profile_mgr:name_input" => {
+                    self.panel_app.user_settings_state.new_profile_name_focused = true;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: name input focused");
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {
@@ -7398,14 +7566,26 @@ impl ChartApp {
                     self.panel_app.user_settings_state.wizard_page = 1;
                     eprintln!("[ChartApp] wizard: legacy wizard_e2e handler");
                 }
+                // ── Profile inline input focus ─────────────────────────────────
+                "profile_rename_input" => {
+                    self.panel_app.user_settings_state.profile_rename_focused = true;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    eprintln!("[ChartApp] profile_rename_input: focused");
+                }
+                "new_profile_name_input" => {
+                    self.panel_app.user_settings_state.new_profile_name_focused = true;
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    eprintln!("[ChartApp] new_profile_name_input: focused");
+                }
                 // ── Profile handlers ───────────────────────────────────────────
                 "profile_rename_confirm" => {
-                    let new_name = self.panel_app.user_settings_state.profile_rename_buffer.trim().to_string();
+                    let new_name = self.panel_app.user_settings_state.profile_rename_editing.text.trim().to_string();
                     if !new_name.is_empty() {
                         // Update display name for active profile (rename target is always the active profile
                         // since only the active row shows the Rename button).
                         self.panel_app.user_settings_state.profile_display_name = new_name.clone();
                         self.panel_app.user_settings_state.profile_rename_mode = false;
+                        self.panel_app.user_settings_state.profile_rename_focused = false;
                         self.panel_app.user_settings_state.profile_rename_target_id = None;
                         self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
                         eprintln!("[ChartApp] profile_rename_confirm: new name = {}", new_name);
@@ -7413,16 +7593,23 @@ impl ChartApp {
                 }
                 "profile_rename_cancel" => {
                     self.panel_app.user_settings_state.profile_rename_mode = false;
+                    self.panel_app.user_settings_state.profile_rename_focused = false;
+                    self.panel_app.user_settings_state.profile_rename_editing.text.clear();
+                    self.panel_app.user_settings_state.profile_rename_editing.cursor = 0;
                     self.panel_app.user_settings_state.profile_rename_target_id = None;
                     eprintln!("[ChartApp] profile_rename_cancel");
                 }
                 "profile_new" => {
-                    self.panel_app.user_settings_state.show_new_profile_dialog = true;
-                    self.panel_app.user_settings_state.new_profile_name = String::new();
+                    let uss = &mut self.panel_app.user_settings_state;
+                    uss.show_new_profile_dialog = true;
+                    uss.new_profile_name_editing.text = String::new();
+                    uss.new_profile_name_editing.cursor = 0;
+                    uss.new_profile_name_editing.selection_start = None;
+                    uss.new_profile_name_focused = true;
                     eprintln!("[ChartApp] profile_new: opening dialog");
                 }
                 "profile_new_confirm" => {
-                    let name = self.panel_app.user_settings_state.new_profile_name.trim().to_string();
+                    let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if !name.is_empty() {
                         let mode = if self.panel_app.user_settings_state.new_profile_mode_connected {
                             "connected"
@@ -7431,24 +7618,51 @@ impl ChartApp {
                         };
                         self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
                         self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
+                        self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
+                        self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
                         self.panel_app.user_settings_state.new_profile_mode_connected = false;
                         eprintln!("[ChartApp] profile_new_confirm: creating profile '{}' ({})", name, mode);
                     }
                 }
                 "profile_new_cancel" => {
                     self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
+                    self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
                     eprintln!("[ChartApp] profile_new_cancel");
+                }
+                rest if rest.starts_with("vault_picker_profile:") => {
+                    let profile_id = &rest["vault_picker_profile:".len()..];
+                    self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
+                    eprintln!("[ChartApp] vault_picker: switching to profile {}", profile_id);
+                }
+                rest if rest.starts_with("profile_mgr:select:") => {
+                    let profile_id = &rest["profile_mgr:select:".len()..];
+                    if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
+                        // Already on this profile — just dismiss
+                        self.panel_app.user_settings_state.show_profile_manager = false;
+                        eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                    } else {
+                        // Switch to the selected profile
+                        self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
+                        eprintln!("[ChartApp] profile_mgr: switching to profile {}", profile_id);
+                    }
                 }
                 rest if rest.starts_with("profile_rename:") => {
                     let id = &rest["profile_rename:".len()..];
                     let uss = &mut self.panel_app.user_settings_state;
-                    // Find the display name for this profile to pre-fill the buffer
+                    // Find the display name for this profile to pre-fill the input
                     let current_name = uss.available_profiles.iter()
                         .find(|(pid, _, _, _)| pid == id)
                         .map(|(_, name, _, _)| name.clone())
                         .unwrap_or_else(|| uss.profile_display_name.clone());
+                    let cursor = current_name.chars().count();
                     uss.profile_rename_mode = true;
-                    uss.profile_rename_buffer = current_name;
+                    uss.profile_rename_editing.text = current_name;
+                    uss.profile_rename_editing.cursor = cursor;
+                    uss.profile_rename_editing.selection_start = None;
+                    uss.profile_rename_focused = true;
                     uss.profile_rename_target_id = Some(id.to_string());
                     eprintln!("[ChartApp] profile_rename:{}: entering rename mode", id);
                 }

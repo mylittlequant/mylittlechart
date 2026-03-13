@@ -11,8 +11,8 @@
 //!
 //! - [`app_data_dir`] — resolve (and create) the OS app-data root.
 //! - [`get_user_data_dir`] — backward-compatible alias for [`app_data_dir`].
-//! - [`save_profile`] / [`load_profile`] — write/read `profile.enc` (or
-//!   `profile.json` when no encryption key is available).
+//! - [`save_profile`] / [`load_profile`] — write/read `profile.json` (plaintext,
+//!   no credentials) and `vault.enc` (encrypted credentials, when key is available).
 //! - [`save_json`] / [`load_json`] — generic helpers for any `Serialize` /
 //!   `DeserializeOwned` type at an arbitrary path inside the data dir.
 //!
@@ -167,18 +167,15 @@ pub fn get_user_data_dir() -> PathBuf {
 // profile.json / profile.enc helpers
 // =============================================================================
 
-/// Save profile using the new split model.
+/// Save profile using the split model.
 ///
 /// `profile.json` is **always** written as plaintext (no credentials).
 /// Credential fields (`agent_api_keys`, `exchange_keys`, `notification_settings`,
-/// `agent_api_key`) are extracted into a [`VaultSecrets`] struct and saved
-/// separately:
-/// - When `key` is `Some`: written as `vault.enc` (AES-GCM encrypted).
-/// - When `key` is `None`: written as `vault.json` (plaintext — same security
-///   level as the legacy no-passphrase mode).
+/// `agent_api_key`) are extracted into a [`VaultSecrets`] struct and written
+/// to `vault.enc` only when `key` is `Some`.
 ///
-/// Any legacy `profile.enc` from the old all-or-nothing scheme is removed
-/// after a successful write so future loads use the new split files.
+/// When `key` is `None` (vault not yet unlocked), the vault file from the
+/// previous session is left untouched — credentials are not lost.
 pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(), ProfileError> {
     let dir = active_profile_data_dir();
     fs::create_dir_all(&dir)?;
@@ -194,70 +191,32 @@ pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(),
     let json = serde_json::to_string_pretty(&plaintext_profile)?;
     fs::write(&json_path, &json)?;
 
-    // Write vault (encrypted or plaintext depending on whether we have a key).
-    match key {
-        Some(k) => {
-            let vault_path = dir.join("vault.enc");
-            vault::save_encrypted(k, &vault_path, &secrets)
-                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            // Remove plaintext vault if it exists (upgrade from no-passphrase).
-            let _ = fs::remove_file(dir.join("vault.json"));
-        }
-        None => {
-            let vault_path = dir.join("vault.json");
-            let vault_json = serde_json::to_string_pretty(&secrets)?;
-            fs::write(&vault_path, &vault_json)?;
-        }
+    // Write vault.enc only when the key is available.
+    // When key is None (before vault unlock), vault.enc from the previous session
+    // is left untouched — credentials are not lost.
+    if let Some(k) = key {
+        let vault_path = dir.join("vault.enc");
+        vault::save_encrypted(k, &vault_path, &secrets)
+            .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
     }
-
-    // Remove legacy profile.enc so future loads go through the new split path.
-    let _ = fs::remove_file(dir.join("profile.enc"));
 
     Ok(())
 }
 
-/// Load profile using the new split model.
+/// Load profile using the split model.
 ///
-/// Always loads `profile.json` (plaintext) first.  If a vault file exists
-/// (`vault.enc` or `vault.json`), the credentials are decrypted and merged
-/// back into the returned [`UserProfile`].
+/// Always loads `profile.json` (plaintext, no credentials) first.
+/// If `vault.enc` exists and a key is provided, the credentials are
+/// decrypted and merged back into the returned [`UserProfile`].
 ///
-/// **Migration from legacy `profile.enc`:**
-/// If `profile.enc` exists but `profile.json` does not, this function
-/// decrypts `profile.enc` (key required), writes the split files to disk,
-/// then returns the profile with secrets already populated in memory.
-///
-/// If `profile.enc` exists without a key, returns
-/// `Err(ProfileError::Io(PermissionDenied))` so the caller can show the
-/// vault unlock overlay.
+/// When no key is available (vault not yet unlocked) the profile is still
+/// returned — just without credentials populated.
 pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError> {
     let dir = active_profile_data_dir();
-    let enc_path = dir.join("profile.enc");
     let json_path = dir.join("profile.json");
     let vault_enc_path = dir.join("vault.enc");
-    let vault_json_path = dir.join("vault.json");
 
-    // ── Migration: legacy profile.enc → split files ──────────────────────────
-    // Only migrate when profile.json does not yet exist so we do this once.
-    if enc_path.exists() && !json_path.exists() {
-        if let Some(k) = key {
-            // Decrypt the old monolithic profile.
-            let mut profile: UserProfile = vault::load_encrypted(k, &enc_path)
-                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-            profile.notification_settings.telegram.migrate_legacy();
-            // Write split files and remove profile.enc.
-            save_profile(&profile, Some(k))?;
-            eprintln!("[storage] Migrated profile.enc → profile.json + vault.enc");
-            return Ok(profile);
-        }
-        // profile.enc exists but no key — caller must provide one.
-        return Err(ProfileError::Io(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Encrypted profile found but no key provided",
-        )));
-    }
-
-    // ── Normal load: profile.json + optional vault ────────────────────────────
+    // Load plaintext profile (always readable without key).
     let mut profile = if json_path.exists() {
         let json = fs::read_to_string(&json_path)?;
         serde_json::from_str::<UserProfile>(&json)?
@@ -265,7 +224,7 @@ pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError>
         UserProfile::new()
     };
 
-    // Load and merge vault secrets if available.
+    // Merge encrypted vault secrets if key is available.
     if vault_enc_path.exists() {
         if let Some(k) = key {
             match vault::load_encrypted::<VaultSecrets>(k, &vault_enc_path) {
@@ -277,18 +236,6 @@ pub fn load_profile(key: Option<&VaultKey>) -> Result<UserProfile, ProfileError>
             }
         }
         // No key but vault.enc exists: profile loads fine, secrets stay empty.
-        // This is expected if the user has not unlocked the vault yet.
-    } else if vault_json_path.exists() {
-        // No-passphrase install — secrets are in plaintext vault.json.
-        match fs::read_to_string(&vault_json_path) {
-            Ok(vault_json) => {
-                match serde_json::from_str::<VaultSecrets>(&vault_json) {
-                    Ok(secrets) => secrets.merge_into(&mut profile),
-                    Err(e) => eprintln!("[storage] Failed to parse vault.json: {}", e),
-                }
-            }
-            Err(e) => eprintln!("[storage] Failed to read vault.json: {}", e),
-        }
     }
 
     Ok(profile)
@@ -322,25 +269,38 @@ pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) ->
     Ok(())
 }
 
-/// Generic load — tries `.enc` first, falls back to the original path.
+/// Generic load — plaintext by default, with optional legacy `.enc` migration.
 ///
-/// If an `.enc` file is found but no key is provided, returns a
-/// `PermissionDenied` error rather than silently returning corrupted data.
-pub fn load_json<T: DeserializeOwned>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
+/// If an `.enc` file exists and a key is provided, the file is decrypted,
+/// re-saved as plaintext JSON, and the `.enc` file is deleted (one-time
+/// migration).  If an `.enc` file exists but no key is provided, it is
+/// silently skipped and the plaintext `.json` version is tried instead
+/// (non-sensitive files like watchlists should always be loadable without a key).
+pub fn load_json<T: DeserializeOwned + Serialize>(path: &Path, key: Option<&VaultKey>) -> Result<T, ProfileError> {
     let enc_path = path.with_extension("enc");
 
     if enc_path.exists() {
         if let Some(k) = key {
-            return vault::load_encrypted(k, &enc_path)
-                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+            // Attempt to decrypt and migrate to plaintext.
+            match vault::load_encrypted::<T>(k, &enc_path) {
+                Ok(value) => {
+                    // Persist as plaintext and remove .enc.
+                    if let Ok(json) = serde_json::to_string_pretty(&value) {
+                        let _ = fs::write(path, json);
+                    }
+                    let _ = fs::remove_file(&enc_path);
+                    return Ok(value);
+                }
+                Err(e) => {
+                    eprintln!("[storage] failed to decrypt legacy {:?}: {}", enc_path, e);
+                    // Fall through to try plaintext.
+                }
+            }
         }
-        return Err(ProfileError::Io(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "Encrypted file found but no key provided",
-        )));
+        // No key provided — skip .enc and fall through to plaintext.
     }
 
-    // Fall back to plaintext.
+    // Load plaintext.
     let json = fs::read_to_string(path)?;
     let value: T = serde_json::from_str(&json)?;
     Ok(value)
@@ -411,94 +371,9 @@ pub fn active_profile_data_dir() -> PathBuf {
 // Legacy profile migration
 // =============================================================================
 
-/// Migrate an existing flat-layout profile into the new `profiles/` structure.
-///
-/// Returns `Ok(true)` if migration was performed, `Ok(false)` if it was
-/// skipped (already migrated or no existing data to migrate).
-///
-/// Migration steps:
-/// 1. Copy `profile.json` → `profiles/default/profile.json`
-/// 2. Move `presets/`, `watchlists.json`, `templates/`, `snapshots/` into
-///    `profiles/default/`
-/// 3. Assign a UUID and creation timestamp to the migrated profile.
-/// 4. Write `profiles/index.json` with this profile as active.
+/// Legacy migration removed — all profiles are already in the split format.
 pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
-    let index_path = profiles_dir().join("index.json");
-    if index_path.exists() {
-        // Already migrated.
-        return Ok(false);
-    }
-
-    let root = app_data_dir();
-    let legacy_profile = root.join("profile.json");
-    if !legacy_profile.exists() {
-        // Fresh install — nothing to migrate.
-        return Ok(false);
-    }
-
-    // Create the default profile subdirectory.
-    let default_dir = profiles_dir().join("default");
-    fs::create_dir_all(&default_dir).map_err(|e| e.to_string())?;
-
-    // Move profile.json.
-    fs::rename(&legacy_profile, default_dir.join("profile.json")).map_err(|e| e.to_string())?;
-
-    // Move optional data files/dirs (best effort — ignore missing).
-    let moves: &[(&str, &str)] = &[
-        ("presets", "presets"),
-        ("watchlists.json", "watchlists.json"),
-        ("templates", "templates"),
-        ("snapshots", "snapshots"),
-    ];
-    for (src_name, dst_name) in moves {
-        let src = root.join(src_name);
-        if src.exists() {
-            let dst = default_dir.join(dst_name);
-            let _ = fs::rename(&src, &dst);
-        }
-    }
-
-    // Load the migrated profile, assign UUID + timestamp, save back.
-    let profile_path = default_dir.join("profile.json");
-    let mut profile: UserProfile = fs::read_to_string(&profile_path)
-        .ok()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_else(UserProfile::new);
-
-    let new_id = uuid::Uuid::new_v4().to_string();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    profile.profile_id = new_id.clone();
-    profile.profile_created_at = now;
-    if profile.display_name.is_empty() || profile.display_name == "Default" {
-        profile.display_name = "Default".to_string();
-    }
-    if profile.avatar.is_empty() {
-        profile.avatar = "chart".to_string();
-    }
-
-    let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
-    fs::write(&profile_path, json).map_err(|e| e.to_string())?;
-
-    // Write the index.
-    let meta = ProfileMeta {
-        id: new_id.clone(),
-        display_name: profile.display_name.clone(),
-        avatar: profile.avatar.clone(),
-        created_at: now,
-        dir_name: "default".to_string(),
-        client_mode: profile.client_mode,
-    };
-    let index = ProfileIndex {
-        active_profile_id: new_id,
-        profiles: vec![meta],
-    };
-    save_profile_index(&index)?;
-
-    Ok(true)
+    Ok(false)
 }
 
 // =============================================================================

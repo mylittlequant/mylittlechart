@@ -470,6 +470,7 @@ pub use user_profile::{
 
 // Unified user state manager
 pub use user_manager::UserManager;
+pub use user_manager::{ProfileInfo, ProfileManager, SwitchData};
 
 // =============================================================================
 // Tests

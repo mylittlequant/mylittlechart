@@ -264,9 +264,9 @@ impl UserManager {
             Err(e) => eprintln!("[UserManager] failed to list presets: {}", e),
         }
 
-        // Settings snapshots.
+        // Settings snapshots — always plaintext, never encrypted.
         let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
-        let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, key_ref) {
+        let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, None) {
             Ok(s) => {
                 eprintln!("[UserManager] loaded settings snapshots");
                 s

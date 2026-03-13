@@ -3175,6 +3175,32 @@ impl Default for UserSettingsTab {
     }
 }
 
+// =============================================================================
+// Profile Manager
+// =============================================================================
+
+/// Navigation pages for the unified Profile Manager overlay.
+///
+/// Replaces the old vault_unlock overlay and profile picker with a single
+/// full-screen modal that handles all profile-related flows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProfileManagerPage {
+    /// Main page: list of all profiles with status indicators.
+    ProfileList,
+    /// Enter passphrase to unlock a profile that has vault.enc.
+    UnlockPassphrase,
+    /// Create a new passphrase for a profile that has no vault.
+    CreatePassphrase,
+    /// Creating a brand new profile (name input).
+    CreateNew,
+}
+
+impl Default for ProfileManagerPage {
+    fn default() -> Self {
+        Self::ProfileList
+    }
+}
+
 /// Display info for a managed API key shown in the key manager list.
 ///
 /// Only metadata is stored here — the raw key is never shown after creation.
@@ -3326,6 +3352,20 @@ pub struct UserSettingsState {
     /// Number of consecutive failed vault unlock attempts.
     /// After 3 failures the "Forgot passphrase? Create new profile" button is shown.
     pub vault_unlock_attempts: u32,
+    // ── PROFILE MANAGER ───────────────────────────────────────────────────────
+    /// True when the profile manager overlay is shown (replaces vault_unlock + profile picker).
+    pub show_profile_manager: bool,
+    /// Current page of the profile manager.
+    pub profile_manager_page: ProfileManagerPage,
+    /// Profile ID being operated on in the profile manager (unlock/create passphrase target).
+    pub profile_manager_target_id: String,
+    /// Display name of the target profile (for showing in headers).
+    pub profile_manager_target_name: String,
+    /// Whether each profile has vault encryption.
+    /// Vec<(id, display_name, avatar, client_mode, has_vault)>.
+    pub profiles_with_vault_status: Vec<(String, String, String, ClientMode, bool)>,
+    /// Whether new profile is standalone mode (true) or connected (false).
+    pub new_profile_standalone: bool,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
     /// 8-char device code for device linking displayed on page 1.
@@ -3355,8 +3395,10 @@ pub struct UserSettingsState {
     pub available_profiles: Vec<(String, String, String, ClientMode)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
-    /// Text buffer for the inline rename input.
-    pub profile_rename_buffer: String,
+    /// Text editing state for the inline rename input.
+    pub profile_rename_editing: TextEditingState,
+    /// Whether the profile rename input field is focused for keyboard input.
+    pub profile_rename_focused: bool,
     /// ID of the profile row currently being renamed (None = not renaming).
     pub profile_rename_target_id: Option<String>,
     /// Whether the avatar picker popover is open.
@@ -3365,8 +3407,10 @@ pub struct UserSettingsState {
     pub profile_avatar_target_id: Option<String>,
     /// Whether the "New Profile" inline dialog is open.
     pub show_new_profile_dialog: bool,
-    /// Text buffer for new profile name input.
-    pub new_profile_name: String,
+    /// Text editing state for the new profile name input.
+    pub new_profile_name_editing: TextEditingState,
+    /// Whether the new profile name input field is focused for keyboard input.
+    pub new_profile_name_focused: bool,
     /// Mode chosen for new profile creation: false = Standalone (default), true = Connected.
     pub new_profile_mode_connected: bool,
 }
@@ -3435,6 +3479,12 @@ impl Default for UserSettingsState {
             needs_vault_unlock: false,
             vault_unlock_error: None,
             vault_unlock_attempts: 0,
+            show_profile_manager: false,
+            profile_manager_page: ProfileManagerPage::ProfileList,
+            profile_manager_target_id: String::new(),
+            profile_manager_target_name: String::new(),
+            profiles_with_vault_status: Vec::new(),
+            new_profile_standalone: true,
             wizard_page: 0,
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),
@@ -3446,12 +3496,26 @@ impl Default for UserSettingsState {
             runtime_profile_id: String::new(),
             available_profiles: Vec::new(),
             profile_rename_mode: false,
-            profile_rename_buffer: String::new(),
+            profile_rename_editing: TextEditingState {
+                field_id: "profile_rename".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            profile_rename_focused: false,
             profile_rename_target_id: None,
             show_avatar_picker: false,
             profile_avatar_target_id: None,
             show_new_profile_dialog: false,
-            new_profile_name: String::new(),
+            new_profile_name_editing: TextEditingState {
+                field_id: "new_profile_name".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            new_profile_name_focused: false,
             new_profile_mode_connected: false,
         }
     }

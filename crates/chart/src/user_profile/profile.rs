@@ -738,8 +738,7 @@ pub struct ProfileIndex {
 /// On load, they are decrypted from `vault.enc` and merged back into
 /// the in-memory `UserProfile`.
 ///
-/// When no vault key is set (no-passphrase install), `vault.json` is
-/// written instead — same security level as the legacy all-plaintext mode.
+/// A vault key is always required — set during the welcome wizard.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VaultSecrets {
     /// Legacy single API key — kept for backward-compat migration only.
