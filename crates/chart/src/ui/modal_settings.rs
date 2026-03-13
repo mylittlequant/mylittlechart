@@ -3192,6 +3192,11 @@ pub enum ProfileManagerPage {
     CreatePassphrase,
     /// Creating a brand new profile (name input).
     CreateNew,
+    /// Display the recovery key once after vault creation.
+    ///
+    /// Shown immediately after `CreatePassphrase` succeeds.  The user must
+    /// acknowledge ("I have written it down") before proceeding.
+    ShowRecoveryKey,
 }
 
 impl Default for ProfileManagerPage {
@@ -3300,14 +3305,6 @@ pub struct UserSettingsState {
     pub e2e_passphrase_editing: TextEditingState,
     /// Whether the E2E passphrase input field has keyboard focus.
     pub e2e_passphrase_focused: bool,
-    /// Whether presets category is enabled for sync (mirrors SyncState.category_prefs.presets).
-    pub sync_presets: bool,
-    /// Whether watchlists category is enabled for sync.
-    pub sync_watchlists: bool,
-    /// Whether templates category is enabled for sync.
-    pub sync_templates: bool,
-    /// Whether settings snapshots category is enabled for sync.
-    pub sync_snapshots: bool,
     /// Last sync timestamp displayed in the Sync tab (Unix seconds, 0 = never).
     pub last_sync_timestamp: i64,
     /// Quota used in bytes (from server status response, 0 = unknown).
@@ -3354,6 +3351,11 @@ pub struct UserSettingsState {
     // ── PROFILE MANAGER ───────────────────────────────────────────────────────
     /// True when the profile manager overlay is shown (replaces vault_unlock + profile picker).
     pub show_profile_manager: bool,
+    /// Formatted recovery key to display on the `ShowRecoveryKey` page.
+    ///
+    /// Set by `main.rs` after a successful vault creation and cleared when the
+    /// user confirms they have recorded it.
+    pub recovery_key_display: Option<String>,
     /// Current page of the profile manager.
     pub profile_manager_page: ProfileManagerPage,
     /// Profile ID being operated on in the profile manager (unlock/create passphrase target).
@@ -3456,10 +3458,6 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             e2e_passphrase_focused: false,
-            sync_presets: true,
-            sync_watchlists: true,
-            sync_templates: true,
-            sync_snapshots: true,
             last_sync_timestamp: 0,
             quota_used_bytes: 0,
             sync_status_label: "Idle".to_string(),
@@ -3479,6 +3477,7 @@ impl Default for UserSettingsState {
             vault_unlock_error: None,
             vault_unlock_attempts: 0,
             show_profile_manager: false,
+            recovery_key_display: None,
             profile_manager_page: ProfileManagerPage::ProfileList,
             profile_manager_target_id: String::new(),
             profile_manager_target_name: String::new(),

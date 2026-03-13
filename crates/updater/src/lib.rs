@@ -666,7 +666,7 @@ async fn do_re_encrypt_all(
     };
 
     // Collect ALL local items (no change-detection, push everything).
-    let local_items = cloud_sync::collect_local_sync_items(data_dir, &sync_state.category_prefs);
+    let local_items = cloud_sync::collect_local_sync_items(data_dir);
 
     if local_items.is_empty() {
         log::debug!("[Updater] ReEncryptAll: no local items to push");

@@ -1849,37 +1849,6 @@ fn render_sync_tab(
         cy += 8.0;
     }
 
-    // ── Section: SYNC CATEGORIES (only when sync enabled) ─────────────────────
-    if state.sync_enabled {
-        ctx.set_font("600 11px sans-serif");
-        ctx.set_fill_color("rgba(244,205,99,0.7)");
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("SYNC CATEGORIES", x, cy);
-        cy += section_gap;
-
-        let categories: &[(&str, &str, bool)] = &[
-            ("sync_presets_toggle", "Presets", state.sync_presets),
-            ("sync_watchlists_toggle", "Watchlists", state.sync_watchlists),
-            ("sync_templates_toggle", "Templates", state.sync_templates),
-            ("sync_snapshots_toggle", "Settings Snapshots", state.sync_snapshots),
-        ];
-
-        for (action_id, label, is_checked) in categories {
-            let row_rect = render_checkbox_row(ctx, x, cy, label, *is_checked, effective_text_color, toolbar_theme);
-            result.content_items.push((action_id.to_string(), row_rect));
-            if !sync_tab_locked {
-                let hit_id = format!("user_settings:{}", action_id);
-                input_coordinator.register_on_layer(
-                    hit_id.as_str(),
-                    row_rect,
-                    uzor::input::sense::Sense::CLICK,
-                    layer_id,
-                );
-            }
-            cy += row_gap - 6.0;
-        }
-    }
-
     cy += 8.0;
     let total_content_h = cy - container.content_y() + container.scroll_offset();
     let _scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);

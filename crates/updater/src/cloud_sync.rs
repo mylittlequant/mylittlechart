@@ -116,46 +116,7 @@ pub struct SyncCycleResult {
 // Incremental sync state
 // =============================================================================
 
-/// Per-category cloud sync preferences used in the updater loop.
-///
-/// Mirrors `zengeld_chart::user_profile::profile::SyncCategoryPrefs` but is
-/// defined here so the updater crate stays independent of `zengeld-chart`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncCategoryPrefs {
-    /// Whether chart presets are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub presets: bool,
-    /// Whether watchlists are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub watchlists: bool,
-    /// Whether indicator/primitive templates are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub templates: bool,
-    /// Whether settings snapshots are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub settings_snapshots: bool,
-    /// Whether the active theme identifier is included in cloud sync.
-    #[serde(default = "default_true")]
-    pub theme: bool,
-    /// Whether notification/alert delivery settings are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub notification_settings: bool,
-}
-
 fn default_true() -> bool { true }
-
-impl Default for SyncCategoryPrefs {
-    fn default() -> Self {
-        Self {
-            presets: true,
-            watchlists: true,
-            templates: true,
-            settings_snapshots: true,
-            theme: true,
-            notification_settings: true,
-        }
-    }
-}
 
 /// Persisted state for incremental sync — stored in `profile.json` via
 /// [`crate::chart::user_profile::profile::UserProfile::sync_state`].
@@ -179,9 +140,10 @@ pub struct SyncState {
     /// user sets up E2E.  Empty string means E2E has not been configured.
     #[serde(default)]
     pub e2e_salt: String,
-    /// Per-category sync preferences — which data categories to include in sync.
-    #[serde(default)]
-    pub category_prefs: SyncCategoryPrefs,
+    /// Whether the encrypted vault file (`vault.enc`) is included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_vault: bool,
     /// Checksums of items as they were after the last successful push/pull.
     ///
     /// Key: `sync_id`  (e.g. `"preset_my_chart"`).
@@ -205,15 +167,6 @@ pub struct SyncState {
     /// after each successful push.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
-    /// When `true` and E2E is enabled, the `name` field of each `SyncItem` is
-    /// also encrypted before being sent to the server.  Encrypted names are
-    /// base64-encoded in the same format as encrypted content so the server
-    /// can store and return them opaquely.
-    ///
-    /// On pull, names are decrypted before the items are written to disk.
-    /// Defaults to `true` (names are encrypted by default for maximum privacy).
-    #[serde(default = "default_true")]
-    pub sync_e2e_encrypt_names: bool,
 }
 
 // =============================================================================
@@ -242,16 +195,20 @@ fn file_modified_ms(path: impl AsRef<Path>) -> i64 {
         .unwrap_or(1)
 }
 
-/// Collect all syncable items from disk, filtered by `category_prefs`.
+/// Collect all syncable items from disk.
 ///
 /// Returns `Vec<SyncItem>` ready for push comparison.  Items whose files do
 /// not exist are silently skipped (not an error — the user simply hasn't
-/// created them yet).  Items in disabled categories are excluded.
-pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPrefs) -> Vec<SyncItem> {
+/// created them yet).
+///
+/// All categories are always collected.  The caller is responsible for
+/// filtering out items by category (e.g. filtering `"vault"` when
+/// `sync_vault` is `false`).
+pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
     let mut items = Vec::new();
 
     // Category: "watchlist" — single blob
-    if category_prefs.watchlists {
+    {
         let path = data_dir.join("watchlists.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -268,7 +225,7 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
     }
 
     // Category: "settings_snapshot" — single blob
-    if category_prefs.settings_snapshots {
+    {
         let path = data_dir.join("settings_snapshots.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -285,8 +242,37 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
     }
 
     // Category: "preset" — one per file in presets/
-    if category_prefs.presets {
-        if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
+    if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "json") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let id = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let checksum = sha256_hex(&content);
+                    items.push(SyncItem {
+                        sync_id: format!("preset_{}", id),
+                        category: "preset".to_string(),
+                        name: id,
+                        content,
+                        checksum,
+                        modified_at: file_modified_ms(&path),
+                        deleted: false,
+                    });
+                }
+            }
+        }
+    }
+
+    // Category: "template_primitive" and "template_indicator" — per file in templates/{type}/
+    for (subdir, category) in &[
+        ("primitives", "template_primitive"),
+        ("indicators", "template_indicator"),
+    ] {
+        let dir = data_dir.join("templates").join(subdir);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().map_or(false, |e| e == "json") {
@@ -297,8 +283,8 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
                             .unwrap_or_default();
                         let checksum = sha256_hex(&content);
                         items.push(SyncItem {
-                            sync_id: format!("preset_{}", id),
-                            category: "preset".to_string(),
+                            sync_id: format!("{}_{}", category, id),
+                            category: category.to_string(),
                             name: id,
                             content,
                             checksum,
@@ -311,41 +297,8 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
         }
     }
 
-    // Category: "template_primitive" and "template_indicator" — per file in templates/{type}/
-    if category_prefs.templates {
-        for (subdir, category) in &[
-            ("primitives", "template_primitive"),
-            ("indicators", "template_indicator"),
-        ] {
-            let dir = data_dir.join("templates").join(subdir);
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "json") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            let id = path
-                                .file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let checksum = sha256_hex(&content);
-                            items.push(SyncItem {
-                                sync_id: format!("{}_{}", category, id),
-                                category: category.to_string(),
-                                name: id,
-                                content,
-                                checksum,
-                                modified_at: file_modified_ms(&path),
-                                deleted: false,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Category: "theme" — single value stored in theme.json
-    if category_prefs.theme {
+    {
         let path = data_dir.join("theme.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -362,7 +315,7 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
     }
 
     // Category: "notification_settings" — single blob stored in notification_settings.json
-    if category_prefs.notification_settings {
+    {
         let path = data_dir.join("notification_settings.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
@@ -375,6 +328,27 @@ pub fn collect_local_sync_items(data_dir: &Path, category_prefs: &SyncCategoryPr
                 modified_at: file_modified_ms(&path),
                 deleted: false,
             });
+        }
+    }
+
+    // Category: "vault" — encrypted vault blob (vault.enc), base64-encoded as content.
+    {
+        let vault_path = data_dir.join("vault.enc");
+        if vault_path.exists() {
+            if let Ok(bytes) = std::fs::read(&vault_path) {
+                let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let checksum = sha256_hex(&content);
+                let modified_at = file_modified_ms(&vault_path);
+                items.push(SyncItem {
+                    sync_id: "vault".to_string(),
+                    category: "vault".to_string(),
+                    name: "vault".to_string(),
+                    content,
+                    checksum,
+                    modified_at,
+                    deleted: false,
+                });
+            }
         }
     }
 
@@ -519,6 +493,18 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 backup_file(&target)?;
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "vault" => {
+                // vault.enc is stored as base64-encoded raw bytes on the server.
+                // Decode back to raw bytes before writing to disk.
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&item.content)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("vault base64 decode: {}", e)))?;
+                let target = data_dir.join("vault.enc");
+                backup_file(&target)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &bytes)?;
                 std::fs::rename(&tmp, &target)?;
             }
             other => {
@@ -729,8 +715,14 @@ pub async fn do_sync_cycle(
     build_attest: &BuildAttestation,
     e2e_key: Option<[u8; 32]>,
 ) -> Result<SyncCycleResult, String> {
-    // Step 1: collect local items (filtered by per-category preferences).
-    let local_items = collect_local_sync_items(data_dir, &state.category_prefs);
+    // Step 1: collect all local items, then filter vault if disabled.
+    let local_items = {
+        let mut all = collect_local_sync_items(data_dir);
+        if !state.sync_vault {
+            all.retain(|item| item.category != "vault");
+        }
+        all
+    };
 
     // Build a local index: sync_id → &SyncItem.
     let local_index: std::collections::HashMap<&str, &SyncItem> = local_items
@@ -913,10 +905,8 @@ pub async fn do_sync_cycle(
     // Tombstones (`deleted: true`) are passed through as-is: their content is empty
     // and their checksum is already SHA-256(""), so no encryption is needed.
     //
-    // When `sync_e2e_encrypt_names` is `true`, the `name` field is also encrypted
-    // using the same AES-GCM scheme so the server stores no plaintext metadata.
+    // Item names are ALWAYS plaintext metadata — never encrypted.
     let items_to_push: Vec<SyncItem> = if let Some(ref key) = e2e_key {
-        let encrypt_names = state.sync_e2e_encrypt_names;
         let mut enc_items = Vec::with_capacity(to_push.len());
         for item in &to_push {
             if item.deleted {
@@ -929,29 +919,10 @@ pub async fn do_sync_cycle(
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
                     let enc_checksum = sha256_hex(&encoded);
 
-                    // Optionally encrypt the name field so the server holds no
-                    // plaintext metadata when full E2E privacy is requested.
-                    let enc_name = if encrypt_names {
-                        match crate::e2e_crypto::encrypt(key, item.name.as_bytes()) {
-                            Ok(name_ct) => {
-                                base64::engine::general_purpose::STANDARD.encode(&name_ct)
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "[CloudSync] E2E name-encrypt failed for {}: {} — using plaintext name",
-                                    item.sync_id, e
-                                );
-                                item.name.clone()
-                            }
-                        }
-                    } else {
-                        item.name.clone()
-                    };
-
                     enc_items.push(SyncItem {
                         sync_id: item.sync_id.clone(),
                         category: item.category.clone(),
-                        name: enc_name,
+                        name: item.name.clone(),
                         content: encoded,
                         checksum: enc_checksum,
                         modified_at: item.modified_at,
@@ -1007,7 +978,7 @@ pub async fn do_sync_cycle(
                 // to decrypt are skipped with a warning so a single bad blob does not
                 // abort the whole pull.
                 let to_write: Vec<SyncItem> = if let Some(ref key) = e2e_key {
-                    let decrypt_names = state.sync_e2e_encrypt_names;
+                    // Names are always plaintext — only content is decrypted.
                     let mut dec_items = Vec::with_capacity(filtered.len());
                     for item in filtered {
                         match base64::engine::general_purpose::STANDARD.decode(&item.content) {
@@ -1016,32 +987,7 @@ pub async fn do_sync_cycle(
                                     Ok(plaintext_bytes) => {
                                         match String::from_utf8(plaintext_bytes) {
                                             Ok(plaintext) => {
-                                                // Optionally decrypt the name field.
-                                                let dec_name = if decrypt_names {
-                                                    match base64::engine::general_purpose::STANDARD.decode(&item.name) {
-                                                        Ok(name_ct) => {
-                                                            match crate::e2e_crypto::decrypt(key, &name_ct) {
-                                                                Ok(name_bytes) => {
-                                                                    String::from_utf8(name_bytes).unwrap_or_else(|_| {
-                                                                        log::warn!("[CloudSync] Decrypted name is not valid UTF-8 for {} — using raw value", item.sync_id);
-                                                                        item.name.clone()
-                                                                    })
-                                                                }
-                                                                Err(e) => {
-                                                                    log::warn!("[CloudSync] E2E name-decrypt failed for {}: {} — using raw value", item.sync_id, e);
-                                                                    item.name.clone()
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(_) => {
-                                                            // Not base64 — treat as plaintext (mixed data or flag mismatch).
-                                                            item.name.clone()
-                                                        }
-                                                    }
-                                                } else {
-                                                    item.name.clone()
-                                                };
-                                                dec_items.push(SyncItem { content: plaintext, name: dec_name, ..item });
+                                                dec_items.push(SyncItem { content: plaintext, ..item });
                                             }
                                             Err(e) => {
                                                 log::warn!("[CloudSync] Decrypted content is not valid UTF-8 for {}: {} — skipping", item.sync_id, e);
@@ -1143,10 +1089,9 @@ pub async fn do_sync_cycle(
         enabled: state.enabled,
         e2e_enabled: state.e2e_enabled,
         e2e_salt: state.e2e_salt.clone(),
-        category_prefs: state.category_prefs.clone(),
+        sync_vault: state.sync_vault,
         last_synced_checksums: new_checksums,
         synced_items: new_synced_items,
-        sync_e2e_encrypt_names: state.sync_e2e_encrypt_names,
     };
 
     log::info!(

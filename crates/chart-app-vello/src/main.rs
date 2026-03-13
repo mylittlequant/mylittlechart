@@ -2157,10 +2157,6 @@ impl App<'_> {
             let uss = &mut chart.panel_app.user_settings_state;
             uss.sync_enabled = ss.enabled;
             uss.e2e_enabled = ss.e2e_enabled;
-            uss.sync_presets = ss.category_prefs.presets;
-            uss.sync_watchlists = ss.category_prefs.watchlists;
-            uss.sync_templates = ss.category_prefs.templates;
-            uss.sync_snapshots = ss.category_prefs.settings_snapshots;
             uss.last_sync_timestamp = ss.last_sync_timestamp;
         }
         // Sync profile data into the user settings state.
@@ -4324,6 +4320,12 @@ impl ApplicationHandler for App<'_> {
                                 self.needs_vault_unlock = false;
                                 let is_connected = self.profile.cloud_enabled;
                                 let key_count = self.app_state.agent_api_keys.len();
+
+                                // If a recovery key was generated, show it to the user before
+                                // proceeding.  The ShowRecoveryKey page is non-dismissable until
+                                // the user clicks "I have written it down".
+                                let recovery_key = self.profile_manager.pending_recovery_key.clone();
+
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                     pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
@@ -4334,11 +4336,35 @@ impl ApplicationHandler for App<'_> {
                                     pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                                     pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                                     pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+
+                                    if let Some(ref rk) = recovery_key {
+                                        use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                            Some(rk.clone());
+                                        pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                            ProfileManagerPage::ShowRecoveryKey;
+                                        pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                                    }
                                 }
                             }
                             Err(e) => eprintln!("[App] vault salt error: {}", e),
                         }
                     }
+                }
+
+                // ── Recovery key confirmed ───────────────────────────────────────────────────
+                // Emitted when the user clicks "I have written it down" on the ShowRecoveryKey page.
+                // Clears the pending recovery key from memory and closes the overlay.
+                if cmd_str == "recovery_key_confirmed" {
+                    self.profile_manager.clear_pending_recovery_key();
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.user_settings_state.recovery_key_display = None;
+                        pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                        pw.chart.panel_app.user_settings_state.profile_manager_page =
+                            ProfileManagerPage::ProfileList;
+                    }
+                    eprintln!("[App] recovery key confirmed — overlay dismissed");
                 }
 
                 // ── Vault unlock → new profile wizard ────────────────────────────────────────
@@ -4420,6 +4446,7 @@ impl ApplicationHandler for App<'_> {
                         None
                     } else if cmd_str.starts_with("profile_switch:")
                         || cmd_str == "vault_skip_to_wizard"
+                        || cmd_str == "recovery_key_confirmed"
                         || cmd_str.starts_with("profile_create:")
                         || cmd_str.starts_with("profile_rename:")
                         || cmd_str == "profile_delete"
@@ -4690,6 +4717,14 @@ impl ApplicationHandler for App<'_> {
                             let salt_hex = params.salt.clone();
                             let salt_hex_for_spawn = salt_hex.clone();
 
+                            // Take the recovery-key-wrapped master key generated during local
+                            // vault setup (by derive_and_set_vault_key).  This is sent to the
+                            // server for escrow so the user can recover access if they forget
+                            // their passphrase.  The server stores it opaquely; it can only be
+                            // decrypted with the user's recovery key.
+                            let encrypted_master_key_for_spawn =
+                                self.profile_manager.take_encrypted_master_key();
+
                             // Immediately arm the updater with the new key so that the
                             // re-encrypt command (sent below after the server call) can
                             // use it.
@@ -4713,6 +4748,7 @@ impl ApplicationHandler for App<'_> {
                                     &token_str,
                                     &salt_hex_for_spawn,
                                     params.iterations,
+                                    encrypted_master_key_for_spawn.as_deref(),
                                     &build_attest_for_spawn,
                                 )
                                 .await {

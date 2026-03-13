@@ -408,6 +408,12 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
     fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
 
+    // Generate and persist a random 16-byte salt for future vault key derivation.
+    // The salt is safe to store in plaintext — it is only useful with the passphrase.
+    let salt = crate::vault::generate_salt();
+    let salt_hex = salt.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    fs::write(profile_dir.join("salt.hex"), salt_hex).map_err(|e| e.to_string())?;
+
     let meta = ProfileMeta {
         id: id.clone(),
         display_name: name.to_string(),

@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::crypto;
 use crate::preset::preset::ChartPreset;
 use crate::preset::storage::{list_presets, load_preset};
 use crate::templates::TemplateManager;
@@ -87,6 +88,18 @@ pub struct ProfileManager {
     pub snapshots: SettingsSnapshots,
     /// Encryption key for the active profile's vault.
     pub vault_key: Option<VaultKey>,
+    /// Formatted recovery key to show once after vault creation.
+    ///
+    /// Set by [`derive_and_set_vault_key`] on first-time vault setup.
+    /// Cleared when the UI confirms the user has recorded it
+    /// (call [`clear_pending_recovery_key`]).
+    pub pending_recovery_key: Option<String>,
+    /// The master key wrapped with the recovery key, ready for server upload.
+    ///
+    /// Set alongside [`pending_recovery_key`].  The caller should upload
+    /// this (base64-encoded) to the server's `encrypted_master_key` field
+    /// on the `POST /api/sync/e2e-setup` endpoint.
+    pub encrypted_master_key: Option<Vec<u8>>,
 }
 
 impl ProfileManager {
@@ -195,6 +208,8 @@ impl ProfileManager {
             presets,
             snapshots,
             vault_key: key,
+            pending_recovery_key: None,
+            encrypted_master_key: None,
         }
     }
 
@@ -290,14 +305,57 @@ impl ProfileManager {
     ///
     /// Creates `salt.hex` in the active profile directory if it does not already
     /// exist.  Sets `self.vault_key` and returns the derived key.
+    ///
+    /// On **first-time vault setup** (no pre-existing `vault.enc`), also:
+    /// - Generates a random recovery key.
+    /// - Encrypts the master key with it and stores the blob in
+    ///   [`Self::encrypted_master_key`] for upload to the server.
+    /// - Stores the formatted recovery key in [`Self::pending_recovery_key`]
+    ///   so the UI can display it once for the user to write down.
     pub fn derive_and_set_vault_key(&mut self, passphrase: &str) -> Result<VaultKey, String> {
         let profile_dir = self.active_profile_dir();
         let salt_path = profile_dir.join("salt.hex");
+        let vault_path = profile_dir.join("vault.enc");
+        let is_first_setup = !vault_path.exists();
 
         let salt = vault::load_or_create_salt(&salt_path).map_err(|e| e.to_string())?;
-        let key = vault::derive_key(passphrase, &salt);
-        self.vault_key = Some(key);
-        Ok(key)
+
+        // Derive master key directly so we can use it for recovery key wrapping.
+        let master_key = crypto::derive_master_key(passphrase, &salt);
+        let vault_key = crypto::derive_vault_key(&master_key, &salt);
+
+        self.vault_key = Some(vault_key);
+
+        // On first-time vault creation, generate a recovery key and wrap the master key.
+        if is_first_setup {
+            let recovery_key = crypto::generate_recovery_key();
+            match crypto::encrypt_master_key_for_recovery(&master_key, &recovery_key, &salt) {
+                Ok(encrypted) => {
+                    self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
+                    self.encrypted_master_key = Some(encrypted);
+                }
+                Err(e) => {
+                    eprintln!("[ProfileManager] failed to encrypt master key for recovery: {}", e);
+                }
+            }
+        }
+
+        Ok(vault_key)
+    }
+
+    /// Clear the pending recovery key after the UI has shown it to the user.
+    ///
+    /// Call this after the user acknowledges the "I have written it down" confirmation.
+    pub fn clear_pending_recovery_key(&mut self) {
+        self.pending_recovery_key = None;
+    }
+
+    /// Take the encrypted master key blob for server upload.
+    ///
+    /// Returns `None` if the blob has already been taken or was never generated.
+    /// Clears the stored blob from memory.
+    pub fn take_encrypted_master_key(&mut self) -> Option<Vec<u8>> {
+        self.encrypted_master_key.take()
     }
 
     /// Validate a passphrase against the existing `vault.enc`.

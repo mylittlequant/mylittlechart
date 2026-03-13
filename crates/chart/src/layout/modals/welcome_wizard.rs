@@ -5,8 +5,8 @@
 //! cannot be dismissed except by completing the setup flow.
 //!
 //! Pages:
-//!   0 — Connection Mode  (Standalone / Connected)
-//!   1 — Set Passphrase   (mandatory for both modes; Connected also shows sign-in)
+//!   0 — Welcome          (Get Started button)
+//!   1 — Set Passphrase   (mandatory; Connected mode also shows sign-in section)
 
 use crate::engine::render::RenderContext;
 use uzor::render::{TextAlign, TextBaseline};

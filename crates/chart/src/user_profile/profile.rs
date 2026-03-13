@@ -307,50 +307,6 @@ pub struct UserProfile {
 }
 
 // =============================================================================
-// SyncCategoryPrefs
-// =============================================================================
-
-/// Per-category cloud sync preferences.
-///
-/// Each field controls whether items of that category are included in the
-/// sync cycle.  All fields default to `true` (opt-in by category) so that
-/// new installs sync everything unless the user explicitly disables a category.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncCategoryPrefs {
-    /// Whether chart presets are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub presets: bool,
-    /// Whether watchlists are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub watchlists: bool,
-    /// Whether indicator/primitive templates are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub templates: bool,
-    /// Whether settings snapshots are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub settings_snapshots: bool,
-    /// Whether the active theme identifier is included in cloud sync.
-    #[serde(default = "default_true")]
-    pub theme: bool,
-    /// Whether notification/alert delivery settings are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub notification_settings: bool,
-}
-
-impl Default for SyncCategoryPrefs {
-    fn default() -> Self {
-        Self {
-            presets: true,
-            watchlists: true,
-            templates: true,
-            settings_snapshots: true,
-            theme: true,
-            notification_settings: true,
-        }
-    }
-}
-
-// =============================================================================
 // SyncState
 // =============================================================================
 
@@ -380,9 +336,10 @@ pub struct SyncState {
     /// provides no useful information to an attacker.
     #[serde(default)]
     pub e2e_salt: String,
-    /// Per-category sync preferences — which data categories to include in sync.
-    #[serde(default)]
-    pub category_prefs: SyncCategoryPrefs,
+    /// Whether the encrypted vault file (`vault.enc`) is included in cloud sync.
+    /// Defaults to `true` — the vault is always synced unless the user opts out.
+    #[serde(default = "default_true")]
+    pub sync_vault: bool,
     /// Set of sync item keys (`"category:sync_id"`) that have been successfully
     /// pushed to the server at least once.
     ///
@@ -391,11 +348,6 @@ pub struct SyncState {
     /// the next sync cycle so the server marks the item as deleted.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
-    /// When `true` and E2E is enabled, the `name` field of each `SyncItem` is
-    /// also encrypted before being sent to the server.  Defaults to `true`
-    /// (names are encrypted by default for maximum privacy).
-    #[serde(default = "default_true")]
-    pub sync_e2e_encrypt_names: bool,
 }
 
 impl Default for SyncState {
@@ -405,9 +357,8 @@ impl Default for SyncState {
             enabled: false,
             e2e_enabled: false,
             e2e_salt: String::new(),
-            category_prefs: SyncCategoryPrefs::default(),
+            sync_vault: true,
             synced_items: std::collections::HashSet::new(),
-            sync_e2e_encrypt_names: true,
         }
     }
 }

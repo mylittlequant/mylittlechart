@@ -5617,18 +5617,10 @@ impl ChartApp {
                     e2e_enabled: ui.e2e_enabled,
                     e2e_salt: existing.sync_state.e2e_salt.clone(),
                     last_sync_timestamp: existing.sync_state.last_sync_timestamp,
-                    category_prefs: zengeld_chart::user_profile::profile::SyncCategoryPrefs {
-                        presets: ui.sync_presets,
-                        watchlists: ui.sync_watchlists,
-                        templates: ui.sync_templates,
-                        settings_snapshots: ui.sync_snapshots,
-                        theme: existing.sync_state.category_prefs.theme,
-                        notification_settings: existing.sync_state.category_prefs.notification_settings,
-                    },
+                    sync_vault: existing.sync_state.sync_vault,
                     // Preserve the synced_items set — it is managed by the updater
                     // loop and must not be reset when the user changes settings.
                     synced_items: existing.sync_state.synced_items.clone(),
-                    sync_e2e_encrypt_names: existing.sync_state.sync_e2e_encrypt_names,
                 }
             },
         }

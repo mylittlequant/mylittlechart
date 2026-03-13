@@ -7272,28 +7272,12 @@ impl ChartApp {
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                         eprintln!("[ChartApp] e2e_setup requested");
                     }
-                }
-                "sync_presets_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.sync_presets;
-                    self.panel_app.user_settings_state.sync_presets = new_val;
-                    eprintln!("[ChartApp] sync_presets = {}", new_val);
-                }
-                "sync_watchlists_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.sync_watchlists;
-                    self.panel_app.user_settings_state.sync_watchlists = new_val;
-                    eprintln!("[ChartApp] sync_watchlists = {}", new_val);
-                }
-                "sync_templates_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.sync_templates;
-                    self.panel_app.user_settings_state.sync_templates = new_val;
-                    eprintln!("[ChartApp] sync_templates = {}", new_val);
-                }
-                "sync_snapshots_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.sync_snapshots;
-                    self.panel_app.user_settings_state.sync_snapshots = new_val;
-                    eprintln!("[ChartApp] sync_snapshots = {}", new_val);
                 }
                 "force_sync" => {
                     if !self.panel_app.user_settings_state.sync_is_active {
@@ -7340,17 +7324,6 @@ impl ChartApp {
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;
                     eprintln!("[ChartApp] e2e_passphrase_input: focused");
-                }
-                "e2e_setup" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if !passphrase.is_empty() {
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                        eprintln!("[ChartApp] e2e_setup requested");
-                    }
                 }
                 "show_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
@@ -7527,12 +7500,6 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_standalone = true;
                     eprintln!("[ChartApp] profile_mgr: create new profile page");
                 }
-                "profile_mgr:mode_standalone" => {
-                    self.panel_app.user_settings_state.new_profile_standalone = true;
-                }
-                "profile_mgr:mode_connected" => {
-                    self.panel_app.user_settings_state.new_profile_standalone = false;
-                }
                 "profile_mgr:unlock" => {
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
@@ -7551,19 +7518,22 @@ impl ChartApp {
                 "profile_mgr:create_confirm" => {
                     let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if !name.is_empty() {
-                        let mode = if self.panel_app.user_settings_state.new_profile_standalone {
-                            "standalone"
-                        } else {
-                            "connected"
-                        };
-                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
-                        eprintln!("[ChartApp] profile_mgr: creating profile '{}' mode={}", name, mode);
+                        // All new profiles start standalone (cloud sync off by default — toggle in settings).
+                        self.pending_updater_cmd = Some(format!("profile_create:standalone:{}", name));
+                        eprintln!("[ChartApp] profile_mgr: creating profile '{}'", name);
                     }
                 }
                 "profile_mgr:name_input" => {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     eprintln!("[ChartApp] profile_mgr: name input focused");
+                }
+                "profile_mgr:recovery_key_confirm" => {
+                    // User confirmed they have written down the recovery key.
+                    // Emit a command so main.rs clears pending_recovery_key and
+                    // dismisses the ShowRecoveryKey page.
+                    self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
+                    eprintln!("[ChartApp] profile_mgr: recovery key confirmed by user");
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {

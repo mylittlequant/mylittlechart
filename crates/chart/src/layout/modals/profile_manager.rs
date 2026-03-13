@@ -7,7 +7,7 @@
 //!   ProfileList       — List all profiles; select one to load or create a new one.
 //!   UnlockPassphrase  — Enter passphrase to unlock a profile with vault.enc.
 //!   CreatePassphrase  — Set a new passphrase for a profile that has no vault.
-//!   CreateNew         — Enter name + mode for a brand-new profile.
+//!   CreateNew         — Enter name for a brand-new profile (sync toggled in settings).
 
 use crate::engine::render::RenderContext;
 use uzor::render::{TextAlign, TextBaseline};
@@ -71,6 +71,10 @@ pub fn render_profile_manager(
         ProfileManagerPage::CreateNew => render_page_create_new(
             ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
             current_time_ms, &layer_id, input_coordinator, result,
+        ),
+        ProfileManagerPage::ShowRecoveryKey => render_page_show_recovery_key(
+            ctx, window_w, window_h, state, text_color, toolbar_theme,
+            &layer_id, input_coordinator, result,
         ),
     }
 }
@@ -462,6 +466,146 @@ fn render_page_create_passphrase(
 }
 
 // =============================================================================
+// Page: ShowRecoveryKey
+// =============================================================================
+
+/// Render the recovery key display page.
+///
+/// Shown once after a successful vault creation.  The user must click
+/// "Я записал" ("I have written it down") to proceed.  Until they do,
+/// this overlay remains.
+#[allow(clippy::too_many_arguments)]
+fn render_page_show_recovery_key(
+    ctx: &mut dyn RenderContext,
+    window_w: f64,
+    window_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    let modal_w: f64 = 500.0;
+    let modal_h: f64 = 340.0;
+    let modal_x = (window_w - modal_w) / 2.0;
+    let modal_y = (window_h - modal_h) / 2.0;
+
+    // Modal background
+    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.45)");
+    ctx.set_stroke_width(1.5);
+    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+
+    // Absorb clicks on the modal background
+    input_coordinator.register_on_layer(
+        "profile_manager:recovery_key_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    let padding = 28.0;
+    let inner_x = modal_x + padding;
+    let inner_w = modal_w - padding * 2.0;
+    let mut cy = modal_y + 24.0;
+
+    // Title
+    ctx.set_font("bold 18px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Recovery Key", inner_x + inner_w / 2.0, cy);
+    cy += 28.0;
+
+    // Warning subtitle
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(
+        "Запишите и сохраните в безопасное место",
+        inner_x + inner_w / 2.0,
+        cy,
+    );
+    cy += 18.0;
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.fill_text(
+        "Если вы забудете пароль, этот ключ восстановит доступ",
+        inner_x + inner_w / 2.0,
+        cy,
+    );
+    ctx.set_text_align(TextAlign::Left);
+    cy += 26.0;
+
+    // Recovery key box
+    let key_box_h = 80.0;
+    ctx.set_fill_color("rgba(0,0,0,0.35)");
+    ctx.fill_rounded_rect(inner_x, cy, inner_w, key_box_h, 4.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.35)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(inner_x, cy, inner_w, key_box_h, 4.0);
+
+    // Recovery key text (monospace)
+    let key_text = state
+        .recovery_key_display
+        .as_deref()
+        .unwrap_or("(key not available)");
+
+    ctx.set_font("bold 13px monospace");
+    ctx.set_fill_color("rgba(244,205,99,1.0)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    // Split into two lines at the midpoint dash for readability
+    let mid = key_text.len() / 2;
+    // Find the nearest dash to mid for a clean break
+    let break_pos = key_text[..mid + 5]
+        .rfind('-')
+        .map(|i| i + 1)
+        .unwrap_or(mid);
+    let line1 = &key_text[..break_pos.min(key_text.len())];
+    let line2 = &key_text[break_pos.min(key_text.len())..];
+    ctx.fill_text(line1, inner_x + inner_w / 2.0, cy + key_box_h / 2.0 - 10.0);
+    ctx.fill_text(line2, inner_x + inner_w / 2.0, cy + key_box_h / 2.0 + 10.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    cy += key_box_h + 18.0;
+
+    // Confirm button: "Я записал"
+    let btn_label = "Я записал — продолжить";
+    let is_btn_hovered = hovered == Some("profile_mgr:recovery_key_confirm");
+    let btn_bg = if is_btn_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    let btn_text_col = "rgba(0,0,0,0.85)";
+    let btn_h = 34.0;
+    let btn_w = inner_w.min(260.0);
+    let btn_x = inner_x + (inner_w - btn_w) / 2.0;
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(btn_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(btn_label, btn_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, cy, btn_w, btn_h);
+    result.content_items.push(("profile_mgr:recovery_key_confirm".to_string(), btn_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_confirm",
+        btn_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+}
+
+// =============================================================================
 // Page: CreateNew
 // =============================================================================
 
@@ -482,7 +626,7 @@ fn render_page_create_new(
     let hovered = state.hovered_item_id.as_deref();
 
     let modal_w: f64 = 460.0;
-    let modal_h: f64 = 340.0;
+    let modal_h: f64 = 240.0; // name input + create button only (no mode selection)
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
@@ -560,65 +704,6 @@ fn render_page_create_new(
         );
     }
     cy += input_h + 16.0;
-
-    // Mode selection label
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Mode", inner_x, cy);
-    cy += 18.0;
-
-    // Mode rows
-    let mode_row_h = 36.0;
-    let mode_rows = [
-        ("profile_mgr:mode_standalone", "Standalone (Offline)", state.new_profile_standalone),
-        ("profile_mgr:mode_connected", "Connected (Cloud Sync)", !state.new_profile_standalone),
-    ];
-
-    for (mode_id, mode_label, is_selected) in &mode_rows {
-        let is_hovered = hovered == Some(*mode_id);
-        let row_bg = if *is_selected {
-            "rgba(255,255,255,0.08)"
-        } else if is_hovered {
-            "rgba(255,255,255,0.05)"
-        } else {
-            "rgba(255,255,255,0.03)"
-        };
-        ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(inner_x, cy, inner_w, mode_row_h, 4.0);
-
-        if *is_selected {
-            ctx.set_stroke_color("rgba(244,205,99,0.35)");
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(inner_x, cy, inner_w, mode_row_h, 4.0);
-        }
-
-        let row_mid_y = cy + mode_row_h / 2.0;
-
-        // Radio circle indicator
-        let indicator = if *is_selected { "\u{25CF}" } else { "\u{25CB}" }; // ● or ○
-        let ind_color = if *is_selected { toolbar_theme.accent.as_str() } else { "rgba(254,255,238,0.40)" };
-        ctx.set_font("14px sans-serif");
-        ctx.set_fill_color(ind_color);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(indicator, inner_x + 10.0, row_mid_y);
-
-        // Mode label
-        let label_color = if *is_selected { text_color } else { "rgba(254,255,238,0.65)" };
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(label_color);
-        ctx.fill_text(*mode_label, inner_x + 30.0, row_mid_y);
-
-        let mode_rect = WidgetRect::new(inner_x, cy, inner_w, mode_row_h);
-        result.content_items.push((mode_id.to_string(), mode_rect));
-        let hit_id = format!("user_settings:{}",mode_id);
-        input_coordinator.register_on_layer(hit_id.as_str(), mode_rect, Sense::CLICK, layer_id);
-
-        cy += mode_row_h + 6.0;
-    }
-
-    cy += 12.0;
 
     // Create button
     let name_is_empty = state.new_profile_name_editing.text.trim().is_empty();
