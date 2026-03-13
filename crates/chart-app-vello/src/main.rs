@@ -2172,8 +2172,19 @@ impl App<'_> {
             uss.profile_avatar = self.profile_manager.profile.avatar.clone();
             // Load available profiles from the index.
             if let Some(index) = zengeld_chart::load_profile_index() {
+                let profiles_dir = zengeld_chart::active_profile_data_dir()
+                    .parent()
+                    .map(|p| p.to_path_buf());
                 uss.available_profiles = index.profiles.iter().map(|m| {
                     (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled)
+                }).collect();
+                uss.profiles_with_vault_status = index.profiles.iter().map(|m| {
+                    let has_vault = if let Some(ref pd) = profiles_dir {
+                        pd.join(&m.dir_name).join("vault.enc").exists()
+                    } else {
+                        false
+                    };
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
                 }).collect();
             } else {
                 // No index yet — synthesize a single entry from the current profile.
