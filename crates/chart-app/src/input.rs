@@ -7633,8 +7633,9 @@ impl ChartApp {
                         .map(|(_, name, _, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
-                        // Unencrypted profile — cannot enter, only delete
-                        eprintln!("[ChartApp] profile_mgr: blocked entry to unencrypted profile {}", profile_id);
+                        // Unencrypted profile — switch to it, hot-reload will show CreatePassphrase
+                        self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
+                        eprintln!("[ChartApp] profile_mgr: switching to unencrypted profile {} (will show passphrase setup)", profile_id);
                     } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         if self.panel_app.user_settings_state.needs_vault_unlock {
                             // Current profile but vault not unlocked yet — stay on unlock page

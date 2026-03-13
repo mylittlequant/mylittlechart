@@ -219,7 +219,13 @@ fn render_page_profile_list(
             ctx.fill_text("Delete", del_x + del_w / 2.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
 
-            // Register delete button hit area (on top of row)
+            // Register row hit area FIRST (lower priority)
+            let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
+            result.content_items.push((widget_id.clone(), row_rect));
+            let hit_id = format!("user_settings:{}", widget_id);
+            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+
+            // Register delete button SECOND (higher priority — on top of row)
             let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
             result.content_items.push((del_id.clone(), del_rect));
             input_coordinator.register_on_layer(
@@ -230,11 +236,13 @@ fn render_page_profile_list(
             );
         }
 
-        // Register row hit area (for selecting encrypted profiles)
-        let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
-        result.content_items.push((widget_id.clone(), row_rect));
-        let hit_id = format!("user_settings:{}",widget_id);
-        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+        // Register row hit area for encrypted profiles (outside the if/else above)
+        if *has_vault {
+            let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
+            result.content_items.push((widget_id.clone(), row_rect));
+            let hit_id = format!("user_settings:{}", widget_id);
+            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+        }
 
         cy += profile_row_h + 6.0;
     }
