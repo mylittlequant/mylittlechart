@@ -241,13 +241,8 @@ impl ProfileManager {
     }
 
     /// Delete a profile by ID.
-    ///
-    /// Returns an error if `id` matches the currently active profile (safety
-    /// guard — callers must switch away first).
     pub fn delete_profile(&mut self, id: &str) -> Result<(), String> {
-        if id == self.index.active_profile_id {
-            return Err("Cannot delete the active profile".to_string());
-        }
+        // No active-profile guard — storage::delete_profile handles index fallback.
         delete_profile(id)?;
         self.refresh_index();
         Ok(())

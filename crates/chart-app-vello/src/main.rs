@@ -547,6 +547,9 @@ struct App<'s> {
     pending_profile_switch: Option<String>,
     /// When true, show the welcome wizard after the next profile switch completes.
     show_wizard_after_switch: bool,
+    /// When true, skeleton windows are promoted to live: drop all windows, recreate
+    /// with `skeleton=false` so they fetch bars, connect exchanges, etc.
+    pending_skeleton_promote: bool,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2008,6 +2011,7 @@ impl App<'_> {
             link_poll_rx: None,
             pending_profile_switch: None,
             show_wizard_after_switch: false,
+            pending_skeleton_promote: false,
         }
     }
 
@@ -2115,6 +2119,7 @@ impl App<'_> {
         };
 
         // All windows are equal — all use the shared bridge and profile.
+        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
         let live_update_rx = self.bridge.add_listener();
         let mut chart = chart_app::ChartApp::new_window(
             self.bridge.clone(),
@@ -2123,6 +2128,7 @@ impl App<'_> {
             restore,
             &self.profile,
             &self.profile_manager,
+            skeleton,
         );
         // Apply the app-level theme so new windows start with the correct preset.
         if !self.app_state.theme_preset.is_empty() {
@@ -2468,6 +2474,40 @@ impl App<'_> {
 
         eprintln!(
             "[App] hot-reload: profile switch complete — {} window(s) created",
+            self.windows.len()
+        );
+    }
+
+    /// Promote skeleton windows to live: drop all windows and recreate with `skeleton=false`
+    /// so they actually fetch bars, connect to exchanges, subscribe to tickers, etc.
+    ///
+    /// Called after vault unlock, wizard completion, or fresh E2E setup.
+    /// The profile is already fully loaded in memory (vault secrets decrypted, app_state rebuilt).
+    fn promote_skeleton(&mut self, event_loop: &ActiveEventLoop) {
+        eprintln!(
+            "[App] skeleton → live: dropping {} skeleton window(s)",
+            self.windows.len()
+        );
+
+        // Drop all skeleton windows.
+        let window_ids: Vec<winit::window::WindowId> = self.windows.keys().copied().collect();
+        for wid in window_ids {
+            self.windows.remove(&wid);
+        }
+        self.last_focused = None;
+
+        // Recreate from saved window state (or default).
+        let saved = self.saved_windows.clone();
+        if saved.is_empty() {
+            self.create_window(event_loop, None, None);
+        } else {
+            for ws in &saved {
+                self.create_window(event_loop, Some(ws), None);
+            }
+        }
+
+        eprintln!(
+            "[App] skeleton → live: {} live window(s) created",
             self.windows.len()
         );
     }
@@ -4244,25 +4284,19 @@ impl ApplicationHandler for App<'_> {
 
                         // Save profile + vault.
                         self.save_all(&[]);
+                        self.is_first_run = false;
+                        self.needs_vault_unlock = false;
+                        self.needs_migration = false;
 
-                        // Dismiss wizard on all windows.
-                        let is_connected = cloud_enabled;
-                        self.sync_profiles_to_windows();
-                        for pw in self.windows.values_mut() {
-                            pw.chart.panel_app.user_settings_state.show_welcome_wizard = false;
-                            pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                            pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
-                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                            pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                        }
+                        // Promote skeleton to live: recreate windows with real data.
+                        eprintln!("[App] wizard_complete — promoting skeleton to live");
+                        self.pending_skeleton_promote = true;
 
                         // Tell updater about the mode.
                         #[cfg(all(feature = "updater", not(feature = "standalone")))]
                         {
                             if let Some(ref handle) = self.updater_handle {
-                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SetCloudEnabled(is_connected));
+                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SetCloudEnabled(cloud_enabled));
                             }
                         }
                     }
@@ -4344,37 +4378,19 @@ impl ApplicationHandler for App<'_> {
                     } else if self.needs_vault_unlock {
                         match self.profile_manager.validate_passphrase(passphrase) {
                             Ok(key) => {
-                                eprintln!("[App] vault passphrase validated OK");
+                                eprintln!("[App] vault passphrase validated OK — promoting skeleton");
                                 self.profile_manager.set_vault_key(key);
                                 if let Err(e) = self.profile_manager.load_vault_secrets() {
                                     eprintln!("[App] failed to load vault secrets: {}", e);
                                 }
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
-                                // Merge secrets into the in-memory profile copy.
                                 self.profile = self.profile_manager.profile.clone();
-                                // Sync credential-dependent state.
                                 self.app_state.agent_api_keys =
                                     self.profile_manager.profile.agent_api_keys.clone();
                                 self.needs_vault_unlock = false;
-                                eprintln!(
-                                    "[App] vault unlocked — {} window(s) already open with correct layout",
-                                    self.windows.len()
-                                );
-                                let is_connected = self.profile.cloud_enabled;
-                                let key_count = self.app_state.agent_api_keys.len();
-                                for pw in self.windows.values_mut() {
-                                    pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                                    pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                    pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                    pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
-                                    pw.chart.panel_app.user_settings_state.api_key =
-                                        format!("{} key(s) registered", key_count);
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                                }
+                                // Drop skeleton windows and recreate with live data.
+                                self.pending_skeleton_promote = true;
                             }
                             Err(e) => {
                                 eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
@@ -4393,38 +4409,28 @@ impl ApplicationHandler for App<'_> {
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
                                 self.app_state.template_manager.vault_key = Some(key);
-                                eprintln!("[App] vault key derived and set");
-                                // Sync credential-dependent state.
+                                eprintln!("[App] vault key derived and set — promoting skeleton");
                                 self.app_state.agent_api_keys =
                                     self.profile_manager.profile.agent_api_keys.clone();
                                 self.needs_vault_unlock = false;
-                                let is_connected = self.profile.cloud_enabled;
-                                let key_count = self.app_state.agent_api_keys.len();
+                                self.needs_migration = false;
 
-                                // If a recovery key was generated, show it to the user before
-                                // proceeding.  The ShowRecoveryKey page is non-dismissable until
-                                // the user clicks "I have written it down".
                                 let recovery_key = self.profile_manager.pending_recovery_key.clone();
-
-                                for pw in self.windows.values_mut() {
-                                    pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                                    pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                    pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
-                                    pw.chart.panel_app.user_settings_state.api_key =
-                                        format!("{} key(s) registered", key_count);
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                                    pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
-
-                                    if let Some(ref rk) = recovery_key {
+                                if recovery_key.is_some() {
+                                    // Show recovery key on skeleton first; promote after user confirms.
+                                    for pw in self.windows.values_mut() {
                                         use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                                        pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                        pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
-                                            Some(rk.clone());
+                                            recovery_key.clone();
                                         pw.chart.panel_app.user_settings_state.profile_manager_page =
                                             ProfileManagerPage::ShowRecoveryKey;
                                         pw.chart.panel_app.user_settings_state.show_profile_manager = true;
                                     }
+                                } else {
+                                    // No recovery key — promote immediately.
+                                    self.pending_skeleton_promote = true;
                                 }
                             }
                             Err(e) => eprintln!("[App] vault salt error: {}", e),
@@ -4437,14 +4443,9 @@ impl ApplicationHandler for App<'_> {
                 // Clears the pending recovery key from memory and closes the overlay.
                 if cmd_str == "recovery_key_confirmed" {
                     self.profile_manager.clear_pending_recovery_key();
-                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                    for pw in self.windows.values_mut() {
-                        pw.chart.panel_app.user_settings_state.recovery_key_display = None;
-                        pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                        pw.chart.panel_app.user_settings_state.profile_manager_page =
-                            ProfileManagerPage::ProfileList;
-                    }
-                    eprintln!("[App] recovery key confirmed — overlay dismissed");
+                    eprintln!("[App] recovery key confirmed — promoting skeleton to live");
+                    // Don't patch windows — skeleton promote will recreate them.
+                    self.pending_skeleton_promote = true;
                 }
 
                 // ── Vault unlock → new profile wizard ────────────────────────────────────────
@@ -5872,6 +5873,15 @@ impl ApplicationHandler for App<'_> {
         // destroy windows while any iteration over `self.windows` is active.
         if let Some(target_id) = self.pending_profile_switch.take() {
             self.execute_profile_switch(&target_id, event_loop);
+        }
+
+        // ── Promote skeleton windows to live ────────────────────────────────
+        // After vault unlock / wizard / fresh e2e setup, the skeleton windows
+        // (no bar data, no connector activity) are replaced with fully-live
+        // windows that fetch data.
+        if self.pending_skeleton_promote {
+            self.pending_skeleton_promote = false;
+            self.promote_skeleton(event_loop);
         }
 
         // ── Set event loop control flow based on FPS limit ──────────────────

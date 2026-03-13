@@ -451,9 +451,13 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
     let mut index = load_profile_index()
         .ok_or_else(|| "No profile index found".to_string())?;
 
-    // Safety: never delete the active profile.
+    // If deleting the active-in-index profile, switch active to the first remaining.
     if index.active_profile_id == id {
-        return Err("Cannot delete the active profile".to_string());
+        let fallback = index.profiles.iter().find(|m| m.id != id).map(|m| m.id.clone());
+        if let Some(next_id) = fallback {
+            index.active_profile_id = next_id;
+        }
+        // If no other profiles remain, active_profile_id stays stale but harmless.
     }
 
     // Find the profile metadata so we know its directory name.

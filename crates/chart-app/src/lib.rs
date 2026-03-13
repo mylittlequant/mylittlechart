@@ -1039,6 +1039,7 @@ impl ChartApp {
         restore: Option<&zengeld_chart::WindowState>,
         profile: &zengeld_chart::UserProfile,
         user_manager: &zengeld_chart::ProfileManager,
+        skeleton: bool,
     ) -> Self {
         let mut app = Self {
             panel_app: ChartPanelApp::new("BTCUSDT"),
@@ -1239,14 +1240,16 @@ impl ChartApp {
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
             }
 
-            for (sym, exch, tf) in &window_data {
-                let eid = digdigdig3::ExchangeId::from_str(exch)
-                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-                if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
-                    continue;
+            if !skeleton {
+                for (sym, exch, tf) in &window_data {
+                    let eid = digdigdig3::ExchangeId::from_str(exch)
+                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                    if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    bridge.ensure_connector(eid);
+                    bridge.request_bars(eid, sym, tf, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
                 }
-                bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
             }
 
             app.needs_initial_viewport_fit = true;
@@ -1270,19 +1273,21 @@ impl ChartApp {
                 app.panel_app.active_preset_id = untitled_id;
             }
 
-            bridge.ensure_connector(exchange_id);
-            bridge.request_bars(
-                exchange_id,
-                "BTCUSDT",
-                &zengeld_chart::state::Timeframe::new("1H", 60),
-                None,
-                Some(app.panel_app.user_manager.profile.bar_count as usize),
-            );
+            if !skeleton {
+                bridge.ensure_connector(exchange_id);
+                bridge.request_bars(
+                    exchange_id,
+                    "BTCUSDT",
+                    &zengeld_chart::state::Timeframe::new("1H", 60),
+                    None,
+                    Some(app.panel_app.user_manager.profile.bar_count as usize),
+                );
+            }
         }
 
         // Warm up all enabled connectors (idempotent — ensure_connector is a no-op if started).
         // New connectors default to disabled — only explicitly enabled ones start.
-        {
+        if !skeleton {
             use digdigdig3::connector_manager::ConnectorRegistry;
             let registry = ConnectorRegistry::new();
             for meta in registry.list_all() {
@@ -1308,18 +1313,22 @@ impl ChartApp {
             }
         }
 
-        bridge.request_symbols(exchange_id);
+        if !skeleton {
+            bridge.request_symbols(exchange_id);
+        }
 
         // Subscribe mini tickers for active watchlist.
-        if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
-            for ws in wl.all_symbols() {
-                let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
-                    .unwrap_or(exchange_id);
-                if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
-                    continue;
+        if !skeleton {
+            if let Some(wl) = app.sidebar_state.watchlist_manager.active_list() {
+                for ws in wl.all_symbols() {
+                    let ws_exchange = digdigdig3::ExchangeId::from_str(&ws.exchange)
+                        .unwrap_or(exchange_id);
+                    if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    bridge.ensure_connector(ws_exchange);
+                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol);
                 }
-                bridge.ensure_connector(ws_exchange);
-                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol);
             }
         }
 
