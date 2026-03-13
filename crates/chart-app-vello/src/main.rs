@@ -4287,6 +4287,7 @@ impl ApplicationHandler for App<'_> {
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                     pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                    pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                     pw.chart.panel_app.user_settings_state.client_mode_connected = is_connected;
                                     pw.chart.panel_app.user_settings_state.api_key =
                                         format!("{} key(s) registered", key_count);
@@ -4706,7 +4707,7 @@ impl ApplicationHandler for App<'_> {
                         // block to avoid holding the `handle` borrow while calling save_all.
                         let passphrase = passphrase.to_string();
                         let token = zengeld_updater::token_store::load_token();
-                        if let Some(tok) = token {
+                        if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
                             let client = reqwest::Client::builder()
                                 .timeout(std::time::Duration::from_secs(15))
                                 .build()
