@@ -5795,6 +5795,7 @@ impl ChartApp {
         if self.panel_app.user_settings_state.show_profile_manager {
             let allowed = widget_id.starts_with("profile_manager:")
                 || widget_id.starts_with("user_settings:profile_mgr:")
+                || widget_id.starts_with("user_settings:profile_delete:")
                 || widget_id == "user_settings:e2e_passphrase_input";
             if !allowed {
                 return;
@@ -7633,9 +7634,14 @@ impl ChartApp {
                         .map(|(_, name, _, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
-                        // Unencrypted profile — switch to it, hot-reload will show CreatePassphrase
-                        self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
-                        eprintln!("[ChartApp] profile_mgr: switching to unencrypted profile {} (will show passphrase setup)", profile_id);
+                        // Unencrypted profile — show CreatePassphrase inline (NO hot-reload)
+                        // After passphrase is set, main.rs will create vault in target dir then switch
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
                     } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         if self.panel_app.user_settings_state.needs_vault_unlock {
                             // Current profile but vault not unlocked yet — stay on unlock page
@@ -7715,13 +7721,8 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("profile_delete:") => {
                     let id = &rest["profile_delete:".len()..];
-                    let active_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
-                    if id != active_id.as_str() {
-                        self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
-                        eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
-                    } else {
-                        eprintln!("[ChartApp] profile_delete: cannot delete active profile");
-                    }
+                    self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
+                    eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
                 }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);

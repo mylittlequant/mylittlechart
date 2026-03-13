@@ -4318,7 +4318,26 @@ impl ApplicationHandler for App<'_> {
                                         }
                                     }
                                 } else {
-                                    eprintln!("[App] pre-switch: target profile {} missing salt/vault", target_id);
+                                    // Target profile has no vault — create vault with this passphrase
+                                    eprintln!("[App] pre-switch: creating vault for unencrypted profile {}", target_id);
+                                    if let Ok(salt) = zengeld_chart::vault::load_or_create_salt(&salt_path) {
+                                        let key = zengeld_chart::vault::derive_key(passphrase, &salt);
+                                        let empty_secrets = zengeld_chart::user_profile::VaultSecrets::default();
+                                        if let Ok(()) = zengeld_chart::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
+                                            eprintln!("[App] pre-switch: vault created, switching to profile {}", target_id);
+                                            self.pending_profile_switch = Some(target_id);
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                            }
+                                        } else {
+                                            eprintln!("[App] pre-switch: failed to create vault.enc");
+                                        }
+                                    } else {
+                                        eprintln!("[App] pre-switch: failed to create salt");
+                                    }
                                 }
                             }
                         }
