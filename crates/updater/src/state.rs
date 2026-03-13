@@ -125,10 +125,10 @@ pub enum UpdaterCommand {
     StartOAuth(String),
     /// Log out (clear stored token).
     Logout,
-    /// Switch connected mode at runtime.
-    /// `true` = Connected (enable server communication),
-    /// `false` = Standalone (stop all phone-home).
-    SetConnectedMode(bool),
+    /// Enable or disable cloud connectivity at runtime.
+    /// `true` = cloud enabled (OTA, sync, telemetry),
+    /// `false` = cloud disabled (stop all phone-home).
+    SetCloudEnabled(bool),
     /// Trigger an immediate cloud sync cycle (push local changes, pull remote).
     ///
     /// Ignored in standalone mode.  The updater broadcasts progress via the

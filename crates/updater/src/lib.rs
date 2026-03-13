@@ -42,7 +42,7 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// `connected` controls whether the updater makes any HTTP calls to
 /// chart.example on startup. In standalone mode (`connected = false`)
 /// the loop still runs so it can handle commands, but no network traffic
-/// is generated until a `SetConnectedMode(true)` command arrives.
+/// is generated until a `SetCloudEnabled(true)` command arrives.
 ///
 /// `telemetry_enabled` controls whether anonymized metrics are sent.  Can be
 /// toggled at runtime via [`UpdaterCommand::SetTelemetryEnabled`].
@@ -297,7 +297,7 @@ async fn updater_loop(
                             log::warn!("[Updater] ForceSync ignored — running in standalone mode");
                         }
                     }
-                    state::UpdaterCommand::SetConnectedMode(new_mode) => {
+                    state::UpdaterCommand::SetCloudEnabled(new_mode) => {
                         let was_connected = connected;
                         connected = new_mode;
                         log::info!("[Updater] Client mode changed: connected={}", connected);

@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::profile::{ClientMode, ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
+use super::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use crate::vault::{self, VaultKey};
 
 // =============================================================================
@@ -380,12 +380,12 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 // Profile creation
 // =============================================================================
 
-/// Create a new profile with the given display name, avatar, and fixed client mode.
+/// Create a new profile with the given display name, avatar, and cloud mode.
 ///
 /// Creates `profiles/{uuid}/profile.json` and adds the entry to the index.
-/// Does NOT switch the active profile.  The `client_mode` is stored in the
+/// Does NOT switch the active profile.  The `cloud_enabled` flag is stored in
 /// ProfileMeta and is immutable after creation.
-pub fn create_profile(name: &str, avatar: &str, client_mode: ClientMode) -> Result<ProfileMeta, String> {
+pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -403,7 +403,7 @@ pub fn create_profile(name: &str, avatar: &str, client_mode: ClientMode) -> Resu
     profile.display_name = name.to_string();
     profile.avatar = avatar.to_string();
     profile.profile_created_at = now;
-    profile.client_mode = client_mode;
+    profile.cloud_enabled = cloud_enabled;
 
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
     fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
@@ -414,7 +414,7 @@ pub fn create_profile(name: &str, avatar: &str, client_mode: ClientMode) -> Resu
         avatar: avatar.to_string(),
         created_at: now,
         dir_name,
-        client_mode,
+        cloud_enabled,
     };
 
     // Append to existing index (or create one if it doesn't exist yet).

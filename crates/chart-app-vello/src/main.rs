@@ -1917,7 +1917,7 @@ impl App<'_> {
             #[cfg(feature = "standalone")]
             let connected = false;
             #[cfg(not(feature = "standalone"))]
-            let connected = profile.client_mode == zengeld_chart::user_profile::profile::ClientMode::Connected;
+            let connected = profile.cloud_enabled;
 
             // Build attestation — embedded at compile time by build.rs.
             // Empty string for dev builds (no RELEASE_SIGNING_KEY set).
@@ -2147,8 +2147,7 @@ impl App<'_> {
         // the copy serialised by save_all; profile_manager.profile is only the
         // seed used during startup loading).
         chart.panel_app.user_settings_state.client_mode_connected =
-            self.profile.client_mode
-                == zengeld_chart::user_profile::profile::ClientMode::Connected;
+            self.profile.cloud_enabled;
         // Sync telemetry opt-out from the loaded profile.
         chart.panel_app.user_settings_state.telemetry_enabled =
             self.profile_manager.profile.telemetry_enabled;
@@ -2178,7 +2177,7 @@ impl App<'_> {
             // Load available profiles from the index.
             if let Some(index) = zengeld_chart::load_profile_index() {
                 uss.available_profiles = index.profiles.iter().map(|m| {
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode)
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled)
                 }).collect();
             } else {
                 // No index yet — synthesize a single entry from the current profile.
@@ -2186,7 +2185,7 @@ impl App<'_> {
                     uss.profile_id.clone(),
                     uss.profile_display_name.clone(),
                     uss.profile_avatar.clone(),
-                    zengeld_chart::ClientMode::default(),
+                    false,
                 )];
             }
         }
@@ -2247,7 +2246,7 @@ impl App<'_> {
                     } else {
                         false
                     };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode, has_vault)
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
                 }).collect();
             }
         }
@@ -2321,13 +2320,13 @@ impl App<'_> {
     /// windows so the user-settings modal always shows up-to-date data.
     fn sync_profiles_to_windows(&mut self) {
         let profiles = self.profile_manager.available_profiles();
-        let profiles_with_vault: Vec<(String, String, String, zengeld_chart::ClientMode, bool)> = profiles
+        let profiles_with_vault: Vec<(String, String, String, bool, bool)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.client_mode, p.has_vault))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled, p.has_vault))
             .collect();
-        let available: Vec<(String, String, String, zengeld_chart::ClientMode)> = profiles
+        let available: Vec<(String, String, String, bool)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.client_mode))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled))
             .collect();
         for pw in self.windows.values_mut() {
             pw.chart.panel_app.user_settings_state.available_profiles = available.clone();
@@ -2427,7 +2426,7 @@ impl App<'_> {
                         } else {
                             false
                         };
-                        (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.client_mode, has_vault)
+                        (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
                     }).collect();
                 }
             }
@@ -4126,20 +4125,20 @@ impl ApplicationHandler for App<'_> {
                     }
                 } else if let Some(rest) = cmd_str.strip_prefix("profile_create:") {
                     // Format: "profile_create:{mode}:{name}" where mode is "connected" or "standalone".
-                    let (client_mode, raw_name) = if let Some(name) = rest.strip_prefix("connected:") {
-                        (zengeld_chart::ClientMode::Connected, name)
+                    let (cloud_enabled, raw_name) = if let Some(name) = rest.strip_prefix("connected:") {
+                        (true, name)
                     } else if let Some(name) = rest.strip_prefix("standalone:") {
-                        (zengeld_chart::ClientMode::Standalone, name)
+                        (false, name)
                     } else {
                         // Fallback: legacy format without mode prefix — treat as standalone.
-                        (zengeld_chart::ClientMode::Standalone, rest)
+                        (false, rest)
                     };
                     let name_opt = if raw_name.trim().is_empty() { None } else { Some(raw_name) };
-                    match self.profile_manager.create_profile(name_opt, "chart", client_mode) {
+                    match self.profile_manager.create_profile(name_opt, "chart", cloud_enabled) {
                         Ok(meta) => {
                             eprintln!(
-                                "[App] profile created: {} ({}) mode={:?}",
-                                meta.display_name, meta.id, meta.client_mode
+                                "[App] profile created: {} ({}) cloud_enabled={}",
+                                meta.display_name, meta.id, meta.cloud_enabled
                             );
                             self.sync_profiles_to_windows();
                             // Switch to the new profile immediately and show the
@@ -4182,16 +4181,12 @@ impl ApplicationHandler for App<'_> {
                         let mode_str = parts[0];
                         let passphrase = parts[1];
 
-                        let client_mode = if mode_str == "standalone" {
-                            zengeld_chart::ClientMode::Standalone
-                        } else {
-                            zengeld_chart::ClientMode::Connected
-                        };
+                        let cloud_enabled = mode_str != "standalone";
 
                         if !self.is_first_run {
                             // Creating a NEW profile from settings wizard.
                             // The current profile is immutable — create a fresh one.
-                            match self.profile_manager.create_profile(None, "chart", client_mode) {
+                            match self.profile_manager.create_profile(None, "chart", cloud_enabled) {
                                 Ok(meta) => {
                                     eprintln!(
                                         "[App] wizard_complete: created new profile '{}' ({})",
@@ -4204,7 +4199,7 @@ impl ApplicationHandler for App<'_> {
                                     }
                                     // Reload ProfileManager from the new empty profile directory.
                                     self.profile_manager = zengeld_chart::ProfileManager::load(None);
-                                    self.profile_manager.profile.client_mode = client_mode;
+                                    self.profile_manager.profile.cloud_enabled = cloud_enabled;
                                     self.profile = self.profile_manager.profile.clone();
                                     // Clear presets/templates for fresh profile.
                                     self.app_state.presets.clear();
@@ -4218,8 +4213,8 @@ impl ApplicationHandler for App<'_> {
                             }
                         } else {
                             // First run — configure the default profile in-place.
-                            self.profile_manager.profile.client_mode = client_mode;
-                            self.profile.client_mode = client_mode;
+                            self.profile_manager.profile.cloud_enabled = cloud_enabled;
+                            self.profile.cloud_enabled = cloud_enabled;
                         }
 
                         // Derive vault key via ProfileManager and sync to app_state.
@@ -4239,7 +4234,7 @@ impl ApplicationHandler for App<'_> {
                         self.save_all(&[]);
 
                         // Dismiss wizard on all windows.
-                        let is_connected = client_mode == zengeld_chart::ClientMode::Connected;
+                        let is_connected = cloud_enabled;
                         self.sync_profiles_to_windows();
                         for pw in self.windows.values_mut() {
                             pw.chart.panel_app.user_settings_state.show_welcome_wizard = false;
@@ -4255,7 +4250,7 @@ impl ApplicationHandler for App<'_> {
                         #[cfg(all(feature = "updater", not(feature = "standalone")))]
                         {
                             if let Some(ref handle) = self.updater_handle {
-                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SetConnectedMode(is_connected));
+                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SetCloudEnabled(is_connected));
                             }
                         }
                     }
@@ -4291,8 +4286,7 @@ impl ApplicationHandler for App<'_> {
                                     "[App] vault unlocked — {} window(s) already open with correct layout",
                                     self.windows.len()
                                 );
-                                let is_connected = self.profile.client_mode
-                                    == zengeld_chart::user_profile::profile::ClientMode::Connected;
+                                let is_connected = self.profile.cloud_enabled;
                                 let key_count = self.app_state.agent_api_keys.len();
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
@@ -4328,8 +4322,7 @@ impl ApplicationHandler for App<'_> {
                                 self.app_state.agent_api_keys =
                                     self.profile_manager.profile.agent_api_keys.clone();
                                 self.needs_vault_unlock = false;
-                                let is_connected = self.profile.client_mode
-                                    == zengeld_chart::user_profile::profile::ClientMode::Connected;
+                                let is_connected = self.profile.cloud_enabled;
                                 let key_count = self.app_state.agent_api_keys.len();
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
@@ -4359,7 +4352,7 @@ impl ApplicationHandler for App<'_> {
                     match self.profile_manager.create_profile(
                         None,
                         "chart",
-                        zengeld_chart::ClientMode::Standalone,
+                        false,
                     ) {
                         Ok(meta) => {
                             eprintln!(
@@ -4454,15 +4447,15 @@ impl ApplicationHandler for App<'_> {
                             // Send SetConnectedMode first, then ForceSync.
                             // SetConnectedMode is sent below via the `command` variable;
                             // ForceSync is queued here as a second message.
-                            let _ = handle.cmd_tx.send(UpdaterCommand::SetConnectedMode(true));
+                            let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
                             let _ = handle.cmd_tx.send(UpdaterCommand::ForceSync);
                             // Skip the generic send below (already sent).
                             None
                         } else {
-                            Some(UpdaterCommand::SetConnectedMode(true))
+                            Some(UpdaterCommand::SetCloudEnabled(true))
                         }
                     } else if cmd_str == "set_standalone" {
-                        Some(UpdaterCommand::SetConnectedMode(false))
+                        Some(UpdaterCommand::SetCloudEnabled(false))
                     } else if cmd_str == "set_telemetry_enabled:true" {
                         self.profile_manager.profile.telemetry_enabled = true;
                         Some(UpdaterCommand::SetTelemetryEnabled(true))
@@ -4781,10 +4774,8 @@ impl ApplicationHandler for App<'_> {
                                     linked_at: now,
                                 });
                             // Auto-switch to Connected mode when user logs in.
-                            self.profile_manager.profile.client_mode =
-                                zengeld_chart::user_profile::profile::ClientMode::Connected;
-                            self.profile.client_mode =
-                                zengeld_chart::user_profile::profile::ClientMode::Connected;
+                            self.profile_manager.profile.cloud_enabled = true;
+                            self.profile.cloud_enabled = true;
                             // Reflect the mode change in all open windows immediately.
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.client_mode_connected = true;

@@ -192,10 +192,7 @@ fn render_page_profile_list(
         ctx.fill_text(vault_label, inner_x + inner_w - 8.0, row_mid_y);
 
         // Client mode badge (slightly left of vault badge)
-        let mode_label = match client_mode {
-            crate::user_profile::profile::ClientMode::Connected => "Cloud",
-            crate::user_profile::profile::ClientMode::Standalone => "Offline",
-        };
+        let mode_label = if *client_mode { "Cloud" } else { "Offline" };
         ctx.set_fill_color("rgba(254,255,238,0.30)");
         let vault_label_approx_w = if *has_vault { 62.0 } else { 90.0 };
         ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - vault_label_approx_w - 8.0, row_mid_y);
@@ -376,7 +373,7 @@ fn render_page_create_passphrase(
     let hovered = state.hovered_item_id.as_deref();
 
     let modal_w: f64 = 460.0;
-    let modal_h: f64 = 320.0;
+    let modal_h: f64 = 280.0;
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
@@ -430,8 +427,8 @@ fn render_page_create_passphrase(
         frame_theme, current_time_ms, layer_id, input_coordinator, result,
     );
 
-    // Encrypt button
-    let encrypt_disabled = state.e2e_passphrase_editing.text.is_empty();
+    // Encrypt button (disabled until passphrase meets minimum length)
+    let encrypt_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
     let btn_bg = if encrypt_disabled {
         "rgba(244,205,99,0.20)"
@@ -462,32 +459,6 @@ fn render_page_create_passphrase(
             layer_id,
         );
     }
-    cy += btn_h + 16.0;
-
-    // Skip link
-    let is_skip_hovered = hovered == Some("profile_mgr:skip_encryption");
-    let skip_color = if is_skip_hovered {
-        "rgba(254,255,238,0.60)"
-    } else {
-        "rgba(254,255,238,0.32)"
-    };
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(skip_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Skip \u{2014} leave unencrypted", inner_x + inner_w / 2.0, cy);
-    ctx.set_text_align(TextAlign::Left);
-
-    let skip_w = 180.0;
-    let skip_h = 16.0;
-    let skip_rect = WidgetRect::new(inner_x + (inner_w - skip_w) / 2.0, cy, skip_w, skip_h);
-    result.content_items.push(("profile_mgr:skip_encryption".to_string(), skip_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:profile_mgr:skip_encryption",
-        skip_rect,
-        Sense::CLICK,
-        layer_id,
-    );
 }
 
 // =============================================================================

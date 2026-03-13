@@ -20,7 +20,6 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
-use crate::user_profile::profile::ClientMode;
 
 /// Render the Welcome Wizard overlay.
 ///
@@ -59,7 +58,7 @@ pub fn render_welcome_wizard(
     let modal_w: f64 = 580.0;
     let modal_h: f64 = match state.wizard_page {
         1 => page1_height(state),
-        _ => 380.0, // page 0
+        _ => 360.0, // page 0 — welcome + Get Started
     };
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
@@ -101,7 +100,7 @@ fn page1_height(state: &UserSettingsState) -> f64 {
 }
 
 // =============================================================================
-// Page 0 — Connection Mode selection
+// Page 0 — Welcome
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
@@ -125,37 +124,55 @@ fn render_page0(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Welcome to Nemo", x + w / 2.0, *cy);
-    *cy += 34.0;
+    *cy += 40.0;
 
-    // Step indicator
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.fill_text("Step 1 of 2 — Connection Mode", x + w / 2.0, *cy);
+    // Subtitle
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Professional trading charts and analytics.", x + w / 2.0, *cy);
+    *cy += 24.0;
+
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.fill_text("Click \u{201C}Get Started\u{201D} to set up your profile.", x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
-    *cy += 32.0;
+    *cy += 60.0;
 
-    // ── Card A: Standalone ────────────────────────────────────────────────────
-    render_mode_card(
-        ctx, x, *cy, w, toolbar_theme, layer_id, input_coordinator, result,
-        "Standalone (Offline)",
-        "No internet required. All data stays on this device.",
-        "Choose Offline",
-        "wizard_standalone",
-        false,
-        hovered,
-    );
-    *cy += 102.0;
+    // Info note about passphrase
+    let note_h = 56.0;
+    ctx.set_fill_color("rgba(240,173,78,0.07)");
+    ctx.fill_rounded_rect(x, *cy, w, note_h, 4.0);
+    ctx.set_stroke_color("rgba(240,173,78,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, *cy, w, note_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.75)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Next: you\u{2019}ll create a passphrase to protect your data.", x + 12.0, *cy + 10.0);
+    ctx.fill_text("Your passphrase is never stored on any server.", x + 12.0, *cy + 28.0);
+    *cy += note_h + 36.0;
 
-    // ── Card B: Connected ─────────────────────────────────────────────────────
-    render_mode_card(
-        ctx, x, *cy, w, toolbar_theme, layer_id, input_coordinator, result,
-        "Connected (Cloud Sync)",
-        "Sync presets, watchlists across devices. Requires a free account.",
-        "Choose Connected",
-        "wizard_connected",
-        true,
-        hovered,
-    );
+    // "Get Started" button
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
+    let btn_x = x + (w - btn_w) / 2.0;
+    let is_btn_hovered = hovered == Some("wizard_get_started");
+    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Get Started", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
+    result.content_items.push(("wizard_get_started".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_get_started", btn_rect, Sense::CLICK, layer_id);
 }
 
 // =============================================================================
@@ -259,8 +276,8 @@ fn render_page1_passphrase(
         *cy += 12.0;
     }
 
-    // ── Complete Setup button (disabled until passphrase is entered) ──────────
-    let enable_disabled = state.e2e_passphrase_editing.text.is_empty();
+    // ── Complete Setup button (disabled until passphrase meets minimum length) ──
+    let enable_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::MIN_PASSPHRASE_LENGTH;
     let is_e2e_hovered = !enable_disabled && hovered == Some("wizard_enable_e2e");
     let enable_bg = if enable_disabled {
         "rgba(244,205,99,0.20)"
@@ -292,82 +309,6 @@ fn render_page1_passphrase(
 // Shared helper widgets
 // =============================================================================
 
-/// Render a single mode-selection card.
-#[allow(clippy::too_many_arguments)]
-fn render_mode_card(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    w: f64,
-    toolbar_theme: &ToolbarTheme,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-    title: &str,
-    description: &str,
-    btn_label: &str,
-    action: &str,
-    accent_title: bool,
-    hovered_item_id: Option<&str>,
-) {
-    let card_h = 90.0;
-    let card_padding = 14.0;
-    let is_btn_hovered = hovered_item_id == Some(action);
-
-    // Card background — subtle highlight when button is hovered
-    let card_bg = if is_btn_hovered { "rgba(255,255,255,0.07)" } else { "rgba(255,255,255,0.04)" };
-    ctx.set_fill_color(card_bg);
-    ctx.fill_rounded_rect(x, y, w, card_h, 6.0);
-    let card_stroke = if is_btn_hovered { "rgba(244,205,99,0.32)" } else { "rgba(244,205,99,0.18)" };
-    ctx.set_stroke_color(card_stroke);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, y, w, card_h, 6.0);
-
-    // Title
-    let title_color = if accent_title { toolbar_theme.accent.as_str() } else { toolbar_theme.item_text.as_str() };
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(title_color);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(title, x + card_padding, y + card_padding);
-
-    // Description
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.50)");
-    ctx.fill_text(description, x + card_padding, y + card_padding + 20.0);
-
-    // Button (right side, vertically centered)
-    let btn_w = 130.0;
-    let btn_h = 28.0;
-    let btn_x = x + w - card_padding - btn_w;
-    let btn_y = y + (card_h - btn_h) / 2.0;
-
-    // Slightly brighten button on hover
-    let btn_bg = if is_btn_hovered {
-        // Blend accent with white for a lighter shade on hover
-        "rgba(255,255,255,0.92)"
-    } else {
-        toolbar_theme.accent.as_str()
-    };
-    ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 11px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(btn_label, btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let hit_rect = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
-    let action_id = format!("user_settings:{}", action);
-    result.content_items.push((action.to_string(), hit_rect));
-    input_coordinator.register_on_layer(
-        action_id.as_str(),
-        hit_rect,
-        Sense::CLICK,
-        layer_id,
-    );
-}
 
 /// Render the back arrow button. Returns the new cy after the button.
 fn render_back_button(
@@ -553,7 +494,7 @@ pub fn render_vault_unlock(
     // Passphrase input (reuse the shared helper)
     cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, &layer_id, input_coordinator, result);
 
-    // Unlock button (disabled until passphrase is entered)
+    // Unlock button (disabled until passphrase is entered; vault passphrase can be any length)
     let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
     let hovered = state.hovered_item_id.as_deref();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
@@ -641,7 +582,7 @@ fn render_vault_profile_picker(
     let hovered = state.hovered_item_id.as_deref();
 
     // Collect profiles excluding the currently locked one.
-    let other_profiles: Vec<&(String, String, String, ClientMode)> = state
+    let other_profiles: Vec<&(String, String, String, bool)> = state
         .available_profiles
         .iter()
         .filter(|(id, _, _, _)| id != &state.profile_id)
@@ -727,10 +668,7 @@ fn render_vault_profile_picker(
         ctx.fill_text(name.as_str(), inner_x + 12.0, row_mid_y);
 
         // Client mode badge (10px, dimmed, right-aligned)
-        let badge_label = match mode {
-            ClientMode::Connected => "Connected",
-            ClientMode::Standalone => "Standalone",
-        };
+        let badge_label = if *mode { "Connected" } else { "Standalone" };
         ctx.set_font("10px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.35)");
         ctx.set_text_align(TextAlign::Right);

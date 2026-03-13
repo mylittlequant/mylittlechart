@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::preset::preset::ChartPreset;
 use crate::preset::storage::{list_presets, load_preset};
 use crate::templates::TemplateManager;
-use crate::user_profile::profile::{ClientMode, ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
+use crate::user_profile::profile::{ProfileIndex, ProfileMeta, UserProfile, VaultSecrets};
 use crate::user_profile::storage::{
     active_profile_data_dir, create_profile, delete_profile, load_json, load_profile,
     load_profile_index, profiles_dir, save_profile, save_profile_index,
@@ -19,6 +19,13 @@ use crate::user_profile::storage::{
 use crate::vault::{self, VaultKey};
 
 use super::manager::SettingsSnapshots;
+
+/// Minimum length required for a vault passphrase.
+///
+/// Enforced in the UI (Encrypt/Complete Setup buttons are disabled until
+/// the passphrase reaches this length) as well as in command handlers before
+/// delegating to vault key derivation.
+pub const MIN_PASSPHRASE_LENGTH: usize = 8;
 
 // =============================================================================
 // ProfileInfo
@@ -33,8 +40,8 @@ pub struct ProfileInfo {
     pub display_name: String,
     /// Avatar emoji key.
     pub avatar: String,
-    /// Client mode fixed at creation time.
-    pub client_mode: ClientMode,
+    /// Whether cloud connectivity (OTA, sync, telemetry) is enabled for this profile.
+    pub cloud_enabled: bool,
     /// Whether this profile has an encrypted vault (`vault.enc` exists).
     pub has_vault: bool,
     /// Whether this profile is the currently active one.
@@ -204,14 +211,14 @@ impl ProfileManager {
         &mut self,
         name: Option<&str>,
         avatar: &str,
-        mode: ClientMode,
+        cloud_enabled: bool,
     ) -> Result<ProfileMeta, String> {
         let final_name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => self.auto_generate_name(),
         };
 
-        let meta = create_profile(&final_name, avatar, mode)?;
+        let meta = create_profile(&final_name, avatar, cloud_enabled)?;
         self.refresh_index();
         Ok(meta)
     }
@@ -423,7 +430,7 @@ impl ProfileManager {
                     id: m.id.clone(),
                     display_name: m.display_name.clone(),
                     avatar: m.avatar.clone(),
-                    client_mode: m.client_mode,
+                    cloud_enabled: m.cloud_enabled,
                     has_vault,
                     is_active,
                 }

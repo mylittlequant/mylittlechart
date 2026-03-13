@@ -4348,9 +4348,23 @@ impl ChartApp {
             let editing = &mut self.panel_app.user_settings_state.e2e_passphrase_editing;
             match ch {
                 '\r' | '\n' => {
-                    // Enter submits the E2E setup/restore form if passphrase is non-empty
+                    // Enter submits the passphrase — only when on an
+                    // appropriate page (unlock / create-passphrase / settings
+                    // sync tab / wizard).  On the ProfileList or CreateNew
+                    // pages the passphrase field should not be active, but
+                    // guard against stale focus just in case.
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    let on_passphrase_page = if self.panel_app.user_settings_state.show_profile_manager {
+                        matches!(
+                            self.panel_app.user_settings_state.profile_manager_page,
+                            ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::CreatePassphrase
+                        )
+                    } else {
+                        true // settings sync tab, wizard, vault_unlock — always valid
+                    };
+
                     let passphrase = editing.text.trim().to_string();
-                    if !passphrase.is_empty() {
+                    if !passphrase.is_empty() && on_passphrase_page {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         editing.text.clear();
                         editing.cursor = 0;
@@ -5780,9 +5794,13 @@ impl ChartApp {
         // they select a profile or dismiss the manager.
         if self.panel_app.user_settings_state.show_profile_manager {
             let allowed = widget_id.starts_with("profile_manager:")
-                || widget_id == "user_settings:e2e_passphrase_input"
-                || widget_id == "user_settings:profile_mgr:name_input";
+                || widget_id.starts_with("user_settings:profile_mgr:")
+                || widget_id == "user_settings:e2e_passphrase_input";
             if !allowed {
+                return;
+            }
+            // Absorb background/dimmer clicks silently — no action needed.
+            if widget_id.starts_with("profile_manager:") {
                 return;
             }
         }
@@ -7438,18 +7456,12 @@ impl ChartApp {
                     eprintln!("[ChartApp] disconnect cancelled, staying Connected");
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
-                "wizard_standalone" => {
-                    // Page 0: user chose Standalone — go to page 1 (passphrase)
+                "wizard_get_started" => {
+                    // Page 0: user clicked Get Started — go to page 1 (passphrase)
+                    // Default to standalone mode (mode selection removed)
                     self.panel_app.user_settings_state.wizard_mode_standalone = true;
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    eprintln!("[ChartApp] wizard: chose Standalone, going to page 1 (passphrase)");
-                }
-                "wizard_connected" => {
-                    // Page 0: user chose Connected — go to page 1 (passphrase + sign-in)
-                    self.panel_app.user_settings_state.wizard_mode_standalone = false;
-                    self.panel_app.user_settings_state.wizard_page = 1;
-                    self.panel_app.user_settings_state.wizard_linking_status = String::new();
-                    eprintln!("[ChartApp] wizard: chose Connected, going to page 1 (passphrase)");
+                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (passphrase)");
                 }
                 "wizard_back" => {
                     // Back arrow — go to previous page
@@ -7465,11 +7477,9 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
                 "wizard_enable_e2e" => {
-                    // Page 1: user confirmed passphrase — apply mode + E2E and close wizard.
-                    // Encode the mode in the command so main.rs can set it after key derivation
-                    // (pending_updater_cmd is a single Option, can't send two commands).
+                    // Page 1: user confirmed passphrase — apply E2E and close wizard.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if !passphrase.is_empty() {
+                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
                         let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
                         self.panel_app.user_settings_state.client_mode_connected = !standalone;
                         let mode = if standalone { "standalone" } else { "connected" };
@@ -7533,14 +7543,10 @@ impl ChartApp {
                 }
                 "profile_mgr:create_passphrase" => {
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if !passphrase.is_empty() {
+                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         eprintln!("[ChartApp] profile_mgr: create passphrase submitted");
                     }
-                }
-                "profile_mgr:skip_encryption" => {
-                    self.panel_app.user_settings_state.show_profile_manager = false;
-                    eprintln!("[ChartApp] profile_mgr: skipped encryption");
                 }
                 "profile_mgr:create_confirm" => {
                     let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();

@@ -10,7 +10,6 @@ use crate::ui::scroll_state::ScrollState;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use uzor::widgets::text_input::state::TextInputState;
 use alert_delivery::NotificationSettings;
-use crate::user_profile::profile::ClientMode;
 
 // =============================================================================
 // Text Editing State
@@ -3363,7 +3362,7 @@ pub struct UserSettingsState {
     pub profile_manager_target_name: String,
     /// Whether each profile has vault encryption.
     /// Vec<(id, display_name, avatar, client_mode, has_vault)>.
-    pub profiles_with_vault_status: Vec<(String, String, String, ClientMode, bool)>,
+    pub profiles_with_vault_status: Vec<(String, String, String, bool, bool)>,
     /// Whether new profile is standalone mode (true) or connected (false).
     pub new_profile_standalone: bool,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
@@ -3392,7 +3391,7 @@ pub struct UserSettingsState {
     /// correct row.
     pub runtime_profile_id: String,
     /// All available profiles as (id, display_name, avatar, client_mode) tuples.
-    pub available_profiles: Vec<(String, String, String, ClientMode)>,
+    pub available_profiles: Vec<(String, String, String, bool)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
     /// Text editing state for the inline rename input.

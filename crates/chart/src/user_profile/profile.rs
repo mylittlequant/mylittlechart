@@ -8,25 +8,6 @@
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
-// ClientMode
-// =============================================================================
-
-/// Client operation mode — controls server connectivity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ClientMode {
-    /// No communication with chart.example. Zero phone-home.
-    Standalone,
-    /// Connected to chart.example — OTA, sync, centralized keys.
-    Connected,
-}
-
-impl Default for ClientMode {
-    fn default() -> Self {
-        ClientMode::Standalone
-    }
-}
-
-// =============================================================================
 // Schema version
 // =============================================================================
 
@@ -109,11 +90,6 @@ pub struct UserProfile {
     /// Schema version.  Used for forward-compatible migration.
     #[serde(default = "default_version")]
     pub version: u32,
-
-    /// Client operation mode — whether to connect to chart.example or run
-    /// fully standalone.  Defaults to `Standalone` for new installs (privacy-first).
-    #[serde(default)]
-    pub client_mode: ClientMode,
 
     // -------------------------------------------------------------------------
     // Active selections
@@ -254,9 +230,20 @@ pub struct UserProfile {
     // Telemetry opt-out
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Cloud connectivity
+    // -------------------------------------------------------------------------
+
+    /// Whether cloud connectivity (OTA, sync, telemetry) is enabled.
+    ///
+    /// Set at profile creation (connected vs standalone mode) and persisted in
+    /// profile.json.  Renamed from the old `client_mode == Connected` pattern.
+    #[serde(default)]
+    pub cloud_enabled: bool,
+
     /// Whether to send anonymized usage metrics to chart.example.
     ///
-    /// Never serialized — derived at runtime from `client_mode` and a
+    /// Never serialized — derived at runtime from `cloud_enabled` and a
     /// UI-only toggle stored in `UserSettingsState`.  Kept as a runtime
     /// field so existing call sites (updater, input handler) compile without
     /// changes while the profile.json stays free of this redundant flag.
@@ -430,7 +417,6 @@ impl UserProfile {
     pub fn new() -> Self {
         Self {
             version: PROFILE_VERSION,
-            client_mode: ClientMode::default(),
             active_preset_id: String::new(),
             open_tabs: Vec::new(),
             active_theme: default_theme(),
@@ -452,6 +438,7 @@ impl UserProfile {
             agent_api_keys: Vec::new(),
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
+            cloud_enabled: false,
             telemetry_enabled: false,
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
@@ -711,10 +698,10 @@ pub struct ProfileMeta {
     pub created_at: i64,
     /// Relative subdirectory name under `profiles/` (e.g. "default" or a UUID).
     pub dir_name: String,
-    /// Client mode fixed at profile creation time — immutable afterwards.
-    /// Old index.json files without this field default to Standalone.
+    /// Whether cloud connectivity (OTA, sync, telemetry) is enabled.
+    /// Old index.json files without this field default to false (cloud disabled).
     #[serde(default)]
-    pub client_mode: ClientMode,
+    pub cloud_enabled: bool,
 }
 
 /// The profile index file — lists all profiles and which is active.

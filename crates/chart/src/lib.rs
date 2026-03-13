@@ -453,7 +453,6 @@ pub use user_profile::{
     ProfileError,
     ProfileMeta,
     ProfileIndex,
-    ClientMode,
     app_data_dir,
     get_user_data_dir,
     active_profile_data_dir,
@@ -470,7 +469,7 @@ pub use user_profile::{
 
 // Unified user state manager
 pub use user_manager::UserManager;
-pub use user_manager::{ProfileInfo, ProfileManager, SwitchData};
+pub use user_manager::{ProfileInfo, ProfileManager, SwitchData, MIN_PASSPHRASE_LENGTH};
 
 // =============================================================================
 // Tests

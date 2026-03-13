@@ -10,7 +10,6 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::sense::Sense;
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
-use crate::user_profile::profile::ClientMode;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
@@ -763,10 +762,7 @@ fn render_profile_section(
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(name.as_str(), name_x, row_cy);
 
-            let mode_label = match mode {
-                ClientMode::Connected => " (connected)",
-                ClientMode::Standalone => " (standalone)",
-            };
+            let mode_label = if *mode { " (connected)" } else { " (standalone)" };
             let mode_tag_x = name_x + name.chars().count() as f64 * 7.5 + 4.0;
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color("rgba(254,255,238,0.35)");
