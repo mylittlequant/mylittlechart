@@ -7483,13 +7483,9 @@ impl ChartApp {
                 // ── Profile Manager handlers ───────────────────────────────────
                 "profile_mgr:back" => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                    let on_mandatory_page = matches!(
-                        self.panel_app.user_settings_state.profile_manager_page,
-                        ProfileManagerPage::CreatePassphrase | ProfileManagerPage::UnlockPassphrase | ProfileManagerPage::ShowRecoveryKey
-                    ) && self.panel_app.user_settings_state.needs_vault_unlock;
-                    if on_mandatory_page {
-                        // Block "Back" — vault must be set up before accessing the app
-                        eprintln!("[ChartApp] profile_mgr: back blocked — vault unlock/setup required");
+                    // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
+                    if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
+                        eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
                     } else {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
@@ -7624,9 +7620,18 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
                     let profile_id = &rest["profile_mgr:select:".len()..];
-                    if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
+                    // Check if target profile has vault (encrypted)
+                    let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .unwrap_or(false);
+                    if !target_has_vault {
+                        // Unencrypted profile — cannot enter, only delete
+                        eprintln!("[ChartApp] profile_mgr: blocked entry to unencrypted profile {}", profile_id);
+                    } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         if self.panel_app.user_settings_state.needs_vault_unlock {
-                            // Vault not set up — can't dismiss, force passphrase page
+                            // Current profile but vault not unlocked yet — stay on unlock page
                             eprintln!("[ChartApp] profile_mgr: selected current profile but vault not unlocked — blocking");
                         } else {
                             // Already on this profile, vault OK — dismiss
@@ -7634,7 +7639,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
                         }
                     } else {
-                        // Switch to the selected profile
+                        // Switch to the selected encrypted profile
                         self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
                         eprintln!("[ChartApp] profile_mgr: switching to profile {}", profile_id);
                     }
