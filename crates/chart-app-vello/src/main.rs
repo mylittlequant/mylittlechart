@@ -2440,7 +2440,7 @@ impl App<'_> {
                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
             }
-        } else if !has_vault && !has_salt && !self.is_first_run {
+        } else if !has_vault && !self.is_first_run {
             // Existing profile with no encryption — offer to set up
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
             self.needs_vault_unlock = true;
@@ -6491,7 +6491,9 @@ fn main() {
     // The app is fully functional without it (presets, tabs, watchlists are plaintext),
     // but API keys and exchange credentials will be unavailable until unlocked.
     let needs_vault_unlock = has_vault && has_salt;
-    let needs_migration = has_profile && !has_salt && !has_vault;
+    // has_salt && !has_vault = incomplete profile (created but passphrase never set)
+    // !has_salt && !has_vault = old plaintext profile (pre-ZT)
+    let needs_migration = has_profile && !has_vault;
 
     if is_first_run {
         eprintln!("[App] first-run detected — welcome wizard will be shown");
