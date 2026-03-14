@@ -230,12 +230,9 @@ async fn updater_loop(
                         do_key_sync(&http_client, &td.token, &synced_keys_tx, &build_attest).await;
                     }
 
-                    // Cloud sync — best-effort, only runs if user opted in.
-                    if let Some(ref td) = token {
-                        if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
-                        }
-                    }
+                    // Cloud sync is now event-driven (SyncPushChanged command).
+                    // The interval tick no longer triggers a sync cycle to avoid
+                    // redundant full-read passes when the app is idle.
                 }
                 // In standalone mode: interval fires but we do nothing — no HTTP calls.
             }
@@ -578,6 +575,19 @@ async fn updater_loop(
                             let remaining: Vec<state::SyncConflict> =
                                 pending_conflicts.values().cloned().collect();
                             sync_status_tx.send_replace(state::SyncStatus::ConflictsDetected(remaining));
+                        }
+                    }
+                    state::UpdaterCommand::SyncPushChanged(categories) => {
+                        if connected && sync_state.enabled {
+                            let token = token_store::load_token();
+                            if let Some(ref td) = token {
+                                eprintln!("[Updater] SyncPushChanged: {:?}", categories);
+                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                            } else {
+                                log::debug!("[Updater] SyncPushChanged ignored — not logged in");
+                            }
+                        } else {
+                            log::debug!("[Updater] SyncPushChanged ignored — cloud={} sync_enabled={}", connected, sync_state.enabled);
                         }
                     }
                     state::UpdaterCommand::Shutdown => {

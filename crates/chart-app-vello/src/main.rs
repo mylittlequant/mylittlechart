@@ -3566,6 +3566,13 @@ impl ApplicationHandler for App<'_> {
         self.tick_app_state();
         let _t1 = std::time::Instant::now();
 
+        // ── Accumulator for event-driven sync push ───────────────────────────
+        // Collects blob categories that were flushed to disk this frame.  A
+        // single SyncPushChanged command is sent after all flush blocks so the
+        // updater can immediately push changed items to the server.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        let mut sync_changed_categories: Vec<String> = Vec::new();
+
         // ── Drain watchlist actions from all windows → AppState ────────────
         // Windows queue WatchlistAction instead of mutating directly.
         // App applies them to the single AppState watchlist.
@@ -3811,6 +3818,11 @@ impl ApplicationHandler for App<'_> {
         }
         if templates_had_actions {
             self.app_state.templates_dirty = true;
+            #[cfg(all(feature = "updater", not(feature = "standalone")))]
+            {
+                sync_changed_categories.push("template_primitive".to_string());
+                sync_changed_categories.push("template_indicator".to_string());
+            }
         }
 
         // ── Drain performance actions from all windows ─────────────────────
@@ -3883,6 +3895,8 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
             }
+            #[cfg(all(feature = "updater", not(feature = "standalone")))]
+            sync_changed_categories.push("preset".to_string());
         }
 
         // ── Dirty-flag persistence ──────────────────────────────────────
@@ -3962,6 +3976,8 @@ impl ApplicationHandler for App<'_> {
                     eprintln!("[App] Failed to save profile: {}", e);
                 } else {
                     self.profile = profile;
+                    #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                    sync_changed_categories.push("profile".to_string());
                 }
 
                 // Clear dirty flags.
@@ -3975,6 +3991,9 @@ impl ApplicationHandler for App<'_> {
                 // Watchlists are always plaintext — pass None regardless of vault key.
                 if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
+                } else {
+                    #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                    sync_changed_categories.push("watchlist".to_string());
                 }
                 // Clear dirty flags.
                 for pw in self.windows.values_mut() {
@@ -3982,6 +4001,19 @@ impl ApplicationHandler for App<'_> {
                 }
             }
         }
+
+        // ── Event-driven sync push ────────────────────────────────────────────
+        // Fire one SyncPushChanged after all dirty-flag flushes so the updater
+        // can immediately push to the server rather than waiting for the 5-min
+        // interval tick.  The updater's do_cloud_sync reads all files and dedupes
+        // via checksums — no extra work is done for unchanged items.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        if !sync_changed_categories.is_empty() {
+            if let Some(ref handle) = self.updater_handle {
+                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SyncPushChanged(sync_changed_categories));
+            }
+        }
+
         let _t3 = std::time::Instant::now();
 
         // ── App shutdown ────────────────────────────────────────────────

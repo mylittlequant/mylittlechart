@@ -189,6 +189,15 @@ pub enum UpdaterCommand {
         sync_id: String,
         resolution: ConflictResolution,
     },
+    /// Notify that specific blob categories changed on disk and should be synced.
+    ///
+    /// The list of category strings is purely informational — the updater's
+    /// `do_cloud_sync` reads all files and filters by `sync_state` toggles
+    /// regardless of which categories are listed.  The categories are used only
+    /// for logging so the operator can see which change triggered the push.
+    ///
+    /// Ignored if cloud sync is disabled or the user is not logged in.
+    SyncPushChanged(Vec<String>),
     /// Shut down the updater background task cleanly.
     ///
     /// After receiving this command the loop exits; no further network calls
