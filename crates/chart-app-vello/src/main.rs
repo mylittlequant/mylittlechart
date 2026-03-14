@@ -2058,10 +2058,23 @@ impl App<'_> {
             attrs = attrs.with_undecorated_shadow(true);
         }
 
-        // Skeleton = loading screen: always default size (1200x800), OS-centered.
-        // Only apply saved geometry for live (non-skeleton) windows.
+        // Skeleton = loading screen: fixed 1200x800, centered on primary monitor.
+        // Live windows use saved geometry from the profile.
         let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
-        if !skeleton {
+        if skeleton {
+            // Center on primary monitor
+            if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
+                let screen = monitor.size();
+                let scale = monitor.scale_factor();
+                let win_w = (1200.0 * scale) as i32;
+                let win_h = (800.0 * scale) as i32;
+                let cx = (screen.width as i32 - win_w) / 2;
+                let cy = (screen.height as i32 - win_h) / 2;
+                attrs = attrs.with_position(winit::dpi::Position::Physical(
+                    winit::dpi::PhysicalPosition::new(cx, cy),
+                ));
+            }
+        } else {
             if let Some(ws) = restore {
                 use winit::dpi::Position;
                 if let (Some(x), Some(y)) = (ws.x, ws.y) {

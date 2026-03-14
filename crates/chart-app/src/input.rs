@@ -7644,8 +7644,15 @@ impl ChartApp {
                         eprintln!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
                     } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         if self.panel_app.user_settings_state.needs_vault_unlock {
-                            // Current profile but vault not unlocked yet — stay on unlock page
-                            eprintln!("[ChartApp] profile_mgr: selected current profile but vault not unlocked — blocking");
+                            // Current profile, vault locked — show unlock passphrase page
+                            self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+                            self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                            self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                            self.panel_app.user_settings_state.vault_unlock_error = None;
+                            self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                            self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                            self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                            eprintln!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
                         } else {
                             // Already on this profile, vault OK — dismiss
                             self.panel_app.user_settings_state.show_profile_manager = false;
