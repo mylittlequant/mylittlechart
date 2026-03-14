@@ -751,6 +751,17 @@ pub async fn do_sync_cycle(
     profile_id: &str,
     device_id: &str,
 ) -> Result<SyncCycleResult, String> {
+    // Guard: never sync without E2E key — all blobs must be encrypted.
+    if e2e_key.is_none() {
+        eprintln!("[CloudSync] e2e_key not set — skipping sync cycle (waiting for vault unlock)");
+        return Ok(SyncCycleResult {
+            pushed: 0,
+            pulled: 0,
+            new_state: state.clone(),
+            conflicts: vec![],
+        });
+    }
+
     // Step 1: collect all local items, then apply per-category filters.
     let local_items = {
         let mut all = collect_local_sync_items(data_dir);

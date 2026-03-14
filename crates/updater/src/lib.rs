@@ -377,6 +377,15 @@ async fn updater_loop(
                     state::UpdaterCommand::SetE2EKey(key) => {
                         e2e_key = key;
                         log::info!("[Updater] E2E key updated: {}", if e2e_key.is_some() { "set" } else { "cleared" });
+                        // E2E key just arrived — trigger immediate sync so blobs
+                        // are pushed encrypted (earlier attempts were skipped).
+                        if e2e_key.is_some() && connected && sync_state.enabled {
+                            let token = token_store::load_token();
+                            if let Some(ref td) = token {
+                                eprintln!("[Updater] E2E key set — triggering encrypted sync");
+                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                            }
+                        }
                     }
                     state::UpdaterCommand::ReEncryptAll => {
                         if !connected {
