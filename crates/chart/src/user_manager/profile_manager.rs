@@ -340,6 +340,59 @@ impl ProfileManager {
         Ok(vault_key)
     }
 
+    /// Derive vault key for an arbitrary profile directory (e.g. a newly-created profile
+    /// that hasn't been switched to yet).
+    ///
+    /// Identical to [`derive_and_set_vault_key`] except it operates on the given `dir`
+    /// instead of the active profile directory.  Does NOT update `self.vault_key` — the
+    /// caller receives the derived key and is responsible for storing it (e.g. via
+    /// `pending_switch_vault_key`).
+    ///
+    /// On **first-time vault setup** (no pre-existing `vault.enc` in `dir`), also:
+    /// - Generates a random recovery key.
+    /// - Encrypts the master key with it and stores the blob in
+    ///   [`Self::encrypted_master_key`].
+    /// - Stores the formatted recovery key in [`Self::pending_recovery_key`].
+    /// - Creates an empty `vault.enc` so the directory is fully initialised.
+    pub fn derive_and_set_vault_key_for_dir(
+        &mut self,
+        passphrase: &str,
+        dir: &std::path::Path,
+    ) -> Result<VaultKey, String> {
+        let salt_path = dir.join("salt.hex");
+        let vault_path = dir.join("vault.enc");
+        let is_first_setup = !vault_path.exists();
+
+        let salt = vault::load_or_create_salt(&salt_path).map_err(|e| e.to_string())?;
+        let master_key = crypto::derive_master_key(passphrase, &salt);
+        let vault_key = crypto::derive_vault_key(&master_key, &salt);
+
+        // Do NOT set self.vault_key — this is for a different profile's directory.
+
+        if is_first_setup {
+            let recovery_key = crypto::generate_recovery_key();
+            match crypto::encrypt_master_key_for_recovery(&master_key, &recovery_key, &salt) {
+                Ok(encrypted) => {
+                    self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
+                    self.encrypted_master_key = Some(encrypted);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[ProfileManager] failed to encrypt master key for recovery: {}",
+                        e
+                    );
+                }
+            }
+
+            // Create an empty vault.enc so the profile directory is fully initialised.
+            let empty_secrets = VaultSecrets::default();
+            vault::save_encrypted(&vault_key, &vault_path, &empty_secrets)
+                .map_err(|e| format!("Failed to create vault: {}", e))?;
+        }
+
+        Ok(vault_key)
+    }
+
     /// Clear the pending recovery key after the UI has shown it to the user.
     ///
     /// Call this after the user acknowledges the "I have written it down" confirmation.

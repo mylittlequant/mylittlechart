@@ -566,6 +566,12 @@ struct App<'s> {
     /// When true, skeleton windows are promoted to live: drop all windows, recreate
     /// with `skeleton=false` so they fetch bars, connect exchanges, etc.
     pending_skeleton_promote: bool,
+    /// Profile switch deferred until after recovery key is acknowledged.
+    ///
+    /// Set by the `e2e_setup:` handler for Path C (new profile vault creation) when
+    /// a recovery key must be shown before completing the profile switch.  Consumed
+    /// by `recovery_key_confirmed` to trigger the actual switch.
+    pending_switch_after_recovery: Option<(String, zengeld_chart::vault::VaultKey)>,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2030,6 +2036,7 @@ impl App<'_> {
             pending_switch_vault_key: None,
             pending_new_profile_id: None,
             pending_skeleton_promote: false,
+            pending_switch_after_recovery: None,
         }
     }
 
@@ -4318,9 +4325,25 @@ impl ApplicationHandler for App<'_> {
                         self.needs_vault_unlock = false;
                         self.needs_migration = false;
 
-                        // Promote skeleton to live: recreate windows with real data.
-                        eprintln!("[App] wizard_complete — promoting skeleton to live");
-                        self.pending_skeleton_promote = true;
+                        // If a recovery key was generated, show it before promoting.
+                        let recovery_key = self.profile_manager.pending_recovery_key.clone();
+                        if recovery_key.is_some() {
+                            // Show recovery key on skeleton first; promote after user confirms.
+                            for pw in self.windows.values_mut() {
+                                use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                                pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                    recovery_key.clone();
+                                pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                    ProfileManagerPage::ShowRecoveryKey;
+                                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                            }
+                        } else {
+                            // No recovery key — promote immediately.
+                            eprintln!("[App] wizard_complete — promoting skeleton to live");
+                            self.pending_skeleton_promote = true;
+                        }
 
                         // Tell updater about the mode.
                         #[cfg(all(feature = "updater", not(feature = "standalone")))]
@@ -4351,32 +4374,48 @@ impl ApplicationHandler for App<'_> {
                                 .cloned();
                             if let Some(meta) = target_meta {
                                 let target_dir = pd.join(&meta.dir_name);
-                                let salt_path = target_dir.join("salt.hex");
-                                let vault_path = target_dir.join("vault.enc");
-                                if let Ok(salt) = zengeld_chart::vault::load_or_create_salt(&salt_path) {
-                                    let key = zengeld_chart::vault::derive_key(passphrase, &salt);
-                                    let empty_secrets = zengeld_chart::user_profile::VaultSecrets::default();
-                                    if let Ok(()) = zengeld_chart::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
+                                match self.profile_manager.derive_and_set_vault_key_for_dir(passphrase, &target_dir) {
+                                    Ok(key) => {
                                         eprintln!("[App] new profile vault created, switching to {}", new_profile_id);
-                                        self.pending_new_profile_id = None;
-                                        self.pending_switch_vault_key = Some(key);
-                                        self.pending_profile_switch = Some(new_profile_id.clone());
-                                        for pw in self.windows.values_mut() {
-                                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                                            pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                        }
-                                    } else {
-                                        eprintln!("[App] new profile: failed to create vault.enc");
-                                        for pw in self.windows.values_mut() {
-                                            pw.chart.panel_app.user_settings_state.vault_unlock_error =
-                                                Some("Failed to create vault — please try again".to_string());
+
+                                        let recovery_key = self.profile_manager.pending_recovery_key.clone();
+                                        if recovery_key.is_some() {
+                                            // Show recovery key before completing the profile switch.
+                                            self.pending_switch_after_recovery = Some((new_profile_id.clone(), key));
+                                            self.pending_new_profile_id = None;
+                                            for pw in self.windows.values_mut() {
+                                                use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                                    recovery_key.clone();
+                                                pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                                    ProfileManagerPage::ShowRecoveryKey;
+                                                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                                            }
+                                        } else {
+                                            // No recovery key — switch immediately.
+                                            self.pending_new_profile_id = None;
+                                            self.pending_switch_vault_key = Some(key);
+                                            self.pending_profile_switch = Some(new_profile_id.clone());
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                            }
                                         }
                                     }
-                                } else {
-                                    eprintln!("[App] new profile: failed to create salt");
+                                    Err(e) => {
+                                        eprintln!("[App] new profile: failed to create vault: {}", e);
+                                        for pw in self.windows.values_mut() {
+                                            pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                Some(format!("Failed to create vault: {}", e));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -4529,9 +4568,17 @@ impl ApplicationHandler for App<'_> {
                 // Clears the pending recovery key from memory and closes the overlay.
                 if cmd_str == "recovery_key_confirmed" {
                     self.profile_manager.clear_pending_recovery_key();
-                    eprintln!("[App] recovery key confirmed — promoting skeleton to live");
-                    // Don't patch windows — skeleton promote will recreate them.
-                    self.pending_skeleton_promote = true;
+                    if let Some((profile_id, vault_key)) = self.pending_switch_after_recovery.take() {
+                        // Recovery key was shown for a NEW profile — complete the profile switch.
+                        eprintln!("[App] recovery key confirmed — switching to new profile {}", profile_id);
+                        self.pending_switch_vault_key = Some(vault_key);
+                        self.pending_profile_switch = Some(profile_id);
+                    } else {
+                        // Recovery key was shown during wizard / first-run — promote skeleton.
+                        eprintln!("[App] recovery key confirmed — promoting skeleton to live");
+                        // Don't patch windows — skeleton promote will recreate them.
+                        self.pending_skeleton_promote = true;
+                    }
                 }
 
                 // ── Vault unlock → new profile wizard ────────────────────────────────────────
