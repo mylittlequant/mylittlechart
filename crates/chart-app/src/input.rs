@@ -12812,7 +12812,7 @@ impl ChartApp {
                         // Record AddCompareSeries so the user can undo adding this overlay.
                         if let Some(series) = added_series {
                             self.push_undo_command(zengeld_chart::Command::AddCompareSeries {
-                                series,
+                                series: series.without_bars(),
                             });
                             eprintln!("[ChartApp] Recorded AddCompareSeries {}", symbol_part);
                             self.autosave_snapshot();

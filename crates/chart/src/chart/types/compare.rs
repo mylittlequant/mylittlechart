@@ -101,6 +101,17 @@ impl CompareSeries {
         }
     }
 
+    /// Return a clone of this series with the `bars` field emptied.
+    ///
+    /// Used when recording undo commands — bars are re-fetchable from the
+    /// exchange and should never bloat command history.
+    pub fn without_bars(&self) -> Self {
+        Self {
+            bars: Vec::new(),
+            ..self.clone()
+        }
+    }
+
     /// Set base to a specific timestamp
     pub fn set_base_timestamp(&mut self, timestamp: i64) {
         if let Some(bar) = self.bars.iter().find(|b| b.timestamp == timestamp) {

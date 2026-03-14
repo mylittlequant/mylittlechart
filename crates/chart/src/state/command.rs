@@ -636,13 +636,13 @@ impl Command {
             Command::AddCompareSeries { series } => {
                 Command::RemoveCompareSeries {
                     symbol: series.symbol.clone(),
-                    series: series.clone(),
+                    series: series.without_bars(),
                 }
             }
 
             Command::RemoveCompareSeries { symbol: _, series } => {
                 Command::AddCompareSeries {
-                    series: series.clone(),
+                    series: series.without_bars(),
                 }
             }
 
@@ -665,14 +665,14 @@ impl Command {
             Command::ClearAllCompareSeries { series } => {
                 // Inverse of clear-all is to restore all cleared series
                 Command::RestoreAllCompareSeries {
-                    series: series.clone(),
+                    series: series.iter().map(|s| s.without_bars()).collect(),
                 }
             }
 
             Command::RestoreAllCompareSeries { series } => {
                 // Inverse of restore-all is to clear-all (storing them for further undo)
                 Command::ClearAllCompareSeries {
-                    series: series.clone(),
+                    series: series.iter().map(|s| s.without_bars()).collect(),
                 }
             }
 
