@@ -123,7 +123,7 @@ fn default_true() -> bool { true }
 ///
 /// Keeping this state allows subsequent syncs to send only `since` queries
 /// instead of comparing the full item catalogue each time.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncState {
     /// Unix timestamp (milliseconds) of the last successful sync.
     /// `0` means the client has never synced.
@@ -144,6 +144,26 @@ pub struct SyncState {
     /// Defaults to `true`.
     #[serde(default = "default_true")]
     pub sync_vault: bool,
+    /// Whether chart presets are included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_presets: bool,
+    /// Whether indicator and primitive templates are included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_templates: bool,
+    /// Whether watchlists are included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_watchlists: bool,
+    /// Whether the active theme is included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_theme: bool,
+    /// Whether the recovery key (encrypted master key) is included in cloud sync.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub sync_recovery_key: bool,
     /// Checksums of items as they were after the last successful push/pull.
     ///
     /// Key: `sync_id`  (e.g. `"preset_my_chart"`).
@@ -167,6 +187,25 @@ pub struct SyncState {
     /// after each successful push.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            last_sync_timestamp: 0,
+            enabled: false,
+            e2e_enabled: false,
+            e2e_salt: String::new(),
+            sync_vault: true,
+            sync_presets: true,
+            sync_templates: true,
+            sync_watchlists: true,
+            sync_theme: true,
+            sync_recovery_key: true,
+            last_synced_checksums: std::collections::HashMap::new(),
+            synced_items: std::collections::HashSet::new(),
+        }
+    }
 }
 
 // =============================================================================
@@ -715,12 +754,26 @@ pub async fn do_sync_cycle(
     build_attest: &BuildAttestation,
     e2e_key: Option<[u8; 32]>,
 ) -> Result<SyncCycleResult, String> {
-    // Step 1: collect all local items, then filter vault if disabled.
+    // Step 1: collect all local items, then apply per-category filters.
     let local_items = {
         let mut all = collect_local_sync_items(data_dir);
         if !state.sync_vault {
             all.retain(|item| item.category != "vault");
         }
+        if !state.sync_presets {
+            all.retain(|item| item.category != "preset");
+        }
+        if !state.sync_templates {
+            all.retain(|item| item.category != "template_indicator" && item.category != "template_primitive");
+        }
+        if !state.sync_watchlists {
+            all.retain(|item| item.category != "watchlist");
+        }
+        if !state.sync_theme {
+            all.retain(|item| item.category != "theme");
+        }
+        // sync_recovery_key is managed at the E2E-setup level and is not
+        // represented as a distinct sync category; no filter needed here.
         all
     };
 
@@ -1090,6 +1143,11 @@ pub async fn do_sync_cycle(
         e2e_enabled: state.e2e_enabled,
         e2e_salt: state.e2e_salt.clone(),
         sync_vault: state.sync_vault,
+        sync_presets: state.sync_presets,
+        sync_templates: state.sync_templates,
+        sync_watchlists: state.sync_watchlists,
+        sync_theme: state.sync_theme,
+        sync_recovery_key: state.sync_recovery_key,
         last_synced_checksums: new_checksums,
         synced_items: new_synced_items,
     };

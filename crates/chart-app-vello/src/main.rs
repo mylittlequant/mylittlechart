@@ -1954,7 +1954,7 @@ impl App<'_> {
                 timestamp: env!("BUILD_TIMESTAMP").to_string(),
             };
 
-            Some(zengeld_updater::start(
+            let handle = zengeld_updater::start(
                 bridge.runtime().handle(),
                 source,
                 connected,
@@ -1963,7 +1963,23 @@ impl App<'_> {
                 profile.sync_state.synced_items.clone(),
                 zengeld_chart::active_profile_data_dir(),
                 build_attest,
-            ))
+            );
+
+            // Seed granular sync toggles from profile into the updater loop.
+            // The `start()` function only accepts a single `sync_enabled` bool,
+            // so we send the per-category toggles immediately after starting.
+            {
+                use zengeld_updater::UpdaterCommand;
+                let ss = &profile.sync_state;
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncVault(ss.sync_vault));
+                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncRecoveryKey(ss.sync_recovery_key));
+            }
+
+            Some(handle)
         };
         // No updater when the crate feature is absent, or when standalone mode is active.
         #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
@@ -2508,6 +2524,26 @@ impl App<'_> {
                 pw.chart.panel_app.user_settings_state.is_open = false;
             }
             eprintln!("[App] hot-reload: profile has no vault — showing passphrase creation");
+        }
+
+        // Notify the updater of the new data directory and sync settings.
+        // The updater loop holds its own copy of these values; after a profile
+        // switch it must read from the new profile's directory and respect the
+        // new profile's per-category sync toggles.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        if let Some(ref handle) = self.updater_handle {
+            use zengeld_updater::UpdaterCommand;
+            let new_data_dir = zengeld_chart::active_profile_data_dir();
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetDataDir(new_data_dir));
+            let ss = &self.profile_manager.profile.sync_state;
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(ss.enabled));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncVault(ss.sync_vault));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncRecoveryKey(ss.sync_recovery_key));
+            eprintln!("[App] sent SetDataDir + sync toggles to updater after profile switch");
         }
 
         eprintln!(

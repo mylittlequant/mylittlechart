@@ -118,7 +118,7 @@ async fn updater_loop(
     mut telemetry_enabled: bool,
     sync_enabled_init: bool,
     initial_synced_items: std::collections::HashSet<String>,
-    data_dir: std::path::PathBuf,
+    mut data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
 ) {
     let current_version = env!("CARGO_PKG_VERSION");
@@ -335,6 +335,34 @@ async fn updater_loop(
                         sync_state.enabled = enabled;
                         log::info!("[Updater] Cloud sync enabled: {}", sync_state.enabled);
                     }
+                    state::UpdaterCommand::SetSyncPresets(val) => {
+                        sync_state.sync_presets = val;
+                        log::debug!("[Updater] sync_presets: {}", val);
+                    }
+                    state::UpdaterCommand::SetSyncTemplates(val) => {
+                        sync_state.sync_templates = val;
+                        log::debug!("[Updater] sync_templates: {}", val);
+                    }
+                    state::UpdaterCommand::SetSyncWatchlists(val) => {
+                        sync_state.sync_watchlists = val;
+                        log::debug!("[Updater] sync_watchlists: {}", val);
+                    }
+                    state::UpdaterCommand::SetSyncTheme(val) => {
+                        sync_state.sync_theme = val;
+                        log::debug!("[Updater] sync_theme: {}", val);
+                    }
+                    state::UpdaterCommand::SetSyncVault(val) => {
+                        sync_state.sync_vault = val;
+                        log::debug!("[Updater] sync_vault: {}", val);
+                    }
+                    state::UpdaterCommand::SetSyncRecoveryKey(val) => {
+                        sync_state.sync_recovery_key = val;
+                        log::debug!("[Updater] sync_recovery_key: {}", val);
+                    }
+                    state::UpdaterCommand::SetDataDir(path) => {
+                        data_dir = path;
+                        eprintln!("[Updater] data_dir updated to {:?}", data_dir);
+                    }
                     state::UpdaterCommand::SetE2EKey(key) => {
                         e2e_key = key;
                         log::info!("[Updater] E2E key updated: {}", if e2e_key.is_some() { "set" } else { "cleared" });
@@ -350,8 +378,23 @@ async fn updater_loop(
                                 log::info!("[Updater] Re-encrypting all cloud data with E2E key");
                                 sync_status_tx.send_replace(state::SyncStatus::Syncing);
                                 match do_re_encrypt_all(&http_client, UPDATE_SERVER, &td.token, &sync_state, &data_dir, &build_attest, e2e_key).await {
-                                    Ok(pushed) => {
+                                    Ok((pushed, id_to_checksum)) => {
                                         log::info!("[Updater] ReEncryptAll complete: {} item(s) re-pushed", pushed);
+                                        // Update synced_items and last_synced_checksums so the
+                                        // next normal sync cycle does not re-push everything.
+                                        for (sync_id, checksum) in &id_to_checksum {
+                                            sync_state.synced_items.insert(sync_id.clone());
+                                            sync_state.last_synced_checksums.insert(sync_id.clone(), checksum.clone());
+                                        }
+                                        // Advance the timestamp so the next cycle uses `since` to
+                                        // avoid re-fetching all server items from the beginning.
+                                        let now_ms = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_millis() as i64;
+                                        if now_ms > sync_state.last_sync_timestamp {
+                                            sync_state.last_sync_timestamp = now_ms;
+                                        }
                                         sync_status_tx.send_replace(state::SyncStatus::Completed { pushed, pulled: 0 });
                                     }
                                     Err(e) => {
@@ -649,15 +692,19 @@ async fn do_cloud_sync(
 /// replacing any previously-plaintext server content with ciphertext.
 ///
 /// Used immediately after E2E setup to ensure the server holds no plaintext.
+///
+/// Returns `(total_pushed, sync_id_to_encrypted_checksum)` so the caller can
+/// update `sync_state.synced_items` and `sync_state.last_synced_checksums` to
+/// prevent the next normal sync cycle from unnecessarily re-pushing everything.
 async fn do_re_encrypt_all(
     client: &reqwest::Client,
     server_url: &str,
     auth_token: &str,
-    sync_state: &cloud_sync::SyncState,
+    _sync_state: &cloud_sync::SyncState,
     data_dir: &std::path::Path,
     build_attest: &state::BuildAttestation,
     e2e_key: Option<[u8; 32]>,
-) -> Result<usize, String> {
+) -> Result<(usize, std::collections::HashMap<String, String>), String> {
     use base64::Engine as _;
 
     let key = match e2e_key {
@@ -670,11 +717,12 @@ async fn do_re_encrypt_all(
 
     if local_items.is_empty() {
         log::debug!("[Updater] ReEncryptAll: no local items to push");
-        return Ok(0);
+        return Ok((0, std::collections::HashMap::new()));
     }
 
-    // Encrypt every item.
+    // Encrypt every item, keeping track of (sync_id → encrypted_checksum).
     let mut encrypted_items = Vec::with_capacity(local_items.len());
+    let mut id_to_checksum: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for item in &local_items {
         match crate::e2e_crypto::encrypt(&key, item.content.as_bytes()) {
             Ok(ciphertext) => {
@@ -685,6 +733,7 @@ async fn do_re_encrypt_all(
                     h.update(encoded.as_bytes());
                     format!("{:x}", h.finalize())
                 };
+                id_to_checksum.insert(item.sync_id.clone(), enc_checksum.clone());
                 encrypted_items.push(cloud_sync::SyncItem {
                     sync_id: item.sync_id.clone(),
                     category: item.category.clone(),
@@ -715,7 +764,7 @@ async fn do_re_encrypt_all(
         }
     }
 
-    Ok(total_pushed)
+    Ok((total_pushed, id_to_checksum))
 }
 
 /// Fetch key hashes from the server and broadcast them via the watch channel.

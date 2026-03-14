@@ -144,6 +144,23 @@ pub enum UpdaterCommand {
     /// Mirrors `UserProfile.sync_state.enabled` so the updater loop does not
     /// need a channel back to main to query the profile on every tick.
     SetSyncEnabled(bool),
+    /// Enable or disable syncing of chart presets at runtime.
+    SetSyncPresets(bool),
+    /// Enable or disable syncing of indicator and primitive templates at runtime.
+    SetSyncTemplates(bool),
+    /// Enable or disable syncing of watchlists at runtime.
+    SetSyncWatchlists(bool),
+    /// Enable or disable syncing of the active theme at runtime.
+    SetSyncTheme(bool),
+    /// Enable or disable syncing of the vault (API keys / exchange credentials) at runtime.
+    SetSyncVault(bool),
+    /// Enable or disable syncing of the recovery key at runtime.
+    SetSyncRecoveryKey(bool),
+    /// Update the data directory path used for collecting sync items.
+    ///
+    /// Must be sent after a profile switch so the updater reads from the
+    /// new profile's directory rather than the old one.
+    SetDataDir(std::path::PathBuf),
     /// Set or clear the in-memory E2E encryption key.
     ///
     /// Pass `Some(key)` after the user sets up E2E or re-enters their passphrase.
