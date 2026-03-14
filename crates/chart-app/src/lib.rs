@@ -1140,13 +1140,15 @@ impl ChartApp {
         app.panel_app.template_manager = user_manager.template_manager.clone();
         app.panel_app.presets = user_manager.presets.clone();
 
-        if restore.is_some() {
-            // Restoring a saved window — apply the profile-level tabs/preset as
-            // a baseline (the per-window override from WindowState is applied below).
-            if !user_manager.profile.active_preset_id.is_empty() {
-                app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
-            }
+        // Always restore active_preset_id from profile (not just on restore).
+        // This prevents skeleton launches from creating spurious new Untitled presets.
+        if !user_manager.profile.active_preset_id.is_empty()
+            && app.panel_app.presets.contains_key(&user_manager.profile.active_preset_id)
+        {
+            app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
+        }
 
+        if restore.is_some() {
             app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
             app.panel_app.open_tabs.retain(|id| app.panel_app.presets.contains_key(id));
 
@@ -1157,8 +1159,6 @@ impl ChartApp {
                 app.panel_app.open_tabs = all.iter().map(|p| p.id.clone()).collect();
             }
         }
-        // else: new user-spawned window — don't copy parent's tabs/preset.
-        // The "fresh state" path below will create a new "Untitled" preset.
 
         // Keep profile + snapshots in user_manager.
         app.panel_app.user_manager.profile = user_manager.profile.clone();
@@ -1264,8 +1264,10 @@ impl ChartApp {
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-            // Create an "Untitled" preset tab if no restore or no valid preset.
-            if restore.map_or(true, |_| !has_saved_preset) {
+            // Create an "Untitled" preset only for non-skeleton windows that
+            // genuinely have no valid preset.  Skeleton is a loading screen —
+            // preset creation is deferred until promote_skeleton().
+            if !skeleton && restore.map_or(true, |_| !has_saved_preset) {
                 let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
                 let untitled_id = untitled_preset.id.clone();
                 app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
