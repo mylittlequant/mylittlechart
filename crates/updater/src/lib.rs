@@ -58,6 +58,11 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// profile so that items deleted between sessions are still tombstoned on the
 /// next sync.  Pass an empty `HashSet` if the profile does not yet have this
 /// data (first run or older profile).
+///
+/// `initial_last_synced_checksums` seeds the conflict-detection checksum map
+/// from the persisted profile.  Without seeding, the map starts empty after
+/// every restart, causing all items to appear as conflicts on the first sync.
+/// Pass an empty `HashMap` if the profile does not yet have this data.
 pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
@@ -65,6 +70,7 @@ pub fn start(
     telemetry_enabled: bool,
     sync_enabled: bool,
     initial_synced_items: std::collections::HashSet<String>,
+    initial_last_synced_checksums: std::collections::HashMap<String, String>,
     data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
 ) -> UpdaterHandle {
@@ -87,15 +93,22 @@ pub fn start(
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
+    // Channel for persisting last_synced_checksums — the updater sends the
+    // updated map after each successful sync cycle so main.rs can write it
+    // back into the profile for persistence across restarts.
+    let (sync_checksums_tx, sync_checksums_rx) =
+        watch::channel(std::collections::HashMap::<String, String>::new());
+
     let handle = UpdaterHandle {
         status_rx,
         cmd_tx,
         auth_rx,
         synced_keys_rx,
         sync_status_rx,
+        sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, data_dir, build_attest));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest));
 
     handle
 }
@@ -112,12 +125,14 @@ async fn updater_loop(
     auth_tx: watch::Sender<state::AuthStatus>,
     synced_keys_tx: watch::Sender<Vec<key_sync::SyncedKeyEntry>>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
+    sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
     mut connected: bool,
     mut telemetry_enabled: bool,
     sync_enabled_init: bool,
     initial_synced_items: std::collections::HashSet<String>,
+    initial_last_synced_checksums: std::collections::HashMap<String, String>,
     mut data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
 ) {
@@ -138,9 +153,15 @@ async fn updater_loop(
     // `synced_items` is seeded from the persisted profile so tombstone detection
     // works across restarts: if an item was pushed last session and is gone now,
     // the next cycle will detect it and push a tombstone.
+    //
+    // `last_synced_checksums` is seeded from the persisted profile so conflict
+    // detection works correctly after a restart.  Without seeding, the empty map
+    // would cause every locally-modified item to look like a conflict on the
+    // first sync after startup.
     let mut sync_state = cloud_sync::SyncState {
         enabled: sync_enabled_init,
         synced_items: initial_synced_items,
+        last_synced_checksums: initial_last_synced_checksums,
         ..cloud_sync::SyncState::default()
     };
 
@@ -214,7 +235,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                         }
                     }
                 }
@@ -286,7 +307,7 @@ async fn updater_loop(
                                         sync_state.last_sync_timestamp = 1;
                                         log::info!("[Updater] ForceSync: advancing last_sync_timestamp past 0 to bypass NeedsSetup guard");
                                     }
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -320,7 +341,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
                                 }
                             }
                         }
@@ -592,6 +613,7 @@ async fn do_cloud_sync(
     client: &reqwest::Client,
     auth_token: &str,
     sync_status_tx: &watch::Sender<state::SyncStatus>,
+    sync_checksums_tx: &watch::Sender<std::collections::HashMap<String, String>>,
     sync_state: &mut cloud_sync::SyncState,
     data_dir: &std::path::Path,
     build_attest: &state::BuildAttestation,
@@ -653,6 +675,11 @@ async fn do_cloud_sync(
                 result.pushed, result.pulled, result.conflicts.len()
             );
             *sync_state = result.new_state;
+
+            // Broadcast updated checksums so main.rs can persist them to the
+            // profile.  This ensures conflict detection remains accurate after
+            // a restart even when no profile save has yet occurred this session.
+            sync_checksums_tx.send_replace(sync_state.last_synced_checksums.clone());
 
             if result.conflicts.is_empty() {
                 sync_status_tx.send_replace(state::SyncStatus::Completed {

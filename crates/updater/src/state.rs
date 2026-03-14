@@ -241,6 +241,15 @@ pub struct UpdaterHandle {
     /// The UI polls `has_changed()` each frame and displays progress
     /// indicators or error toasts as appropriate.  Starts as `Idle`.
     pub sync_status_rx: watch::Receiver<SyncStatus>,
+    /// Latest `last_synced_checksums` map after each successful sync cycle.
+    ///
+    /// The main thread polls `has_changed()` each frame and writes the new
+    /// map into `profile_manager.profile.sync_state.last_synced_checksums`
+    /// so that it is persisted to disk on the next profile save.
+    ///
+    /// An empty map is the initial value — it is only populated after a sync
+    /// cycle completes successfully.
+    pub sync_checksums_rx: watch::Receiver<std::collections::HashMap<String, String>>,
 }
 
 /// Server manifest response for latest version.

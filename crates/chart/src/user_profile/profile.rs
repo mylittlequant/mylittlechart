@@ -367,6 +367,22 @@ pub struct SyncState {
     /// the next sync cycle so the server marks the item as deleted.
     #[serde(default)]
     pub synced_items: std::collections::HashSet<String>,
+
+    /// SHA-256 checksums of sync items as they were after the last successful
+    /// push or pull.
+    ///
+    /// Key: `sync_id` (e.g. `"preset_1728503941_123456789"`).
+    /// Value: SHA-256 hex digest of the item content at the time it was last
+    /// successfully synced to *or* from the server.
+    ///
+    /// Persisted across restarts so that conflict detection works correctly
+    /// after a restart.  Without this, an empty map would cause every item to
+    /// appear as a conflict on the first sync after startup.
+    ///
+    /// Seeded into `cloud_sync::SyncState.last_synced_checksums` on startup
+    /// and written back after each successful sync cycle.
+    #[serde(default)]
+    pub last_synced_checksums: std::collections::HashMap<String, String>,
 }
 
 impl Default for SyncState {
@@ -383,6 +399,7 @@ impl Default for SyncState {
             sync_theme: true,
             sync_recovery_key: true,
             synced_items: std::collections::HashSet::new(),
+            last_synced_checksums: std::collections::HashMap::new(),
         }
     }
 }

@@ -1961,6 +1961,7 @@ impl App<'_> {
                 profile.telemetry_enabled,
                 profile.sync_state.enabled,
                 profile.sync_state.synced_items.clone(),
+                profile.sync_state.last_synced_checksums.clone(),
                 zengeld_chart::active_profile_data_dir(),
                 build_attest,
             );
@@ -5438,6 +5439,25 @@ impl ApplicationHandler for App<'_> {
                 }
 
                 eprintln!("[App] sync_status: {}", label);
+            }
+        }
+
+        // ── Poll sync_checksums_rx → persist last_synced_checksums to profile ─
+        //
+        // After each successful sync cycle the updater broadcasts the updated
+        // checksum map so it survives the next restart.  Without this, an empty
+        // map after restart causes every locally-modified item to look like a
+        // conflict on the first sync of the new session.
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        if let Some(ref mut handle) = self.updater_handle {
+            if handle.sync_checksums_rx.has_changed().unwrap_or(false) {
+                let checksums = handle.sync_checksums_rx.borrow_and_update().clone();
+                if !checksums.is_empty() {
+                    self.profile_manager
+                        .profile
+                        .sync_state
+                        .last_synced_checksums = checksums;
+                }
             }
         }
 

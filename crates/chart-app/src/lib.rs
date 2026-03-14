@@ -5636,6 +5636,9 @@ impl ChartApp {
                     // Preserve the synced_items set — it is managed by the updater
                     // loop and must not be reset when the user changes settings.
                     synced_items: existing.sync_state.synced_items.clone(),
+                    // Preserve the last-synced checksum map — managed by the updater
+                    // loop and written back to the profile for cross-restart persistence.
+                    last_synced_checksums: existing.sync_state.last_synced_checksums.clone(),
                 }
             },
         }

@@ -353,23 +353,6 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
         }
     }
 
-    // Category: "notification_settings" — single blob stored in notification_settings.json
-    {
-        let path = data_dir.join("notification_settings.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let checksum = sha256_hex(&content);
-            items.push(SyncItem {
-                sync_id: "notification_settings".to_string(),
-                category: "notification_settings".to_string(),
-                name: "notification_settings".to_string(),
-                content,
-                checksum,
-                modified_at: file_modified_ms(&path),
-                deleted: false,
-            });
-        }
-    }
-
     // Category: "vault" — encrypted vault blob (vault.enc), base64-encoded as content.
     {
         let vault_path = data_dir.join("vault.enc");
@@ -522,13 +505,6 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
             }
             "theme" => {
                 let target = data_dir.join("theme.json");
-                backup_file(&target)?;
-                let tmp = target.with_extension("tmp");
-                std::fs::write(&tmp, &item.content)?;
-                std::fs::rename(&tmp, &target)?;
-            }
-            "notification_settings" => {
-                let target = data_dir.join("notification_settings.json");
                 backup_file(&target)?;
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &item.content)?;
@@ -815,8 +791,6 @@ pub async fn do_sync_cycle(
                 ("settings_snapshot".to_string(), "settings_snapshots".to_string())
             } else if id == "theme" {
                 ("theme".to_string(), "active_theme".to_string())
-            } else if id == "notification_settings" {
-                ("notification_settings".to_string(), "notification_settings".to_string())
             } else if let Some(rest) = id.strip_prefix("template_indicator_") {
                 ("template_indicator".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("template_primitive_") {
