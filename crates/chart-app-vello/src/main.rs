@@ -2058,26 +2058,28 @@ impl App<'_> {
             attrs = attrs.with_undecorated_shadow(true);
         }
 
-        // Apply saved position/size from restore state — position is set in window
-        // attributes BEFORE creation so the OS honors it.
-        if let Some(ws) = restore {
-            use winit::dpi::Position;
-            if let (Some(x), Some(y)) = (ws.x, ws.y) {
-                attrs = attrs.with_position(Position::Physical(
-                    winit::dpi::PhysicalPosition::new(x, y),
-                ));
-            }
-            if let (Some(w), Some(h)) = (ws.width, ws.height) {
-                attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
-            }
-        } else if let Some(from_id) = cascade_from {
-            // Cascade offset from the requesting window.
-            use winit::dpi::Position;
-            if let Some(existing) = self.windows.get(&from_id) {
-                if let Ok(pos) = existing.window.outer_position() {
+        // Skeleton = loading screen: always default size (1200x800), OS-centered.
+        // Only apply saved geometry for live (non-skeleton) windows.
+        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
+        if !skeleton {
+            if let Some(ws) = restore {
+                use winit::dpi::Position;
+                if let (Some(x), Some(y)) = (ws.x, ws.y) {
                     attrs = attrs.with_position(Position::Physical(
-                        winit::dpi::PhysicalPosition::new(pos.x + 30, pos.y + 30),
+                        winit::dpi::PhysicalPosition::new(x, y),
                     ));
+                }
+                if let (Some(w), Some(h)) = (ws.width, ws.height) {
+                    attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
+                }
+            } else if let Some(from_id) = cascade_from {
+                use winit::dpi::Position;
+                if let Some(existing) = self.windows.get(&from_id) {
+                    if let Ok(pos) = existing.window.outer_position() {
+                        attrs = attrs.with_position(Position::Physical(
+                            winit::dpi::PhysicalPosition::new(pos.x + 30, pos.y + 30),
+                        ));
+                    }
                 }
             }
         }
@@ -2140,7 +2142,6 @@ impl App<'_> {
         };
 
         // All windows are equal — all use the shared bridge and profile.
-        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
         let live_update_rx = self.bridge.add_listener();
         let mut chart = chart_app::ChartApp::new_window(
             self.bridge.clone(),
@@ -3407,14 +3408,15 @@ impl ApplicationHandler for App<'_> {
             return;
         }
 
-        // profile.json is always readable now (plaintext split model).
-        // Windows are always restored from saved state regardless of vault lock status.
-        // The vault unlock overlay will appear on the restored window(s) when needed.
-        if self.saved_windows.is_empty() {
+        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
+        if skeleton {
+            // Skeleton = one default-sized window centered by OS, no profile geometry.
+            eprintln!("[App] Skeleton mode — creating single loading window");
+            self.create_window(event_loop, None, None);
+        } else if self.saved_windows.is_empty() {
             eprintln!("[App] No saved windows — creating default");
             self.create_window(event_loop, None, None);
         } else {
-            // Restore ALL windows from saved state — vault overlay appears on top if needed.
             let windows_to_restore = self.saved_windows.clone();
             for ws in &windows_to_restore {
                 eprintln!("[App] Restoring window: id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
