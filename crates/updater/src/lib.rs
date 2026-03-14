@@ -180,12 +180,6 @@ async fn updater_loop(
     let mut pending_conflicts: std::collections::HashMap<String, state::SyncConflict> =
         std::collections::HashMap::new();
 
-    // Flag that prevents the NeedsSetup notification from being emitted on
-    // every periodic tick.  Set to `true` after the first NeedsSetup emission,
-    // reset to `false` when the user sends ForceSync (which also advances
-    // last_sync_timestamp to bypass the NeedsSetup guard on the next cycle).
-    let mut needs_setup_emitted: bool = false;
-
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
@@ -239,7 +233,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                         }
                     }
                 }
@@ -302,16 +296,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    // Reset the NeedsSetup guard so the next cycle re-evaluates.
-                                    needs_setup_emitted = false;
-                                    // If last_sync_timestamp is still 0 (user never synced before
-                                    // and NeedsSetup was shown), advance it to 1 so do_cloud_sync
-                                    // skips the NeedsSetup guard and proceeds with the normal cycle.
-                                    if sync_state.last_sync_timestamp == 0 {
-                                        sync_state.last_sync_timestamp = 1;
-                                        log::info!("[Updater] ForceSync: advancing last_sync_timestamp past 0 to bypass NeedsSetup guard");
-                                    }
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -345,7 +330,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                                 }
                             }
                         }
@@ -615,12 +600,6 @@ async fn updater_loop(
 /// broadcast via `SyncStatus::ConflictsDetected`.  Conflicted items are NOT
 /// written to disk or pushed; `last_sync_timestamp` is still updated so that
 /// the non-conflicted items move forward.
-///
-/// When this is the very first sync attempt (`last_sync_timestamp == 0`) and
-/// the server already holds data for this user, the status is set to
-/// `SyncStatus::NeedsSetup` so the UI can prompt the user before overwriting
-/// local data.  The caller should re-invoke this function (or let the periodic
-/// timer do it) once the user has decided.
 async fn do_cloud_sync(
     client: &reqwest::Client,
     auth_token: &str,
@@ -631,55 +610,9 @@ async fn do_cloud_sync(
     build_attest: &state::BuildAttestation,
     e2e_key: Option<[u8; 32]>,
     pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
-    needs_setup_emitted: &mut bool,
     profile_id: &str,
     device_id: &str,
 ) {
-    // On the very first sync attempt, check whether the server already has
-    // data.  If it does, emit NeedsSetup so the UI can prompt the user
-    // instead of silently pulling and potentially overwriting local data.
-    //
-    // `needs_setup_emitted` prevents emitting the same notification on every
-    // periodic tick — once emitted we stop repeating it until the user
-    // explicitly sends ForceSync (which resets this flag and advances
-    // last_sync_timestamp to 1 to bypass this guard).
-    if sync_state.last_sync_timestamp == 0 && !*needs_setup_emitted {
-        match cloud_sync::check_status(client, UPDATE_SERVER, auth_token, build_attest, profile_id, device_id).await {
-            Ok(server_status) if server_status.has_cloud_data => {
-                log::info!(
-                    "[Updater] First sync: server has {} item(s) — emitting NeedsSetup",
-                    server_status.item_count
-                );
-                *needs_setup_emitted = true;
-                sync_status_tx.send_replace(state::SyncStatus::NeedsSetup);
-                // Do not proceed with the full sync cycle yet; wait for the
-                // user to acknowledge via the UI.  The periodic timer will
-                // call us again; once the user sends ForceSync the flag is
-                // cleared and last_sync_timestamp is set to 1 so we proceed.
-                return;
-            }
-            Ok(_) => {
-                // Server has no data — safe to proceed with the normal cycle
-                // (we will push local items on first sync).
-                log::debug!("[Updater] First sync: server is empty — proceeding with normal push");
-            }
-            Err(e) => {
-                // Could not reach the server.  Emit an error and bail out;
-                // the loop will retry on the next periodic tick.
-                log::warn!("[Updater] First sync status check failed: {}", e);
-                sync_status_tx.send_replace(state::SyncStatus::Error(format!(
-                    "Sync unavailable: {}",
-                    e
-                )));
-                return;
-            }
-        }
-    } else if sync_state.last_sync_timestamp == 0 && *needs_setup_emitted {
-        // NeedsSetup already emitted — skip silently until ForceSync resets us.
-        log::debug!("[Updater] Skipping sync: NeedsSetup already emitted, waiting for user action");
-        return;
-    }
-
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
     match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key, profile_id, device_id).await {
