@@ -150,10 +150,14 @@ pub async fn get_e2e_params(
     client: &reqwest::Client,
     server_url: &str,
     token: &str,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<Option<(String, i32)>, String> {
     let resp = client
         .get(format!("{}/api/sync/e2e-params", server_url))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -201,6 +205,8 @@ pub async fn setup_e2e_on_server(
     iterations: i32,
     encrypted_master_key: Option<&[u8]>,
     build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<(), String> {
     #[derive(serde::Serialize)]
     struct E2ESetupRequest<'a> {
@@ -217,6 +223,8 @@ pub async fn setup_e2e_on_server(
     let builder = client
         .post(format!("{}/api/sync/e2e-setup", server_url))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .json(&E2ESetupRequest {
             salt,
             iterations,

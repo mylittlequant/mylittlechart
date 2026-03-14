@@ -543,10 +543,14 @@ pub async fn check_status(
     server_url: &str,
     token: &str,
     build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<SyncStatusResponse, String> {
     let builder = client
         .get(format!("{}/api/sync/status", server_url))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .timeout(std::time::Duration::from_secs(10));
 
     let builder = crate::attest::with_attestation(builder, build_attest);
@@ -580,10 +584,14 @@ pub async fn fetch_changes(
     token: &str,
     since: i64,
     build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<(Vec<SyncItemMeta>, i64), String> {
     let builder = client
         .get(format!("{}/api/sync/changes?since={}", server_url, since))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .timeout(std::time::Duration::from_secs(15));
 
     let builder = crate::attest::with_attestation(builder, build_attest);
@@ -622,6 +630,8 @@ pub async fn push_items(
     token: &str,
     items: &[SyncItem],
     build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<usize, String> {
     #[derive(Serialize)]
     struct Req<'a> {
@@ -631,6 +641,8 @@ pub async fn push_items(
     let builder = client
         .post(format!("{}/api/sync/push", server_url))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .json(&Req { items })
         .timeout(std::time::Duration::from_secs(30));
 
@@ -670,10 +682,14 @@ pub async fn pull_all(
     server_url: &str,
     token: &str,
     build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<Vec<SyncItem>, String> {
     let builder = client
         .get(format!("{}/api/sync/pull", server_url))
         .bearer_auth(token)
+        .header("X-Profile-Id", profile_id)
+        .header("X-Device-Id", device_id)
         .timeout(std::time::Duration::from_secs(30));
 
     let builder = crate::attest::with_attestation(builder, build_attest);
@@ -729,6 +745,8 @@ pub async fn do_sync_cycle(
     data_dir: &Path,
     build_attest: &BuildAttestation,
     e2e_key: Option<[u8; 32]>,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<SyncCycleResult, String> {
     // Step 1: collect all local items, then apply per-category filters.
     let local_items = {
@@ -824,7 +842,7 @@ pub async fn do_sync_cycle(
 
     // Step 2: fetch server change metadata.
     // On the very first sync (last_sync_timestamp == 0) we fetch everything.
-    let (server_changes, server_timestamp) = fetch_changes(client, server_url, token, state.last_sync_timestamp, build_attest).await?;
+    let (server_changes, server_timestamp) = fetch_changes(client, server_url, token, state.last_sync_timestamp, build_attest, profile_id, device_id).await?;
 
     log::debug!(
         "[CloudSync] Cycle start: {} local item(s), {} server change(s) since ts={}",
@@ -968,7 +986,7 @@ pub async fn do_sync_cycle(
 
     // Push in batches of 50 (server limit).
     for batch in items_to_push.chunks(50) {
-        match push_items(client, server_url, token, batch, build_attest).await {
+        match push_items(client, server_url, token, batch, build_attest, profile_id, device_id).await {
             Ok(n) => {
                 pushed_count += n;
                 log::debug!("[CloudSync] Pushed batch: {} item(s)", n);
@@ -992,7 +1010,7 @@ pub async fn do_sync_cycle(
     if !to_pull_ids.is_empty() {
         // Pull all items at once using the full-pull endpoint.
         // This is the simplest approach; incremental per-item pull can be added later.
-        match pull_all(client, server_url, token, build_attest).await {
+        match pull_all(client, server_url, token, build_attest, profile_id, device_id).await {
             Ok(all_server_items) => {
                 // Filter to only the items we actually need.
                 let filtered: Vec<SyncItem> = all_server_items

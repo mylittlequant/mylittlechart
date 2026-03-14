@@ -73,6 +73,7 @@ pub fn start(
     initial_last_synced_checksums: std::collections::HashMap<String, String>,
     data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
+    profile_id: String,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -108,7 +109,7 @@ pub fn start(
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest));
+    runtime.spawn(updater_loop(status_tx, auth_tx, synced_keys_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id));
 
     handle
 }
@@ -135,7 +136,10 @@ async fn updater_loop(
     initial_last_synced_checksums: std::collections::HashMap<String, String>,
     mut data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
+    mut profile_id: String,
 ) {
+    // Obtain device_id once at startup — stable for the life of this process.
+    let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
 
     // Shared HTTP client for key sync requests.
@@ -235,7 +239,7 @@ async fn updater_loop(
                     // Cloud sync — best-effort, only runs if user opted in.
                     if let Some(ref td) = token {
                         if sync_state.enabled {
-                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                            do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
                         }
                     }
                 }
@@ -307,7 +311,7 @@ async fn updater_loop(
                                         sync_state.last_sync_timestamp = 1;
                                         log::info!("[Updater] ForceSync: advancing last_sync_timestamp past 0 to bypass NeedsSetup guard");
                                     }
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -341,7 +345,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted).await;
+                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &mut needs_setup_emitted, &profile_id, &device_id).await;
                                 }
                             }
                         }
@@ -384,6 +388,10 @@ async fn updater_loop(
                         data_dir = path;
                         eprintln!("[Updater] data_dir updated to {:?}", data_dir);
                     }
+                    state::UpdaterCommand::SetProfileId(id) => {
+                        profile_id = id;
+                        eprintln!("[Updater] profile_id updated to {}", profile_id);
+                    }
                     state::UpdaterCommand::SetE2EKey(key) => {
                         e2e_key = key;
                         log::info!("[Updater] E2E key updated: {}", if e2e_key.is_some() { "set" } else { "cleared" });
@@ -398,7 +406,7 @@ async fn updater_loop(
                             if let Some(ref td) = token {
                                 log::info!("[Updater] Re-encrypting all cloud data with E2E key");
                                 sync_status_tx.send_replace(state::SyncStatus::Syncing);
-                                match do_re_encrypt_all(&http_client, UPDATE_SERVER, &td.token, &sync_state, &data_dir, &build_attest, e2e_key).await {
+                                match do_re_encrypt_all(&http_client, UPDATE_SERVER, &td.token, &sync_state, &data_dir, &build_attest, e2e_key, &profile_id, &device_id).await {
                                     Ok((pushed, id_to_checksum)) => {
                                         log::info!("[Updater] ReEncryptAll complete: {} item(s) re-pushed", pushed);
                                         // Update synced_items and last_synced_checksums so the
@@ -476,6 +484,8 @@ async fn updater_loop(
                                     &td.token,
                                     &[item],
                                     &build_attest,
+                                    &profile_id,
+                                    &device_id,
                                 )
                                 .await
                                 {
@@ -521,6 +531,8 @@ async fn updater_loop(
                                     UPDATE_SERVER,
                                     &td.token,
                                     &build_attest,
+                                    &profile_id,
+                                    &device_id,
                                 )
                                 .await
                                 {
@@ -620,6 +632,8 @@ async fn do_cloud_sync(
     e2e_key: Option<[u8; 32]>,
     pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
     needs_setup_emitted: &mut bool,
+    profile_id: &str,
+    device_id: &str,
 ) {
     // On the very first sync attempt, check whether the server already has
     // data.  If it does, emit NeedsSetup so the UI can prompt the user
@@ -630,7 +644,7 @@ async fn do_cloud_sync(
     // explicitly sends ForceSync (which resets this flag and advances
     // last_sync_timestamp to 1 to bypass this guard).
     if sync_state.last_sync_timestamp == 0 && !*needs_setup_emitted {
-        match cloud_sync::check_status(client, UPDATE_SERVER, auth_token, build_attest).await {
+        match cloud_sync::check_status(client, UPDATE_SERVER, auth_token, build_attest, profile_id, device_id).await {
             Ok(server_status) if server_status.has_cloud_data => {
                 log::info!(
                     "[Updater] First sync: server has {} item(s) — emitting NeedsSetup",
@@ -668,7 +682,7 @@ async fn do_cloud_sync(
 
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
-    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key).await {
+    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key, profile_id, device_id).await {
         Ok(result) => {
             log::debug!(
                 "[Updater] Cloud sync: pushed={} pulled={} conflicts={}",
@@ -731,6 +745,8 @@ async fn do_re_encrypt_all(
     data_dir: &std::path::Path,
     build_attest: &state::BuildAttestation,
     e2e_key: Option<[u8; 32]>,
+    profile_id: &str,
+    device_id: &str,
 ) -> Result<(usize, std::collections::HashMap<String, String>), String> {
     use base64::Engine as _;
 
@@ -780,7 +796,7 @@ async fn do_re_encrypt_all(
     // Push in batches of 50.
     let mut total_pushed = 0usize;
     for batch in encrypted_items.chunks(50) {
-        match cloud_sync::push_items(client, server_url, auth_token, batch, build_attest).await {
+        match cloud_sync::push_items(client, server_url, auth_token, batch, build_attest, profile_id, device_id).await {
             Ok(n) => {
                 total_pushed += n;
                 log::debug!("[Updater] ReEncryptAll batch pushed: {} item(s)", n);

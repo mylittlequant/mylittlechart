@@ -161,6 +161,11 @@ pub enum UpdaterCommand {
     /// Must be sent after a profile switch so the updater reads from the
     /// new profile's directory rather than the old one.
     SetDataDir(std::path::PathBuf),
+    /// Update the active profile ID used in sync HTTP request headers.
+    ///
+    /// Must be sent after a profile switch alongside [`SetDataDir`] so that
+    /// `X-Profile-Id` headers on all sync requests reflect the current profile.
+    SetProfileId(String),
     /// Set or clear the in-memory E2E encryption key.
     ///
     /// Pass `Some(key)` after the user sets up E2E or re-enters their passphrase.

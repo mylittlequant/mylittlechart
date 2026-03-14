@@ -1964,6 +1964,7 @@ impl App<'_> {
                 profile.sync_state.last_synced_checksums.clone(),
                 zengeld_chart::active_profile_data_dir(),
                 build_attest,
+                profile.profile_id.clone(),
             );
 
             // Seed granular sync toggles from profile into the updater loop.
@@ -2536,6 +2537,9 @@ impl App<'_> {
             use zengeld_updater::UpdaterCommand;
             let new_data_dir = zengeld_chart::active_profile_data_dir();
             let _ = handle.cmd_tx.send(UpdaterCommand::SetDataDir(new_data_dir));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetProfileId(
+                self.profile_manager.profile.profile_id.clone(),
+            ));
             let ss = &self.profile_manager.profile.sync_state;
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(ss.enabled));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
@@ -5014,6 +5018,8 @@ impl ApplicationHandler for App<'_> {
                                 platform: env!("BUILD_PLATFORM").to_string(),
                                 timestamp: env!("BUILD_TIMESTAMP").to_string(),
                             };
+                            let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
+                            let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
                             self.bridge.runtime().spawn(async move {
                                 match zengeld_updater::e2e_crypto::setup_e2e_on_server(
                                     &client,
@@ -5023,6 +5029,8 @@ impl ApplicationHandler for App<'_> {
                                     params.iterations,
                                     encrypted_master_key_for_spawn.as_deref(),
                                     &build_attest_for_spawn,
+                                    &profile_id_for_spawn,
+                                    &device_id_for_spawn,
                                 )
                                 .await {
                                     Ok(_) => {
