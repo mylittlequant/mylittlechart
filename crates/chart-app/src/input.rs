@@ -7494,6 +7494,15 @@ impl ChartApp {
                     }
                 }
                 // ── Profile Manager handlers ───────────────────────────────────
+                "profile_mgr:close" => {
+                    // × button — dismiss profile manager, return to live chart
+                    self.panel_app.user_settings_state.show_profile_manager = false;
+                    self.panel_app.user_settings_state.profile_manager_page =
+                        zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                    eprintln!("[ChartApp] profile_mgr: close button clicked, dismissing");
+                }
                 "profile_mgr:back" => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                     // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key

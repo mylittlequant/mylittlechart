@@ -133,6 +133,35 @@ fn render_page_profile_list(
     let inner_w = modal_w - padding * 2.0;
     let mut cy = modal_y + 30.0;
 
+    // Close button (×) — only when a live profile is running
+    if !state.runtime_profile_id.is_empty() {
+        let close_size = 28.0;
+        let close_x = modal_x + modal_w - padding - close_size + 4.0;
+        let close_y = modal_y + 8.0;
+        let close_id = "user_settings:profile_mgr:close";
+        let close_hovered = hovered == Some("profile_mgr:close");
+
+        if close_hovered {
+            ctx.set_fill_color("rgba(255,255,255,0.10)");
+            ctx.fill_rounded_rect(close_x, close_y, close_size, close_size, 4.0);
+        }
+
+        ctx.set_font("16px sans-serif");
+        ctx.set_fill_color(if close_hovered { "rgba(255,255,255,0.9)" } else { "rgba(255,255,255,0.5)" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("\u{2715}", close_x + close_size / 2.0, close_y + close_size / 2.0);
+
+        let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
+        result.content_items.push(("profile_mgr:close".to_string(), close_rect));
+        input_coordinator.register_on_layer(
+            close_id,
+            close_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+
     // Title
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
