@@ -5161,9 +5161,20 @@ impl ApplicationHandler for App<'_> {
                                             eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
                                         }
                                     } else {
-                                        // First-time setup path: upload the vault salt to the server
-                                        // so it can be fetched on future sessions.  Then trigger
-                                        // re-encryption of any existing plaintext cloud items.
+                                        // First-time setup path: arm the updater with the E2E key
+                                        // unconditionally, then upload salt to server if logged in.
+                                        // SetE2EKey must always fire so sync works even if the server
+                                        // upload is deferred (e.g. user enables sync later).
+                                        if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(sync_key))) {
+                                            eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
+                                        }
+
+                                        // Persist the vault salt locally so we know E2E is configured
+                                        // on the next app start.
+                                        self.profile_manager.profile.sync_state.e2e_enabled = true;
+                                        self.profile_manager.profile.sync_state.e2e_salt = vault_salt.clone();
+
+                                        // Upload salt to server + trigger re-encryption if logged in.
                                         let token = zengeld_updater::token_store::load_token();
                                         if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
                                             let client = reqwest::Client::builder()
@@ -5172,19 +5183,8 @@ impl ApplicationHandler for App<'_> {
                                                 .unwrap_or_default();
                                             let server_url = "https://chart.example".to_string();
                                             let token_str = tok.token.clone();
-                                            let salt_hex_for_spawn = vault_salt.clone();
+                                            let salt_hex_for_spawn = vault_salt;
 
-                                            // Arm the updater with the key immediately so that the
-                                            // ReEncryptAll command (sent after the server call) can
-                                            // use it right away.
-                                            if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(sync_key))) {
-                                                eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
-                                            }
-
-                                            // Take the recovery-key-wrapped master key generated
-                                            // during local vault setup.  Sent to the server for
-                                            // escrow; the server stores it opaquely and never
-                                            // decrypts it.
                                             let encrypted_master_key_for_spawn =
                                                 self.profile_manager.take_encrypted_master_key();
 
@@ -5220,12 +5220,8 @@ impl ApplicationHandler for App<'_> {
                                                     Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
                                                 }
                                             });
-                                            // Persist the vault salt so we know E2E is configured
-                                            // on the next app start.
-                                            self.profile_manager.profile.sync_state.e2e_enabled = true;
-                                            self.profile_manager.profile.sync_state.e2e_salt = vault_salt;
                                         } else {
-                                            eprintln!("[App] e2e_setup: not logged in or cloud disabled — skipping server upload");
+                                            eprintln!("[App] e2e_setup: salt saved locally — server upload deferred (not logged in or cloud disabled)");
                                         }
                                     }
                                 }
