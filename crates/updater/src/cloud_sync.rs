@@ -653,19 +653,20 @@ pub async fn push_items(
     let resp = builder
         .send()
         .await
-        .map_err(|e| format!("sync push request: {}", e))?;
+        .map_err(|e| { eprintln!("[CloudSync] push_items send error: {}", e); format!("sync push request: {}", e) })?;
 
-    if !resp.status().is_success() {
-        return Err(format!("sync push: HTTP {}", resp.status()));
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("sync push read body: {}", e))?;
+    eprintln!("[CloudSync] push_items response: status={} body_len={} body={}", status, body.len(), &body[..500.min(body.len())]);
+
+    if !status.is_success() {
+        return Err(format!("sync push: HTTP {} body={}", status, &body[..500.min(body.len())]));
     }
 
-    let data: PushResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("sync push parse: {}", e))?;
+    let data: PushResponse = serde_json::from_str(&body).map_err(|e| format!("sync push parse: {}", e))?;
 
     if !data.rejected.is_empty() {
-        log::warn!(
+        eprintln!(
             "[CloudSync] Push: {} item(s) rejected by server: {:?}",
             data.rejected.len(),
             data.rejected
@@ -986,19 +987,27 @@ pub async fn do_sync_cycle(
         to_push.clone()
     };
 
+    eprintln!("[CloudSync] classification: to_push={} to_pull={} conflicts={} e2e_key={}",
+        to_push.len(), to_pull_ids.len(), conflicts.len(),
+        if e2e_key.is_some() { "set" } else { "none" });
+    for item in &to_push {
+        eprintln!("[CloudSync]   push: id={} cat={} bytes={}", item.sync_id, item.category, item.content.len());
+    }
+
     // Push in batches of 50 (server limit).
     for batch in items_to_push.chunks(50) {
+        eprintln!("[CloudSync] pushing batch of {} items to {}/api/sync/push", batch.len(), server_url);
         match push_items(client, server_url, token, batch, build_attest, profile_id, device_id).await {
             Ok(n) => {
+                eprintln!("[CloudSync] push OK: accepted={}", n);
                 pushed_count += n;
-                log::debug!("[CloudSync] Pushed batch: {} item(s)", n);
                 // Record the sync_ids from this batch as successfully pushed.
                 for item in batch {
                     pushed_ids.push(item.sync_id.clone());
                 }
             }
             Err(e) => {
-                log::warn!("[CloudSync] Push batch failed: {}", e);
+                eprintln!("[CloudSync] push FAILED: {}", e);
                 // Continue — partial push is still progress.
             }
         }
