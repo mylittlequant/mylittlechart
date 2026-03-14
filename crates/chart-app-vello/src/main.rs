@@ -559,8 +559,10 @@ struct App<'s> {
     /// Vault key pre-validated during Branch A (pre-switch passphrase check), so
     /// `execute_profile_switch` can inject it directly and skip the unlock screen.
     pending_switch_vault_key: Option<zengeld_chart::vault::VaultKey>,
-    /// When true, show the welcome wizard after the next profile switch completes.
-    show_wizard_after_switch: bool,
+    /// ID of a newly created profile awaiting vault setup. Set by `profile_create:`
+    /// handler; consumed by the `e2e_setup:` handler once the user enters a passphrase
+    /// and vault creation succeeds, after which the actual profile switch happens.
+    pending_new_profile_id: Option<String>,
     /// When true, skeleton windows are promoted to live: drop all windows, recreate
     /// with `skeleton=false` so they fetch bars, connect exchanges, etc.
     pending_skeleton_promote: bool,
@@ -2026,7 +2028,7 @@ impl App<'_> {
             link_poll_rx: None,
             pending_profile_switch: None,
             pending_switch_vault_key: None,
-            show_wizard_after_switch: false,
+            pending_new_profile_id: None,
             pending_skeleton_promote: false,
         }
     }
@@ -2454,37 +2456,7 @@ impl App<'_> {
             }
         }
 
-        // If the switch was triggered by profile creation, show the profile manager
-        // create passphrase page so the user can set up encryption for the new profile.
-        if self.show_wizard_after_switch {
-            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-            self.show_wizard_after_switch = false;
-            self.needs_vault_unlock = true;
-            for pw in self.windows.values_mut() {
-                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
-                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
-                pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
-                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
-                pw.chart.panel_app.user_settings_state.is_open = false;
-                // Populate vault status list
-                if let Some(ref index) = zengeld_chart::load_profile_index() {
-                    let profiles_dir = zengeld_chart::active_profile_data_dir()
-                        .parent()
-                        .map(|p| p.to_path_buf());
-                    pw.chart.panel_app.user_settings_state.profiles_with_vault_status = index.profiles.iter().map(|m| {
-                        let has_vault = if let Some(ref pd) = profiles_dir {
-                            pd.join(&m.id).join("vault.enc").exists()
-                        } else {
-                            false
-                        };
-                        (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
-                    }).collect();
-                }
-            }
-            self.is_first_run = true;
-            eprintln!("[App] hot-reload: showing passphrase setup for new profile");
-        } else if has_vault && has_salt {
+        if has_vault && has_salt {
             // Profile has vault — need unlock
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
             for pw in self.windows.values_mut() {
@@ -4229,12 +4201,19 @@ impl ApplicationHandler for App<'_> {
                                 meta.display_name, meta.id, meta.cloud_enabled
                             );
                             self.sync_profiles_to_windows();
-                            // Switch to the new profile immediately and show the
-                            // welcome wizard so the user can configure their E2E
-                            // passphrase on first entry into this profile.
-                            self.pending_profile_switch = Some(meta.id.clone());
-                            self.show_wizard_after_switch = true;
-                            self.is_first_run = true; // so wizard_complete configures in-place
+                            // Show passphrase setup in the current window — no profile switch yet.
+                            // The switch happens only after the user successfully creates the vault.
+                            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                            self.pending_new_profile_id = Some(meta.id.clone());
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                                pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                                pw.chart.panel_app.user_settings_state.profile_manager_target_id = meta.id.clone();
+                                pw.chart.panel_app.user_settings_state.profile_manager_target_name = meta.display_name.clone();
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                            }
                         }
                         Err(e) => eprintln!("[App] profile_create failed: {}", e),
                     }
@@ -4342,10 +4321,56 @@ impl ApplicationHandler for App<'_> {
                 // This runs BEFORE the updater-handle block so that we can call
                 // save_all() without holding an immutable borrow of updater_handle.
                 if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
+                    // ── New profile vault creation ──
+                    // When the user just created a new profile, we show the CreatePassphrase
+                    // modal without switching profiles first.  Once the vault is created we
+                    // trigger the profile switch so the user lands in the new profile.
+                    if let Some(ref new_profile_id) = self.pending_new_profile_id.clone() {
+                        let profiles_dir = zengeld_chart::active_profile_data_dir()
+                            .parent()
+                            .map(|p| p.to_path_buf());
+                        if let Some(pd) = profiles_dir {
+                            let target_meta = self.profile_manager.available_profiles()
+                                .iter()
+                                .find(|p| p.id == *new_profile_id)
+                                .cloned();
+                            if let Some(meta) = target_meta {
+                                let target_dir = pd.join(&meta.dir_name);
+                                let salt_path = target_dir.join("salt.hex");
+                                let vault_path = target_dir.join("vault.enc");
+                                if let Ok(salt) = zengeld_chart::vault::load_or_create_salt(&salt_path) {
+                                    let key = zengeld_chart::vault::derive_key(passphrase, &salt);
+                                    let empty_secrets = zengeld_chart::user_profile::VaultSecrets::default();
+                                    if let Ok(()) = zengeld_chart::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
+                                        eprintln!("[App] new profile vault created, switching to {}", new_profile_id);
+                                        self.pending_new_profile_id = None;
+                                        self.pending_switch_vault_key = Some(key);
+                                        self.pending_profile_switch = Some(new_profile_id.clone());
+                                        for pw in self.windows.values_mut() {
+                                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                            pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                            pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                        }
+                                    } else {
+                                        eprintln!("[App] new profile: failed to create vault.enc");
+                                        for pw in self.windows.values_mut() {
+                                            pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                Some("Failed to create vault — please try again".to_string());
+                                        }
+                                    }
+                                } else {
+                                    eprintln!("[App] new profile: failed to create salt");
+                                }
+                            }
+                        }
+                    } else
                     // ── Pre-switch validation: unlocking a DIFFERENT profile ──
                     // If the target profile differs from the running profile, validate
                     // the passphrase against the target's vault WITHOUT hot-reloading.
                     // Only switch after successful validation.
+                    {
                     let target_id = self.windows.values().next()
                         .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
                         .unwrap_or_default();
@@ -4477,6 +4502,7 @@ impl ApplicationHandler for App<'_> {
                             Err(e) => eprintln!("[App] vault salt error: {}", e),
                         }
                     }
+                    } // end else (not a new-profile vault creation)
                 }
 
                 // ── Recovery key confirmed ───────────────────────────────────────────────────

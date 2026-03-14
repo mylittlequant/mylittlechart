@@ -461,6 +461,22 @@ fn render_page_create_passphrase(
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
+    // Minimum length hint
+    if state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(
+            &format!("Minimum {} characters", crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH),
+            inner_x,
+            cy,
+        );
+        cy += 16.0;
+    } else {
+        cy += 16.0; // keep spacing consistent
+    }
+
     // Passphrase input
     render_passphrase_input(
         ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme,
