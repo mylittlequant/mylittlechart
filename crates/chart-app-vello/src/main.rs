@@ -2706,9 +2706,11 @@ impl App<'_> {
     /// `exclude_window_ids` — window ids to exclude from the saved profile
     /// (used for deleted windows that should not be persisted).
     fn save_all(&mut self, exclude_window_ids: &[String]) {
-        // 1. Autosave every window's active preset.
+        // 1. Autosave every window's active preset (skip skeleton windows).
         for pw in self.windows.values_mut() {
-            pw.chart.autosave_snapshot();
+            if !pw.skeleton {
+                pw.chart.autosave_snapshot();
+            }
         }
 
         // 1b. Drain preset actions queued by autosave_snapshot into AppState.
@@ -3912,9 +3914,11 @@ impl ApplicationHandler for App<'_> {
             let any_watchlists_dirty = self.windows.values().any(|pw| pw.chart.watchlists_dirty);
 
             if any_profile_dirty {
-                // Autosave every window's active preset first.
+                // Autosave every window's active preset first (skip skeleton).
                 for pw in self.windows.values_mut() {
-                    pw.chart.autosave_snapshot();
+                    if !pw.skeleton {
+                        pw.chart.autosave_snapshot();
+                    }
                 }
 
                 // Sync OS position/size into ChartApp fields.
@@ -4104,10 +4108,10 @@ impl ApplicationHandler for App<'_> {
             }
 
             if !windows_to_close.is_empty() {
-                // Autosave closing windows before removal.
+                // Autosave closing windows before removal (skip skeleton).
                 for (wid, _) in &windows_to_close {
                     if let Some(pw) = self.windows.get_mut(wid) {
-                        pw.chart.autosave_snapshot();
+                        if !pw.skeleton { pw.chart.autosave_snapshot(); }
                     }
                 }
 
