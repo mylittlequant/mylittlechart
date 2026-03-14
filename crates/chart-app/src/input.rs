@@ -7615,9 +7615,38 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_new_cancel");
                 }
                 rest if rest.starts_with("vault_picker_profile:") => {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                     let profile_id = &rest["vault_picker_profile:".len()..];
-                    self.pending_updater_cmd = Some(format!("profile_switch:{}", profile_id));
-                    eprintln!("[ChartApp] vault_picker: switching to profile {}", profile_id);
+                    let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .unwrap_or(false);
+                    let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _)| name.clone())
+                        .unwrap_or_default();
+                    if !target_has_vault {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] vault_picker: passphrase setup for unencrypted profile {}", profile_id);
+                    } else {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] vault_picker: passphrase prompt for profile {}", profile_id);
+                    }
+                    // Switch to profile_manager modal to show the passphrase page
+                    self.panel_app.user_settings_state.show_profile_manager = true;
+                    self.panel_app.user_settings_state.show_welcome_wizard = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
