@@ -988,69 +988,6 @@ fn render_profile_section(
 
         cy += input_h + 4.0;
 
-        // ── Mode radio buttons ───────────────────────────────────────────────
-        let radio_h = 20.0;
-        let dot_r = 5.0;
-        let dot_cx_radio = x + dot_r;
-
-        // Connected radio
-        let conn_dot_cy = cy + radio_h / 2.0;
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.5);
-        ctx.begin_path();
-        ctx.arc(dot_cx_radio, conn_dot_cy, dot_r, 0.0, std::f64::consts::TAU);
-        ctx.stroke();
-        if state.new_profile_mode_connected {
-            ctx.set_fill_color(&toolbar_theme.accent);
-            ctx.begin_path();
-            ctx.arc(dot_cx_radio, conn_dot_cy, dot_r - 3.0, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-        }
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if state.new_profile_mode_connected { "rgba(254,255,238,0.9)" } else { "rgba(254,255,238,0.55)" });
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Connected", x + dot_r * 2.0 + 8.0, conn_dot_cy);
-
-        let conn_radio_rect = WidgetRect::new(x, cy, available_w / 2.0 - 4.0, radio_h);
-        result.content_items.push(("profile_new_mode_connected".to_string(), conn_radio_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:profile_new_mode_connected",
-            uzor::types::Rect::new(x, cy, available_w / 2.0 - 4.0, radio_h),
-            Sense::CLICK,
-            layer_id,
-        );
-
-        // Standalone radio
-        let sa_x = x + available_w / 2.0 + 4.0;
-        let sa_dot_cx = sa_x + dot_r;
-        let sa_dot_cy = cy + radio_h / 2.0;
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.5);
-        ctx.begin_path();
-        ctx.arc(sa_dot_cx, sa_dot_cy, dot_r, 0.0, std::f64::consts::TAU);
-        ctx.stroke();
-        if !state.new_profile_mode_connected {
-            ctx.set_fill_color(&toolbar_theme.accent);
-            ctx.begin_path();
-            ctx.arc(sa_dot_cx, sa_dot_cy, dot_r - 3.0, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-        }
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if !state.new_profile_mode_connected { "rgba(254,255,238,0.9)" } else { "rgba(254,255,238,0.55)" });
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Standalone", sa_x + dot_r * 2.0 + 8.0, sa_dot_cy);
-
-        let sa_radio_rect = WidgetRect::new(sa_x, cy, available_w / 2.0 - 4.0, radio_h);
-        result.content_items.push(("profile_new_mode_standalone".to_string(), sa_radio_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:profile_new_mode_standalone",
-            uzor::types::Rect::new(sa_x, cy, available_w / 2.0 - 4.0, radio_h),
-            Sense::CLICK,
-            layer_id,
-        );
-
-        cy += radio_h + 4.0;
-
         // Create button — full row
         ctx.set_fill_color("rgba(76,175,80,0.2)");
         ctx.fill_rounded_rect(x, cy, available_w, input_h, 3.0);

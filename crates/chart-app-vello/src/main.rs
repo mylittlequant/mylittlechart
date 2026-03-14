@@ -4206,21 +4206,13 @@ impl ApplicationHandler for App<'_> {
                         Err(e) => eprintln!("[App] profile_set_avatar failed: {}", e),
                     }
                 } else if let Some(rest) = cmd_str.strip_prefix("profile_create:") {
-                    // Format: "profile_create:{mode}:{name}" where mode is "connected" or "standalone".
-                    let (cloud_enabled, raw_name) = if let Some(name) = rest.strip_prefix("connected:") {
-                        (true, name)
-                    } else if let Some(name) = rest.strip_prefix("standalone:") {
-                        (false, name)
-                    } else {
-                        // Fallback: legacy format without mode prefix — treat as standalone.
-                        (false, rest)
-                    };
-                    let name_opt = if raw_name.trim().is_empty() { None } else { Some(raw_name) };
-                    match self.profile_manager.create_profile(name_opt, "chart", cloud_enabled) {
+                    // Format: "profile_create:{name}" — cloud_enabled is always false at creation.
+                    let name_opt = if rest.trim().is_empty() { None } else { Some(rest) };
+                    match self.profile_manager.create_profile(name_opt, "chart") {
                         Ok(meta) => {
                             eprintln!(
-                                "[App] profile created: {} ({}) cloud_enabled={}",
-                                meta.display_name, meta.id, meta.cloud_enabled
+                                "[App] profile created: {} ({})",
+                                meta.display_name, meta.id
                             );
                             self.sync_profiles_to_windows();
                             // Show passphrase setup in the current window — no profile switch yet.
@@ -4262,96 +4254,76 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
 
-                // ── Wizard complete: mode + passphrase in a single command ──
-                // Format: "wizard_complete:{standalone|connected}:{passphrase}"
-                if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
-                    let parts: Vec<&str> = rest.splitn(2, ':').collect();
-                    if parts.len() == 2 {
-                        let mode_str = parts[0];
-                        let passphrase = parts[1];
-
-                        let cloud_enabled = mode_str != "standalone";
-
-                        if !self.is_first_run {
-                            // Creating a NEW profile from settings wizard.
-                            // The current profile is immutable — create a fresh one.
-                            match self.profile_manager.create_profile(None, "chart", cloud_enabled) {
-                                Ok(meta) => {
-                                    eprintln!(
-                                        "[App] wizard_complete: created new profile '{}' ({})",
-                                        meta.id, mode_str
-                                    );
-                                    // Switch active profile to the new one.
-                                    if let Some(mut index) = zengeld_chart::load_profile_index() {
-                                        index.active_profile_id = meta.id.clone();
-                                        let _ = zengeld_chart::save_profile_index(&index);
-                                    }
-                                    // Reload ProfileManager from the new empty profile directory.
-                                    self.profile_manager = zengeld_chart::ProfileManager::load(None);
-                                    self.profile_manager.profile.cloud_enabled = cloud_enabled;
-                                    self.profile = self.profile_manager.profile.clone();
-                                    // Clear presets/templates for fresh profile.
-                                    self.app_state.presets.clear();
-                                    self.app_state.template_manager =
-                                        self.profile_manager.template_manager.clone();
+                // ── Wizard complete: passphrase in a single command ──
+                // Format: "wizard_complete:{passphrase}"
+                if let Some(passphrase) = cmd_str.strip_prefix("wizard_complete:") {
+                    if !self.is_first_run {
+                        // Creating a NEW profile from settings wizard.
+                        // The current profile is immutable — create a fresh one.
+                        match self.profile_manager.create_profile(None, "chart") {
+                            Ok(meta) => {
+                                eprintln!(
+                                    "[App] wizard_complete: created new profile '{}'",
+                                    meta.id
+                                );
+                                // Switch active profile to the new one.
+                                if let Some(mut index) = zengeld_chart::load_profile_index() {
+                                    index.active_profile_id = meta.id.clone();
+                                    let _ = zengeld_chart::save_profile_index(&index);
                                 }
-                                Err(e) => {
-                                    eprintln!("[App] wizard_complete: failed to create profile: {}", e);
-                                    // Fall through — configure existing profile as fallback.
-                                }
-                            }
-                        } else {
-                            // First run — configure the default profile in-place.
-                            self.profile_manager.profile.cloud_enabled = cloud_enabled;
-                            self.profile.cloud_enabled = cloud_enabled;
-                        }
-
-                        // Derive vault key via ProfileManager and sync to app_state.
-                        match self.profile_manager.derive_and_set_vault_key(passphrase) {
-                            Ok(key) => {
-                                self.app_state.vault_key = Some(key);
-                                self.profile_manager.vault_key = Some(key);
-                                self.app_state.template_manager.vault_key = Some(key);
-                                eprintln!("[App] wizard_complete: vault key derived, mode={}, saving", mode_str);
+                                // Reload ProfileManager from the new empty profile directory.
+                                self.profile_manager = zengeld_chart::ProfileManager::load(None);
+                                self.profile = self.profile_manager.profile.clone();
+                                // Clear presets/templates for fresh profile.
+                                self.app_state.presets.clear();
+                                self.app_state.template_manager =
+                                    self.profile_manager.template_manager.clone();
                             }
                             Err(e) => {
-                                eprintln!("[App] wizard_complete: failed to derive vault key: {}", e);
+                                eprintln!("[App] wizard_complete: failed to create profile: {}", e);
+                                // Fall through — configure existing profile as fallback.
                             }
                         }
+                    }
+                    // First run — no profile creation needed, configure in-place.
 
-                        // Save profile + vault.
-                        self.save_all(&[]);
-                        self.is_first_run = false;
-                        self.needs_vault_unlock = false;
-                        self.needs_migration = false;
-
-                        // If a recovery key was generated, show it before promoting.
-                        let recovery_key = self.profile_manager.pending_recovery_key.clone();
-                        if recovery_key.is_some() {
-                            // Show recovery key on skeleton first; promote after user confirms.
-                            for pw in self.windows.values_mut() {
-                                use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                                pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                pw.chart.panel_app.user_settings_state.recovery_key_display =
-                                    recovery_key.clone();
-                                pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                    ProfileManagerPage::ShowRecoveryKey;
-                                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
-                            }
-                        } else {
-                            // No recovery key — promote immediately.
-                            eprintln!("[App] wizard_complete — promoting skeleton to live");
-                            self.pending_skeleton_promote = true;
+                    // Derive vault key via ProfileManager and sync to app_state.
+                    match self.profile_manager.derive_and_set_vault_key(passphrase) {
+                        Ok(key) => {
+                            self.app_state.vault_key = Some(key);
+                            self.profile_manager.vault_key = Some(key);
+                            self.app_state.template_manager.vault_key = Some(key);
+                            eprintln!("[App] wizard_complete: vault key derived, saving");
                         }
-
-                        // Tell updater about the mode.
-                        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                        {
-                            if let Some(ref handle) = self.updater_handle {
-                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SetCloudEnabled(cloud_enabled));
-                            }
+                        Err(e) => {
+                            eprintln!("[App] wizard_complete: failed to derive vault key: {}", e);
                         }
+                    }
+
+                    // Save profile + vault.
+                    self.save_all(&[]);
+                    self.is_first_run = false;
+                    self.needs_vault_unlock = false;
+                    self.needs_migration = false;
+
+                    // If a recovery key was generated, show it before promoting.
+                    let recovery_key = self.profile_manager.pending_recovery_key.clone();
+                    if recovery_key.is_some() {
+                        // Show recovery key on skeleton first; promote after user confirms.
+                        for pw in self.windows.values_mut() {
+                            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                            pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                            pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                recovery_key.clone();
+                            pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                ProfileManagerPage::ShowRecoveryKey;
+                            pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                        }
+                    } else {
+                        // No recovery key — promote immediately.
+                        eprintln!("[App] wizard_complete — promoting skeleton to live");
+                        self.pending_skeleton_promote = true;
                     }
                 }
 
@@ -4588,12 +4560,7 @@ impl ApplicationHandler for App<'_> {
                 if cmd_str == "vault_skip_to_wizard" {
                     // Create a brand-new profile so the wizard operates on fresh data,
                     // not the old encrypted profile the user can no longer unlock.
-                    // wizard_complete will set the real client mode after page 0.
-                    match self.profile_manager.create_profile(
-                        None,
-                        "chart",
-                        false,
-                    ) {
+                    match self.profile_manager.create_profile(None, "chart") {
                         Ok(meta) => {
                             eprintln!(
                                 "[App] vault_skip_to_wizard: created new profile {} ({})",

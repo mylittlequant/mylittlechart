@@ -4461,14 +4461,8 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     let name = editing.text.trim().to_string();
                     if !name.is_empty() {
-                        let mode = if self.panel_app.user_settings_state.new_profile_mode_connected {
-                            "connected"
-                        } else {
-                            "standalone"
-                        };
-                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
+                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
                         self.panel_app.user_settings_state.show_new_profile_dialog = false;
-                        self.panel_app.user_settings_state.new_profile_mode_connected = false;
                     }
                 }
                 '\x1b' => {
@@ -7399,53 +7393,9 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("logout".to_string());
                     eprintln!("[ChartApp] logout: sending logout command to updater");
                 }
-                "profile_new_mode_connected" => {
-                    self.panel_app.user_settings_state.new_profile_mode_connected = true;
-                    eprintln!("[ChartApp] profile_new_mode_connected: new profile will be Connected");
-                }
-                "profile_new_mode_standalone" => {
-                    self.panel_app.user_settings_state.new_profile_mode_connected = false;
-                    eprintln!("[ChartApp] profile_new_mode_standalone: new profile will be Standalone");
-                }
-                // ── Sync transition choices (Standalone → Connected) ──────────
-                "sync_upload" => {
-                    self.panel_app.user_settings_state.sync_transition_pending = false;
-                    self.panel_app.user_settings_state.client_mode_connected = true;
-                    self.pending_updater_cmd = Some("set_connected_upload".to_string());
-                    eprintln!("[ChartApp] sync choice: upload local data, switching to Connected");
-                }
-                "sync_download" => {
-                    self.panel_app.user_settings_state.sync_transition_pending = false;
-                    self.panel_app.user_settings_state.client_mode_connected = true;
-                    self.pending_updater_cmd = Some("set_connected_download".to_string());
-                    eprintln!("[ChartApp] sync choice: download cloud data, switching to Connected");
-                }
-                "sync_fresh" => {
-                    self.panel_app.user_settings_state.sync_transition_pending = false;
-                    self.panel_app.user_settings_state.client_mode_connected = true;
-                    self.pending_updater_cmd = Some("set_connected".to_string());
-                    eprintln!("[ChartApp] sync choice: start fresh, switching to Connected");
-                }
-                "sync_cancel" => {
-                    self.panel_app.user_settings_state.sync_transition_pending = false;
-                    eprintln!("[ChartApp] sync transition cancelled, staying Standalone");
-                }
-                // ── Disconnect confirmation (Connected → Standalone) ──────────
-                "disconnect_confirm" => {
-                    self.panel_app.user_settings_state.disconnect_pending = false;
-                    self.panel_app.user_settings_state.client_mode_connected = false;
-                    self.pending_updater_cmd = Some("set_standalone".to_string());
-                    eprintln!("[ChartApp] disconnect confirmed, switching to Standalone");
-                }
-                "disconnect_cancel" => {
-                    self.panel_app.user_settings_state.disconnect_pending = false;
-                    eprintln!("[ChartApp] disconnect cancelled, staying Connected");
-                }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 "wizard_get_started" => {
                     // Page 0: user clicked Get Started — go to page 1 (passphrase)
-                    // Default to standalone mode (mode selection removed)
-                    self.panel_app.user_settings_state.wizard_mode_standalone = true;
                     self.panel_app.user_settings_state.wizard_page = 1;
                     eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (passphrase)");
                 }
@@ -7466,16 +7416,13 @@ impl ChartApp {
                     // Page 1: user confirmed passphrase — apply E2E and close wizard.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
-                        let standalone = self.panel_app.user_settings_state.wizard_mode_standalone;
-                        self.panel_app.user_settings_state.client_mode_connected = !standalone;
-                        let mode = if standalone { "standalone" } else { "connected" };
-                        self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", mode, passphrase));
+                        self.pending_updater_cmd = Some(format!("wizard_complete:{}", passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
                         self.panel_app.user_settings_state.needs_vault_unlock = false;
                         self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        eprintln!("[ChartApp] wizard: setup complete, closing wizard, standalone={}", standalone);
+                        eprintln!("[ChartApp] wizard: setup complete, closing wizard");
                     }
                 }
                 // ── Vault unlock handler (returning encrypted users) ──────────
@@ -7530,7 +7477,6 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
                     self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    self.panel_app.user_settings_state.new_profile_standalone = true;
                     eprintln!("[ChartApp] profile_mgr: create new profile page");
                 }
                 "profile_mgr:unlock" => {
@@ -7551,8 +7497,7 @@ impl ChartApp {
                 "profile_mgr:create_confirm" => {
                     let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if !name.is_empty() {
-                        // All new profiles start standalone (cloud sync off by default — toggle in settings).
-                        self.pending_updater_cmd = Some(format!("profile_create:standalone:{}", name));
+                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
                         eprintln!("[ChartApp] profile_mgr: creating profile '{}'", name);
                     }
                 }
@@ -7570,7 +7515,6 @@ impl ChartApp {
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {
-                    self.panel_app.user_settings_state.wizard_mode_standalone = false;
                     self.panel_app.user_settings_state.wizard_e2e_chosen = true;
                     self.panel_app.user_settings_state.wizard_page = 1;
                     eprintln!("[ChartApp] wizard: legacy wizard_e2e handler");
@@ -7620,18 +7564,12 @@ impl ChartApp {
                 "profile_new_confirm" => {
                     let name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if !name.is_empty() {
-                        let mode = if self.panel_app.user_settings_state.new_profile_mode_connected {
-                            "connected"
-                        } else {
-                            "standalone"
-                        };
-                        self.pending_updater_cmd = Some(format!("profile_create:{}:{}", mode, name));
+                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
                         self.panel_app.user_settings_state.show_new_profile_dialog = false;
                         self.panel_app.user_settings_state.new_profile_name_focused = false;
                         self.panel_app.user_settings_state.new_profile_name_editing.text.clear();
                         self.panel_app.user_settings_state.new_profile_name_editing.cursor = 0;
-                        self.panel_app.user_settings_state.new_profile_mode_connected = false;
-                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}' ({})", name, mode);
+                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
                     }
                 }
                 "profile_new_cancel" => {

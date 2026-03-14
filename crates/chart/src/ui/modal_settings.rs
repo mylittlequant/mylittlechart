@@ -3365,8 +3365,6 @@ pub struct UserSettingsState {
     /// Whether each profile has vault encryption.
     /// Vec<(id, display_name, avatar, client_mode, has_vault)>.
     pub profiles_with_vault_status: Vec<(String, String, String, bool, bool)>,
-    /// Whether new profile is standalone mode (true) or connected (false).
-    pub new_profile_standalone: bool,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
     /// 8-char device code for device linking displayed on page 1.
@@ -3375,8 +3373,6 @@ pub struct UserSettingsState {
     pub wizard_linking_status: String,
     /// True if the user selected the E2E option (so page 2 is shown after linking).
     pub wizard_e2e_chosen: bool,
-    /// True = Standalone mode chosen, false = Connected mode chosen.
-    pub wizard_mode_standalone: bool,
 
     // ── Profile ──────────────────────────────────────────────────────────
     /// Display name of the active profile.
@@ -3412,8 +3408,6 @@ pub struct UserSettingsState {
     pub new_profile_name_editing: TextEditingState,
     /// Whether the new profile name input field is focused for keyboard input.
     pub new_profile_name_focused: bool,
-    /// Mode chosen for new profile creation: false = Standalone (default), true = Connected.
-    pub new_profile_mode_connected: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3482,12 +3476,10 @@ impl Default for UserSettingsState {
             profile_manager_target_id: String::new(),
             profile_manager_target_name: String::new(),
             profiles_with_vault_status: Vec::new(),
-            new_profile_standalone: true,
             wizard_page: 0,
             wizard_device_code: String::new(),
             wizard_linking_status: String::new(),
             wizard_e2e_chosen: false,
-            wizard_mode_standalone: true,
             profile_display_name: "Default".to_string(),
             profile_avatar: "chart".to_string(),
             profile_id: String::new(),
@@ -3514,7 +3506,6 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             new_profile_name_focused: false,
-            new_profile_mode_connected: false,
         }
     }
 }

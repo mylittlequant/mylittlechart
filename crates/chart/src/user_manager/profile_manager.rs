@@ -223,19 +223,19 @@ impl ProfileManager {
     ///
     /// If `name` is `None` or empty, an auto-generated name ("New Profile",
     /// "New Profile 2", …) is used.  The new profile is NOT made active.
+    /// Cloud sync is always disabled at creation (toggle it in settings later).
     /// Returns the newly created [`ProfileMeta`].
     pub fn create_profile(
         &mut self,
         name: Option<&str>,
         avatar: &str,
-        cloud_enabled: bool,
     ) -> Result<ProfileMeta, String> {
         let final_name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => self.auto_generate_name(),
         };
 
-        let meta = create_profile(&final_name, avatar, cloud_enabled)?;
+        let meta = create_profile(&final_name, avatar, false)?;
         self.refresh_index();
         Ok(meta)
     }

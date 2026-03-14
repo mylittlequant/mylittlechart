@@ -90,13 +90,9 @@ pub fn render_welcome_wizard(
     }
 }
 
-/// Compute the height for page 1 based on the selected connection mode.
-fn page1_height(state: &UserSettingsState) -> f64 {
-    if state.wizard_mode_standalone {
-        320.0 // Standalone: passphrase only
-    } else {
-        420.0 // Connected: passphrase + sign-in section
-    }
+/// Compute the height for page 1.
+fn page1_height(_state: &UserSettingsState) -> f64 {
+    320.0 // Passphrase only
 }
 
 // =============================================================================
@@ -233,48 +229,6 @@ fn render_page1_passphrase(
 
     // Passphrase input (mandatory)
     *cy = render_passphrase_input(ctx, x, w, cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, layer_id, input_coordinator, result);
-
-    // ── Connected mode: sign-in section ──────────────────────────────────────
-    if !state.wizard_mode_standalone {
-        ctx.set_font("600 11px sans-serif");
-        ctx.set_fill_color("rgba(244,205,99,0.7)");
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("SIGN IN", x, *cy);
-        *cy += 16.0;
-
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.55)");
-        ctx.fill_text("Open chart.example/login to link your account.", x, *cy);
-        *cy += 20.0;
-
-        let btn_h = 28.0;
-        let btn_w = w.min(160.0);
-        let is_browser_hovered = hovered == Some("wizard_open_browser");
-        let browser_bg = if is_browser_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-        ctx.set_fill_color(browser_bg);
-        ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-        ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color("rgba(0,0,0,0.85)");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Open Browser", x + btn_w / 2.0, *cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let open_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
-        result.content_items.push(("wizard_open_browser".to_string(), open_rect));
-        input_coordinator.register_on_layer("user_settings:wizard_open_browser", open_rect, Sense::CLICK, layer_id);
-        *cy += btn_h + 8.0;
-
-        if !state.wizard_linking_status.is_empty() {
-            let status_color = if state.wizard_linking_status.starts_with("Linked") { "#5cb85c" } else { "rgba(254,255,238,0.45)" };
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(status_color);
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text(&state.wizard_linking_status, x, *cy);
-            *cy += 16.0;
-        }
-        *cy += 12.0;
-    }
 
     // ── Complete Setup button (disabled until passphrase meets minimum length) ──
     let enable_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::MIN_PASSPHRASE_LENGTH;
