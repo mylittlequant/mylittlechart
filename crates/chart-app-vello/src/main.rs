@@ -2198,7 +2198,11 @@ impl App<'_> {
         // without waiting for the next dirty-flag sync pass.
         chart.sidebar_state.watchlist_manager = self.app_state.watchlist_manager.clone();
         chart.sidebar_state.connector_enabled = self.app_state.connector_enabled.clone();
-        chart.panel_app.presets = self.app_state.presets.clone();
+        // Merge AppState presets into window — don't replace, to keep
+        // any Untitled preset that new_window() just created.
+        for (k, v) in self.app_state.presets.iter() {
+            chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
+        }
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         chart.panel_app.template_manager = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
