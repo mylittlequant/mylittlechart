@@ -4006,6 +4006,52 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
+        // ── Second-pass: autosave_snapshot() inside profile_dirty may have
+        //    pushed new PresetAction::Upsert that missed the first drain.
+        //    Drain + flush them now so they don't wait until next frame. ──────
+        {
+            let mut second_pass_dirty = false;
+            for pw in self.windows.values_mut() {
+                for action in pw.chart.preset_actions.drain(..) {
+                    match action {
+                        chart_app::PresetAction::Upsert(preset) => {
+                            let id = preset.id.clone();
+                            self.app_state.presets.insert(id.clone(), preset);
+                            self.app_state.preset_dirty_ids.insert(id);
+                            second_pass_dirty = true;
+                        }
+                        chart_app::PresetAction::Delete { id } => {
+                            self.app_state.presets.remove(&id);
+                            if let Err(e) = zengeld_chart::preset::storage::delete_preset(&id) {
+                                eprintln!("[App] failed to delete preset file {}: {}", id, e);
+                            }
+                            self.app_state.preset_dirty_ids.remove(&id);
+                        }
+                        chart_app::PresetAction::Rename { id, new_name } => {
+                            if let Some(preset) = self.app_state.presets.get_mut(&id) {
+                                preset.name = new_name;
+                                self.app_state.preset_dirty_ids.insert(id);
+                                second_pass_dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if second_pass_dirty && !self.app_state.preset_dirty_ids.is_empty() {
+                let ids: Vec<String> = self.app_state.preset_dirty_ids.drain().collect();
+                let vault_key = self.app_state.vault_key.as_ref();
+                for id in ids {
+                    if let Some(preset) = self.app_state.presets.get(&id) {
+                        if let Err(e) = zengeld_chart::preset::storage::save_preset(preset, vault_key) {
+                            eprintln!("[App] failed to save preset {}: {}", id, e);
+                        }
+                    }
+                }
+                #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                sync_changed_categories.push("preset".to_string());
+            }
+        }
+
         // ── Event-driven sync push ────────────────────────────────────────────
         // Fire one SyncPushChanged after all dirty-flag flushes so the updater
         // can immediately push to the server rather than waiting for the 5-min
