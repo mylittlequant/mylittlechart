@@ -2442,11 +2442,19 @@ impl ChartPanelApp {
         self.open_tabs = um.profile.open_tabs.clone();
         self.open_tabs.retain(|id| self.presets.contains_key(id));
 
-        // Migration: old data has no open_tabs — open all existing presets.
+        // Migration: old data has no open_tabs — open only the active preset.
         if self.open_tabs.is_empty() && !self.presets.is_empty() {
-            let mut all: Vec<_> = self.presets.values().collect();
-            all.sort_by_key(|p| p.created_at);
-            self.open_tabs = all.iter().map(|p| p.id.clone()).collect();
+            if !self.active_preset_id.is_empty()
+                && self.presets.contains_key(&self.active_preset_id)
+            {
+                self.open_tabs = vec![self.active_preset_id.clone()];
+            } else {
+                let mut all: Vec<_> = self.presets.values().collect();
+                all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                if let Some(newest) = all.first() {
+                    self.open_tabs = vec![newest.id.clone()];
+                }
+            }
         }
 
         // Keep profile + snapshots in user_manager.

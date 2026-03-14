@@ -1152,11 +1152,20 @@ impl ChartApp {
             app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
             app.panel_app.open_tabs.retain(|id| app.panel_app.presets.contains_key(id));
 
-            // Migration: old data has no open_tabs — open all existing presets.
+            // Migration: old data has no open_tabs — open only the active preset.
             if app.panel_app.open_tabs.is_empty() && !app.panel_app.presets.is_empty() {
-                let mut all: Vec<_> = app.panel_app.presets.values().collect();
-                all.sort_by_key(|p| p.created_at);
-                app.panel_app.open_tabs = all.iter().map(|p| p.id.clone()).collect();
+                if !app.panel_app.active_preset_id.is_empty()
+                    && app.panel_app.presets.contains_key(&app.panel_app.active_preset_id)
+                {
+                    app.panel_app.open_tabs = vec![app.panel_app.active_preset_id.clone()];
+                } else {
+                    // No active preset known — open the newest one.
+                    let mut all: Vec<_> = app.panel_app.presets.values().collect();
+                    all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+                    if let Some(newest) = all.first() {
+                        app.panel_app.open_tabs = vec![newest.id.clone()];
+                    }
+                }
             }
         }
 

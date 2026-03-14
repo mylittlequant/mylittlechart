@@ -287,6 +287,9 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == "json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
+                    // Strip heavy fields before sync: bars (re-fetchable from exchange),
+                    // command_history and stashed_command_history (local undo/redo only).
+                    let content = strip_preset_for_sync(&content);
                     let id = path
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
@@ -1179,4 +1182,64 @@ pub async fn do_sync_cycle(
         new_state,
         conflicts,
     })
+}
+
+// =============================================================================
+// Preset stripping helpers
+// =============================================================================
+
+/// Strip heavy fields from a preset JSON before syncing.
+///
+/// Removes `bars` from each window snapshot and compare overlay series —
+/// bar data is re-fetchable from exchanges and inflates presets to 400KB+.
+/// Command history is kept (small, useful for cross-device undo/redo).
+fn strip_preset_for_sync(raw_json: &str) -> String {
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(raw_json) else {
+        return raw_json.to_string();
+    };
+
+    if let Some(windows) = val.get_mut("windows").and_then(|w| w.as_array_mut()) {
+        for win in windows.iter_mut() {
+            if let Some(obj) = win.as_object_mut() {
+                obj.remove("bars");
+
+                // Strip bars from compare overlay series too.
+                if let Some(co) = obj.get_mut("compare_overlay") {
+                    if let Some(series) = co.get_mut("series").and_then(|s| s.as_array_mut()) {
+                        for s in series.iter_mut() {
+                            if let Some(so) = s.as_object_mut() {
+                                so.remove("bars");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also handle sync_groups which contain SyncGroupSnapshot with windows.
+    if let Some(groups) = val.get_mut("sync_groups").and_then(|g| g.as_array_mut()) {
+        for group in groups.iter_mut() {
+            if let Some(windows) = group.get_mut("windows").and_then(|w| w.as_array_mut()) {
+                for win in windows.iter_mut() {
+                    if let Some(obj) = win.as_object_mut() {
+                        obj.remove("bars");
+                        if let Some(co) = obj.get_mut("compare_overlay") {
+                            if let Some(series) =
+                                co.get_mut("series").and_then(|s| s.as_array_mut())
+                            {
+                                for s in series.iter_mut() {
+                                    if let Some(so) = s.as_object_mut() {
+                                        so.remove("bars");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&val).unwrap_or_else(|_| raw_json.to_string())
 }
