@@ -5610,6 +5610,7 @@ impl ChartApp {
             bar_count: existing.bar_count,
             recalc_mode: existing.recalc_mode.clone(),
             cloud_enabled: existing.cloud_enabled,
+            ota_enabled: self.panel_app.user_settings_state.ota_enabled,
             server_enabled: self.panel_app.user_settings_state.server_enabled,
             server_port: self.panel_app.user_settings_state.server_port,
             agent_api_key: self.panel_app.user_settings_state.api_key.clone(),
@@ -5623,10 +5624,15 @@ impl ChartApp {
                 let ui = &self.panel_app.user_settings_state;
                 zengeld_chart::user_profile::profile::SyncState {
                     enabled: ui.sync_enabled,
-                    e2e_enabled: ui.e2e_enabled,
+                    e2e_enabled: existing.sync_state.e2e_enabled,
                     e2e_salt: existing.sync_state.e2e_salt.clone(),
                     last_sync_timestamp: existing.sync_state.last_sync_timestamp,
-                    sync_vault: existing.sync_state.sync_vault,
+                    sync_vault: ui.sync_vault_ui,
+                    sync_presets: ui.sync_presets,
+                    sync_templates: ui.sync_templates,
+                    sync_watchlists: ui.sync_watchlists,
+                    sync_theme: ui.sync_theme_toggle,
+                    sync_recovery_key: ui.sync_recovery_key_ui,
                     // Preserve the synced_items set — it is managed by the updater
                     // loop and must not be reset when the user changes settings.
                     synced_items: existing.sync_state.synced_items.clone(),

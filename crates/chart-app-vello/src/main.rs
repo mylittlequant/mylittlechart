@@ -2204,8 +2204,17 @@ impl App<'_> {
             let ss = &self.profile_manager.profile.sync_state;
             let uss = &mut chart.panel_app.user_settings_state;
             uss.sync_enabled = ss.enabled;
-            uss.e2e_enabled = ss.e2e_enabled;
             uss.last_sync_timestamp = ss.last_sync_timestamp;
+            uss.sync_presets = ss.sync_presets;
+            uss.sync_templates = ss.sync_templates;
+            uss.sync_watchlists = ss.sync_watchlists;
+            uss.sync_theme_toggle = ss.sync_theme;
+            uss.sync_vault_ui = ss.sync_vault;
+            uss.sync_recovery_key_ui = ss.sync_recovery_key;
+        }
+        {
+            let uss = &mut chart.panel_app.user_settings_state;
+            uss.ota_enabled = self.profile_manager.profile.ota_enabled;
         }
         // Sync profile data into the user settings state.
         {
@@ -4672,10 +4681,47 @@ impl ApplicationHandler for App<'_> {
                         Some(UpdaterCommand::SetTelemetryEnabled(false))
                     } else if cmd_str == "set_sync_enabled:true" {
                         self.profile_manager.profile.sync_state.enabled = true;
+                        // TODO Phase 4: auto-upload salt on first sync enable
+                        eprintln!("[App] sync enabled");
                         Some(UpdaterCommand::SetSyncEnabled(true))
                     } else if cmd_str == "set_sync_enabled:false" {
                         self.profile_manager.profile.sync_state.enabled = false;
                         Some(UpdaterCommand::SetSyncEnabled(false))
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_presets:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_presets = val;
+                        eprintln!("[App] sync_presets = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_templates:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_templates = val;
+                        eprintln!("[App] sync_templates = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_watchlists:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_watchlists = val;
+                        eprintln!("[App] sync_watchlists = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_theme:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_theme = val;
+                        eprintln!("[App] sync_theme = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_vault:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_vault = val;
+                        eprintln!("[App] sync_vault = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_recovery_key:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.sync_state.sync_recovery_key = val;
+                        eprintln!("[App] sync_recovery_key = {}", val);
+                        None
+                    } else if let Some(rest) = cmd_str.strip_prefix("set_ota_enabled:") {
+                        let val = rest == "true";
+                        self.profile_manager.profile.ota_enabled = val;
+                        eprintln!("[App] ota_enabled = {}", val);
+                        None
                     } else if cmd_str == "force_sync" {
                         Some(UpdaterCommand::ForceSync)
                     } else if cmd_str == "start_device_auth" {
@@ -5246,24 +5292,18 @@ impl ApplicationHandler for App<'_> {
             if handle.sync_status_rx.has_changed().unwrap_or(false) {
                 let sync_status = handle.sync_status_rx.borrow_and_update().clone();
 
-                let (label, color, is_active, needs_setup, has_error, error_msg, has_conflicts) =
+                let (label, color, is_active, has_error) =
                     match &sync_status {
                         zengeld_updater::SyncStatus::Idle => (
                             "Idle".to_string(),
                             "#888888".to_string(),
                             false,
                             false,
-                            false,
-                            String::new(),
-                            false,
                         ),
                         zengeld_updater::SyncStatus::Syncing => (
                             "Syncing\u{2026}".to_string(),
                             "#f0ad4e".to_string(),
                             true,
-                            false,
-                            false,
-                            String::new(),
                             false,
                         ),
                         zengeld_updater::SyncStatus::Completed { pushed, pulled } => {
@@ -5272,7 +5312,7 @@ impl ApplicationHandler for App<'_> {
                             } else {
                                 format!("Synced \u{2014} \u{2191}{} \u{2193}{}", pushed, pulled)
                             };
-                            (lbl, "#5cb85c".to_string(), false, false, false, String::new(), false)
+                            (lbl, "#5cb85c".to_string(), false, false)
                         }
                         zengeld_updater::SyncStatus::Error(msg) => {
                             let truncated = if msg.len() > 60 {
@@ -5289,19 +5329,13 @@ impl ApplicationHandler for App<'_> {
                                 format!("Error: {}", truncated),
                                 "#d9534f".to_string(),
                                 false,
-                                false,
                                 true,
-                                msg.clone(),
-                                false,
                             )
                         }
                         zengeld_updater::SyncStatus::NeedsSetup => (
                             "Cloud data found".to_string(),
                             "#f0ad4e".to_string(),
                             false,
-                            true,
-                            false,
-                            String::new(),
                             false,
                         ),
                         zengeld_updater::SyncStatus::ConflictsDetected(conflicts) => (
@@ -5309,9 +5343,6 @@ impl ApplicationHandler for App<'_> {
                             "#e67e22".to_string(),
                             false,
                             false,
-                            false,
-                            String::new(),
-                            true,
                         ),
                     };
 
@@ -5333,10 +5364,6 @@ impl ApplicationHandler for App<'_> {
                     uss.sync_status_label = label.clone();
                     uss.sync_status_color = color.clone();
                     uss.sync_is_active = is_active;
-                    uss.sync_needs_setup = needs_setup;
-                    uss.sync_has_error = has_error;
-                    uss.sync_error_msg = error_msg.clone();
-                    uss.sync_has_conflicts = has_conflicts;
 
                     if is_completed {
                         uss.last_sync_timestamp = now_ts;
@@ -5346,11 +5373,13 @@ impl ApplicationHandler for App<'_> {
                     if !has_error {
                         uss.attestation_rejected = false;
                     }
-                    if has_error
-                        && (error_msg.contains("build attestation")
-                            || error_msg.contains("attestation failed"))
-                    {
-                        uss.attestation_rejected = true;
+                    if has_error {
+                        // Check error message for attestation failures
+                        if let zengeld_updater::SyncStatus::Error(ref msg) = sync_status {
+                            if msg.contains("build attestation") || msg.contains("attestation failed") {
+                                uss.attestation_rejected = true;
+                            }
+                        }
                     }
 
                     // Show the launch banner on the first successful sync completion

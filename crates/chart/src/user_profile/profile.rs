@@ -241,13 +241,17 @@ pub struct UserProfile {
     #[serde(default)]
     pub cloud_enabled: bool,
 
+    /// Whether OTA (over-the-air) updates are enabled.
+    ///
+    /// When `false`, the app will not check for updates on startup.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub ota_enabled: bool,
+
     /// Whether to send anonymized usage metrics to chart.example.
     ///
-    /// Never serialized — derived at runtime from `cloud_enabled` and a
-    /// UI-only toggle stored in `UserSettingsState`.  Kept as a runtime
-    /// field so existing call sites (updater, input handler) compile without
-    /// changes while the profile.json stays free of this redundant flag.
-    #[serde(skip)]
+    /// Persisted so the user's choice survives restarts.
+    #[serde(default)]
     pub telemetry_enabled: bool,
 
     // -------------------------------------------------------------------------
@@ -340,6 +344,21 @@ pub struct SyncState {
     /// Defaults to `true` — the vault is always synced unless the user opts out.
     #[serde(default = "default_true")]
     pub sync_vault: bool,
+    /// Whether chart presets are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_presets: bool,
+    /// Whether indicator templates are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_templates: bool,
+    /// Whether watchlists are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_watchlists: bool,
+    /// Whether the active theme is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_theme: bool,
+    /// Whether the recovery key (encrypted master key) is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_recovery_key: bool,
     /// Set of sync item keys (`"category:sync_id"`) that have been successfully
     /// pushed to the server at least once.
     ///
@@ -358,6 +377,11 @@ impl Default for SyncState {
             e2e_enabled: false,
             e2e_salt: String::new(),
             sync_vault: true,
+            sync_presets: true,
+            sync_templates: true,
+            sync_watchlists: true,
+            sync_theme: true,
+            sync_recovery_key: true,
             synced_items: std::collections::HashSet::new(),
         }
     }
@@ -390,6 +414,7 @@ impl UserProfile {
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
             cloud_enabled: false,
+            ota_enabled: true,
             telemetry_enabled: false,
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),

@@ -4369,7 +4369,6 @@ impl ChartApp {
                         editing.text.clear();
                         editing.cursor = 0;
                         editing.selection_start = None;
-                        self.panel_app.user_settings_state.e2e_restore_mode = false;
                     }
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                 }
@@ -7270,63 +7269,40 @@ impl ChartApp {
                     });
                     eprintln!("[ChartApp] sync_enabled = {}", new_val);
                 }
-                "e2e_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.e2e_enabled;
-                    self.panel_app.user_settings_state.e2e_enabled = new_val;
-                    eprintln!("[ChartApp] e2e_enabled = {}", new_val);
+                "sync_presets_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_presets;
+                    self.panel_app.user_settings_state.sync_presets = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_presets:{}", v));
                 }
-                "e2e_setup" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if !passphrase.is_empty() {
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                        eprintln!("[ChartApp] e2e_setup requested");
-                    }
+                "sync_templates_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_templates;
+                    self.panel_app.user_settings_state.sync_templates = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_templates:{}", v));
                 }
-                "force_sync" => {
-                    if !self.panel_app.user_settings_state.sync_is_active {
-                        self.pending_updater_cmd = Some("force_sync".to_string());
-                        eprintln!("[ChartApp] force_sync requested");
-                    }
+                "sync_watchlists_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_watchlists;
+                    self.panel_app.user_settings_state.sync_watchlists = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_watchlists:{}", v));
                 }
-                "resolve_all_keep_local" => {
-                    self.pending_updater_cmd = Some("resolve_all:keep_local".to_string());
-                    self.panel_app.user_settings_state.sync_has_conflicts = false;
-                    eprintln!("[ChartApp] resolve_all:keep_local");
+                "sync_theme_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_theme_toggle;
+                    self.panel_app.user_settings_state.sync_theme_toggle = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_theme:{}", v));
                 }
-                "resolve_all_keep_cloud" => {
-                    self.pending_updater_cmd = Some("resolve_all:keep_cloud".to_string());
-                    self.panel_app.user_settings_state.sync_has_conflicts = false;
-                    eprintln!("[ChartApp] resolve_all:keep_cloud");
+                "sync_vault_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_vault_ui;
+                    self.panel_app.user_settings_state.sync_vault_ui = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_vault:{}", v));
                 }
-                "needs_setup_upload" => {
-                    self.panel_app.user_settings_state.sync_needs_setup = false;
-                    self.pending_updater_cmd = Some("set_connected_upload".to_string());
-                    eprintln!("[ChartApp] needs_setup_upload: switching to connected+upload");
+                "sync_recovery_key_toggle" => {
+                    let v = !self.panel_app.user_settings_state.sync_recovery_key_ui;
+                    self.panel_app.user_settings_state.sync_recovery_key_ui = v;
+                    self.pending_updater_cmd = Some(format!("set_sync_recovery_key:{}", v));
                 }
-                "needs_setup_download" => {
-                    self.panel_app.user_settings_state.sync_needs_setup = false;
-                    self.pending_updater_cmd = Some("set_connected_download".to_string());
-                    eprintln!("[ChartApp] needs_setup_download: switching to connected+download");
-                }
-                "needs_setup_dismiss" => {
-                    self.panel_app.user_settings_state.sync_needs_setup = false;
-                    eprintln!("[ChartApp] needs_setup_dismiss: dismissed");
-                }
-                "e2e_restore" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if !passphrase.is_empty() {
-                        // Use the same e2e_setup command — the updater handles both setup and restore.
-                        // For restore, the server's existing salt is used (handled by the updater's
-                        // SetE2EKey path when a salt already exists on the server).
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        self.panel_app.user_settings_state.e2e_restore_mode = false;
-                        // e2e_enabled will be set by updater response via sync_status_rx
-                        eprintln!("[ChartApp] e2e_restore requested");
-                    }
+                "ota_toggle" => {
+                    let v = !self.panel_app.user_settings_state.ota_enabled;
+                    self.panel_app.user_settings_state.ota_enabled = v;
+                    self.pending_updater_cmd = Some(format!("set_ota_enabled:{}", v));
                 }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;

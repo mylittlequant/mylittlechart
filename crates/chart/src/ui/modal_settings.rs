@@ -3299,16 +3299,32 @@ pub struct UserSettingsState {
     // ── Sync tab state ────────────────────────────────────────────────────────
     /// Whether the user has opted into cloud sync (mirrors SyncState.enabled).
     pub sync_enabled: bool,
-    /// Whether E2E encryption is enabled (mirrors SyncState.e2e_enabled).
-    pub e2e_enabled: bool,
     /// In-memory passphrase input buffer — never persisted to disk.
+    /// Also used by vault unlock / profile manager passphrase pages.
     pub e2e_passphrase_editing: TextEditingState,
     /// Whether the E2E passphrase input field has keyboard focus.
+    /// Also used by vault unlock / profile manager passphrase pages.
     pub e2e_passphrase_focused: bool,
     /// Last sync timestamp displayed in the Sync tab (Unix seconds, 0 = never).
     pub last_sync_timestamp: i64,
     /// Quota used in bytes (from server status response, 0 = unknown).
     pub quota_used_bytes: i64,
+
+    // ── Granular sync toggles ──────────────────────────────────────────────
+    /// Whether chart presets are included in cloud sync.
+    pub sync_presets: bool,
+    /// Whether indicator templates are included in cloud sync.
+    pub sync_templates: bool,
+    /// Whether watchlists are included in cloud sync.
+    pub sync_watchlists: bool,
+    /// Whether the active theme is included in cloud sync.
+    pub sync_theme_toggle: bool,
+    /// Whether the vault (API keys / exchange credentials) is included in cloud sync.
+    pub sync_vault_ui: bool,
+    /// Whether the recovery key is included in cloud sync.
+    pub sync_recovery_key_ui: bool,
+    /// Whether OTA auto-updates are enabled.
+    pub ota_enabled: bool,
 
     // ── SYNC STATUS (P0) ──────────────────────────────────────────────────
     /// Human-readable sync status: "Idle" / "Syncing…" / "Synced — ↑3 ↓1" / "Error: …"
@@ -3317,24 +3333,10 @@ pub struct UserSettingsState {
     pub sync_status_color: String,
     /// True while SyncStatus::Syncing — drives a spinner or progress indicator.
     pub sync_is_active: bool,
-    /// True when the updater emits NeedsSetup (server has data, but local has never synced).
-    pub sync_needs_setup: bool,
-    /// True when the updater emits Error.
-    pub sync_has_error: bool,
-    /// Error detail string when sync_has_error is true.
-    pub sync_error_msg: String,
-    /// True when the updater emits ConflictsDetected.
-    pub sync_has_conflicts: bool,
     /// True when BUILD_ATTESTATION env var was empty at compile time (dev / unofficial build).
     pub is_unofficial_build: bool,
     /// True when the server returned a 403 attestation-rejected error.
     pub attestation_rejected: bool,
-    /// True when the server has E2E params but the local profile does not.
-    pub server_has_e2e: bool,
-    /// True when the user needs to restore E2E passphrase from server salt.
-    pub e2e_restore_mode: bool,
-    /// Salt hex string fetched from server for E2E restore flow.
-    pub e2e_server_salt: String,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -3443,7 +3445,6 @@ impl Default for UserSettingsState {
             sync_transition_pending: false,
             disconnect_pending: false,
             sync_enabled: false,
-            e2e_enabled: false,
             e2e_passphrase_editing: TextEditingState {
                 field_id: "e2e_passphrase".to_string(),
                 text: String::new(),
@@ -3454,18 +3455,18 @@ impl Default for UserSettingsState {
             e2e_passphrase_focused: false,
             last_sync_timestamp: 0,
             quota_used_bytes: 0,
+            sync_presets: true,
+            sync_templates: true,
+            sync_watchlists: true,
+            sync_theme_toggle: true,
+            sync_vault_ui: true,
+            sync_recovery_key_ui: true,
+            ota_enabled: true,
             sync_status_label: "Idle".to_string(),
             sync_status_color: "#888888".to_string(),
             sync_is_active: false,
-            sync_needs_setup: false,
-            sync_has_error: false,
-            sync_error_msg: String::new(),
-            sync_has_conflicts: false,
             is_unofficial_build: false,
             attestation_rejected: false,
-            server_has_e2e: false,
-            e2e_restore_mode: false,
-            e2e_server_salt: String::new(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
