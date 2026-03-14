@@ -4418,6 +4418,8 @@ impl ApplicationHandler for App<'_> {
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                pw.chart.panel_app.user_settings_state.is_open = false;
                                             }
                                         }
                                         Err(e) => {
@@ -4446,6 +4448,8 @@ impl ApplicationHandler for App<'_> {
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                pw.chart.panel_app.user_settings_state.is_open = false;
                                             }
                                         } else {
                                             eprintln!("[App] pre-switch: failed to create vault.enc");
