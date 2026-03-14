@@ -3056,6 +3056,16 @@ impl ChartPanelApp {
             ));
         }
 
+        // Skeleton overlay — opaque background fill that hides chart content
+        // while the vault unlock / welcome wizard is shown.  Drawn BEFORE the
+        // modal so the modal appears on top of the solid background.
+        if self.user_settings_state.show_welcome_wizard
+            || self.user_settings_state.show_profile_manager
+        {
+            ctx.set_fill_color(&frame_theme.toolbar_bg);
+            ctx.fill_rect(0.0, 0.0, modal_layout.prim_screen_w, modal_layout.prim_screen_h);
+        }
+
         // Welcome Wizard — rendered on top of everything when active.
         // This is shown on first launch (no profile.json existed at startup).
         // It is non-closeable: the user must pick a mode to proceed.

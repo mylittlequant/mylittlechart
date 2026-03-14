@@ -696,7 +696,10 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 })
             })
             .collect();
-        if tabs.is_empty() {
+        if pw.skeleton {
+            // Skeleton: no tabs at all, chrome draws only + and system buttons.
+            tabs.clear();
+        } else if tabs.is_empty() {
             tabs.push(chrome::Tab {
                 id: "__default__".to_string(),
                 name: "Chart".to_string(),
@@ -725,78 +728,60 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         {
             let mut chrome_ctx =
                 VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
-            if !pw.skeleton {
-                chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
-            }
-            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, pw.skeleton);
+            chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
+            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64);
         }
 
-        if !pw.skeleton {
-            // Toolbar dirty-cache
-            if pw.toolbar_dirty {
-                pw.toolbar_scene.reset();
-                let mut tb_ctx = VelloGpuRenderContext::new(
-                    &mut pw.toolbar_scene,
-                    0.0,
-                    chrome::CHROME_HEIGHT,
-                    None,
-                    None,
-                );
-                pw.chart.render_toolbar_only(&mut tb_ctx);
-                pw.toolbar_dirty = false;
-            }
+        // Toolbar dirty-cache
+        if pw.toolbar_dirty {
+            pw.toolbar_scene.reset();
+            let mut tb_ctx = VelloGpuRenderContext::new(
+                &mut pw.toolbar_scene,
+                0.0,
+                chrome::CHROME_HEIGHT,
+                None,
+                None,
+            );
+            pw.chart.render_toolbar_only(&mut tb_ctx);
+            pw.toolbar_dirty = false;
+        }
 
-            // Chart content (chart panels, modals) — toolbar skipped because
-            // it is composited from the cached toolbar_scene below.
-            {
-                let mut render_ctx = VelloGpuRenderContext::new(
-                    &mut pw.scene,
-                    0.0,
-                    chrome::CHROME_HEIGHT,
-                    None,
-                    None,
-                );
-                pw.chart.render(&mut render_ctx, frame_time, true);
-            }
-
-            let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
-
-            // Sidebar scene rebuild (after render, within the same input frame)
-            if sidebar_is_open && pw.sidebar_dirty_scene {
-                pw.sidebar_scene.reset();
-                let mut sb_ctx = VelloGpuRenderContext::new(
-                    &mut pw.sidebar_scene,
-                    0.0,
-                    chrome::CHROME_HEIGHT,
-                    None,
-                    None,
-                );
-                pw.chart.render_sidebar_only(&mut sb_ctx);
-                pw.sidebar_dirty_scene = false;
-            }
-
-            // Composite cached sidebar on top of chart content (below toolbar).
-            if sidebar_is_open {
-                pw.scene.append(&pw.sidebar_scene, None);
-            }
-
-            // Composite cached toolbar on top of chart content.
-            pw.scene.append(&pw.toolbar_scene, None);
-        } else {
-            // Skeleton mode: fill the area below the chrome strip with the theme
-            // background color.  No chart, toolbar, or sidebar is rendered.
-            use uzor::render::RenderContext as _;
-            let bg = pw.chrome_state.colors.background.clone();
-            let mut bg_ctx = VelloGpuRenderContext::new(
+        // Chart content (chart panels, modals) — toolbar skipped because
+        // it is composited from the cached toolbar_scene below.
+        {
+            let mut render_ctx = VelloGpuRenderContext::new(
                 &mut pw.scene,
                 0.0,
                 chrome::CHROME_HEIGHT,
                 None,
                 None,
             );
-            bg_ctx.set_fill_color(&bg);
-            bg_ctx.fill_rect(0.0, 0.0, width as f64, (height as f64) - chrome::CHROME_HEIGHT);
+            pw.chart.render(&mut render_ctx, frame_time, true);
         }
+
+        let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
+
+        // Sidebar scene rebuild (after render, within the same input frame)
+        if sidebar_is_open && pw.sidebar_dirty_scene {
+            pw.sidebar_scene.reset();
+            let mut sb_ctx = VelloGpuRenderContext::new(
+                &mut pw.sidebar_scene,
+                0.0,
+                chrome::CHROME_HEIGHT,
+                None,
+                None,
+            );
+            pw.chart.render_sidebar_only(&mut sb_ctx);
+            pw.sidebar_dirty_scene = false;
+        }
+
+        // Composite cached sidebar on top of chart content (below toolbar).
+        if sidebar_is_open {
+            pw.scene.append(&pw.sidebar_scene, None);
+        }
+
+        // Composite cached toolbar on top of chart content.
+        pw.scene.append(&pw.toolbar_scene, None);
 
         // Render chrome context menu overlay
         if pw.chrome_state.context_menu.open {
@@ -835,10 +820,8 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                     None,
                     None,
                 );
-                if !pw.skeleton {
-                    chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
-                }
-                chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, pw.skeleton);
+                chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
+                chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64);
 
                 // Render chart + toolbar + sidebar + modals at y_offset=CHROME_HEIGHT.
                 let mut chart_ctx = instanced_context::InstancedChartRenderContext::new(
@@ -849,14 +832,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                     None,
                     None,
                 );
-                if !pw.skeleton {
-                    pw.chart.render(&mut chart_ctx, frame_time, false);
-                } else {
-                    // Skeleton mode: fill below chrome with background color.
-                    let bg = &pw.chrome_state.colors.background.clone();
-                    chart_ctx.set_fill_color(bg);
-                    chart_ctx.fill_rect(0.0, 0.0, width as f64, (height as f64) - chrome::CHROME_HEIGHT);
-                }
+                pw.chart.render(&mut chart_ctx, frame_time, false);
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
                 if pw.chrome_state.context_menu.open {
@@ -904,22 +880,13 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 );
                 cpu_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0 (no offset).
-                if !pw.skeleton {
-                    chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state);
-                }
-                chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, pw.skeleton);
-                if !pw.skeleton {
-                    // Render chart + toolbar + sidebar + modals offset by CHROME_HEIGHT.
-                    cpu_ctx.save();
-                    cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
-                    pw.chart.render(&mut cpu_ctx, frame_time, false);
-                    cpu_ctx.restore();
-                } else {
-                    // Skeleton mode: fill below chrome with background color.
-                    let bg = pw.chrome_state.colors.background.clone();
-                    cpu_ctx.set_fill_color(&bg);
-                    cpu_ctx.fill_rect(0.0, chrome::CHROME_HEIGHT, width as f64, (height as f64) - chrome::CHROME_HEIGHT);
-                }
+                chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state);
+                chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64);
+                // Render chart + toolbar + sidebar + modals offset by CHROME_HEIGHT.
+                cpu_ctx.save();
+                cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
+                pw.chart.render(&mut cpu_ctx, frame_time, false);
+                cpu_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
                     chrome::render_context_menu(
@@ -951,19 +918,12 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 skia_ctx.set_fill_color("#131722");
                 skia_ctx.fill_rect(0.0, 0.0, width as f64, height as f64);
                 // Render chrome at y=0.
-                if !pw.skeleton {
-                    chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state);
-                }
-                chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64, pw.skeleton);
-                if !pw.skeleton {
-                    // Render chart content below the chrome strip.
-                    skia_ctx.save();
-                    skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
-                    pw.chart.render(&mut skia_ctx, frame_time, false);
-                    skia_ctx.restore();
-                }
-                // (Skeleton mode: TinySkia already filled the whole frame with
-                // the background color above; the chrome strip is drawn on top.)
+                chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state);
+                chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64);
+                skia_ctx.save();
+                skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
+                pw.chart.render(&mut skia_ctx, frame_time, false);
+                skia_ctx.restore();
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
                     chrome::render_context_menu(
@@ -986,21 +946,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 );
                 hybrid_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0.
-                if !pw.skeleton {
-                    chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state);
-                }
-                chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64, pw.skeleton);
-                if !pw.skeleton {
-                    // Render chart + toolbar + sidebar + modals at y=CHROME_HEIGHT.
-                    hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
-                    pw.chart.render(&mut hybrid_ctx, frame_time, false);
-                    hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
-                } else {
-                    // Skeleton mode: fill below chrome with background color.
-                    let bg = pw.chrome_state.colors.background.clone();
-                    hybrid_ctx.set_fill_color(&bg);
-                    hybrid_ctx.fill_rect(0.0, chrome::CHROME_HEIGHT, width as f64, (height as f64) - chrome::CHROME_HEIGHT);
-                }
+                chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state);
+                chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64);
+                hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
+                pw.chart.render(&mut hybrid_ctx, frame_time, false);
+                hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
                 if pw.chrome_state.context_menu.open {
                     chrome::render_context_menu(

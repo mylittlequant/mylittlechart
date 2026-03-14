@@ -261,15 +261,7 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
 
 // ── render ────────────────────────────────────────────────────────────────────
 
-/// Render the chrome strip.
-///
-/// When `skeleton` is `true` the window is a placeholder (vault unlock / first-run
-/// wizard is pending).  In skeleton mode:
-///   - Tabs and the new-window / settings buttons are hidden.
-///   - The `+` new-tab button is rendered at the left edge (where the first tab
-///     would normally start) so the chrome bar does not look completely empty.
-///   - Minimize, maximize, and close buttons are always rendered.
-pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skeleton: bool) {
+pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
     let c = &state.colors;
 
     // ── Background ──────────────────────────────────────────────────────────
@@ -297,30 +289,80 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
             ctx.set_fill_color(&c.close_hover);
             ctx.fill_rect(close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::SettingsButton if !skeleton => {
+        ChromeHit::SettingsButton => {
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rect(settings_left, 0.0, SETTINGS_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::NewWindowButton if !skeleton => {
+        ChromeHit::NewWindowButton => {
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rect(new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
         ChromeHit::NewTabButton => {
-            let new_tab_x = if skeleton {
-                TAB_LEFT_MARGIN
-            } else {
-                tab_strip_end_x(state)
-            };
+            let new_tab_x = tab_strip_end_x(state);
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rect(new_tab_x, 0.0, NEW_TAB_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
         _ => {}
     }
 
-    if skeleton {
-        // ── Skeleton mode: only the "+" button at the left edge ─────────────
-        // No tabs, no new-window button, no settings gear.
-        let new_tab_x = TAB_LEFT_MARGIN;
+    // ── Tabs ────────────────────────────────────────────────────────────────
+    // All tabs share the SAME background as chrome (no active/inactive bg difference).
+    // Active tab: accent-colored line at bottom.
+    // Hovered tab: button_hover-colored line at bottom.
+    {
+        let mut cursor = TAB_LEFT_MARGIN;
+        for (i, tab) in state.tabs.iter().enumerate() {
+            let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
+            let tab_left  = cursor;
+            let tab_right = cursor + tw;
+
+            // Bottom accent line (2px)
+            if tab.active {
+                ctx.set_fill_color(&c.tab_accent);
+                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+            } else if state.hovered == ChromeHit::Tab(i)
+                   || state.hovered == ChromeHit::TabClose(i)
+            {
+                ctx.set_fill_color(&c.icon_hover);
+                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+            }
+
+            // Tab name text
+            {
+                let text_x = tab_left + TAB_PADDING_H;
+                let text_color = if tab.active {
+                    &c.icon_hover
+                } else {
+                    &c.icon_normal
+                };
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
+            }
+
+            // Tab close × button — flush right, icon turns red on hover
+            {
+                let close_rect_left = tab_right - TAB_CLOSE_SIZE;
+                let icon_size = 14.0;
+                let icon_color = if state.hovered == ChromeHit::TabClose(i) {
+                    &c.close_hover
+                } else {
+                    &c.icon_normal
+                };
+                let icon_x = close_rect_left + (TAB_CLOSE_SIZE - icon_size) / 2.0;
+                let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
+                if let Some(svg) = icon_svg("close") {
+                    draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, icon_color);
+                }
+            }
+
+            cursor = tab_right + TAB_GAP;
+        }
+
+        // "+" new tab button with dividers on both sides
+        let new_tab_x = cursor;
 
         // Left divider (75% height vertical line)
         let div_h = CHROME_HEIGHT * 0.6;
@@ -333,6 +375,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         } else {
             &c.icon_normal
         };
+        // Draw + as stroked lines (same technique as close × icon — crisp)
         let plus_cx = (new_tab_x + NEW_TAB_BUTTON_WIDTH / 2.0).floor() + 0.5;
         let plus_cy = (CHROME_HEIGHT / 2.0).floor() + 0.5;
         let arm = 5.0;
@@ -346,139 +389,54 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         ctx.move_to(plus_cx, plus_cy - arm);
         ctx.line_to(plus_cx, plus_cy + arm);
         ctx.stroke();
-    } else {
-        // ── Normal mode: tabs + new-tab button ──────────────────────────────
-        // All tabs share the SAME background as chrome (no active/inactive bg difference).
-        // Active tab: accent-colored line at bottom.
-        // Hovered tab: button_hover-colored line at bottom.
-        {
-            let mut cursor = TAB_LEFT_MARGIN;
-            for (i, tab) in state.tabs.iter().enumerate() {
-                let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
-                let tab_left  = cursor;
-                let tab_right = cursor + tw;
 
-                // Bottom accent line (2px)
-                if tab.active {
-                    ctx.set_fill_color(&c.tab_accent);
-                    ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
-                } else if state.hovered == ChromeHit::Tab(i)
-                       || state.hovered == ChromeHit::TabClose(i)
-                {
-                    ctx.set_fill_color(&c.icon_hover);
-                    ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
-                }
+    }
 
-                // Tab name text
-                {
-                    let text_x = tab_left + TAB_PADDING_H;
-                    let text_color = if tab.active {
-                        &c.icon_hover
-                    } else {
-                        &c.icon_normal
-                    };
-                    ctx.set_font("12px sans-serif");
-                    ctx.set_fill_color(text_color);
-                    ctx.set_text_align(TextAlign::Left);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
-                }
-
-                // Tab close × button — flush right, icon turns red on hover
-                {
-                    let close_rect_left = tab_right - TAB_CLOSE_SIZE;
-                    let icon_size = 14.0;
-                    let icon_color = if state.hovered == ChromeHit::TabClose(i) {
-                        &c.close_hover
-                    } else {
-                        &c.icon_normal
-                    };
-                    let icon_x = close_rect_left + (TAB_CLOSE_SIZE - icon_size) / 2.0;
-                    let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
-                    if let Some(svg) = icon_svg("close") {
-                        draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, icon_color);
-                    }
-                }
-
-                cursor = tab_right + TAB_GAP;
-            }
-
-            // "+" new tab button with dividers on both sides
-            let new_tab_x = cursor;
-
-            // Left divider (75% height vertical line)
-            let div_h = CHROME_HEIGHT * 0.6;
-            let div_y = (CHROME_HEIGHT - div_h) / 2.0;
-            ctx.set_fill_color(&c.separator);
-            ctx.fill_rect(new_tab_x, div_y, 1.0, div_h);
-
-            let plus_color = if state.hovered == ChromeHit::NewTabButton {
-                &c.icon_hover
-            } else {
-                &c.icon_normal
-            };
-            // Draw + as stroked lines (same technique as close × icon — crisp)
-            let plus_cx = (new_tab_x + NEW_TAB_BUTTON_WIDTH / 2.0).floor() + 0.5;
-            let plus_cy = (CHROME_HEIGHT / 2.0).floor() + 0.5;
-            let arm = 5.0;
-            ctx.set_stroke_color(plus_color);
-            ctx.set_stroke_width(1.5);
-            ctx.begin_path();
-            ctx.move_to(plus_cx - arm, plus_cy);
-            ctx.line_to(plus_cx + arm, plus_cy);
-            ctx.stroke();
-            ctx.begin_path();
-            ctx.move_to(plus_cx, plus_cy - arm);
-            ctx.line_to(plus_cx, plus_cy + arm);
-            ctx.stroke();
+    // ── New-window icon (SVG, 18×18) ────────────────────────────────────────
+    {
+        let icon_color = if state.hovered == ChromeHit::NewWindowButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let icon_x = new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
+        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+        if let Some(svg) = icon_svg("new_window") {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
         }
+    }
 
-        // ── New-window icon (SVG, 18×18) ────────────────────────────────────
-        {
-            let icon_color = if state.hovered == ChromeHit::NewWindowButton {
-                &c.icon_hover
-            } else {
-                &c.icon_normal
-            };
-            let icon_x = new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
-            let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
-            if let Some(svg) = icon_svg("new_window") {
-                draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
-            }
+    // ── Divider between new-window and settings (75% height) ────────────────
+    {
+        let div_h = CHROME_HEIGHT * 0.6;
+        let div_y = (CHROME_HEIGHT - div_h) / 2.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rect(settings_left, div_y, 1.0, div_h);
+    }
+
+    // ── Settings gear icon (SVG, 18×18 for better visibility) ───────────────
+    {
+        let gear_color = if state.hovered == ChromeHit::SettingsButton {
+            &c.icon_hover
+        } else {
+            &c.icon_normal
+        };
+        let icon_x = settings_left + (SETTINGS_BUTTON_WIDTH - 18.0) / 2.0;
+        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+        if let Some(svg) = icon_svg("settings") {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, gear_color);
         }
+    }
 
-        // ── Divider between new-window and settings (75% height) ────────────
-        {
-            let div_h = CHROME_HEIGHT * 0.6;
-            let div_y = (CHROME_HEIGHT - div_h) / 2.0;
-            ctx.set_fill_color(&c.separator);
-            ctx.fill_rect(settings_left, div_y, 1.0, div_h);
-        }
+    // ── Divider right of settings (75% height) ─────────────────────────────
+    {
+        let div_h = CHROME_HEIGHT * 0.6;
+        let div_y = (CHROME_HEIGHT - div_h) / 2.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rect(minimize_x, div_y, 1.0, div_h);
+    }
 
-        // ── Settings gear icon (SVG, 18×18 for better visibility) ───────────
-        {
-            let gear_color = if state.hovered == ChromeHit::SettingsButton {
-                &c.icon_hover
-            } else {
-                &c.icon_normal
-            };
-            let icon_x = settings_left + (SETTINGS_BUTTON_WIDTH - 18.0) / 2.0;
-            let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
-            if let Some(svg) = icon_svg("settings") {
-                draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, gear_color);
-            }
-        }
-
-        // ── Divider right of settings (75% height) ──────────────────────────
-        {
-            let div_h = CHROME_HEIGHT * 0.6;
-            let div_y = (CHROME_HEIGHT - div_h) / 2.0;
-            ctx.set_fill_color(&c.separator);
-            ctx.fill_rect(minimize_x, div_y, 1.0, div_h);
-        }
-    } // end of non-skeleton branch
-
-    // ── Minimize icon ─ (filled rect, pixel-perfect) — always rendered ───────
+    // ── Minimize icon ─ (filled rect, pixel-perfect) ────────────────────────
     {
         let icon_color = if state.hovered == ChromeHit::MinimizeButton {
             &c.icon_hover
@@ -491,7 +449,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         ctx.fill_rect(cx - 5.0, cy, 10.0, 1.0);
     }
 
-    // ── Maximize icon □ / restore (filled rect outlines) — always rendered ───
+    // ── Maximize icon □ / restore (filled rect outlines) ────────────────────
     {
         let icon_color = if state.hovered == ChromeHit::MaximizeButton {
             &c.icon_hover
@@ -514,7 +472,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
         }
     }
 
-    // ── Close icon × (stroked diagonals, 1.5px) — always rendered ───────────
+    // ── Close icon × (stroked diagonals, 1.5px) ────────────────────────────
     {
         let icon_color = if state.hovered == ChromeHit::CloseButton {
             &c.icon_hover
