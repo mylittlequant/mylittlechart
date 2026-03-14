@@ -341,6 +341,13 @@ async fn updater_loop(
                     state::UpdaterCommand::SetSyncEnabled(enabled) => {
                         sync_state.enabled = enabled;
                         log::info!("[Updater] Cloud sync enabled: {}", sync_state.enabled);
+                        if enabled && connected {
+                            let token = token_store::load_token();
+                            if let Some(ref td) = token {
+                                eprintln!("[Updater] Sync enabled — triggering immediate sync");
+                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                            }
+                        }
                     }
                     state::UpdaterCommand::SetSyncPresets(val) => {
                         sync_state.sync_presets = val;
