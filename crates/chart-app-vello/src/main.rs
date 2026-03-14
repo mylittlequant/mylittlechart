@@ -2761,6 +2761,15 @@ impl App<'_> {
             .filter(|id| self.windows.contains_key(id))
             .or_else(|| self.windows.keys().next().copied());
 
+        // Sync profile_manager mutations back into self.profile before saving.
+        // All toggle handlers (set_sync_enabled, set_ota_enabled, e2e salt, etc.)
+        // write to profile_manager.profile, not self.profile. Without this copy
+        // those changes would be lost on the next save_all() call.
+        self.profile.sync_state = self.profile_manager.profile.sync_state.clone();
+        self.profile.ota_enabled = self.profile_manager.profile.ota_enabled;
+        self.profile.telemetry_enabled = self.profile_manager.profile.telemetry_enabled;
+        self.profile.cloud_enabled = self.profile_manager.profile.cloud_enabled;
+
         let mut profile = self.profile.clone();
         profile.windows = window_states;
 
