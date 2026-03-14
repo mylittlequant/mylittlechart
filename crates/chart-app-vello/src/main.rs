@@ -2470,8 +2470,8 @@ impl App<'_> {
             }
         }
 
-        if has_vault && has_salt {
-            // Profile has vault — need unlock
+        if has_vault && has_salt && self.needs_vault_unlock {
+            // Profile has vault and key was NOT pre-injected — need unlock
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
