@@ -1203,44 +1203,52 @@ impl ChartApp {
             LiveDataProvider::new(exchange_id, exchange_name.clone(), bridge.clone()),
         );
 
-        let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
-
-        if has_saved_preset {
-            // Restore from saved preset.
+        if skeleton {
+            // Skeleton is a pure loading screen — no presets, no connectors,
+            // no data providers.  Everything happens after promote_skeleton().
             if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
                 window.data_provider = data_provider.clone();
                 window.toolbar_config = ToolbarConfig::standalone();
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
+        } else {
+            let has_saved_preset = app.panel_app.presets.contains_key(&app.panel_app.active_preset_id);
 
-            let preset_id = app.panel_app.active_preset_id.clone();
-            app.process_chart_out_event(
-                zengeld_chart::events::ChartOutEvent::LoadPreset { id: preset_id },
-            );
+            if has_saved_preset {
+                // Restore from saved preset.
+                if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+                    window.data_provider = data_provider.clone();
+                    window.toolbar_config = ToolbarConfig::standalone();
+                }
+                app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-            // Ensure all windows have data_provider and toolbar config.
-            let window_data: Vec<(String, String, zengeld_chart::state::Timeframe)> = app
-                .panel_app.panel_grid.iter_windows()
-                .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone()))
-                .collect();
-
-            for window in app.panel_app.panel_grid.windows_mut().values_mut() {
-                let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
-                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-                let win_exchange_name = win_exchange_id.as_str().to_string();
-                let win_provider: SharedDataProvider = std::sync::Arc::new(
-                    LiveDataProvider::new(win_exchange_id, win_exchange_name, bridge.clone()),
+                let preset_id = app.panel_app.active_preset_id.clone();
+                app.process_chart_out_event(
+                    zengeld_chart::events::ChartOutEvent::LoadPreset { id: preset_id },
                 );
-                window.data_provider = win_provider;
-                window.toolbar_config = ToolbarConfig::standalone();
-            }
 
-            if let Some(active_win) = app.panel_app.panel_grid.active_window() {
-                app.active_exchange = digdigdig3::ExchangeId::from_str(&active_win.exchange)
-                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-            }
+                // Ensure all windows have data_provider and toolbar config.
+                let window_data: Vec<(String, String, zengeld_chart::state::Timeframe)> = app
+                    .panel_app.panel_grid.iter_windows()
+                    .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone()))
+                    .collect();
 
-            if !skeleton {
+                for window in app.panel_app.panel_grid.windows_mut().values_mut() {
+                    let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
+                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                    let win_exchange_name = win_exchange_id.as_str().to_string();
+                    let win_provider: SharedDataProvider = std::sync::Arc::new(
+                        LiveDataProvider::new(win_exchange_id, win_exchange_name, bridge.clone()),
+                    );
+                    window.data_provider = win_provider;
+                    window.toolbar_config = ToolbarConfig::standalone();
+                }
+
+                if let Some(active_win) = app.panel_app.panel_grid.active_window() {
+                    app.active_exchange = digdigdig3::ExchangeId::from_str(&active_win.exchange)
+                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                }
+
                 for (sym, exch, tf) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -1250,32 +1258,28 @@ impl ChartApp {
                     bridge.ensure_connector(eid);
                     bridge.request_bars(eid, sym, tf, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
                 }
-            }
 
-            app.needs_initial_viewport_fit = true;
-        } else {
-            // Fresh state — Binance default.
-            if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
-                window.data_provider = data_provider.clone();
-                window.exchange = exchange_name.clone();
-                window.toolbar_config = ToolbarConfig::standalone();
-                window.symbol = "BTCUSDT".to_string();
-                window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
-            }
-            app.panel_app.toolbar_config = ToolbarConfig::standalone();
+                app.needs_initial_viewport_fit = true;
+            } else {
+                // Fresh state — Binance default.
+                if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
+                    window.data_provider = data_provider.clone();
+                    window.exchange = exchange_name.clone();
+                    window.toolbar_config = ToolbarConfig::standalone();
+                    window.symbol = "BTCUSDT".to_string();
+                    window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                }
+                app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-            // Create an "Untitled" preset only for non-skeleton windows that
-            // genuinely have no valid preset.  Skeleton is a loading screen —
-            // preset creation is deferred until promote_skeleton().
-            if !skeleton && restore.map_or(true, |_| !has_saved_preset) {
-                let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
-                let untitled_id = untitled_preset.id.clone();
-                app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
-                app.panel_app.open_tabs = vec![untitled_id.clone()];
-                app.panel_app.active_preset_id = untitled_id;
-            }
+                // Create an "Untitled" preset for genuinely fresh windows.
+                if restore.map_or(true, |_| !has_saved_preset) {
+                    let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
+                    let untitled_id = untitled_preset.id.clone();
+                    app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
+                    app.panel_app.open_tabs = vec![untitled_id.clone()];
+                    app.panel_app.active_preset_id = untitled_id;
+                }
 
-            if !skeleton {
                 bridge.ensure_connector(exchange_id);
                 bridge.request_bars(
                     exchange_id,
