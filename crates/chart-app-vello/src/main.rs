@@ -4813,8 +4813,11 @@ impl ApplicationHandler for App<'_> {
                         Some(UpdaterCommand::SetTelemetryEnabled(false))
                     } else if cmd_str == "set_sync_enabled:true" {
                         self.profile_manager.profile.sync_state.enabled = true;
-                        // TODO Phase 4: auto-upload salt on first sync enable
+                        self.profile.cloud_enabled = true;
+                        self.profile_manager.profile.cloud_enabled = true;
                         eprintln!("[App] sync enabled");
+                        // Sync requires cloud connection — enable it.
+                        let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
                         Some(UpdaterCommand::SetSyncEnabled(true))
                     } else if cmd_str == "set_sync_enabled:false" {
                         self.profile_manager.profile.sync_state.enabled = false;
