@@ -6359,8 +6359,11 @@ impl ApplicationHandler for App<'_> {
                     // maximized by the OS (e.g. via Win+Arrow keys).
                     pw.chrome_state.is_maximized = pw.window.is_maximized();
 
-                    // Mark dirty so position/size is persisted on next save.
-                    pw.chart.profile_dirty = true;
+                    // Mark dirty so position/size is persisted on next save
+                    // (skip skeleton — it's a loading screen, nothing to persist).
+                    if !pw.skeleton {
+                        pw.chart.profile_dirty = true;
+                    }
                     // Toolbar and sidebar layout changes on resize — must rebuild both.
                     pw.toolbar_dirty = true;
                     pw.sidebar_dirty_scene = true;
@@ -6369,7 +6372,9 @@ impl ApplicationHandler for App<'_> {
 
             // ─── Window moved ─────────────────────────────────────────────
             WindowEvent::Moved(_) => {
-                pw.chart.profile_dirty = true;
+                if !pw.skeleton {
+                    pw.chart.profile_dirty = true;
+                }
             }
 
             // ─── Mouse move ───────────────────────────────────────────────
