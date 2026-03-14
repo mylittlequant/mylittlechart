@@ -244,6 +244,7 @@ fn file_modified_ms(path: impl AsRef<Path>) -> i64 {
 /// filtering out items by category (e.g. filtering `"vault"` when
 /// `sync_vault` is `false`).
 pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
+    eprintln!("[CloudSync] collect_local_sync_items: data_dir={:?}", data_dir);
     let mut items = Vec::new();
 
     // Category: "watchlist" — single blob
@@ -374,6 +375,7 @@ pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
         }
     }
 
+    eprintln!("[CloudSync] collected {} local items", items.len());
     items
 }
 

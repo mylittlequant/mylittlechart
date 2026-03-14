@@ -5011,8 +5011,70 @@ impl ApplicationHandler for App<'_> {
                                         // Vault unlock path: E2E was already set up on a previous
                                         // session.  Just re-arm the updater with the re-derived key
                                         // so it can decrypt/encrypt sync items this session.
-                                        // Do NOT call setup_e2e_on_server — the salt is already there.
-                                        eprintln!("[App] e2e_setup: salt already configured — sending derived key to updater");
+
+                                        // Check for salt mismatch caused by the old bug where a
+                                        // random salt was stored in the profile instead of the
+                                        // vault's actual salt.  If the profile salt doesn't match
+                                        // the on-disk vault salt, the server has the wrong salt —
+                                        // re-upload the correct one.
+                                        let profile_salt = self.profile_manager.profile.sync_state.e2e_salt.clone();
+                                        if profile_salt != vault_salt {
+                                            eprintln!(
+                                                "[App] e2e_salt mismatch: profile={} disk={} — re-uploading correct vault salt to server",
+                                                profile_salt, vault_salt
+                                            );
+
+                                            // Fix the in-memory profile so the correct salt is
+                                            // persisted on the next save_all().
+                                            self.profile_manager.profile.sync_state.e2e_salt = vault_salt.clone();
+
+                                            // Re-upload to the server if the user is logged in and
+                                            // cloud is enabled.  We do NOT trigger ReEncryptAll
+                                            // here — the sync_key was already derived from the
+                                            // correct vault_salt so encryption is fine; we are only
+                                            // correcting the server-stored salt metadata.
+                                            let token = zengeld_updater::token_store::load_token();
+                                            if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
+                                                let client = reqwest::Client::builder()
+                                                    .timeout(std::time::Duration::from_secs(15))
+                                                    .build()
+                                                    .unwrap_or_default();
+                                                let server_url = "https://chart.example".to_string();
+                                                let token_str = tok.token.clone();
+                                                let salt_hex_for_spawn = vault_salt.clone();
+                                                let build_attest_for_spawn = zengeld_updater::BuildAttestation {
+                                                    attestation: env!("BUILD_ATTESTATION").to_string(),
+                                                    version: env!("CARGO_PKG_VERSION").to_string(),
+                                                    platform: env!("BUILD_PLATFORM").to_string(),
+                                                    timestamp: env!("BUILD_TIMESTAMP").to_string(),
+                                                };
+                                                let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
+                                                let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
+                                                let iterations = zengeld_updater::e2e_crypto::PBKDF2_ITERATIONS as i32;
+                                                self.bridge.runtime().spawn(async move {
+                                                    match zengeld_updater::e2e_crypto::setup_e2e_on_server(
+                                                        &client,
+                                                        &server_url,
+                                                        &token_str,
+                                                        &salt_hex_for_spawn,
+                                                        iterations,
+                                                        None, // no new encrypted_master_key for mismatch repair
+                                                        &build_attest_for_spawn,
+                                                        &profile_id_for_spawn,
+                                                        &device_id_for_spawn,
+                                                    )
+                                                    .await {
+                                                        Ok(_) => eprintln!("[App] e2e_salt mismatch repair: server salt updated successfully"),
+                                                        Err(e) => eprintln!("[App] e2e_salt mismatch repair: server update failed: {}", e),
+                                                    }
+                                                });
+                                            } else {
+                                                eprintln!("[App] e2e_salt mismatch repair: not logged in or cloud disabled — skipping server upload");
+                                            }
+                                        } else {
+                                            eprintln!("[App] e2e_setup: salt already configured — sending derived key to updater");
+                                        }
+
                                         if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(sync_key))) {
                                             eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
                                         }
