@@ -5800,7 +5800,19 @@ impl ChartApp {
             if !allowed {
                 return;
             }
-            // Absorb background/dimmer clicks silently — no action needed.
+            // Dimmer click — dismiss profile manager if user has a live profile
+            if widget_id == "profile_manager:dimmer" {
+                if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
+                    self.panel_app.user_settings_state.show_profile_manager = false;
+                    self.panel_app.user_settings_state.profile_manager_page =
+                        zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                    eprintln!("[ChartApp] profile_manager: dimmer clicked, dismissing (live profile exists)");
+                }
+                return;
+            }
+            // Absorb other profile_manager: background clicks
             if widget_id.starts_with("profile_manager:") {
                 return;
             }
@@ -7487,6 +7499,12 @@ impl ChartApp {
                     // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
                     if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
                         eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
+                    } else if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ProfileList) {
+                        // Already on ProfileList — "Back" means dismiss if we have a live profile
+                        if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
+                            self.panel_app.user_settings_state.show_profile_manager = false;
+                            eprintln!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
+                        }
                     } else {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
