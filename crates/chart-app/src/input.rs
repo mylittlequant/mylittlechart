@@ -7735,9 +7735,45 @@ impl ChartApp {
                     );
                 }
                 rest if rest.starts_with("profile_switch:") => {
-                    let id = &rest["profile_switch:".len()..];
-                    self.pending_updater_cmd = Some(format!("profile_switch:{}", id));
-                    eprintln!("[ChartApp] profile_switch: switching to profile id = {}", id);
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    let profile_id = &rest["profile_switch:".len()..];
+                    // Check if target profile has vault
+                    let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .unwrap_or(false);
+                    let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
+                        .iter()
+                        .find(|(id, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _)| name.clone())
+                        .unwrap_or_default();
+                    if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
+                        // Already on this profile — dismiss
+                        eprintln!("[ChartApp] profile_switch: already on this profile, ignoring");
+                    } else if !target_has_vault {
+                        // Unencrypted — show CreatePassphrase inline
+                        self.panel_app.user_settings_state.show_profile_manager = true;
+                        self.panel_app.user_settings_state.is_open = false;
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] profile_switch: passphrase setup for unencrypted {}", profile_id);
+                    } else {
+                        // Encrypted — show UnlockPassphrase inline
+                        self.panel_app.user_settings_state.show_profile_manager = true;
+                        self.panel_app.user_settings_state.is_open = false;
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        eprintln!("[ChartApp] profile_switch: passphrase prompt for {}", profile_id);
+                    }
                 }
                 rest if rest.starts_with("profile_avatar:") => {
                     let avatar = &rest["profile_avatar:".len()..];
