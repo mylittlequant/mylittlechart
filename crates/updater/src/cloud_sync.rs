@@ -874,80 +874,25 @@ pub async fn do_sync_cycle(
         .map(|m| (m.sync_id.as_str(), m))
         .collect();
 
-    // Step 4: classify every item into push / pull / conflict / in-sync buckets.
+    // Step 4: Last-write-wins push-only — client is always source of truth.
+    // Push any local item whose checksum differs from what the server has.
+    // No pull, no conflict detection — server is just backup storage.
     let mut to_push: Vec<SyncItem> = Vec::new();
-    let mut to_pull_ids: Vec<String> = Vec::new();
-    let mut conflicts: Vec<SyncConflict> = Vec::new();
+    let conflicts: Vec<SyncConflict> = Vec::new(); // Always empty — no conflicts in LWW model.
 
-    // --- Local items: decide push vs conflict ---
     for local in &local_items {
         match server_index.get(local.sync_id.as_str()) {
             Some(server_meta) if !server_meta.deleted && server_meta.checksum == local.checksum => {
                 // Identical on both sides — already in sync, skip.
                 log::trace!("[CloudSync] In sync: {}", local.sync_id);
             }
-            Some(server_meta) if !server_meta.deleted => {
-                // Both sides have it but content differs — need conflict detection.
-                let last_known = state.last_synced_checksums.get(local.sync_id.as_str());
-
-                let local_changed = last_known.map_or(true, |ck| ck != &local.checksum);
-                let server_changed = last_known.map_or(true, |ck| ck != &server_meta.checksum);
-
-                if local_changed && server_changed {
-                    // True conflict: both sides modified since last sync.
-                    log::debug!(
-                        "[CloudSync] True conflict: {} local_cs={} server_cs={}",
-                        local.sync_id,
-                        &local.checksum[..8.min(local.checksum.len())],
-                        &server_meta.checksum[..8.min(server_meta.checksum.len())]
-                    );
-                    conflicts.push(SyncConflict {
-                        sync_id: local.sync_id.clone(),
-                        category: local.category.clone(),
-                        name: local.name.clone(),
-                        local_modified: local.modified_at,
-                        cloud_modified: server_meta.modified_at,
-                        local_checksum: local.checksum.clone(),
-                        cloud_checksum: server_meta.checksum.clone(),
-                        local_content: local.content.clone(),
-                    });
-                    // Do NOT push or pull this item — leave it for user resolution.
-                } else if local_changed {
-                    // Only local changed — safe to push.
-                    log::debug!("[CloudSync] Local-only change, will push: {}", local.sync_id);
-                    to_push.push(local.clone());
-                } else {
-                    // Only server changed — safe to pull.
-                    log::debug!("[CloudSync] Server-only change, will pull: {}", local.sync_id);
-                    to_pull_ids.push(local.sync_id.clone());
-                }
-            }
             _ => {
-                // Server doesn't have it (or it's deleted there) — push local.
-                log::debug!("[CloudSync] New local item, will push: {}", local.sync_id);
+                // Different or missing on server — push local (last-write-wins).
+                log::debug!("[CloudSync] Will push (LWW): {}", local.sync_id);
                 to_push.push(local.clone());
             }
         }
     }
-
-    // --- Server items not present locally → pull ---
-    for server_meta in &server_changes {
-        if server_meta.deleted {
-            // Tombstone — no local write needed.
-            continue;
-        }
-        if local_index.contains_key(server_meta.sync_id.as_str()) {
-            // Already handled above.
-            continue;
-        }
-        // Item only on server — pull it.
-        log::debug!("[CloudSync] New server item, will pull: {}", server_meta.sync_id);
-        to_pull_ids.push(server_meta.sync_id.clone());
-    }
-
-    // Deduplicate to_pull_ids (shouldn't happen but be safe).
-    to_pull_ids.sort_unstable();
-    to_pull_ids.dedup();
 
     // Append tombstones for locally deleted items to the push list.
     // Tombstones have `deleted: true` and empty content; they are never
@@ -1001,8 +946,8 @@ pub async fn do_sync_cycle(
         to_push.clone()
     };
 
-    eprintln!("[CloudSync] classification: to_push={} to_pull={} conflicts={} e2e_key={}",
-        to_push.len(), to_pull_ids.len(), conflicts.len(),
+    eprintln!("[CloudSync] LWW push-only: to_push={} e2e_key={}",
+        to_push.len(),
         if e2e_key.is_some() { "set" } else { "none" });
     for item in &to_push {
         eprintln!("[CloudSync]   push: id={} cat={} bytes={}", item.sync_id, item.category, item.content.len());
@@ -1027,72 +972,10 @@ pub async fn do_sync_cycle(
         }
     }
 
-    // Execute pull.
-    let mut pulled_count = 0usize;
-    // Successfully written items — used to update checksum state.
-    let mut written_items: Vec<SyncItem> = Vec::new();
-
-    if !to_pull_ids.is_empty() {
-        // Pull all items at once using the full-pull endpoint.
-        // This is the simplest approach; incremental per-item pull can be added later.
-        match pull_all(client, server_url, token, build_attest, profile_id, device_id).await {
-            Ok(all_server_items) => {
-                // Filter to only the items we actually need.
-                let filtered: Vec<SyncItem> = all_server_items
-                    .into_iter()
-                    .filter(|item| to_pull_ids.contains(&item.sync_id))
-                    .collect();
-
-                // If E2E is active, base64-decode then decrypt each item's content
-                // (and optionally the name) before writing to disk.  Items that fail
-                // to decrypt are skipped with a warning so a single bad blob does not
-                // abort the whole pull.
-                let to_write: Vec<SyncItem> = if let Some(ref key) = e2e_key {
-                    // Names are always plaintext — only content is decrypted.
-                    let mut dec_items = Vec::with_capacity(filtered.len());
-                    for item in filtered {
-                        match base64::engine::general_purpose::STANDARD.decode(&item.content) {
-                            Ok(ciphertext) => {
-                                match crate::e2e_crypto::decrypt(key, &ciphertext) {
-                                    Ok(plaintext_bytes) => {
-                                        match String::from_utf8(plaintext_bytes) {
-                                            Ok(plaintext) => {
-                                                dec_items.push(SyncItem { content: plaintext, ..item });
-                                            }
-                                            Err(e) => {
-                                                log::warn!("[CloudSync] Decrypted content is not valid UTF-8 for {}: {} — skipping", item.sync_id, e);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::warn!("[CloudSync] E2E decrypt failed for {}: {} — skipping", item.sync_id, e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("[CloudSync] Base64 decode failed for {}: {} — skipping", item.sync_id, e);
-                            }
-                        }
-                    }
-                    dec_items
-                } else {
-                    filtered
-                };
-
-                pulled_count = to_write.len();
-
-                if !to_write.is_empty() {
-                    write_sync_items_to_disk(data_dir, &to_write)
-                        .map_err(|e| format!("write pulled items to disk: {}", e))?;
-                    log::debug!("[CloudSync] Wrote {} pulled item(s) to disk", pulled_count);
-                    written_items = to_write;
-                }
-            }
-            Err(e) => {
-                log::warn!("[CloudSync] Pull failed: {}", e);
-            }
-        }
-    }
+    // No automatic pull — client is source of truth. Pull only on explicit
+    // user request ("Restore from Backup"). Keep counters for logging.
+    let pulled_count = 0usize;
+    let written_items: Vec<SyncItem> = Vec::new();
 
     // Step 6: update timestamp, checksum state, and synced_items tracking.
     //
@@ -1188,11 +1071,12 @@ pub async fn do_sync_cycle(
 // Preset stripping helpers
 // =============================================================================
 
-/// Strip heavy fields from a preset JSON before syncing.
+/// Strip heavy/device-specific fields from a preset JSON before syncing.
 ///
 /// Removes `bars` from each window snapshot and compare overlay series —
 /// bar data is re-fetchable from exchanges and inflates presets to 400KB+.
-/// Command history is kept (small, useful for cross-device undo/redo).
+/// Removes `ViewportChange` commands from `command_history` (undo/redo stacks)
+/// — pan/zoom state is device-specific and ephemeral; it should not cross devices.
 fn strip_preset_for_sync(raw_json: &str) -> String {
     let Ok(mut val) = serde_json::from_str::<serde_json::Value>(raw_json) else {
         return raw_json.to_string();
@@ -1202,6 +1086,20 @@ fn strip_preset_for_sync(raw_json: &str) -> String {
         for win in windows.iter_mut() {
             if let Some(obj) = win.as_object_mut() {
                 obj.remove("bars");
+
+                // Strip ViewportChange commands from command_history.
+                // Viewport (pan/zoom) is device-specific and ephemeral — keep
+                // locally for undo/redo but don't sync between devices.
+                if let Some(history) = obj.get_mut("command_history") {
+                    for stack_name in &["undo_stack", "redo_stack"] {
+                        if let Some(stack) = history
+                            .get_mut(*stack_name)
+                            .and_then(|s| s.as_array_mut())
+                        {
+                            stack.retain(|cmd| cmd.get("ViewportChange").is_none());
+                        }
+                    }
+                }
 
                 // Strip bars from compare overlay series too.
                 if let Some(co) = obj.get_mut("compare_overlay") {
@@ -1224,6 +1122,21 @@ fn strip_preset_for_sync(raw_json: &str) -> String {
                 for win in windows.iter_mut() {
                     if let Some(obj) = win.as_object_mut() {
                         obj.remove("bars");
+
+                        // Strip ViewportChange commands from command_history.
+                        // Viewport (pan/zoom) is device-specific and ephemeral — keep
+                        // locally for undo/redo but don't sync between devices.
+                        if let Some(history) = obj.get_mut("command_history") {
+                            for stack_name in &["undo_stack", "redo_stack"] {
+                                if let Some(stack) = history
+                                    .get_mut(*stack_name)
+                                    .and_then(|s| s.as_array_mut())
+                                {
+                                    stack.retain(|cmd| cmd.get("ViewportChange").is_none());
+                                }
+                            }
+                        }
+
                         if let Some(co) = obj.get_mut("compare_overlay") {
                             if let Some(series) =
                                 co.get_mut("series").and_then(|s| s.as_array_mut())

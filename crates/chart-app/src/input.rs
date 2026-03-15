@@ -3816,7 +3816,6 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
                         }
-                        self.autosave_snapshot();
                         eprintln!("[ChartApp] cmp_settings scroll on tf_{}_slider", tf_idx);
                     }
                     CmpScrollAction::LineWidth { current, min_val, max_val } => {
@@ -3827,7 +3826,6 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.compare_overlay.set_series_line_width_by_index(series_idx, new_val);
                         }
-                        self.autosave_snapshot();
                         eprintln!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
                     }
                     CmpScrollAction::Swallow => {}
@@ -3898,7 +3896,6 @@ impl ChartApp {
                                                         _ => {}
                                                     }
                                                     inst.timeframe_visibility = Some(tf_config);
-                                                    self.autosave_snapshot();
                                                     eprintln!("[ChartApp] ind_settings scroll on tf_{}_slider", tf_idx);
                                                 }
                                             }
@@ -10143,6 +10140,7 @@ impl ChartApp {
         match rest {
             "close" => {
                 self.panel_app.indicator_settings_state.close();
+                self.autosave_snapshot();
             }
             "modal_bg" => {
                 // Click inside modal body — close template dropdown if open
@@ -10210,6 +10208,7 @@ impl ChartApp {
                 match btn_id {
                     "ok" | "cancel" => {
                         self.panel_app.indicator_settings_state.close();
+                        self.autosave_snapshot();
                         eprintln!("[ChartApp] ind_settings closed via footer: {}", btn_id);
                     }
                     "template_dropdown" => {
@@ -11501,6 +11500,7 @@ impl ChartApp {
         match rest {
             "close" | "ok" => {
                 self.panel_app.compare_settings_state.close();
+                self.autosave_snapshot();
                 eprintln!("[ChartApp] cmp_settings closed ({})", rest);
             }
             "cancel" => {

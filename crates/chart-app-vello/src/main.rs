@@ -3911,6 +3911,7 @@ impl ApplicationHandler for App<'_> {
         // Only preset/template writes require the vault key (guarded above).
         {
             let any_profile_dirty = self.windows.values().any(|pw| pw.chart.profile_dirty);
+            let any_geometry_dirty = self.windows.values().any(|pw| pw.chart.profile_geometry_dirty);
             let any_watchlists_dirty = self.windows.values().any(|pw| pw.chart.watchlists_dirty);
 
             if any_profile_dirty {
@@ -3991,6 +3992,81 @@ impl ApplicationHandler for App<'_> {
                 // Clear dirty flags.
                 for pw in self.windows.values_mut() {
                     pw.chart.profile_dirty = false;
+                }
+            }
+
+            // Geometry-only changes: save locally but skip cloud sync.
+            // This handles window move/resize — position persists across restarts
+            // but doesn't flood the sync pipeline (~180 events per 3s drag).
+            if any_geometry_dirty && !any_profile_dirty {
+                // Sync OS position/size into ChartApp fields.
+                for pw in self.windows.values_mut() {
+                    if pw.window.is_minimized().unwrap_or(false) {
+                        continue;
+                    }
+                    if let Ok(pos) = pw.window.outer_position() {
+                        if pos.x > -30000 && pos.y > -30000 {
+                            pw.chart.window_x = Some(pos.x);
+                            pw.chart.window_y = Some(pos.y);
+                        }
+                    }
+                    let sz = pw.window.inner_size();
+                    if sz.width > 0 && sz.height > 0 {
+                        pw.chart.window_width = Some(sz.width);
+                        pw.chart.window_height = Some(sz.height);
+                    }
+                }
+
+                let window_states: Vec<zengeld_chart::WindowState> = self.windows.values()
+                    .map(|pw| pw.chart.build_window_state())
+                    .collect();
+
+                let preferred_key = self.last_focused
+                    .filter(|id| self.windows.contains_key(id))
+                    .or_else(|| self.windows.keys().next().copied());
+
+                let mut profile = self.profile.clone();
+                profile.windows = window_states;
+                profile.connector_enabled = self.app_state.connector_enabled.clone();
+                profile.active_theme = self.app_state.theme_preset.clone();
+                profile.device_name = self.app_state.device_name.clone();
+                profile.app_version = self.app_state.app_version.clone();
+                profile.recalc_mode = match self.app_state.recalc_mode {
+                    chart_app::RecalcMode::PerTick  => "PerTick".to_string(),
+                    chart_app::RecalcMode::PerFrame => "PerFrame".to_string(),
+                    chart_app::RecalcMode::PerBar   => "PerBar".to_string(),
+                };
+
+                if let Some(key) = preferred_key {
+                    if let Some(pw) = self.windows.get(&key) {
+                        profile.sidebar_visible = pw.chart.sidebar_state.is_right_open();
+                        profile.sidebar_panel = chart_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
+                        profile.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
+                        let inline = &pw.chart.panel_app.toolbar_state.floating_inline_bar;
+                        profile.inline_bar_x = Some(inline.x);
+                        profile.inline_bar_y = Some(inline.y);
+                        let dock_str = match inline.dock_edge {
+                            zengeld_chart::InlineDockEdge::Bottom => "Bottom",
+                            zengeld_chart::InlineDockEdge::Top => "Top",
+                            zengeld_chart::InlineDockEdge::Free => "Free",
+                        };
+                        profile.inline_bar_dock = Some(dock_str.to_string());
+                    }
+                }
+
+                let vault_key = self.app_state.vault_key.as_ref();
+                if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
+                    eprintln!("[App] Failed to save profile (geometry): {}", e);
+                } else {
+                    self.profile = profile;
+                    // NOTE: No sync_changed_categories push — geometry is local-only.
+                }
+            }
+
+            // Clear geometry dirty flags (always, whether or not content was also dirty).
+            if any_geometry_dirty {
+                for pw in self.windows.values_mut() {
+                    pw.chart.profile_geometry_dirty = false;
                 }
             }
 
@@ -6362,7 +6438,7 @@ impl ApplicationHandler for App<'_> {
                     // Mark dirty so position/size is persisted on next save
                     // (skip skeleton — it's a loading screen, nothing to persist).
                     if !pw.skeleton {
-                        pw.chart.profile_dirty = true;
+                        pw.chart.profile_geometry_dirty = true;
                     }
                     // Toolbar and sidebar layout changes on resize — must rebuild both.
                     pw.toolbar_dirty = true;
@@ -6373,7 +6449,7 @@ impl ApplicationHandler for App<'_> {
             // ─── Window moved ─────────────────────────────────────────────
             WindowEvent::Moved(_) => {
                 if !pw.skeleton {
-                    pw.chart.profile_dirty = true;
+                    pw.chart.profile_geometry_dirty = true;
                 }
             }
 

@@ -299,6 +299,9 @@ pub struct ChartApp {
     /// Set to true when this window's tab/preset state changed and needs saving.
     /// Checked and cleared by App each frame.
     pub profile_dirty: bool,
+    /// Set to true when window geometry (position/size) changed.
+    /// Triggers local save but NOT cloud sync.
+    pub profile_geometry_dirty: bool,
     /// Set to true when watchlist data changed and needs saving.
     /// Checked and cleared by App each frame.
     pub watchlists_dirty: bool,
@@ -684,6 +687,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
@@ -939,6 +943,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
@@ -1091,6 +1096,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
@@ -1794,9 +1800,8 @@ impl ChartApp {
                             self.bridge.subscribe_trades(exchange_id, &symbol);
                         }
 
-                        // Snapshot bars into the in-memory preset so tab switches
-                        // can restore them instantly instead of re-fetching.
-                        self.autosave_snapshot();
+                        // Bars are kept in-memory (window.bars) for tab-switch UX.
+                        // No disk write or sync needed — bars are re-fetchable cache.
                     }
                 }
                 LiveUpdate::BarUpdate { .. } => {
