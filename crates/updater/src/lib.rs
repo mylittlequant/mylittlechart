@@ -293,7 +293,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -327,7 +327,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                                 }
                             }
                         }
@@ -345,7 +345,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 eprintln!("[Updater] Sync enabled — triggering immediate sync");
-                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                             }
                         }
                     }
@@ -390,7 +390,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 eprintln!("[Updater] E2E key set — triggering encrypted sync");
-                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                             }
                         }
                     }
@@ -598,7 +598,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 eprintln!("[Updater] SyncPushChanged: {:?}", categories);
-                                do_cloud_sync(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
                             } else {
                                 log::debug!("[Updater] SyncPushChanged ignored — not logged in");
                             }
@@ -616,17 +616,14 @@ async fn updater_loop(
     }
 }
 
-/// Run one cloud sync cycle and update the status watch channel.
+/// 3-step sync pipeline: collect → cloud_sync → zt_blob_push.
 ///
-/// Best-effort: a sync failure is logged and broadcast but never fatal.
-/// The sync state is updated in-place on success so the next cycle is
-/// incremental (only items changed since the last run are fetched).
-///
-/// If conflicts are detected they are inserted into `pending_conflicts` and
-/// broadcast via `SyncStatus::ConflictsDetected`.  Conflicted items are NOT
-/// written to disk or pushed; `last_sync_timestamp` is still updated so that
-/// the non-conflicted items move forward.
-async fn do_cloud_sync(
+/// Step 1: Single disk-read pass — collect all local items with tier tags.
+/// Step 2: CloudSync pipeline — structured data, LWW, E2E in transit.
+///         Skipped if `e2e_key` is not set (vault must be unlocked first).
+/// Step 3: ZT blob push — vault.enc, recovery_key.enc (already encrypted by
+///         the vault layer).  Only attempted if Step 2 succeeded.
+async fn run_sync_pipeline(
     client: &reqwest::Client,
     auth_token: &str,
     sync_status_tx: &watch::Sender<state::SyncStatus>,
@@ -641,17 +638,27 @@ async fn do_cloud_sync(
 ) {
     sync_status_tx.send_replace(state::SyncStatus::Syncing);
 
-    match cloud_sync::do_sync_cycle(client, UPDATE_SERVER, auth_token, sync_state, data_dir, build_attest, e2e_key, profile_id, device_id).await {
+    // Step 1: Single disk-read pass — collect all local items with tier tags.
+    let local_items = cloud_sync::collect_local_items(data_dir);
+
+    // Step 2: CloudSync pipeline — structured data, LWW, optional E2E in transit.
+    // Guard: skip cloud sync if e2e_key not set (vault must be unlocked).
+    if e2e_key.is_none() {
+        eprintln!("[Updater] e2e_key not set — skipping sync pipeline (waiting for vault unlock)");
+        sync_status_tx.send_replace(state::SyncStatus::Idle);
+        return;
+    }
+
+    match cloud_sync::do_cloud_sync(
+        client, UPDATE_SERVER, auth_token, sync_state,
+        &local_items, build_attest, e2e_key, profile_id, device_id,
+    ).await {
         Ok(result) => {
             log::debug!(
                 "[Updater] Cloud sync: pushed={} pulled={} conflicts={}",
                 result.pushed, result.pulled, result.conflicts.len()
             );
             *sync_state = result.new_state;
-
-            // Broadcast updated checksums so main.rs can persist them to the
-            // profile.  This ensures conflict detection remains accurate after
-            // a restart even when no profile save has yet occurred this session.
             sync_checksums_tx.send_replace(sync_state.last_synced_checksums.clone());
 
             if result.conflicts.is_empty() {
@@ -660,7 +667,6 @@ async fn do_cloud_sync(
                     pulled: result.pulled,
                 });
             } else {
-                // Merge new conflicts into the pending map.
                 for conflict in &result.conflicts {
                     log::warn!(
                         "[Updater] Conflict detected: {} (local_cs={} cloud_cs={})",
@@ -675,12 +681,30 @@ async fn do_cloud_sync(
             }
         }
         Err(e) => {
-            // Network error or server-side failure.  Log it and broadcast the
-            // error status, but do NOT update sync_state — the next periodic
-            // tick will retry from the same checkpoint.  The loop itself
-            // continues normally; this function just returns here.
             log::warn!("[Updater] Cloud sync failed: {}", e);
             sync_status_tx.send_replace(state::SyncStatus::Error(e));
+            return; // Don't attempt ZT blob push if cloud sync failed.
+        }
+    }
+
+    // Step 3: ZT blob push — vault.enc, recovery_key.enc.
+    if sync_state.sync_vault || sync_state.sync_recovery_key {
+        match cloud_sync::do_zt_blob_push(
+            client, UPDATE_SERVER, auth_token, sync_state,
+            &local_items, build_attest, profile_id, device_id,
+        ).await {
+            Ok(zt_result) => {
+                log::debug!("[Updater] ZT blob push: {} item(s) pushed", zt_result.pushed);
+                for (sync_id, checksum) in &zt_result.id_to_checksum {
+                    sync_state.last_synced_checksums.insert(sync_id.clone(), checksum.clone());
+                    sync_state.synced_items.insert(sync_id.clone());
+                }
+                sync_checksums_tx.send_replace(sync_state.last_synced_checksums.clone());
+            }
+            Err(e) => {
+                // Non-fatal: blob push failure does not invalidate cloud sync result.
+                log::warn!("[Updater] ZT blob push failed: {}", e);
+            }
         }
     }
 }
@@ -715,7 +739,20 @@ async fn do_re_encrypt_all(
     };
 
     // Collect ALL local items (no change-detection, push everything).
-    let local_items = cloud_sync::collect_local_sync_items(data_dir);
+    let collected = cloud_sync::collect_local_items(data_dir);
+    // Re-encrypt only CloudSync items — ZtBlob items (vault.enc) must never
+    // be re-encrypted with the sync key.
+    let local_items: Vec<cloud_sync::SyncItem> = collected.cloud_sync_items()
+        .map(|i| cloud_sync::SyncItem {
+            sync_id: i.sync_id.clone(),
+            category: i.category.clone(),
+            name: i.name.clone(),
+            content: i.content.clone(),
+            checksum: i.checksum.clone(),
+            modified_at: i.modified_at,
+            deleted: false,
+        })
+        .collect();
 
     if local_items.is_empty() {
         log::debug!("[Updater] ReEncryptAll: no local items to push");
