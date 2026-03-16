@@ -3197,6 +3197,8 @@ pub enum ProfileManagerPage {
     /// Shown immediately after `CreatePassphrase` succeeds.  The user must
     /// acknowledge ("I have written it down") before proceeding.
     ShowRecoveryKey,
+    /// Enter a recovery key to restore access when passphrase is forgotten.
+    UseRecoveryKey,
 }
 
 impl Default for ProfileManagerPage {
@@ -3305,6 +3307,10 @@ pub struct UserSettingsState {
     /// Whether the E2E passphrase input field has keyboard focus.
     /// Also used by vault unlock / profile manager passphrase pages.
     pub e2e_passphrase_focused: bool,
+    /// In-memory recovery key input buffer — never persisted to disk.
+    pub recovery_key_editing: TextEditingState,
+    /// Whether the recovery key input field has keyboard focus.
+    pub recovery_key_focused: bool,
     /// Last sync timestamp displayed in the Sync tab (Unix seconds, 0 = never).
     pub last_sync_timestamp: i64,
     /// Quota used in bytes (from server status response, 0 = unknown).
@@ -3453,6 +3459,14 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             e2e_passphrase_focused: false,
+            recovery_key_editing: TextEditingState {
+                field_id: "recovery_key".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            recovery_key_focused: false,
             last_sync_timestamp: 0,
             quota_used_bytes: 0,
             sync_presets: true,

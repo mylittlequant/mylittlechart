@@ -4756,6 +4756,121 @@ impl ApplicationHandler for App<'_> {
                     } // end else (not a new-profile vault creation)
                 }
 
+                // ── Recovery key unlock ──────────────────────────────────────────────────────
+                // Emitted when the user enters a recovery key to restore vault access.
+                if let Some(recovery_key_text) = cmd_str.strip_prefix("recovery_unlock:") {
+                    let target_id = self.windows.values().next()
+                        .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
+                        .unwrap_or_default();
+                    let current_id = self.profile_manager.profile.profile_id.clone();
+
+                    // Determine which profile dir to use
+                    let profile_dir = if !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock {
+                        // Unlocking a different profile
+                        let profiles_dir = zengeld_chart::active_profile_data_dir()
+                            .parent()
+                            .map(|p| p.to_path_buf());
+                        profiles_dir.and_then(|pd| {
+                            self.profile_manager.available_profiles()
+                                .iter()
+                                .find(|p| p.id == target_id)
+                                .map(|meta| pd.join(&meta.dir_name))
+                        })
+                    } else {
+                        // Unlocking the active profile (needs_vault_unlock)
+                        Some(zengeld_chart::active_profile_data_dir())
+                    };
+
+                    if let Some(profile_dir) = profile_dir {
+                        match zengeld_chart::crypto::parse_recovery_key(recovery_key_text) {
+                            Ok(recovery_key_bytes) => {
+                                let salt_path = profile_dir.join("salt.hex");
+                                let recovery_enc_path = profile_dir.join("recovery_key.enc");
+
+                                if !recovery_enc_path.exists() {
+                                    eprintln!("[App] recovery_unlock: no recovery_key.enc found in {:?}", profile_dir);
+                                    for pw in self.windows.values_mut() {
+                                        pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                            Some("No recovery data found for this profile".to_string());
+                                    }
+                                } else {
+                                    let salt_result = zengeld_chart::crypto::load_or_create_salt(&salt_path);
+                                    let enc_blob = std::fs::read(&recovery_enc_path);
+
+                                    match (salt_result, enc_blob) {
+                                        (Ok(salt), Ok(blob)) => {
+                                            match zengeld_chart::crypto::decrypt_master_key_with_recovery(
+                                                &blob, &recovery_key_bytes, &salt,
+                                            ) {
+                                                Ok(master_key) => {
+                                                    let vault_key = zengeld_chart::crypto::derive_vault_key(&master_key, &salt);
+                                                    eprintln!("[App] recovery_unlock: master key recovered — vault key derived");
+
+                                                    if self.needs_vault_unlock {
+                                                        // Active profile unlock via recovery
+                                                        self.profile_manager.set_vault_key(vault_key);
+                                                        if let Err(e) = self.profile_manager.load_vault_secrets() {
+                                                            eprintln!("[App] failed to load vault secrets: {}", e);
+                                                        }
+                                                        self.app_state.vault_key = Some(vault_key);
+                                                        self.profile_manager.vault_key = Some(vault_key);
+                                                        self.profile = self.profile_manager.profile.clone();
+                                                        self.app_state.agent_api_keys =
+                                                            self.profile_manager.profile.agent_api_keys.clone();
+                                                        self.needs_vault_unlock = false;
+                                                        self.pending_skeleton_promote = true;
+                                                    } else {
+                                                        // Pre-switch recovery for a different profile
+                                                        self.pending_switch_vault_key = Some(vault_key);
+                                                        self.pending_profile_switch = Some(target_id.clone());
+                                                        for pw in self.windows.values_mut() {
+                                                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_editing.text.clear();
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_editing.cursor = 0;
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_focused = false;
+                                                            pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                            pw.chart.panel_app.user_settings_state.is_open = false;
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("[App] recovery_unlock: decryption failed: {}", e);
+                                                    for pw in self.windows.values_mut() {
+                                                        pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                            Some("Wrong recovery key — decryption failed".to_string());
+                                                        pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        (Err(e), _) => {
+                                            eprintln!("[App] recovery_unlock: failed to read salt: {}", e);
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                    Some(format!("Failed to read vault data: {}", e));
+                                            }
+                                        }
+                                        (_, Err(e)) => {
+                                            eprintln!("[App] recovery_unlock: failed to read recovery_key.enc: {}", e);
+                                            for pw in self.windows.values_mut() {
+                                                pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                                    Some(format!("Failed to read recovery data: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[App] recovery_unlock: invalid recovery key format: {}", e);
+                                for pw in self.windows.values_mut() {
+                                    pw.chart.panel_app.user_settings_state.vault_unlock_error =
+                                        Some(format!("Invalid recovery key format: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // ── Recovery key confirmed ───────────────────────────────────────────────────
                 // Emitted when the user clicks "I have written it down" on the ShowRecoveryKey page.
                 // Clears the pending recovery key from memory and closes the overlay.
@@ -4849,6 +4964,7 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str.starts_with("profile_switch:")
                         || cmd_str == "vault_skip_to_wizard"
                         || cmd_str == "recovery_key_confirmed"
+                        || cmd_str.starts_with("recovery_unlock:")
                         || cmd_str.starts_with("profile_create:")
                         || cmd_str.starts_with("profile_rename:")
                         || cmd_str == "profile_delete"

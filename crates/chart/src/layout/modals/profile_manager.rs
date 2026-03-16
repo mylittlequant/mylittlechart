@@ -76,6 +76,10 @@ pub fn render_profile_manager(
             ctx, window_w, window_h, state, text_color, toolbar_theme,
             &layer_id, input_coordinator, result,
         ),
+        ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
+            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
+            current_time_ms, &layer_id, input_coordinator, result,
+        ),
     }
 }
 
@@ -327,7 +331,7 @@ fn render_page_unlock(
     let hovered = state.hovered_item_id.as_deref();
 
     let modal_w: f64 = 460.0;
-    let modal_h: f64 = if state.vault_unlock_error.is_some() { 310.0 } else { 280.0 };
+    let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
@@ -418,7 +422,30 @@ fn render_page_unlock(
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
+        cy += 18.0;
     }
+
+    // "Use recovery key" link
+    let link_text = "Use recovery key";
+    let is_link_hovered = hovered == Some("profile_mgr:use_recovery_key");
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(if is_link_hovered {
+        "rgba(244,205,99,0.95)"
+    } else {
+        "rgba(244,205,99,0.55)"
+    });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(link_text, inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    let link_w = 140.0;
+    let link_h = 16.0;
+    let link_x = inner_x + (inner_w - link_w) / 2.0;
+    let link_rect = WidgetRect::new(link_x, cy, link_w, link_h);
+    result.content_items.push(("profile_mgr:use_recovery_key".to_string(), link_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:use_recovery_key", link_rect, Sense::CLICK, layer_id,
+    );
 }
 
 // =============================================================================
@@ -818,6 +845,150 @@ fn render_page_create_new(
             Sense::CLICK,
             layer_id,
         );
+    }
+}
+
+// =============================================================================
+// Page: UseRecoveryKey
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page_use_recovery_key(
+    ctx: &mut dyn RenderContext,
+    window_w: f64,
+    window_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    let modal_w: f64 = 520.0;
+    let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
+    let modal_x = (window_w - modal_w) / 2.0;
+    let modal_y = (window_h - modal_h) / 2.0;
+
+    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.25)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+
+    input_coordinator.register_on_layer(
+        "profile_manager:recovery_input_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    let padding = 28.0;
+    let inner_x = modal_x + padding;
+    let inner_w = modal_w - padding * 2.0;
+    let mut cy = modal_y + 20.0;
+
+    // Back button
+    render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    cy += 10.0;
+
+    // Title
+    ctx.set_font("bold 18px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Recover with Recovery Key", inner_x + inner_w / 2.0, cy);
+    cy += 26.0;
+
+    // Subtitle
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Enter the recovery key shown during vault setup", inner_x + inner_w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 22.0;
+
+    // Recovery key input (plain text, not password)
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_h = 32.0;
+    let input_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let editing = &state.recovery_key_editing;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let input_config = InputConfig::new(&editing.text)
+        .with_focused(state.recovery_key_focused)
+        .with_cursor(editing.cursor)
+        .with_placeholder("xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-\u{2026}")
+        .with_type(InputType::Text)
+        .with_selection(sel_start, sel_end);
+
+    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:recovery_key_input".to_string(), input_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_input",
+        input_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.recovery_key_focused && editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            input_result.cursor_x,
+            input_result.cursor_y,
+            input_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+    cy += input_h + 14.0;
+
+    // Recover button
+    let recover_disabled = state.recovery_key_editing.text.len() < 40;
+    let is_recover_hovered = !recover_disabled && hovered == Some("profile_mgr:recovery_unlock");
+    let btn_bg = if recover_disabled {
+        "rgba(244,205,99,0.20)"
+    } else if is_recover_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    let btn_text_col = if recover_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_h = 32.0;
+    let btn_w = inner_w.min(180.0);
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(btn_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Recover", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    if !recover_disabled {
+        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        result.content_items.push(("profile_mgr:recovery_unlock".to_string(), btn_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_mgr:recovery_unlock", btn_rect, Sense::CLICK, layer_id,
+        );
+    }
+    cy += btn_h + 10.0;
+
+    // Error message
+    if let Some(ref err_msg) = state.vault_unlock_error {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.set_text_align(TextAlign::Left);
     }
 }
 

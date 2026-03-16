@@ -4155,12 +4155,14 @@ impl ChartApp {
     /// Routes to active text editing state (primitive settings text_content).
     /// On Enter, commits the edited text back to the primitive.
     pub fn on_char_input(&mut self, ch: char) {
-        // While the profile manager is shown, only the passphrase and name inputs
-        // may receive keyboard events.  All other char routing is blocked to prevent
-        // data leaking into hidden inputs or triggering chart keyboard shortcuts.
+        // While the profile manager is shown, only the passphrase, recovery key,
+        // and name inputs may receive keyboard events.  All other char routing is
+        // blocked to prevent data leaking into hidden inputs or triggering chart
+        // keyboard shortcuts.
         if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
+            && !self.panel_app.user_settings_state.recovery_key_focused
         {
             return;
         }
@@ -4387,6 +4389,53 @@ impl ChartApp {
                 }
                 c if !c.is_control() => {
                     // Any character typed — clear the error so the user can retry.
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle recovery key input in the UseRecoveryKey profile manager page
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.recovery_key_focused
+        {
+            let editing = &mut self.panel_app.user_settings_state.recovery_key_editing;
+            match ch {
+                '\r' | '\n' => {
+                    // Enter submits the recovery key if long enough.
+                    let key_text = editing.text.clone();
+                    if key_text.len() >= 40 {
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
+                        eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
+                    }
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                }
+                '\x1b' => {
+                    // Escape unfocuses without submitting
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                }
+                '\x08' => {
+                    // Backspace — clear any error.
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
+                    }
+                }
+                c if !c.is_control() => {
+                    // Any character typed — clear error.
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     if editing.has_selection() {
                         editing.delete_selection();
@@ -5016,11 +5065,12 @@ impl ChartApp {
         use super::input::KeyPress;
 
         // While the profile manager is shown, only allow key events to reach the
-        // passphrase or name input fields.  This prevents keyboard shortcuts
-        // (Escape, arrow keys, etc.) from operating on the hidden chart UI.
+        // passphrase, recovery key, or name input fields.  This prevents keyboard
+        // shortcuts (Escape, arrow keys, etc.) from operating on the hidden chart UI.
         if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
+            && !self.panel_app.user_settings_state.recovery_key_focused
         {
             return;
         }
@@ -5176,6 +5226,14 @@ impl ChartApp {
             && self.panel_app.user_settings_state.new_profile_name_focused
         {
             apply_key(&mut self.panel_app.user_settings_state.new_profile_name_editing, key);
+            return;
+        }
+
+        // ── Recovery key text input key events (profile manager UseRecoveryKey page) ──
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.recovery_key_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.recovery_key_editing, key);
             return;
         }
 
@@ -7478,6 +7536,29 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     eprintln!("[ChartApp] profile_mgr: name input focused");
+                }
+                "profile_mgr:use_recovery_key" => {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
+                    self.panel_app.user_settings_state.recovery_key_editing.text.clear();
+                    self.panel_app.user_settings_state.recovery_key_editing.cursor = 0;
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.vault_unlock_error = None;
+                    eprintln!("[ChartApp] profile_mgr: use recovery key page");
+                }
+                "profile_mgr:recovery_key_input" => {
+                    self.panel_app.user_settings_state.recovery_key_focused = true;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: recovery key input focused");
+                }
+                "profile_mgr:recovery_unlock" => {
+                    let recovery_key_text = self.panel_app.user_settings_state.recovery_key_editing.text.clone();
+                    if !recovery_key_text.is_empty() {
+                        self.panel_app.user_settings_state.vault_unlock_error = None;
+                        self.pending_updater_cmd = Some(format!("recovery_unlock:{}", recovery_key_text));
+                        eprintln!("[ChartApp] profile_mgr: recovery unlock submitted");
+                    }
                 }
                 "profile_mgr:recovery_key_confirm" => {
                     // User confirmed they have written down the recovery key.
