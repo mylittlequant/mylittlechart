@@ -76,7 +76,8 @@ pub fn start_server(
         let listener = loop {
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(l) => break l,
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("[zengeld-server] port {} unavailable ({}), retrying in 5s", port, e);
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }

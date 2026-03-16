@@ -101,6 +101,9 @@ pub fn wait_for_parent_exit() {
                     let stdout = String::from_utf8_lossy(&out.stdout);
                     if !stdout.contains(&pid_str) {
                         log::info!("Parent process {} has exited", pid_str);
+                        // Extra delay: Windows IOCP may still hold TCP sockets
+                        // for a few seconds after the process PID disappears.
+                        std::thread::sleep(std::time::Duration::from_secs(3));
                         return;
                     }
                 }
