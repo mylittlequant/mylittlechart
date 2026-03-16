@@ -311,13 +311,13 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
     }
 
     {
-        let path = data_dir.join("theme.json");
+        let path = data_dir.join("templates").join("indicator_set_manager.json");
         if let Ok(content) = std::fs::read_to_string(&path) {
             let checksum = sha256_hex(&content);
             items.push(LocalItem {
-                sync_id: "theme".to_string(),
-                category: "theme".to_string(),
-                name: "active_theme".to_string(),
+                sync_id: "indicator_set_manager".to_string(),
+                category: "indicator_set_manager".to_string(),
+                name: "indicator_set_manager".to_string(),
                 content,
                 checksum,
                 modified_at: file_modified_ms(&path),
@@ -326,9 +326,76 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
+    // Read profile.json once; reused for theme and window_layout below.
+    let profile_path = data_dir.join("profile.json");
+    let profile_json_value: Option<serde_json::Value> = std::fs::read_to_string(&profile_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+
     {
-        let path = data_dir.join("salt.json");
+        // Theme is stored as the `active_theme` field inside profile.json, not in a
+        // separate theme.json file.
+        if let Some(ref profile_val) = profile_json_value {
+            if let Some(theme_str) = profile_val
+                .get("active_theme")
+                .and_then(|v| v.as_str())
+            {
+                let content = theme_str.to_string();
+                let checksum = sha256_hex(&content);
+                items.push(LocalItem {
+                    sync_id: "theme".to_string(),
+                    category: "theme".to_string(),
+                    name: "active_theme".to_string(),
+                    content,
+                    checksum,
+                    modified_at: file_modified_ms(&profile_path),
+                    tier: SyncTier::CloudSync,
+                });
+            }
+        }
+    }
+
+    {
+        // Sync stripped window layout (open_tabs, active_preset_id, sidebar state).
+        // Strip device-local geometry before pushing.
+        if let Some(ref profile_val) = profile_json_value {
+            if let Some(windows_arr) = profile_val.get("windows").and_then(|w| w.as_array()) {
+                let stripped: Vec<serde_json::Value> = windows_arr
+                    .iter()
+                    .filter_map(|win| win.as_object())
+                    .map(|obj| {
+                        let mut stripped_win = serde_json::Map::new();
+                        for key in &["open_tabs", "active_preset_id", "sidebar_visible", "sidebar_panel"] {
+                            if let Some(v) = obj.get(*key) {
+                                stripped_win.insert(key.to_string(), v.clone());
+                            }
+                        }
+                        serde_json::Value::Object(stripped_win)
+                    })
+                    .collect();
+                if !stripped.is_empty() {
+                    let content = serde_json::to_string(&stripped)
+                        .unwrap_or_default();
+                    let checksum = sha256_hex(&content);
+                    items.push(LocalItem {
+                        sync_id: "window_layout".to_string(),
+                        category: "window_layout".to_string(),
+                        name: "window_layout".to_string(),
+                        content,
+                        checksum,
+                        modified_at: file_modified_ms(&profile_path),
+                        tier: SyncTier::CloudSync,
+                    });
+                }
+            }
+        }
+    }
+
+    {
+        let path = data_dir.join("salt.hex");
         if let Ok(content) = std::fs::read_to_string(&path) {
+            // salt.hex contains a raw 32-char hex string (e.g. "bdbe042807d325f69c7763cab16cdd4d")
+            let content = content.trim().to_string();
             let checksum = sha256_hex(&content);
             items.push(LocalItem {
                 sync_id: "salt".to_string(),
@@ -363,24 +430,8 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
-    {
-        let path = data_dir.join("recovery_key.enc");
-        if path.exists() {
-            if let Ok(bytes) = std::fs::read(&path) {
-                let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let checksum = sha256_hex(&content);
-                items.push(LocalItem {
-                    sync_id: "recovery_key".to_string(),
-                    category: "recovery_key".to_string(),
-                    name: "recovery_key".to_string(),
-                    content,
-                    checksum,
-                    modified_at: file_modified_ms(&path),
-                    tier: SyncTier::ZtBlob,
-                });
-            }
-        }
-    }
+    // recovery_key.enc is never written to disk — the recovery key goes directly
+    // to the server via upload_vault_params(). No collection block here.
 
     eprintln!(
         "[CloudSync] collect_local_items: {} total items",
@@ -524,11 +575,91 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 std::fs::write(&tmp, &item.content)?;
                 std::fs::rename(&tmp, &target)?;
             }
-            "theme" => {
-                let target = data_dir.join("theme.json");
+            "indicator_set_manager" => {
+                let dir = data_dir.join("templates");
+                std::fs::create_dir_all(&dir)?;
+                let target = dir.join("indicator_set_manager.json");
                 backup_file(&target)?;
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "window_layout" => {
+                // Merge synced tab/preset layout back into profile.json, preserving
+                // all device-local geometry fields (x, y, width, height, etc.).
+                let target = data_dir.join("profile.json");
+                backup_file(&target)?;
+                let mut profile_val: serde_json::Value = if target.exists() {
+                    let raw = std::fs::read_to_string(&target)?;
+                    serde_json::from_str(&raw).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?
+                } else {
+                    serde_json::Value::Object(serde_json::Map::new())
+                };
+                let synced_windows: Vec<serde_json::Value> =
+                    serde_json::from_str(&item.content).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?;
+                // Merge: for each synced window (by index), overlay the synced layout
+                // keys onto the existing local window entry.
+                if let Some(local_windows) = profile_val
+                    .get_mut("windows")
+                    .and_then(|w| w.as_array_mut())
+                {
+                    for (i, synced_win) in synced_windows.iter().enumerate() {
+                        if let (Some(local_win), Some(synced_obj)) =
+                            (local_windows.get_mut(i), synced_win.as_object())
+                        {
+                            if let Some(local_obj) = local_win.as_object_mut() {
+                                for key in &["open_tabs", "active_preset_id", "sidebar_visible", "sidebar_panel"] {
+                                    if let Some(v) = synced_obj.get(*key) {
+                                        local_obj.insert(key.to_string(), v.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // No existing windows array — insert the synced one as-is.
+                    if let Some(obj) = profile_val.as_object_mut() {
+                        obj.insert(
+                            "windows".to_string(),
+                            serde_json::Value::Array(synced_windows),
+                        );
+                    }
+                }
+                let updated = serde_json::to_string_pretty(&profile_val).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &updated)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "theme" => {
+                // Theme is the active_theme string inside profile.json.
+                // Read profile.json, update the field, write back atomically.
+                let target = data_dir.join("profile.json");
+                backup_file(&target)?;
+                let mut profile_val: serde_json::Value = if target.exists() {
+                    let raw = std::fs::read_to_string(&target)?;
+                    serde_json::from_str(&raw).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?
+                } else {
+                    serde_json::Value::Object(serde_json::Map::new())
+                };
+                if let Some(obj) = profile_val.as_object_mut() {
+                    obj.insert(
+                        "active_theme".to_string(),
+                        serde_json::Value::String(item.content.clone()),
+                    );
+                }
+                let updated = serde_json::to_string_pretty(&profile_val).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &updated)?;
                 std::fs::rename(&tmp, &target)?;
             }
             "vault" => {
@@ -546,23 +677,8 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 std::fs::write(&tmp, &bytes)?;
                 std::fs::rename(&tmp, &target)?;
             }
-            "recovery_key" => {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&item.content)
-                    .map_err(|e| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("recovery_key base64 decode: {}", e),
-                        )
-                    })?;
-                let target = data_dir.join("recovery_key.enc");
-                backup_file(&target)?;
-                let tmp = target.with_extension("tmp");
-                std::fs::write(&tmp, &bytes)?;
-                std::fs::rename(&tmp, &target)?;
-            }
             "salt" => {
-                let target = data_dir.join("salt.json");
+                let target = data_dir.join("salt.hex");
                 backup_file(&target)?;
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &item.content)?;
@@ -787,12 +903,13 @@ pub async fn do_cloud_sync(
     let filtered: Vec<SyncItem> = local_items
         .cloud_sync_items()
         .filter(|item| match item.category.as_str() {
-            "preset" => state.sync_presets,
+            "preset" | "window_layout" => state.sync_presets,
             "template_indicator"
             | "template_primitive"
             | "template_compare"
             | "template_indicator_set"
-            | "template_chart" => state.sync_templates,
+            | "template_chart"
+            | "indicator_set_manager" => state.sync_templates,
             "watchlist" => state.sync_watchlists,
             "theme" => state.sync_theme,
             _ => true,
@@ -862,6 +979,10 @@ pub async fn do_cloud_sync(
                 ("theme".to_string(), "active_theme".to_string())
             } else if id == "salt" {
                 ("salt".to_string(), "salt".to_string())
+            } else if id == "indicator_set_manager" {
+                ("indicator_set_manager".to_string(), "indicator_set_manager".to_string())
+            } else if id == "window_layout" {
+                ("window_layout".to_string(), "window_layout".to_string())
             } else if let Some(rest) = id.strip_prefix("template_indicator_set_") {
                 ("template_indicator_set".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("template_indicator_") {
