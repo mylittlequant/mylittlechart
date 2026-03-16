@@ -282,6 +282,7 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
             "template_indicator_set",
             "template_indicator_set_",
         ),
+        ("chart", "template_chart", "template_chart_"),
     ] {
         let dir = data_dir.join("templates").join(subdir);
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -507,6 +508,15 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
             }
             "template_indicator_set" => {
                 let dir = data_dir.join("templates").join("indicator_sets");
+                std::fs::create_dir_all(&dir)?;
+                let target = dir.join(format!("{}.json", item.name));
+                backup_file(&target)?;
+                let tmp = target.with_extension("tmp");
+                std::fs::write(&tmp, &item.content)?;
+                std::fs::rename(&tmp, &target)?;
+            }
+            "template_chart" => {
+                let dir = data_dir.join("templates").join("chart");
                 std::fs::create_dir_all(&dir)?;
                 let target = dir.join(format!("{}.json", item.name));
                 backup_file(&target)?;
@@ -781,7 +791,8 @@ pub async fn do_cloud_sync(
             "template_indicator"
             | "template_primitive"
             | "template_compare"
-            | "template_indicator_set" => state.sync_templates,
+            | "template_indicator_set"
+            | "template_chart" => state.sync_templates,
             "watchlist" => state.sync_watchlists,
             "theme" => state.sync_theme,
             _ => true,
@@ -859,6 +870,8 @@ pub async fn do_cloud_sync(
                 ("template_primitive".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("template_compare_") {
                 ("template_compare".to_string(), rest.to_string())
+            } else if let Some(rest) = id.strip_prefix("template_chart_") {
+                ("template_chart".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("preset_") {
                 ("preset".to_string(), rest.to_string())
             } else {
