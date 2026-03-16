@@ -6919,7 +6919,8 @@ fn main() {
     #[cfg(all(feature = "updater", not(feature = "standalone")))]
     zengeld_updater::wait_for_parent_exit_if_needed();
 
-    println!("chart-app-vello");
+    eprintln!("[App] chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
+    println!("chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
     println!("===============");
     println!("Controls:");
     println!("  Left drag : Pan chart");

@@ -92,8 +92,11 @@ pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> Verif
         return VerifyResult::Unsigned;
     }
 
+    // Strip any internal whitespace (e.g. from URL query param decoding where + became space).
+    let cleaned: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+
     // Decode standard base64.
-    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(trimmed) {
+    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&cleaned) {
         Ok(b) => b,
         Err(e) => return VerifyResult::FormatError(format!("base64 decode failed: {}", e)),
     };

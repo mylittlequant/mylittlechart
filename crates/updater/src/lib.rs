@@ -141,6 +141,7 @@ async fn updater_loop(
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
+    eprintln!("[Updater] Starting — current version: v{}, device_id: {}", current_version, device_id);
 
     // Shared HTTP client for key sync requests.
     // Built once here; reused on every interval tick.
@@ -709,6 +710,7 @@ async fn do_check_and_telemetry(
     match check::fetch_latest(auth_header).await {
         Ok(manifest) => {
             if check::is_newer(current_version, &manifest.version) {
+                eprintln!("[Updater] OTA: update available v{} → v{}", current_version, manifest.version);
                 let info = UpdateInfo {
                     version: manifest.version,
                     sha256: manifest.sha256,
@@ -719,10 +721,12 @@ async fn do_check_and_telemetry(
                 };
                 let _ = status_tx.send(UpdateStatus::UpdateAvailable(info));
             } else {
+                eprintln!("[Updater] OTA: up to date (local v{}, server v{})", current_version, manifest.version);
                 let _ = status_tx.send(UpdateStatus::Idle);
             }
         }
         Err(e) => {
+            eprintln!("[Updater] OTA check failed: {}", e);
             log::warn!("Update check failed: {}", e);
             let _ = status_tx.send(UpdateStatus::Idle);
         }
