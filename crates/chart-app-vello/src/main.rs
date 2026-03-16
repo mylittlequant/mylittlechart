@@ -422,6 +422,8 @@ struct App<'s> {
     pending_spawns: Vec<SpawnRequest>,
     /// Set to true when ALL windows should close.
     close_all_requested: bool,
+    /// Set when OTA update needs a restart — contains the server port for --wait-port.
+    ota_restart_port: Option<u16>,
     /// Default symbol for new charts.
     default_symbol: String,
     /// Shared DataBridge — tokio runtime + connector pool, created once at startup.
@@ -1998,6 +2000,7 @@ impl App<'_> {
             windows: HashMap::new(),
             pending_spawns: Vec::new(),
             close_all_requested: false,
+            ota_restart_port: None,
             default_symbol: symbol.to_string(),
             bridge,
             saved_windows,
@@ -3563,6 +3566,11 @@ impl ApplicationHandler for App<'_> {
                     zengeld_updater::UpdateStatus::Error(e) => {
                         eprintln!("[Updater] Error: {}", e);
                     }
+                    zengeld_updater::UpdateStatus::RestartNow { server_port } => {
+                        eprintln!("[App] OTA: restart requested, shutting down gracefully...");
+                        self.ota_restart_port = Some(*server_port);
+                        self.close_all_requested = true;
+                    }
                     _ => {}
                 }
             }
@@ -4167,6 +4175,18 @@ impl ApplicationHandler for App<'_> {
                 let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::Shutdown);
             }
             self.save_all(&[]);
+
+            // If this is an OTA restart, spawn the new binary before exiting.
+            // Because we're going through the normal shutdown path, all destructors
+            // will run (including TcpListener drop), so the port will be freed.
+            #[cfg(all(feature = "updater", not(feature = "standalone")))]
+            if let Some(port) = self.ota_restart_port {
+                eprintln!("[App] OTA: spawning new process before exit...");
+                if let Err(e) = zengeld_updater::replace::spawn_new(port) {
+                    eprintln!("[App] OTA: failed to spawn new process: {}", e);
+                }
+            }
+
             event_loop.exit();
             return;
         }

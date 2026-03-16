@@ -99,6 +99,56 @@ pub fn spawn_and_exit(server_port: Option<u16>) -> Result<(), String> {
     std::process::exit(0);
 }
 
+/// Spawn the new binary with `--wait-pid <our_pid>` and `--wait-port <port>`.
+///
+/// Unlike [`spawn_and_exit`], this does NOT call `process::exit()` — the caller
+/// is expected to exit gracefully (e.g. via `event_loop.exit()`) so that all
+/// destructors run and TCP sockets are properly released.
+pub fn spawn_new(server_port: u16) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot determine current exe: {}", e))?;
+
+    let my_pid = std::process::id();
+
+    // Collect original args (skip argv[0]), filter out --wait-pid and --wait-port.
+    let mut skip_next = false;
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| {
+            if skip_next {
+                skip_next = false;
+                return false;
+            }
+            if a == "--wait-pid" || a == "--wait-port" {
+                skip_next = true;
+                return false;
+            }
+            if a.starts_with("--wait-pid=") || a.starts_with("--wait-port=") {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    log::info!(
+        "Spawning new process: {} --wait-pid {} --wait-port {}",
+        current_exe.display(),
+        my_pid,
+        server_port
+    );
+
+    std::process::Command::new(&current_exe)
+        .args(&args)
+        .arg("--wait-pid")
+        .arg(my_pid.to_string())
+        .arg("--wait-port")
+        .arg(server_port.to_string())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+
+    Ok(())
+}
+
 /// Called at the very top of main(). If `--wait-pid <PID>` is present in args,
 /// wait for that process to exit before proceeding. This allows the old binary
 /// to release file handles and ports.

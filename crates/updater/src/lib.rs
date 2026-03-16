@@ -777,11 +777,10 @@ async fn do_install(
             let _ = status_tx.send(UpdateStatus::Installing);
             match replace::self_replace(&binary_data) {
                 Ok(()) => {
-                    let _ = status_tx.send(UpdateStatus::RestartPending);
-                    // Spawn new process and exit
-                    if let Err(e) = replace::spawn_and_exit(Some(server_port)) {
-                        let _ = status_tx.send(UpdateStatus::Error(format!("Restart failed: {}", e)));
-                    }
+                    // Signal main thread to do graceful shutdown + spawn new process.
+                    // Main thread will call replace::spawn_new() then event_loop.exit().
+                    let _ = status_tx.send(UpdateStatus::RestartNow { server_port });
+                    // Do NOT call process::exit() here — let main thread handle it.
                 }
                 Err(e) => {
                     let _ = status_tx.send(UpdateStatus::Error(format!("Install failed: {}", e)));
