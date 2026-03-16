@@ -238,7 +238,9 @@ pub struct OutputConfigSnapshot {
 /// Serializable representation of a single indicator instance.
 ///
 /// Mirrors the persisted fields of `IndicatorInstance` from the indicators
-/// crate, omitting runtime-only data (`values`, `signals`).
+/// crate.  `values` is included so that switching tabs can show cached
+/// indicator output instantly (before a background recalc completes).
+/// `signals` is still omitted (transient alert state).
 ///
 /// Using a separate struct avoids a direct dependency on the indicators crate
 /// from the chart crate.
@@ -275,6 +277,14 @@ pub struct IndicatorSnapshot {
     /// `None` means visible on all timeframes.
     #[serde(default)]
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
+    /// Cached computed output series (output key → values vector).
+    ///
+    /// Persisted in local preset snapshots so that tab switching shows
+    /// indicator values immediately.  Stripped from cloud-sync payloads
+    /// (regenerable data — see `strip_preset_for_sync`).
+    /// Absent in older presets → deserialises as empty map via `default`.
+    #[serde(default)]
+    pub values: HashMap<String, Vec<f64>>,
 }
 
 // =============================================================================

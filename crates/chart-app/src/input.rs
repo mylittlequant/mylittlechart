@@ -14564,6 +14564,11 @@ impl ChartApp {
                                         entry.visible = vis;
                                     }
                                 }
+                                // Restore cached computed values so indicator lines are
+                                // visible immediately on tab switch, before Step 6b recalc.
+                                if !ind_snap.values.is_empty() {
+                                    inst.values = std::sync::Arc::new(ind_snap.values.clone());
+                                }
                             }
                         }
                     }
@@ -14968,6 +14973,7 @@ impl ChartApp {
                 origin_id: inst.origin_id,
                 signals_enabled: inst.signals_enabled,
                 timeframe_visibility: inst.timeframe_visibility.clone(),
+                values: (*inst.values).clone(),
             });
         }
 

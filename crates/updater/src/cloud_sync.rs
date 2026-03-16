@@ -1384,5 +1384,14 @@ fn strip_preset_for_sync(raw_json: &str) -> String {
         }
     }
 
+    // Strip cached indicator values — regenerable data, must not inflate sync payloads.
+    if let Some(indicators) = val.get_mut("indicators").and_then(|i| i.as_array_mut()) {
+        for ind in indicators.iter_mut() {
+            if let Some(obj) = ind.as_object_mut() {
+                obj.remove("values");
+            }
+        }
+    }
+
     serde_json::to_string(&val).unwrap_or_else(|_| raw_json.to_string())
 }
