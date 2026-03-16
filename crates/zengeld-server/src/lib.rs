@@ -72,27 +72,14 @@ pub fn start_server(
     runtime.spawn(async move {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
-        // Retry binding — during OTA restart the old process may still hold the port.
-        let mut listener = None;
-        for attempt in 1..=10 {
+        // Background retry every 5s — port may be in TIME_WAIT after OTA restart.
+        let listener = loop {
             match tokio::net::TcpListener::bind(addr).await {
-                Ok(l) => {
-                    listener = Some(l);
-                    break;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[zengeld-server] port {} busy, retry {}/10: {}",
-                        port, attempt, e
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                Ok(l) => break l,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
-        }
-
-        let Some(listener) = listener else {
-            eprintln!("[zengeld-server] failed to bind port {} after 10 retries — Agent API disabled", port);
-            return;
         };
 
         eprintln!("[zengeld-server] Agent API listening on http://{addr}");
