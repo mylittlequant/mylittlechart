@@ -5644,8 +5644,6 @@ impl ChartApp {
                 let ui = &self.panel_app.user_settings_state;
                 zengeld_chart::user_profile::profile::SyncState {
                     enabled: ui.sync_enabled,
-                    e2e_enabled: existing.sync_state.e2e_enabled,
-                    e2e_salt: existing.sync_state.e2e_salt.clone(),
                     last_sync_timestamp: existing.sync_state.last_sync_timestamp,
                     sync_vault: ui.sync_vault_ui,
                     sync_presets: ui.sync_presets,

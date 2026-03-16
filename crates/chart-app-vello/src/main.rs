@@ -5141,19 +5141,15 @@ impl ApplicationHandler for App<'_> {
                             eprintln!("[App] malformed resolve_conflict command: {}", cmd_str);
                             None
                         }
-                    } else if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
-                        // Server-specific E2E: either push the vault salt to the server for
-                        // the first time, or just re-derive the sync key from the existing salt
-                        // (vault unlock path).
+                    } else if cmd_str.starts_with("e2e_setup:") {
+                        // Vault unlock: upload vault salt + encrypted_master_key to the server
+                        // so that vault recovery is possible on another device.
                         //
-                        // IMPORTANT: We always use the vault's own salt (salt.hex on disk),
-                        // never generate a fresh random salt here.  Both the vault key and the
-                        // sync key are derived from the same salt; using a different salt would
-                        // produce a sync key that cannot be re-derived from the vault passphrase.
+                        // CloudSync items are NOT encrypted client-side.  This upload is solely
+                        // for vault recovery (salt + encrypted_master_key stored server-side).
                         //
                         // NOTE: Local vault key derivation (save_all) is done OUTSIDE this
                         // block to avoid holding the `handle` borrow while calling save_all.
-                        let passphrase = passphrase.to_string();
 
                         // Read the vault salt from disk.  This salt was created when the vault
                         // was first set up; it is the ground-truth salt for all key derivation.
@@ -5164,153 +5160,54 @@ impl ApplicationHandler for App<'_> {
                             .to_string();
 
                         if vault_salt.is_empty() {
-                            eprintln!("[App] e2e_setup: salt.hex not found or empty — skipping sync key setup");
+                            eprintln!("[App] e2e_setup: salt.hex not found or empty — skipping vault recovery upload");
                         } else {
-                            // Derive the sync key using the vault's salt.
-                            match zengeld_updater::e2e_crypto::restore_key(&passphrase, &vault_salt) {
-                                Ok(sync_key) => {
-                                    let e2e_already_configured =
-                                        !self.profile_manager.profile.sync_state.e2e_salt.is_empty();
+                            // Upload vault salt + encrypted_master_key to the server so that
+                            // vault recovery is possible on another device.  This call is
+                            // idempotent — the server accepts repeated uploads of the same salt.
+                            // CloudSync items are NOT encrypted client-side; this upload is
+                            // solely for vault recovery purposes.
+                            let token = zengeld_updater::token_store::load_token();
+                            if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
+                                let client = reqwest::Client::builder()
+                                    .timeout(std::time::Duration::from_secs(15))
+                                    .build()
+                                    .unwrap_or_default();
+                                let server_url = "https://chart.example".to_string();
+                                let token_str = tok.token.clone();
+                                let salt_hex_for_spawn = vault_salt;
 
-                                    if e2e_already_configured {
-                                        // Vault unlock path: E2E was already set up on a previous
-                                        // session.  Just re-arm the updater with the re-derived key
-                                        // so it can decrypt/encrypt sync items this session.
+                                let encrypted_master_key_for_spawn =
+                                    self.profile_manager.take_encrypted_master_key();
 
-                                        // Check for salt mismatch caused by the old bug where a
-                                        // random salt was stored in the profile instead of the
-                                        // vault's actual salt.  If the profile salt doesn't match
-                                        // the on-disk vault salt, the server has the wrong salt —
-                                        // re-upload the correct one.
-                                        let profile_salt = self.profile_manager.profile.sync_state.e2e_salt.clone();
-                                        if profile_salt != vault_salt {
-                                            eprintln!(
-                                                "[App] e2e_salt mismatch: profile={} disk={} — re-uploading correct vault salt to server",
-                                                profile_salt, vault_salt
-                                            );
-
-                                            // Fix the in-memory profile so the correct salt is
-                                            // persisted on the next save_all().
-                                            self.profile_manager.profile.sync_state.e2e_salt = vault_salt.clone();
-
-                                            // Re-upload to the server if the user is logged in and
-                                            // cloud is enabled.  We do NOT trigger ReEncryptAll
-                                            // here — the sync_key was already derived from the
-                                            // correct vault_salt so encryption is fine; we are only
-                                            // correcting the server-stored salt metadata.
-                                            let token = zengeld_updater::token_store::load_token();
-                                            if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
-                                                let client = reqwest::Client::builder()
-                                                    .timeout(std::time::Duration::from_secs(15))
-                                                    .build()
-                                                    .unwrap_or_default();
-                                                let server_url = "https://chart.example".to_string();
-                                                let token_str = tok.token.clone();
-                                                let salt_hex_for_spawn = vault_salt.clone();
-                                                let build_attest_for_spawn = zengeld_updater::BuildAttestation {
-                                                    attestation: env!("BUILD_ATTESTATION").to_string(),
-                                                    version: env!("CARGO_PKG_VERSION").to_string(),
-                                                    platform: env!("BUILD_PLATFORM").to_string(),
-                                                    timestamp: env!("BUILD_TIMESTAMP").to_string(),
-                                                };
-                                                let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
-                                                let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
-                                                let iterations = zengeld_updater::e2e_crypto::PBKDF2_ITERATIONS as i32;
-                                                self.bridge.runtime().spawn(async move {
-                                                    match zengeld_updater::e2e_crypto::setup_e2e_on_server(
-                                                        &client,
-                                                        &server_url,
-                                                        &token_str,
-                                                        &salt_hex_for_spawn,
-                                                        iterations,
-                                                        None, // no new encrypted_master_key for mismatch repair
-                                                        &build_attest_for_spawn,
-                                                        &profile_id_for_spawn,
-                                                        &device_id_for_spawn,
-                                                    )
-                                                    .await {
-                                                        Ok(_) => eprintln!("[App] e2e_salt mismatch repair: server salt updated successfully"),
-                                                        Err(e) => eprintln!("[App] e2e_salt mismatch repair: server update failed: {}", e),
-                                                    }
-                                                });
-                                            } else {
-                                                eprintln!("[App] e2e_salt mismatch repair: not logged in or cloud disabled — skipping server upload");
-                                            }
-                                        } else {
-                                            eprintln!("[App] e2e_setup: salt already configured — sending derived key to updater");
-                                        }
-
-                                        if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(sync_key))) {
-                                            eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
-                                        }
-                                    } else {
-                                        // First-time setup path: arm the updater with the E2E key
-                                        // unconditionally, then upload salt to server if logged in.
-                                        // SetE2EKey must always fire so sync works even if the server
-                                        // upload is deferred (e.g. user enables sync later).
-                                        if let Err(e) = handle.cmd_tx.send(UpdaterCommand::SetE2EKey(Some(sync_key))) {
-                                            eprintln!("[App] e2e_setup: SetE2EKey send failed: {}", e);
-                                        }
-
-                                        // Persist the vault salt locally so we know E2E is configured
-                                        // on the next app start.
-                                        self.profile_manager.profile.sync_state.e2e_enabled = true;
-                                        self.profile_manager.profile.sync_state.e2e_salt = vault_salt.clone();
-
-                                        // Upload salt to server + trigger re-encryption if logged in.
-                                        let token = zengeld_updater::token_store::load_token();
-                                        if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
-                                            let client = reqwest::Client::builder()
-                                                .timeout(std::time::Duration::from_secs(15))
-                                                .build()
-                                                .unwrap_or_default();
-                                            let server_url = "https://chart.example".to_string();
-                                            let token_str = tok.token.clone();
-                                            let salt_hex_for_spawn = vault_salt;
-
-                                            let encrypted_master_key_for_spawn =
-                                                self.profile_manager.take_encrypted_master_key();
-
-                                            let cmd_tx_for_spawn = handle.cmd_tx.clone();
-                                            let build_attest_for_spawn = zengeld_updater::BuildAttestation {
-                                                attestation: env!("BUILD_ATTESTATION").to_string(),
-                                                version: env!("CARGO_PKG_VERSION").to_string(),
-                                                platform: env!("BUILD_PLATFORM").to_string(),
-                                                timestamp: env!("BUILD_TIMESTAMP").to_string(),
-                                            };
-                                            let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
-                                            let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
-                                            let iterations = zengeld_updater::e2e_crypto::PBKDF2_ITERATIONS as i32;
-                                            self.bridge.runtime().spawn(async move {
-                                                match zengeld_updater::e2e_crypto::setup_e2e_on_server(
-                                                    &client,
-                                                    &server_url,
-                                                    &token_str,
-                                                    &salt_hex_for_spawn,
-                                                    iterations,
-                                                    encrypted_master_key_for_spawn.as_deref(),
-                                                    &build_attest_for_spawn,
-                                                    &profile_id_for_spawn,
-                                                    &device_id_for_spawn,
-                                                )
-                                                .await {
-                                                    Ok(_) => {
-                                                        eprintln!("[App] E2E setup on server succeeded — triggering re-encryption");
-                                                        if let Err(e) = cmd_tx_for_spawn.send(UpdaterCommand::ReEncryptAll) {
-                                                            eprintln!("[App] e2e_setup: ReEncryptAll send failed: {}", e);
-                                                        }
-                                                    }
-                                                    Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
-                                                }
-                                            });
-                                        } else {
-                                            eprintln!("[App] e2e_setup: salt saved locally — server upload deferred (not logged in or cloud disabled)");
-                                        }
+                                let build_attest_for_spawn = zengeld_updater::BuildAttestation {
+                                    attestation: env!("BUILD_ATTESTATION").to_string(),
+                                    version: env!("CARGO_PKG_VERSION").to_string(),
+                                    platform: env!("BUILD_PLATFORM").to_string(),
+                                    timestamp: env!("BUILD_TIMESTAMP").to_string(),
+                                };
+                                let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
+                                let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
+                                let iterations = zengeld_updater::e2e_crypto::PBKDF2_ITERATIONS as i32;
+                                self.bridge.runtime().spawn(async move {
+                                    match zengeld_updater::e2e_crypto::setup_e2e_on_server(
+                                        &client,
+                                        &server_url,
+                                        &token_str,
+                                        &salt_hex_for_spawn,
+                                        iterations,
+                                        encrypted_master_key_for_spawn.as_deref(),
+                                        &build_attest_for_spawn,
+                                        &profile_id_for_spawn,
+                                        &device_id_for_spawn,
+                                    )
+                                    .await {
+                                        Ok(_) => eprintln!("[App] E2E setup on server succeeded (salt + recovery key uploaded)"),
+                                        Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
                                     }
-                                }
-                                Err(e) => {
-                                    eprintln!("[App] e2e_setup: failed to derive sync key: {}", e);
-                                }
+                                });
+                            } else {
+                                eprintln!("[App] e2e_setup: not logged in or cloud disabled — vault recovery upload deferred");
                             }
                         }
                         None

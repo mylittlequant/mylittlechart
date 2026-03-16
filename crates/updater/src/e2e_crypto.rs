@@ -1,24 +1,19 @@
-//! Client-side E2E encryption for cloud sync.
+//! E2E key management — vault salt storage and recovery key support.
 //!
-//! The encryption scheme is: passphrase → PBKDF2-HMAC-SHA256 → master_key
-//!   → HKDF-SHA256("mylittlechart-sync-v1") → sync_key → AES-256-GCM.
+//! This module handles uploading vault parameters (salt, encrypted master key)
+//! to the server so that vault recovery is possible on another device.
 //!
-//! The server stores only an opaque ciphertext blob and never sees the key
-//! or plaintext.  Domain separation from vault encryption is enforced by the
-//! HKDF info string: sync uses `"mylittlechart-sync-v1"`, vault uses
-//! `"mylittlechart-vault-v1"`.
+//! CloudSync items are NOT encrypted client-side; this module's HTTP helpers
+//! exist solely for vault recovery purposes (salt + encrypted_master_key stored
+//! server-side).
 //!
-//! # Key lifecycle
+//! The `encrypt`/`decrypt` functions are available for ZtBlob-tier items that
+//! need client-side encryption before push (future: custom indicators, strategies).
 //!
-//! 1. On first E2E setup: [`setup_e2e`] generates a random 16-byte salt, stretches the
-//!    passphrase with PBKDF2, and derives the final key with HKDF.  The salt and
-//!    iteration count are sent to the server via [`setup_e2e_on_server`]; the key is
-//!    held in memory only for the duration of the session.
-//!
-//! 2. On subsequent app starts: the user re-enters their passphrase; [`restore_key`]
-//!    fetches the stored salt from the server and re-derives the identical key.
-//!
-//! 3. If the passphrase is forgotten, cloud data is unrecoverable — by design.
+//! Key derivation (`derive_key`, `restore_key`) is used during vault unlock to
+//! produce the master key from the passphrase and salt.  Domain separation from
+//! vault encryption is enforced by the HKDF info string: sync uses
+//! `"mylittlechart-sync-v1"`, vault uses `"mylittlechart-vault-v1"`.
 //!
 //! All cryptographic primitives are delegated to [`zengeld_chart::crypto`].
 

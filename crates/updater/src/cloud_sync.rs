@@ -2,7 +2,7 @@
 //!
 //! This module handles:
 //! - Collecting local profile data and classifying it into sync tiers.
-//! - Pushing CloudSync-tier items (structured plaintext, E2E-encrypted in transit).
+//! - Pushing CloudSync-tier items (structured plaintext, no client-side encryption).
 //! - Pushing ZtBlob-tier items (pre-encrypted binary blobs: vault.enc, recovery_key.enc).
 //! - Writing server-pulled items back to disk.
 //!
@@ -23,7 +23,7 @@ use crate::state::{BuildAttestation, SyncConflict};
 /// Tier that governs how an item is transported to the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncTier {
-    /// Plaintext structured data encrypted client-side before push.
+    /// Plaintext structured data — no client-side encryption.
     CloudSync,
     /// Already-encrypted binary blob — pushed as-is, no re-encryption.
     ZtBlob,
@@ -147,10 +147,6 @@ fn default_true() -> bool {
 pub struct SyncState {
     pub last_sync_timestamp: i64,
     pub enabled: bool,
-    #[serde(default)]
-    pub e2e_enabled: bool,
-    #[serde(default)]
-    pub e2e_salt: String,
     #[serde(default = "default_true")]
     pub sync_vault: bool,
     #[serde(default = "default_true")]
@@ -174,8 +170,6 @@ impl Default for SyncState {
         Self {
             last_sync_timestamp: 0,
             enabled: false,
-            e2e_enabled: false,
-            e2e_salt: String::new(),
             sync_vault: true,
             sync_presets: true,
             sync_templates: true,
@@ -210,149 +204,10 @@ fn file_modified_ms(path: impl AsRef<Path>) -> i64 {
         .unwrap_or(1)
 }
 
-/// Collect all syncable items from disk (legacy API).
-///
-/// Kept for use in `do_re_encrypt_all` in lib.rs.
-/// New code should use [`collect_local_items`] instead.
-pub fn collect_local_sync_items(data_dir: &Path) -> Vec<SyncItem> {
-    eprintln!(
-        "[CloudSync] collect_local_sync_items: data_dir={:?}",
-        data_dir
-    );
-    let mut items = Vec::new();
-
-    {
-        let path = data_dir.join("watchlists.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let checksum = sha256_hex(&content);
-            items.push(SyncItem {
-                sync_id: "watchlists".to_string(),
-                category: "watchlist".to_string(),
-                name: "watchlists".to_string(),
-                content,
-                checksum,
-                modified_at: file_modified_ms(&path),
-                deleted: false,
-            });
-        }
-    }
-
-    {
-        let path = data_dir.join("settings_snapshots.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let checksum = sha256_hex(&content);
-            items.push(SyncItem {
-                sync_id: "settings_snapshots".to_string(),
-                category: "settings_snapshot".to_string(),
-                name: "settings_snapshots".to_string(),
-                content,
-                checksum,
-                modified_at: file_modified_ms(&path),
-                deleted: false,
-            });
-        }
-    }
-
-    if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map_or(false, |e| e == "json") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let content = strip_preset_for_sync(&content);
-                    let id = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let checksum = sha256_hex(&content);
-                    items.push(SyncItem {
-                        sync_id: format!("preset_{}", id),
-                        category: "preset".to_string(),
-                        name: id,
-                        content,
-                        checksum,
-                        modified_at: file_modified_ms(&path),
-                        deleted: false,
-                    });
-                }
-            }
-        }
-    }
-
-    for (subdir, category) in &[
-        ("primitives", "template_primitive"),
-        ("indicators", "template_indicator"),
-    ] {
-        let dir = data_dir.join("templates").join(subdir);
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        let id = path
-                            .file_stem()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let checksum = sha256_hex(&content);
-                        items.push(SyncItem {
-                            sync_id: format!("{}_{}", category, id),
-                            category: category.to_string(),
-                            name: id,
-                            content,
-                            checksum,
-                            modified_at: file_modified_ms(&path),
-                            deleted: false,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    {
-        let path = data_dir.join("theme.json");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let checksum = sha256_hex(&content);
-            items.push(SyncItem {
-                sync_id: "theme".to_string(),
-                category: "theme".to_string(),
-                name: "active_theme".to_string(),
-                content,
-                checksum,
-                modified_at: file_modified_ms(&path),
-                deleted: false,
-            });
-        }
-    }
-
-    {
-        let vault_path = data_dir.join("vault.enc");
-        if vault_path.exists() {
-            if let Ok(bytes) = std::fs::read(&vault_path) {
-                let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let checksum = sha256_hex(&content);
-                let modified_at = file_modified_ms(&vault_path);
-                items.push(SyncItem {
-                    sync_id: "vault".to_string(),
-                    category: "vault".to_string(),
-                    name: "vault".to_string(),
-                    content,
-                    checksum,
-                    modified_at,
-                    deleted: false,
-                });
-            }
-        }
-    }
-
-    eprintln!("[CloudSync] collected {} local items", items.len());
-    items
-}
-
 /// Collect all syncable items in a single disk-read pass, tagging each with
 /// its [`SyncTier`].
 ///
-/// Unlike [`collect_local_sync_items`]:
-/// - Preset stripping is deferred to [`do_cloud_sync`].
+/// Preset stripping is deferred to [`do_cloud_sync`].
 /// - vault.enc and recovery_key.enc are tagged as [`SyncTier::ZtBlob`].
 /// - New categories are included: template_compare, template_indicator_set,
 ///   salt, and recovery_key.
@@ -905,9 +760,8 @@ pub async fn pull_all(
 
 /// Perform one incremental sync cycle for CloudSync-tier items.
 ///
-/// The caller is responsible for the E2E-key guard if needed.
-/// This function does NOT skip when e2e_key is None — that is the caller's
-/// decision.  Vault blobs are handled separately by [`do_zt_blob_push`].
+/// Items are pushed as plaintext — no client-side encryption.
+/// Vault blobs are handled separately by [`do_zt_blob_push`].
 pub async fn do_cloud_sync(
     client: &reqwest::Client,
     server_url: &str,
@@ -915,7 +769,6 @@ pub async fn do_cloud_sync(
     state: &SyncState,
     local_items: &LocalItems,
     build_attest: &BuildAttestation,
-    e2e_key: Option<[u8; 32]>,
     profile_id: &str,
     device_id: &str,
 ) -> Result<SyncCycleResult, String> {
@@ -1071,47 +924,10 @@ pub async fn do_cloud_sync(
 
     to_push.append(&mut tombstones);
 
-    // Optional E2E encryption.
-    let items_to_push: Vec<SyncItem> = if let Some(ref key) = e2e_key {
-        let mut enc_items = Vec::with_capacity(to_push.len());
-        for item in &to_push {
-            if item.deleted {
-                enc_items.push(item.clone());
-                continue;
-            }
-            match crate::e2e_crypto::encrypt(key, item.content.as_bytes()) {
-                Ok(ciphertext) => {
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
-                    let enc_checksum = sha256_hex(&encoded);
-                    enc_items.push(SyncItem {
-                        sync_id: item.sync_id.clone(),
-                        category: item.category.clone(),
-                        name: item.name.clone(),
-                        content: encoded,
-                        checksum: enc_checksum,
-                        modified_at: item.modified_at,
-                        deleted: item.deleted,
-                    });
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[CloudSync] E2E encrypt failed for {}: {} — skipping",
-                        item.sync_id,
-                        e
-                    );
-                }
-            }
-        }
-        enc_items
-    } else {
-        to_push.clone()
-    };
+    // CloudSync pushes plaintext — no client-side encryption.
+    let items_to_push = &to_push;
 
-    eprintln!(
-        "[CloudSync] do_cloud_sync: to_push={} e2e_key={}",
-        to_push.len(),
-        if e2e_key.is_some() { "set" } else { "none" }
-    );
+    eprintln!("[CloudSync] do_cloud_sync: to_push={}", to_push.len());
     for item in &to_push {
         eprintln!(
             "[CloudSync]   push: id={} cat={} bytes={}",
@@ -1191,8 +1007,6 @@ pub async fn do_cloud_sync(
     let new_state = SyncState {
         last_sync_timestamp: sync_timestamp,
         enabled: state.enabled,
-        e2e_enabled: state.e2e_enabled,
-        e2e_salt: state.e2e_salt.clone(),
         sync_vault: state.sync_vault,
         sync_presets: state.sync_presets,
         sync_templates: state.sync_templates,

@@ -169,10 +169,6 @@ async fn updater_loop(
         ..cloud_sync::SyncState::default()
     };
 
-    // In-memory E2E key — set via SetE2EKey command when the user sets up or
-    // unlocks E2E encryption.  Never written to disk.
-    let mut e2e_key: Option<[u8; 32]> = None;
-
     // Pending conflict map: sync_id → SyncConflict.
     //
     // Populated whenever a sync cycle returns conflicts.  Entries are removed
@@ -293,7 +289,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                                 } else {
                                     log::debug!("[Updater] ForceSync ignored — cloud sync not enabled by user");
                                 }
@@ -327,7 +323,7 @@ async fn updater_loop(
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
-                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                    run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                                 }
                             }
                         }
@@ -345,7 +341,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 eprintln!("[Updater] Sync enabled — triggering immediate sync");
-                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             }
                         }
                     }
@@ -380,59 +376,6 @@ async fn updater_loop(
                     state::UpdaterCommand::SetProfileId(id) => {
                         profile_id = id;
                         eprintln!("[Updater] profile_id updated to {}", profile_id);
-                    }
-                    state::UpdaterCommand::SetE2EKey(key) => {
-                        e2e_key = key;
-                        log::info!("[Updater] E2E key updated: {}", if e2e_key.is_some() { "set" } else { "cleared" });
-                        // E2E key just arrived — trigger immediate sync so blobs
-                        // are pushed encrypted (earlier attempts were skipped).
-                        if e2e_key.is_some() && connected && sync_state.enabled {
-                            let token = token_store::load_token();
-                            if let Some(ref td) = token {
-                                eprintln!("[Updater] E2E key set — triggering encrypted sync");
-                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
-                            }
-                        }
-                    }
-                    state::UpdaterCommand::ReEncryptAll => {
-                        if !connected {
-                            log::warn!("[Updater] ReEncryptAll ignored — running in standalone mode");
-                        } else if e2e_key.is_none() {
-                            log::warn!("[Updater] ReEncryptAll ignored — no E2E key set");
-                        } else {
-                            let token = token_store::load_token();
-                            if let Some(ref td) = token {
-                                log::info!("[Updater] Re-encrypting all cloud data with E2E key");
-                                sync_status_tx.send_replace(state::SyncStatus::Syncing);
-                                match do_re_encrypt_all(&http_client, UPDATE_SERVER, &td.token, &sync_state, &data_dir, &build_attest, e2e_key, &profile_id, &device_id).await {
-                                    Ok((pushed, id_to_checksum)) => {
-                                        log::info!("[Updater] ReEncryptAll complete: {} item(s) re-pushed", pushed);
-                                        // Update synced_items and last_synced_checksums so the
-                                        // next normal sync cycle does not re-push everything.
-                                        for (sync_id, checksum) in &id_to_checksum {
-                                            sync_state.synced_items.insert(sync_id.clone());
-                                            sync_state.last_synced_checksums.insert(sync_id.clone(), checksum.clone());
-                                        }
-                                        // Advance the timestamp so the next cycle uses `since` to
-                                        // avoid re-fetching all server items from the beginning.
-                                        let now_ms = std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis() as i64;
-                                        if now_ms > sync_state.last_sync_timestamp {
-                                            sync_state.last_sync_timestamp = now_ms;
-                                        }
-                                        sync_status_tx.send_replace(state::SyncStatus::Completed { pushed, pulled: 0 });
-                                    }
-                                    Err(e) => {
-                                        log::warn!("[Updater] ReEncryptAll failed: {}", e);
-                                        sync_status_tx.send_replace(state::SyncStatus::Error(e));
-                                    }
-                                }
-                            } else {
-                                log::warn!("[Updater] ReEncryptAll ignored — not logged in");
-                            }
-                        }
                     }
                     state::UpdaterCommand::ResolveConflict { sync_id, resolution } => {
                         let conflict = match pending_conflicts.remove(&sync_id) {
@@ -598,7 +541,7 @@ async fn updater_loop(
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
                                 eprintln!("[Updater] SyncPushChanged: {:?}", categories);
-                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, e2e_key, &mut pending_conflicts, &profile_id, &device_id).await;
+                                run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             } else {
                                 log::debug!("[Updater] SyncPushChanged ignored — not logged in");
                             }
@@ -619,8 +562,7 @@ async fn updater_loop(
 /// 3-step sync pipeline: collect → cloud_sync → zt_blob_push.
 ///
 /// Step 1: Single disk-read pass — collect all local items with tier tags.
-/// Step 2: CloudSync pipeline — structured data, LWW, E2E in transit.
-///         Skipped if `e2e_key` is not set (vault must be unlocked first).
+/// Step 2: CloudSync pipeline — structured plaintext data, LWW.
 /// Step 3: ZT blob push — vault.enc, recovery_key.enc (already encrypted by
 ///         the vault layer).  Only attempted if Step 2 succeeded.
 async fn run_sync_pipeline(
@@ -631,7 +573,6 @@ async fn run_sync_pipeline(
     sync_state: &mut cloud_sync::SyncState,
     data_dir: &std::path::Path,
     build_attest: &state::BuildAttestation,
-    e2e_key: Option<[u8; 32]>,
     pending_conflicts: &mut std::collections::HashMap<String, state::SyncConflict>,
     profile_id: &str,
     device_id: &str,
@@ -641,17 +582,10 @@ async fn run_sync_pipeline(
     // Step 1: Single disk-read pass — collect all local items with tier tags.
     let local_items = cloud_sync::collect_local_items(data_dir);
 
-    // Step 2: CloudSync pipeline — structured data, LWW, optional E2E in transit.
-    // Guard: skip cloud sync if e2e_key not set (vault must be unlocked).
-    if e2e_key.is_none() {
-        eprintln!("[Updater] e2e_key not set — skipping sync pipeline (waiting for vault unlock)");
-        sync_status_tx.send_replace(state::SyncStatus::Idle);
-        return;
-    }
-
+    // Step 2: CloudSync pipeline — structured plaintext data, LWW.
     match cloud_sync::do_cloud_sync(
         client, UPDATE_SERVER, auth_token, sync_state,
-        &local_items, build_attest, e2e_key, profile_id, device_id,
+        &local_items, build_attest, profile_id, device_id,
     ).await {
         Ok(result) => {
             log::debug!(
@@ -707,103 +641,6 @@ async fn run_sync_pipeline(
             }
         }
     }
-}
-
-/// Re-encrypt all local sync items and push them to the server unconditionally.
-///
-/// Unlike the normal sync cycle (which skips items whose server checksum
-/// already matches), this function pushes every local item regardless —
-/// replacing any previously-plaintext server content with ciphertext.
-///
-/// Used immediately after E2E setup to ensure the server holds no plaintext.
-///
-/// Returns `(total_pushed, sync_id_to_encrypted_checksum)` so the caller can
-/// update `sync_state.synced_items` and `sync_state.last_synced_checksums` to
-/// prevent the next normal sync cycle from unnecessarily re-pushing everything.
-async fn do_re_encrypt_all(
-    client: &reqwest::Client,
-    server_url: &str,
-    auth_token: &str,
-    _sync_state: &cloud_sync::SyncState,
-    data_dir: &std::path::Path,
-    build_attest: &state::BuildAttestation,
-    e2e_key: Option<[u8; 32]>,
-    profile_id: &str,
-    device_id: &str,
-) -> Result<(usize, std::collections::HashMap<String, String>), String> {
-    use base64::Engine as _;
-
-    let key = match e2e_key {
-        Some(k) => k,
-        None => return Err("no E2E key set".to_string()),
-    };
-
-    // Collect ALL local items (no change-detection, push everything).
-    let collected = cloud_sync::collect_local_items(data_dir);
-    // Re-encrypt only CloudSync items — ZtBlob items (vault.enc) must never
-    // be re-encrypted with the sync key.
-    let local_items: Vec<cloud_sync::SyncItem> = collected.cloud_sync_items()
-        .map(|i| cloud_sync::SyncItem {
-            sync_id: i.sync_id.clone(),
-            category: i.category.clone(),
-            name: i.name.clone(),
-            content: i.content.clone(),
-            checksum: i.checksum.clone(),
-            modified_at: i.modified_at,
-            deleted: false,
-        })
-        .collect();
-
-    if local_items.is_empty() {
-        log::debug!("[Updater] ReEncryptAll: no local items to push");
-        return Ok((0, std::collections::HashMap::new()));
-    }
-
-    // Encrypt every item, keeping track of (sync_id → encrypted_checksum).
-    let mut encrypted_items = Vec::with_capacity(local_items.len());
-    let mut id_to_checksum: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for item in &local_items {
-        match crate::e2e_crypto::encrypt(&key, item.content.as_bytes()) {
-            Ok(ciphertext) => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
-                let enc_checksum = {
-                    use sha2::{Digest, Sha256};
-                    let mut h = Sha256::new();
-                    h.update(encoded.as_bytes());
-                    format!("{:x}", h.finalize())
-                };
-                id_to_checksum.insert(item.sync_id.clone(), enc_checksum.clone());
-                encrypted_items.push(cloud_sync::SyncItem {
-                    sync_id: item.sync_id.clone(),
-                    category: item.category.clone(),
-                    name: item.name.clone(),
-                    content: encoded,
-                    checksum: enc_checksum,
-                    modified_at: item.modified_at,
-                    deleted: item.deleted,
-                });
-            }
-            Err(e) => {
-                log::warn!("[Updater] ReEncryptAll: encrypt failed for {}: {} — skipping", item.sync_id, e);
-            }
-        }
-    }
-
-    // Push in batches of 50.
-    let mut total_pushed = 0usize;
-    for batch in encrypted_items.chunks(50) {
-        match cloud_sync::push_items(client, server_url, auth_token, batch, build_attest, profile_id, device_id).await {
-            Ok(n) => {
-                total_pushed += n;
-                log::debug!("[Updater] ReEncryptAll batch pushed: {} item(s)", n);
-            }
-            Err(e) => {
-                log::warn!("[Updater] ReEncryptAll batch push failed: {}", e);
-            }
-        }
-    }
-
-    Ok((total_pushed, id_to_checksum))
 }
 
 /// Fetch key hashes from the server and broadcast them via the watch channel.

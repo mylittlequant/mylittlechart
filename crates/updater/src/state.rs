@@ -166,19 +166,6 @@ pub enum UpdaterCommand {
     /// Must be sent after a profile switch alongside [`SetDataDir`] so that
     /// `X-Profile-Id` headers on all sync requests reflect the current profile.
     SetProfileId(String),
-    /// Set or clear the in-memory E2E encryption key.
-    ///
-    /// Pass `Some(key)` after the user sets up E2E or re-enters their passphrase.
-    /// Pass `None` to disable E2E encryption (plaintext sync from now on).
-    /// The key is held in memory only — it is never written to disk.
-    SetE2EKey(Option<[u8; 32]>),
-    /// Re-encrypt all existing cloud data with the current E2E key.
-    ///
-    /// Collects all local sync items and pushes them to the server encrypted,
-    /// regardless of whether the server checksums match.  This is used after
-    /// E2E setup so that previously-plaintext cloud data is replaced with
-    /// ciphertext.  Ignored if E2E key is not set or user is not logged in.
-    ReEncryptAll,
     /// Resolve a sync conflict for a specific item.
     ///
     /// - `KeepLocal`: push the local version to the server.
