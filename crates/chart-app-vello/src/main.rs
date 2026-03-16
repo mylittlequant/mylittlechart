@@ -5188,9 +5188,9 @@ impl ApplicationHandler for App<'_> {
                                 };
                                 let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
                                 let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
-                                let iterations = zengeld_updater::e2e_crypto::PBKDF2_ITERATIONS as i32;
+                                let iterations = zengeld_updater::vault_params::PBKDF2_ITERATIONS as i32;
                                 self.bridge.runtime().spawn(async move {
-                                    match zengeld_updater::e2e_crypto::setup_e2e_on_server(
+                                    match zengeld_updater::vault_params::upload_vault_params(
                                         &client,
                                         &server_url,
                                         &token_str,

@@ -13,7 +13,7 @@ pub mod telemetry;
 pub mod oauth;
 pub mod key_sync;
 pub mod cloud_sync;
-pub mod e2e_crypto;
+pub mod vault_params;
 pub mod verify;
 pub mod attest;
 
