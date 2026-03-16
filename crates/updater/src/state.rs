@@ -108,8 +108,6 @@ pub enum UpdateStatus {
     Installing,
     /// Ready to restart.
     RestartPending,
-    /// Binary replaced on disk — main thread should spawn new process and exit gracefully.
-    RestartNow { server_port: u16 },
     /// Error during update process.
     Error(String),
 }
