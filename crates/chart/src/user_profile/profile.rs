@@ -197,12 +197,12 @@ pub struct UserProfile {
     #[serde(default)]
     pub agent_api_key: String,
 
-    /// Registered API keys with permission tiers.
+    /// Registered local agent CLI connector keys with permission tiers.
     ///
     /// An empty vec means auth is disabled (open access).
-    /// Use `#[serde(default)]` so old profiles without this field load as empty.
-    #[serde(default)]
-    pub agent_api_keys: Vec<StoredApiKey>,
+    /// `alias` ensures old profiles serialized with `agent_api_keys` still load.
+    #[serde(default, alias = "agent_api_keys")]
+    pub local_agent_keys: Vec<StoredLocalAgentKey>,
 
     // -------------------------------------------------------------------------
     // Exchange API credentials (keychain-backed)
@@ -412,7 +412,7 @@ impl UserProfile {
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
             agent_api_key: String::new(),
-            agent_api_keys: Vec::new(),
+            local_agent_keys: Vec::new(),
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
             cloud_enabled: false,
@@ -551,16 +551,16 @@ pub struct StoredExchangeKey {
 }
 
 // =============================================================================
-// StoredApiKey — persisted API key entry (mirrors ApiKeyEntry in zengeld-server)
+// StoredLocalAgentKey — persisted local agent CLI connector key entry
 // =============================================================================
 
-/// Persisted representation of a single API key entry.
+/// Persisted representation of a single local agent CLI connector key entry.
 ///
-/// This type mirrors [`zengeld_server::state::ApiKeyEntry`] but lives in the
+/// This type mirrors [`zengeld_server::state::LocalAgentKey`] but lives in the
 /// `chart` crate so that `profile.rs` stays independent of `zengeld-server`.
 /// Conversion to the server type happens in `chart-app-vello/src/main.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredApiKey {
+pub struct StoredLocalAgentKey {
     /// SHA-256 hex digest of the raw key.
     pub key_hash: String,
     /// Human-readable label.
@@ -572,14 +572,17 @@ pub struct StoredApiKey {
     /// Optional agent identifier.
     #[serde(default)]
     pub agent_id: Option<String>,
-    /// Key origin: `"local"` (never removed by cloud sync) or `"cloud"`.
+    /// Key origin: `"local"` or `"cloud"` (legacy).
     ///
     /// Uses `String` instead of an enum so the JSON stays human-readable and
     /// backward-compatible.  Missing field defaults to `"local"` so that keys
-    /// loaded from older profile.json files are never accidentally evicted.
+    /// loaded from older profile.json files are treated as local.
     #[serde(default = "default_key_source")]
     pub source: String,
 }
+
+/// Backward-compatible type alias — old code using `StoredApiKey` still compiles.
+pub type StoredApiKey = StoredLocalAgentKey;
 
 // =============================================================================
 // LinkedAccount
@@ -710,9 +713,9 @@ pub struct VaultSecrets {
     #[serde(default)]
     pub agent_api_key: String,
 
-    /// Registered API keys with permission tiers (contains `key_hash`).
-    #[serde(default)]
-    pub agent_api_keys: Vec<StoredApiKey>,
+    /// Registered local agent CLI connector keys with permission tiers (contains `key_hash`).
+    #[serde(default, alias = "agent_api_keys")]
+    pub local_agent_keys: Vec<StoredLocalAgentKey>,
 
     /// Exchange API key entries (contains `api_secret` and `passphrase`).
     #[serde(default)]
@@ -734,7 +737,7 @@ impl VaultSecrets {
     pub fn extract_from(profile: &mut UserProfile) -> Self {
         let secrets = Self {
             agent_api_key: std::mem::take(&mut profile.agent_api_key),
-            agent_api_keys: std::mem::take(&mut profile.agent_api_keys),
+            local_agent_keys: std::mem::take(&mut profile.local_agent_keys),
             exchange_keys: std::mem::take(&mut profile.exchange_keys),
             notification_settings: std::mem::replace(
                 &mut profile.notification_settings,
@@ -747,7 +750,7 @@ impl VaultSecrets {
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
     pub fn merge_into(self, profile: &mut UserProfile) {
         profile.agent_api_key = self.agent_api_key;
-        profile.agent_api_keys = self.agent_api_keys;
+        profile.local_agent_keys = self.local_agent_keys;
         profile.exchange_keys = self.exchange_keys;
         profile.notification_settings = self.notification_settings;
         profile.notification_settings.telegram.migrate_legacy();

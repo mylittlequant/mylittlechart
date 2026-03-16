@@ -231,12 +231,6 @@ pub struct UpdaterHandle {
     pub cmd_tx: mpsc::UnboundedSender<UpdaterCommand>,
     /// Current authentication status — watch channel updated on login/logout.
     pub auth_rx: watch::Receiver<AuthStatus>,
-    /// Latest batch of key hashes synced from the server.
-    ///
-    /// The main thread polls `has_changed()` each frame and merges the new
-    /// set into the Agent API key registry.  Empty vec = no data yet or sync
-    /// failed (local keys are unaffected).
-    pub synced_keys_rx: watch::Receiver<Vec<crate::key_sync::SyncedKeyEntry>>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress

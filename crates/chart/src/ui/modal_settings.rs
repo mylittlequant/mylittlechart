@@ -3207,7 +3207,7 @@ impl Default for ProfileManagerPage {
     }
 }
 
-/// Display info for a managed API key shown in the key manager list.
+/// Display info for a local agent CLI connector key shown in the key manager list.
 ///
 /// Only metadata is stored here — the raw key is never shown after creation.
 #[derive(Debug, Clone)]
@@ -3219,6 +3219,9 @@ pub struct ManagedKeyInfo {
     /// Optional agent identifier attached to this key.
     pub agent_id: Option<String>,
 }
+
+/// Preferred new name for the key display info type.
+pub type LocalAgentKeyInfo = ManagedKeyInfo;
 
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
@@ -3248,14 +3251,14 @@ pub struct UserSettingsState {
     pub server_port: u16,
     /// Current server status: "running", "stopped", "error".
     pub server_status: String,
-    /// API key for agent authentication. Empty = not generated yet.
-    pub api_key: String,
+    /// Display string for local agent keys (e.g. "3 key(s) registered").
+    pub local_agent_key_display: String,
 
     // ── Key Manager ──────────────────────────────────────────────────────────
-    /// List of managed API keys (metadata only — no raw key values).
+    /// List of local agent CLI connector keys (metadata only — no raw key values).
     /// Refreshed from AgentState each time the Server tab is opened or a
     /// create/delete action completes.
-    pub managed_keys: Vec<ManagedKeyInfo>,
+    pub local_agent_keys_ui: Vec<ManagedKeyInfo>,
     /// Label text being typed for the new key creation form.
     pub new_key_label: String,
     /// Tier selected for the new key: `"read_only"` or `"read_write"`.
@@ -3433,8 +3436,8 @@ impl Default for UserSettingsState {
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),
-            api_key: String::new(),
-            managed_keys: Vec::new(),
+            local_agent_key_display: String::new(),
+            local_agent_keys_ui: Vec::new(),
             new_key_label: String::new(),
             new_key_tier: "read_only".to_string(),
             last_created_key: None,

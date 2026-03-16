@@ -340,7 +340,7 @@ pub struct ChartApp {
     pub server_enabled_changed: Option<bool>,
 
     /// Signal: API key was changed/generated. Consumed by main.rs.
-    pub api_key_changed: Option<String>,
+    pub local_agent_key_changed: Option<String>,
 
     /// Signal: text to copy to clipboard. Consumed by main.rs.
     pub clipboard_text: Option<String>,
@@ -698,7 +698,7 @@ impl ChartApp {
             theme_changed: None,
             recalc_mode_changed: None,
             server_enabled_changed: None,
-            api_key_changed: None,
+            local_agent_key_changed: None,
             clipboard_text: None,
             key_create_request: None,
             key_delete_request: None,
@@ -954,7 +954,7 @@ impl ChartApp {
             theme_changed: None,
             recalc_mode_changed: None,
             server_enabled_changed: None,
-            api_key_changed: None,
+            local_agent_key_changed: None,
             clipboard_text: None,
             key_create_request: None,
             key_delete_request: None,
@@ -1107,7 +1107,7 @@ impl ChartApp {
             theme_changed: None,
             recalc_mode_changed: None,
             server_enabled_changed: None,
-            api_key_changed: None,
+            local_agent_key_changed: None,
             clipboard_text: None,
             key_create_request: None,
             key_delete_request: None,
@@ -5633,8 +5633,8 @@ impl ChartApp {
             ota_enabled: self.panel_app.user_settings_state.ota_enabled,
             server_enabled: self.panel_app.user_settings_state.server_enabled,
             server_port: self.panel_app.user_settings_state.server_port,
-            agent_api_key: self.panel_app.user_settings_state.api_key.clone(),
-            agent_api_keys: existing.agent_api_keys.clone(),
+            agent_api_key: self.panel_app.user_settings_state.local_agent_key_display.clone(),
+            local_agent_keys: existing.local_agent_keys.clone(),
             exchange_keys: existing.exchange_keys.clone(),
             connector_enabled: self.sidebar_state.connector_enabled.clone(),
             telemetry_enabled: self.panel_app.user_settings_state.telemetry_enabled,

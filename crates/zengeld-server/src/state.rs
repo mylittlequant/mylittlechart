@@ -88,25 +88,29 @@ impl Permissions {
     }
 }
 
-/// Origin of an API key — used to prevent cloud sync from evicting local keys.
+/// Origin of a local agent CLI connector key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KeySource {
+pub enum AgentKeySource {
     /// Generated locally via the terminal UI or the Agent API `/api/v1/keys`
-    /// endpoint.  These keys are never removed by cloud sync.
+    /// endpoint.  These keys are local-only and never managed by cloud sync.
     Local,
-    /// Synced from chart.example.  Cloud sync may add or remove these.
+    /// Reserved for future use (previously used by cloud sync).
     Cloud,
 }
 
-impl Default for KeySource {
+impl Default for AgentKeySource {
     fn default() -> Self {
-        KeySource::Local
+        AgentKeySource::Local
     }
 }
 
-/// One entry in the API key registry.
+// Backward-compatible type alias so callers using the old name still compile.
+#[allow(dead_code)]
+pub type KeySource = AgentKeySource;
+
+/// One entry in the local agent CLI connector key registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyEntry {
+pub struct LocalAgentKey {
     /// SHA-256 hex digest of the raw key — never store the raw key.
     pub key_hash: String,
     /// Human-readable label chosen by the creator.
@@ -119,17 +123,26 @@ pub struct ApiKeyEntry {
     pub created_at: u64,
     /// Optional agent identifier attached to this key.
     pub agent_id: Option<String>,
-    /// Whether this key was created locally or synced from the cloud.
+    /// Whether this key was created locally or reserved for future sync.
     ///
-    /// Defaults to [`KeySource::Local`] so that keys loaded from older
+    /// Defaults to [`AgentKeySource::Local`] so that keys loaded from older
     /// profile.json files (which lack this field) are treated as local.
     #[serde(default)]
-    pub source: KeySource,
+    pub source: AgentKeySource,
 }
 
-/// Hash a raw API key to a hex SHA-256 digest.
-pub fn hash_key(raw_key: &str) -> String {
+// Backward-compatible type alias so callers using the old name still compile.
+pub type ApiKeyEntry = LocalAgentKey;
+
+/// Hash a raw local agent key to a hex SHA-256 digest.
+pub fn hash_agent_key(raw_key: &str) -> String {
     format!("{:x}", Sha256::digest(raw_key.as_bytes()))
+}
+
+/// Backward-compatible alias for [`hash_agent_key`].
+#[allow(dead_code)]
+pub fn hash_key(raw_key: &str) -> String {
+    hash_agent_key(raw_key)
 }
 
 // ===========================================================================
@@ -169,15 +182,15 @@ pub struct AgentState {
     /// Application version string (e.g. `"0.1.0"`).
     pub version: String,
 
-    /// Registered API keys.  An empty vec means auth is disabled (open access).
-    pub keys: RwLock<Vec<ApiKeyEntry>>,
+    /// Registered local agent CLI connector keys.  An empty vec means auth is disabled (open access).
+    pub local_keys: RwLock<Vec<LocalAgentKey>>,
 }
 
 impl AgentState {
     /// Create a new [`AgentState`] wrapping the given bridge.
     ///
-    /// Pass an empty `keys` vec to disable authentication (open access).
-    pub fn new(bridge: Arc<DataBridge>, version: impl Into<String>, keys: Vec<ApiKeyEntry>) -> Self {
+    /// Pass an empty `local_keys` vec to disable authentication (open access).
+    pub fn new(bridge: Arc<DataBridge>, version: impl Into<String>, local_keys: Vec<LocalAgentKey>) -> Self {
         Self {
             bridge,
             indicator_snapshot: RwLock::new(IndicatorSnapshot::default()),
@@ -189,7 +202,7 @@ impl AgentState {
             command_queue: Mutex::new(Vec::new()),
             start_time: std::time::Instant::now(),
             version: version.into(),
-            keys: RwLock::new(keys),
+            local_keys: RwLock::new(local_keys),
         }
     }
 
@@ -198,26 +211,31 @@ impl AgentState {
     /// Returns `None` when the key is not found in the registry.
     /// Hashes the raw key and finds the matching entry.
     pub fn resolve_key(&self, raw_key: &str) -> Option<(Permissions, Option<String>)> {
-        let hash = hash_key(raw_key);
-        let guard = self.keys.read().ok()?;
+        let hash = hash_agent_key(raw_key);
+        let guard = self.local_keys.read().ok()?;
         guard
             .iter()
             .find(|e| bool::from(e.key_hash.as_bytes().ct_eq(hash.as_bytes())))
             .map(|e| (e.permissions.clone(), e.agent_id.clone()))
     }
 
-    /// Add a new key entry to the registry at runtime.
-    pub fn add_key(&self, entry: ApiKeyEntry) {
-        if let Ok(mut keys) = self.keys.write() {
+    /// Add a new local agent key entry to the registry at runtime.
+    pub fn add_local_key(&self, entry: LocalAgentKey) {
+        if let Ok(mut keys) = self.local_keys.write() {
             keys.push(entry);
         }
+    }
+
+    /// Backward-compatible alias for [`add_local_key`].
+    pub fn add_key(&self, entry: LocalAgentKey) {
+        self.add_local_key(entry);
     }
 
     /// Remove all key entries whose label matches `label`.
     ///
     /// Returns `true` if at least one entry was removed.
-    pub fn remove_key(&self, label: &str) -> bool {
-        if let Ok(mut keys) = self.keys.write() {
+    pub fn remove_local_key(&self, label: &str) -> bool {
+        if let Ok(mut keys) = self.local_keys.write() {
             let before = keys.len();
             keys.retain(|e| e.label != label);
             keys.len() < before
@@ -226,19 +244,29 @@ impl AgentState {
         }
     }
 
-    /// Return a clone of all registered key entries.
-    pub fn list_keys(&self) -> Vec<ApiKeyEntry> {
-        self.keys.read().map(|g| g.clone()).unwrap_or_default()
+    /// Backward-compatible alias for [`remove_local_key`].
+    pub fn remove_key(&self, label: &str) -> bool {
+        self.remove_local_key(label)
     }
 
-    /// Generate a new API key, store its hash, and return the raw key string.
+    /// Return a clone of all registered local agent key entries.
+    pub fn list_local_keys(&self) -> Vec<LocalAgentKey> {
+        self.local_keys.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Backward-compatible alias for [`list_local_keys`].
+    pub fn list_keys(&self) -> Vec<LocalAgentKey> {
+        self.list_local_keys()
+    }
+
+    /// Generate a new local agent key, store its hash, and return the raw key string.
     /// Used by the UI key manager (CreateKey command).
     pub fn create_key_for_ui(&self, label: &str, tier: &str) -> String {
         use sha2::{Sha256, Digest};
         let random_bytes: [u8; 32] = rand::random();
         let raw_key = hex::encode(random_bytes);
         let key_hash = format!("{:x}", Sha256::digest(raw_key.as_bytes()));
-        let entry = ApiKeyEntry {
+        let entry = LocalAgentKey {
             key_hash,
             label: label.to_string(),
             tier: tier.to_string(),
@@ -248,9 +276,9 @@ impl AgentState {
                 .unwrap_or_default()
                 .as_secs(),
             agent_id: None,
-            source: KeySource::Local,
+            source: AgentKeySource::Local,
         };
-        self.add_key(entry);
+        self.add_local_key(entry);
         raw_key
     }
 

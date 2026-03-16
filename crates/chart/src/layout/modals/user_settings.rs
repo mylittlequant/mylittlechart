@@ -1697,12 +1697,12 @@ fn render_server_tab(
 
     // ── Section: API KEYS ─────────────────────────────────────────────────────
     // This unified section replaces the old "API KEY" + "MANAGED KEYS" sections.
-    let api_keys_y = status_row_y + row_h + 16.0;
+    let local_agent_keys_y = status_row_y + row_h + 16.0;
 
-    render_api_keys_section(
+    render_local_agent_keys_section(
         ctx,
         x,
-        api_keys_y,
+        local_agent_keys_y,
         available_w,
         state,
         toolbar_theme,
@@ -1718,7 +1718,7 @@ fn render_server_tab(
 ///   2. "Created key" one-time reveal box (if last_created_key is Some)
 ///   3. "Registered keys" scrollable list with Delete buttons
 #[allow(clippy::too_many_arguments)]
-fn render_api_keys_section(
+fn render_local_agent_keys_section(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -1933,7 +1933,7 @@ fn render_api_keys_section(
 
     // ── Keys list (scrollable when more than 3 keys) ──────────────────────────
     let item_h = 28.0;
-    let num_keys = state.managed_keys.len();
+    let num_keys = state.local_agent_keys_ui.len();
     let total_keys_h = if num_keys == 0 {
         row_h + 4.0 // "No keys" placeholder
     } else {
@@ -1975,14 +1975,14 @@ fn render_api_keys_section(
     let content_start_y = container.content_y();
     let content_w = container.content_width();
 
-    if state.managed_keys.is_empty() {
+    if state.local_agent_keys_ui.is_empty() {
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("No keys yet.", x, content_start_y + row_h / 2.0);
     } else {
-        for (idx, key_info) in state.managed_keys.iter().enumerate() {
+        for (idx, key_info) in state.local_agent_keys_ui.iter().enumerate() {
             let item_y = content_start_y + idx as f64 * (item_h + 4.0);
             let delete_btn_w = 24.0;
             let delete_btn_x = x + content_w - delete_btn_w;

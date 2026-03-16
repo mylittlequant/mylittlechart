@@ -279,7 +279,7 @@ struct AppState {
     ///
     /// Canonical source — keys managed via the REST API are reflected here and
     /// persisted to the user profile on the next save_all() call.
-    agent_api_keys: Vec<zengeld_chart::StoredApiKey>,
+    local_agent_keys: Vec<zengeld_chart::StoredLocalAgentKey>,
 
     /// Encryption key for zero-trust storage. Derived from passphrase at startup.
     /// `None` during migration or when running without a passphrase (plaintext mode).
@@ -346,9 +346,9 @@ impl AppState {
             recalc_mode,
             server_enabled: profile.server_enabled,
             server_port: profile.server_port,
-            agent_api_keys: {
+            local_agent_keys: {
                 // Start with whatever the profile already has.
-                let mut keys = profile.agent_api_keys.clone();
+                let mut keys = profile.local_agent_keys.clone();
 
                 // Migrate legacy single-key field if present and no new keys yet.
                 if keys.is_empty() && !profile.agent_api_key.is_empty() {
@@ -1714,11 +1714,11 @@ impl App<'_> {
     ) -> Self {
         let app_state = AppState::from_profile(&profile, profile_manager.presets.clone(), profile_manager.snapshots.clone(), profile_manager.template_manager.clone(), profile_manager.vault_key);
 
-        // Convert StoredApiKey entries to ApiKeyEntry (the server type).
-        let server_keys: Vec<zengeld_server::state::ApiKeyEntry> = app_state
-            .agent_api_keys
+        // Convert StoredLocalAgentKey entries to LocalAgentKey (the server type).
+        let server_keys: Vec<zengeld_server::state::LocalAgentKey> = app_state
+            .local_agent_keys
             .iter()
-            .map(|k| zengeld_server::state::ApiKeyEntry {
+            .map(|k| zengeld_server::state::LocalAgentKey {
                 key_hash: k.key_hash.clone(),
                 label: k.label.clone(),
                 tier: k.tier.clone(),
@@ -1727,9 +1727,9 @@ impl App<'_> {
                 agent_id: k.agent_id.clone(),
                 // Treat any stored key as Local unless it was explicitly marked cloud.
                 source: if k.source == "cloud" {
-                    zengeld_server::state::KeySource::Cloud
+                    zengeld_server::state::AgentKeySource::Cloud
                 } else {
-                    zengeld_server::state::KeySource::Local
+                    zengeld_server::state::AgentKeySource::Local
                 },
             })
             .collect();
@@ -2277,9 +2277,9 @@ impl App<'_> {
         }
         // API keys are now managed via /api/v1/keys REST endpoint.
         // Show key count in the UI instead of the raw key string.
-        chart.panel_app.user_settings_state.api_key = format!(
+        chart.panel_app.user_settings_state.local_agent_key_display = format!(
             "{} key(s) registered",
-            self.app_state.agent_api_keys.len()
+            self.app_state.local_agent_keys.len()
         );
         // Propagate build attestation status to new windows.
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
@@ -2799,7 +2799,7 @@ impl App<'_> {
         // Persist the current key registry (managed via the REST API).
         // The legacy `agent_api_key` field is kept empty after migration so
         // we don't double-migrate on the next load.
-        profile.agent_api_keys = self.app_state.agent_api_keys.clone();
+        profile.local_agent_keys = self.app_state.local_agent_keys.clone();
         profile.agent_api_key = String::new();
 
         // Persist notification settings from the first window's alert settings state.
@@ -3343,30 +3343,30 @@ impl App<'_> {
     /// Sync API keys from AgentState back to AppState and persist to disk immediately.
     /// Called after CreateKey / DeleteKey / Regenerate to ensure keys survive crashes.
     fn sync_keys_from_agent(&mut self, agent_state: &std::sync::Arc<zengeld_server::AgentState>) {
-        let server_keys = agent_state.list_keys();
-        self.app_state.agent_api_keys = server_keys.iter().map(|k| {
-            zengeld_chart::StoredApiKey {
+        let server_keys = agent_state.list_local_keys();
+        self.app_state.local_agent_keys = server_keys.iter().map(|k| {
+            zengeld_chart::StoredLocalAgentKey {
                 key_hash: k.key_hash.clone(),
                 label: k.label.clone(),
                 tier: k.tier.clone(),
                 created_at: k.created_at,
                 agent_id: k.agent_id.clone(),
                 source: match k.source {
-                    zengeld_server::state::KeySource::Cloud => "cloud".to_string(),
-                    zengeld_server::state::KeySource::Local => "local".to_string(),
+                    zengeld_server::state::AgentKeySource::Cloud => "cloud".to_string(),
+                    zengeld_server::state::AgentKeySource::Local => "local".to_string(),
                 },
             }
         }).collect();
         // Persist profile with updated keys
         let mut profile = self.profile.clone();
-        profile.agent_api_keys = self.app_state.agent_api_keys.clone();
+        profile.local_agent_keys = self.app_state.local_agent_keys.clone();
         profile.agent_api_key = String::new();
         let vault_key = self.app_state.vault_key.as_ref();
         if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
             eprintln!("[App] Failed to persist keys: {}", e);
         } else {
             self.profile = profile;
-            eprintln!("[App] Keys persisted to profile ({} keys)", self.app_state.agent_api_keys.len());
+            eprintln!("[App] Keys persisted to profile ({} keys)", self.app_state.local_agent_keys.len());
         }
     }
 
@@ -4293,14 +4293,14 @@ impl ApplicationHandler for App<'_> {
         // as an admin key in AgentState and persist immediately.
         {
             let key_change: Option<String> = self.windows.values_mut()
-                .find_map(|pw| pw.chart.api_key_changed.take());
+                .find_map(|pw| pw.chart.local_agent_key_changed.take());
             if let Some(raw_key) = key_change {
                 if !raw_key.is_empty() {
                     if let Some(agent_state) = self.agent_state.clone() {
                         // Remove any previous "master" key, then add the new one
                         agent_state.remove_key("master");
-                        let key_hash = zengeld_server::state::hash_key(&raw_key);
-                        let entry = zengeld_server::state::ApiKeyEntry {
+                        let key_hash = zengeld_server::state::hash_agent_key(&raw_key);
+                        let entry = zengeld_server::state::LocalAgentKey {
                             key_hash,
                             label: "master".to_string(),
                             tier: "admin".to_string(),
@@ -4310,9 +4310,9 @@ impl ApplicationHandler for App<'_> {
                                 .unwrap_or_default()
                                 .as_secs(),
                             agent_id: None,
-                            source: zengeld_server::state::KeySource::Local,
+                            source: zengeld_server::state::AgentKeySource::Local,
                         };
-                        agent_state.add_key(entry);
+                        agent_state.add_local_key(entry);
                         self.sync_keys_from_agent(&agent_state);
                         eprintln!("[App] Master API key regenerated and persisted");
                     }
@@ -4703,8 +4703,8 @@ impl ApplicationHandler for App<'_> {
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
                                 self.profile = self.profile_manager.profile.clone();
-                                self.app_state.agent_api_keys =
-                                    self.profile_manager.profile.agent_api_keys.clone();
+                                self.app_state.local_agent_keys =
+                                    self.profile_manager.profile.local_agent_keys.clone();
                                 self.needs_vault_unlock = false;
                                 // Drop skeleton windows and recreate with live data.
                                 self.pending_skeleton_promote = true;
@@ -4727,8 +4727,8 @@ impl ApplicationHandler for App<'_> {
                                 self.profile_manager.vault_key = Some(key);
                                 self.app_state.template_manager.vault_key = Some(key);
                                 eprintln!("[App] vault key derived and set — promoting skeleton");
-                                self.app_state.agent_api_keys =
-                                    self.profile_manager.profile.agent_api_keys.clone();
+                                self.app_state.local_agent_keys =
+                                    self.profile_manager.profile.local_agent_keys.clone();
                                 self.needs_vault_unlock = false;
                                 self.needs_migration = false;
 
@@ -4815,8 +4815,8 @@ impl ApplicationHandler for App<'_> {
                                                         self.app_state.vault_key = Some(vault_key);
                                                         self.profile_manager.vault_key = Some(vault_key);
                                                         self.profile = self.profile_manager.profile.clone();
-                                                        self.app_state.agent_api_keys =
-                                                            self.profile_manager.profile.agent_api_keys.clone();
+                                                        self.app_state.local_agent_keys =
+                                                            self.profile_manager.profile.local_agent_keys.clone();
                                                         self.needs_vault_unlock = false;
                                                         self.pending_skeleton_promote = true;
                                                     } else {
@@ -5519,107 +5519,6 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
-        // ── Poll synced_keys_rx → merge server keys into Agent API registry ─
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        {
-            let should_merge = self.updater_handle
-                .as_ref()
-                .map(|h| h.synced_keys_rx.has_changed().unwrap_or(false))
-                .unwrap_or(false);
-
-            if should_merge {
-                if let (Some(ref mut handle), Some(ref agent_state)) =
-                    (&mut self.updater_handle, &self.agent_state)
-                {
-                    let synced = handle.synced_keys_rx.borrow_and_update().clone();
-                    if !synced.is_empty() {
-                        // Merge strategy (source-aware):
-                        //   - Keys with source=Local are NEVER removed by cloud sync.
-                        //     They were generated locally via CreateKey or the UI.
-                        //   - Keys with source=Cloud are fully managed by the server:
-                        //     the existing cloud set is replaced with the new synced set.
-                        //   - New keys from the server get source=Cloud.
-
-                        let existing = agent_state.list_keys();
-
-                        // Partition existing keys by source.
-                        let local_keys: Vec<zengeld_server::state::ApiKeyEntry> = existing
-                            .iter()
-                            .filter(|k| k.source == zengeld_server::state::KeySource::Local)
-                            .cloned()
-                            .collect();
-
-                        // Convert synced entries to ApiKeyEntry with source=Cloud.
-                        let cloud_keys: Vec<zengeld_server::state::ApiKeyEntry> = synced
-                            .iter()
-                            .map(|s| {
-                                // Preserve created_at from existing entry if we have it,
-                                // otherwise use current time as a placeholder.
-                                let created_at = existing
-                                    .iter()
-                                    .find(|k| k.key_hash == s.token_hash)
-                                    .map(|k| k.created_at)
-                                    .unwrap_or_else(|| {
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_secs()
-                                    });
-                                // Derive a tier string from the permissions vec for
-                                // backward-compat with ApiKeyEntry which still stores tier.
-                                let tier = if s.permissions.iter().any(|p| p == "admin") {
-                                    "admin"
-                                } else if s.permissions.iter().any(|p| p == "write") {
-                                    "read_write"
-                                } else {
-                                    "read_only"
-                                };
-                                zengeld_server::state::ApiKeyEntry {
-                                    key_hash: s.token_hash.clone(),
-                                    label: s.label.clone(),
-                                    tier: tier.to_string(),
-                                    permissions: zengeld_server::state::Permissions::from_tier(tier),
-                                    created_at,
-                                    agent_id: None,
-                                    source: zengeld_server::state::KeySource::Cloud,
-                                }
-                            })
-                            .collect();
-
-                        // Combine: local keys always kept, cloud keys replaced entirely.
-                        let merged: Vec<zengeld_server::state::ApiKeyEntry> = local_keys
-                            .into_iter()
-                            .chain(cloud_keys)
-                            .collect();
-
-                        let merged_count = merged.len();
-
-                        // Replace the registry atomically.
-                        if let Ok(mut keys) = agent_state.keys.write() {
-                            *keys = merged.clone();
-                        }
-
-                        // Mirror into profile so the merged set persists on save.
-                        self.app_state.agent_api_keys = merged.iter().map(|k| {
-                            zengeld_chart::StoredApiKey {
-                                key_hash: k.key_hash.clone(),
-                                label: k.label.clone(),
-                                tier: k.tier.clone(),
-                                created_at: k.created_at,
-                                agent_id: k.agent_id.clone(),
-                                source: match k.source {
-                                    zengeld_server::state::KeySource::Cloud => "cloud".to_string(),
-                                    zengeld_server::state::KeySource::Local => "local".to_string(),
-                                },
-                            }
-                        }).collect();
-
-                        eprintln!("[App] Key sync: merged {} key(s) into Agent API registry", merged_count);
-                    }
-                }
-            }
-        }
-
         // ── Poll sync_status_rx → update all windows' user_settings_state ─
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
         if let Some(ref mut handle) = self.updater_handle {
@@ -6137,15 +6036,15 @@ impl ApplicationHandler for App<'_> {
             // Sync managed_keys list to all windows for display in the Server tab.
             if let Some(ref agent_state) = self.agent_state {
                 let server_keys = agent_state.list_keys();
-                let managed: Vec<zengeld_chart::ManagedKeyInfo> = server_keys.iter().map(|k| {
-                    zengeld_chart::ManagedKeyInfo {
+                let managed: Vec<zengeld_chart::LocalAgentKeyInfo> = server_keys.iter().map(|k| {
+                    zengeld_chart::LocalAgentKeyInfo {
                         label: k.label.clone(),
                         tier: k.tier.clone(),
                         agent_id: k.agent_id.clone(),
                     }
                 }).collect();
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.user_settings_state.managed_keys = managed.clone();
+                    pw.chart.panel_app.user_settings_state.local_agent_keys_ui = managed.clone();
                 }
             }
             // Clock time in the toolbar updates every second — mark all toolbars dirty

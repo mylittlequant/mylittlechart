@@ -18,7 +18,7 @@
 pub mod profile;
 pub mod storage;
 
-pub use profile::{UserProfile, VaultSecrets, WindowState, StoredApiKey, ProfileMeta, ProfileIndex};
+pub use profile::{UserProfile, VaultSecrets, WindowState, StoredLocalAgentKey, StoredApiKey, ProfileMeta, ProfileIndex};
 pub use storage::{
     ProfileError,
     app_data_dir,

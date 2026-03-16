@@ -51,7 +51,7 @@ pub async fn check_api_key(
     // `.await` point — required for the future to be `Send`.
     let keys_empty: bool = {
         let guard = state
-            .keys
+            .local_keys
             .read()
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         guard.is_empty()

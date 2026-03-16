@@ -19,7 +19,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::auth::check_permission;
-use crate::state::{hash_key, AgentState, ApiKeyEntry, KeySource, Permissions};
+use crate::state::{hash_agent_key, AgentState, LocalAgentKey, AgentKeySource, Permissions};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -77,7 +77,7 @@ fn require_admin(
     perms: Option<&Permissions>,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let keys_empty = state
-        .keys
+        .local_keys
         .read()
         .map(|g| g.is_empty())
         .unwrap_or(false);
@@ -100,7 +100,7 @@ async fn list_keys(
 ) -> Result<Json<KeyListResponse>, (StatusCode, Json<serde_json::Value>)> {
     require_admin(&state, perms.as_ref().map(|Extension(p)| p))?;
 
-    let entries = state.list_keys();
+    let entries = state.list_local_keys();
     let keys = entries
         .into_iter()
         .map(|e| KeyInfo {
@@ -146,7 +146,7 @@ async fn create_key(
     // keys; any API caller (even an existing admin) is blocked from doing so
     // to prevent privilege escalation via the API surface.
     let keys_empty = state
-        .keys
+        .local_keys
         .read()
         .map(|g| g.is_empty())
         .unwrap_or(false);
@@ -193,17 +193,17 @@ async fn create_key(
         .unwrap_or_default()
         .as_secs();
 
-    let entry = ApiKeyEntry {
-        key_hash: hash_key(&raw_key),
+    let entry = LocalAgentKey {
+        key_hash: hash_agent_key(&raw_key),
         label: body.label.clone(),
         tier: body.tier.clone(),
         permissions: Permissions::from_tier(&body.tier),
         created_at,
         agent_id: body.agent_id,
-        source: KeySource::Local,
+        source: AgentKeySource::Local,
     };
 
-    state.add_key(entry);
+    state.add_local_key(entry);
 
     Ok((
         StatusCode::CREATED,
@@ -226,7 +226,7 @@ async fn revoke_key(
 ) -> Result<Json<DeleteKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
     require_admin(&state, perms.as_ref().map(|Extension(p)| p))?;
 
-    let deleted = state.remove_key(&label);
+    let deleted = state.remove_local_key(&label);
     Ok(Json(DeleteKeyResponse { deleted }))
 }
 
