@@ -21,6 +21,7 @@ pub mod state;
 
 use std::sync::Arc;
 use axum::{Router, middleware};
+use socket2::{Domain, Protocol, Socket, Type};
 
 pub use state::AgentState;
 
@@ -72,12 +73,23 @@ pub fn start_server(
     runtime.spawn(async move {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
-        // Background retry every 5s — port may be in TIME_WAIT after OTA restart.
+        // Prefer SO_REUSEADDR so a zombie socket left by process::exit(0) on
+        // Windows does not block the new process from binding the same port.
+        // Fall back to the plain tokio bind on any unexpected error.
         let listener = loop {
-            match tokio::net::TcpListener::bind(addr).await {
-                Ok(l) => break l,
+            match bind_with_reuse(addr) {
+                Ok(std_listener) => {
+                    std_listener
+                        .set_nonblocking(true)
+                        .expect("set_nonblocking");
+                    break tokio::net::TcpListener::from_std(std_listener)
+                        .expect("tokio TcpListener from_std");
+                }
                 Err(e) => {
-                    eprintln!("[zengeld-server] port {} unavailable ({}), retrying in 5s", port, e);
+                    eprintln!(
+                        "[zengeld-server] port {} unavailable ({}), retrying in 5s",
+                        port, e
+                    );
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
@@ -88,4 +100,19 @@ pub fn start_server(
             eprintln!("[zengeld-server] server error: {}", e);
         }
     })
+}
+
+/// Bind a TCP listener with `SO_REUSEADDR` set.
+///
+/// On Windows, `process::exit(0)` leaves a zombie TCP socket whose PID is
+/// dead but whose kernel entry still shows `LISTENING`. A plain `bind()` will
+/// fail with `EADDRINUSE` until the kernel cleans it up (can take tens of
+/// seconds). Setting `SO_REUSEADDR` before `bind()` lets the new process claim
+/// the port immediately.
+fn bind_with_reuse(addr: std::net::SocketAddr) -> std::io::Result<std::net::TcpListener> {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(128)?;
+    Ok(socket.into())
 }
