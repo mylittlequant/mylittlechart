@@ -351,13 +351,13 @@ impl AppState {
                 let mut keys = profile.local_agent_keys.clone();
 
                 // Migrate legacy single-key field if present and no new keys yet.
-                if keys.is_empty() && !profile.agent_api_key.is_empty() {
+                if keys.is_empty() && !profile.legacy_single_agent_key.is_empty() {
                     let created_at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
                     keys.push(zengeld_chart::StoredApiKey {
-                        key_hash: zengeld_server::state::hash_key(&profile.agent_api_key),
+                        key_hash: zengeld_server::state::hash_key(&profile.legacy_single_agent_key),
                         label: "migrated-legacy-key".to_string(),
                         tier: "admin".to_string(),
                         created_at,
@@ -2797,10 +2797,10 @@ impl App<'_> {
         profile.server_enabled = self.app_state.server_enabled;
         profile.server_port = self.app_state.server_port;
         // Persist the current key registry (managed via the REST API).
-        // The legacy `agent_api_key` field is kept empty after migration so
+        // The legacy `legacy_single_agent_key` field is kept empty after migration so
         // we don't double-migrate on the next load.
         profile.local_agent_keys = self.app_state.local_agent_keys.clone();
-        profile.agent_api_key = String::new();
+        profile.legacy_single_agent_key = String::new();
 
         // Persist notification settings from the first window's alert settings state.
         if let Some(pw) = self.windows.values().next() {
@@ -3360,7 +3360,7 @@ impl App<'_> {
         // Persist profile with updated keys
         let mut profile = self.profile.clone();
         profile.local_agent_keys = self.app_state.local_agent_keys.clone();
-        profile.agent_api_key = String::new();
+        profile.legacy_single_agent_key = String::new();
         let vault_key = self.app_state.vault_key.as_ref();
         if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
             eprintln!("[App] Failed to persist keys: {}", e);
@@ -4288,7 +4288,7 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
-        // ── Drain api_key changes (legacy single-key hot-reload) ─────────
+        // ── Drain local_agent_key changes (legacy single-key hot-reload) ─────────
         // When the UI Regenerate button creates a new master key, register it
         // as an admin key in AgentState and persist immediately.
         {

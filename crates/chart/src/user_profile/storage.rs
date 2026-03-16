@@ -170,8 +170,8 @@ pub fn get_user_data_dir() -> PathBuf {
 /// Save profile using the split model.
 ///
 /// `profile.json` is **always** written as plaintext (no credentials).
-/// Credential fields (`agent_api_keys`, `exchange_keys`, `notification_settings`,
-/// `agent_api_key`) are extracted into a [`VaultSecrets`] struct and written
+/// Credential fields (`local_agent_keys`, `exchange_keys`, `notification_settings`,
+/// `legacy_single_agent_key`) are extracted into a [`VaultSecrets`] struct and written
 /// to `vault.enc` only when `key` is `Some`.
 ///
 /// When `key` is `None` (vault not yet unlocked), the vault file from the

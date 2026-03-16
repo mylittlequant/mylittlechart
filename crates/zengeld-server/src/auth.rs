@@ -1,6 +1,6 @@
 //! API key authentication middleware and permission helpers.
 //!
-//! Checks for a Bearer token in the `Authorization` header or an `api_key`
+//! Checks for a Bearer token in the `Authorization` header or a `local_agent_key`
 //! query parameter.  When the key registry ([`AgentState::keys`]) is empty,
 //! authentication is skipped (open access for local dev use).
 //!
@@ -36,7 +36,7 @@ pub struct AgentId(pub Option<String>);
 ///
 /// Accepts the key via:
 /// - `Authorization: Bearer <key>` header
-/// - `?api_key=<key>` query parameter (fallback)
+/// - `?local_agent_key=<key>` query parameter (fallback)
 ///
 /// When the key registry is empty, all requests are allowed (auth disabled).
 /// On a successful match the middleware injects [`Permissions`] and [`AgentId`]
@@ -72,12 +72,12 @@ pub async fn check_api_key(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string());
 
-    // Fallback: ?api_key= query parameter.
+    // Fallback: ?local_agent_key= query parameter.
     let provided = provided.or_else(|| {
         request.uri().query().and_then(|q| {
             q.split('&').find_map(|pair| {
                 let (k, v) = pair.split_once('=')?;
-                if k == "api_key" {
+                if k == "local_agent_key" {
                     Some(v.to_string())
                 } else {
                     None

@@ -5,7 +5,7 @@
 //! commands via REST without touching exchange APIs directly.
 //!
 //! Authentication is controlled by the key registry in [`AgentState::keys`]:
-//! when the registry is non-empty a Bearer token (or `?api_key=` query param)
+//! when the registry is non-empty a Bearer token (or `?local_agent_key=` query param)
 //! is required on all protected routes.  An empty registry disables auth
 //! (open access) for local dev/single-user use.
 //!
@@ -29,7 +29,7 @@ pub use state::AgentState;
 /// Routes are split into two groups:
 /// - **public** (`/health`) — always accessible, no auth required.
 /// - **protected** (`/bars`, `/indicators`) — require the API key when
-///   [`AgentState::api_key`] is non-empty.
+///   [`AgentState::local_keys`] is non-empty.
 ///
 /// Returns a [`tokio::task::JoinHandle`] so the caller can abort or await it
 /// if needed.

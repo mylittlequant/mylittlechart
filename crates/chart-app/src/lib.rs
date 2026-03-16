@@ -5633,7 +5633,7 @@ impl ChartApp {
             ota_enabled: self.panel_app.user_settings_state.ota_enabled,
             server_enabled: self.panel_app.user_settings_state.server_enabled,
             server_port: self.panel_app.user_settings_state.server_port,
-            agent_api_key: self.panel_app.user_settings_state.local_agent_key_display.clone(),
+            legacy_single_agent_key: String::new(),
             local_agent_keys: existing.local_agent_keys.clone(),
             exchange_keys: existing.exchange_keys.clone(),
             connector_enabled: self.sidebar_state.connector_enabled.clone(),

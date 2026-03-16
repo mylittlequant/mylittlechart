@@ -193,9 +193,9 @@ pub struct UserProfile {
     /// Legacy single API key — kept for backward-compat deserialization only.
     ///
     /// If non-empty on load it will be migrated to a single admin entry in
-    /// `agent_api_keys` by the startup code in `main.rs`.
-    #[serde(default)]
-    pub agent_api_key: String,
+    /// `local_agent_keys` by the startup code in `main.rs`.
+    #[serde(default, rename = "agent_api_key")]
+    pub legacy_single_agent_key: String,
 
     /// Registered local agent CLI connector keys with permission tiers.
     ///
@@ -411,7 +411,7 @@ impl UserProfile {
             recalc_mode: default_recalc_mode(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
-            agent_api_key: String::new(),
+            legacy_single_agent_key: String::new(),
             local_agent_keys: Vec::new(),
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
@@ -710,8 +710,8 @@ pub struct ProfileIndex {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VaultSecrets {
     /// Legacy single API key — kept for backward-compat migration only.
-    #[serde(default)]
-    pub agent_api_key: String,
+    #[serde(default, rename = "agent_api_key")]
+    pub legacy_single_agent_key: String,
 
     /// Registered local agent CLI connector keys with permission tiers (contains `key_hash`).
     #[serde(default, alias = "agent_api_keys")]
@@ -736,7 +736,7 @@ impl VaultSecrets {
     /// are not written to plaintext storage.
     pub fn extract_from(profile: &mut UserProfile) -> Self {
         let secrets = Self {
-            agent_api_key: std::mem::take(&mut profile.agent_api_key),
+            legacy_single_agent_key: std::mem::take(&mut profile.legacy_single_agent_key),
             local_agent_keys: std::mem::take(&mut profile.local_agent_keys),
             exchange_keys: std::mem::take(&mut profile.exchange_keys),
             notification_settings: std::mem::replace(
@@ -749,7 +749,7 @@ impl VaultSecrets {
 
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
     pub fn merge_into(self, profile: &mut UserProfile) {
-        profile.agent_api_key = self.agent_api_key;
+        profile.legacy_single_agent_key = self.legacy_single_agent_key;
         profile.local_agent_keys = self.local_agent_keys;
         profile.exchange_keys = self.exchange_keys;
         profile.notification_settings = self.notification_settings;
