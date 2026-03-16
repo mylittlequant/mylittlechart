@@ -19,6 +19,20 @@ pub mod attest;
 
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution};
 
+/// Format current time as `HH:MM:SS` for log lines.
+pub fn now_ts() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // UTC time — simple formatting without chrono dependency.
+    let day_secs = (secs % 86400) as u32;
+    let h = day_secs / 3600;
+    let m = (day_secs % 3600) / 60;
+    let s = day_secs % 60;
+    format!("{:02}:{:02}:{:02}", h, m, s)
+}
+
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
 
@@ -141,7 +155,7 @@ async fn updater_loop(
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
-    eprintln!("[Updater] Starting — current version: v{}, device_id: {}", current_version, device_id);
+    eprintln!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
 
     // Shared HTTP client for key sync requests.
     // Built once here; reused on every interval tick.
@@ -341,7 +355,7 @@ async fn updater_loop(
                         if enabled && connected {
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
-                                eprintln!("[Updater] Sync enabled — triggering immediate sync");
+                                eprintln!("[{} Updater] Sync enabled — triggering immediate sync", now_ts());
                                 run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             }
                         }
@@ -372,11 +386,11 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::SetDataDir(path) => {
                         data_dir = path;
-                        eprintln!("[Updater] data_dir updated to {:?}", data_dir);
+                        eprintln!("[{} Updater] data_dir updated to {:?}", now_ts(), data_dir);
                     }
                     state::UpdaterCommand::SetProfileId(id) => {
                         profile_id = id;
-                        eprintln!("[Updater] profile_id updated to {}", profile_id);
+                        eprintln!("[{} Updater] profile_id updated to {}", now_ts(), profile_id);
                     }
                     state::UpdaterCommand::ResolveConflict { sync_id, resolution } => {
                         let conflict = match pending_conflicts.remove(&sync_id) {
@@ -541,7 +555,7 @@ async fn updater_loop(
                         if connected && sync_state.enabled {
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
-                                eprintln!("[Updater] SyncPushChanged: {:?}", categories);
+                                eprintln!("[{} Updater] SyncPushChanged: {:?}", now_ts(), categories);
                                 run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             } else {
                                 log::debug!("[Updater] SyncPushChanged ignored — not logged in");
@@ -710,7 +724,7 @@ async fn do_check_and_telemetry(
     match check::fetch_latest(auth_header).await {
         Ok(manifest) => {
             if check::is_newer(current_version, &manifest.version) {
-                eprintln!("[Updater] OTA: update available v{} → v{}", current_version, manifest.version);
+                eprintln!("[{} Updater] OTA: update available v{} → v{}", now_ts(), current_version, manifest.version);
                 let info = UpdateInfo {
                     version: manifest.version,
                     sha256: manifest.sha256,
@@ -721,12 +735,12 @@ async fn do_check_and_telemetry(
                 };
                 let _ = status_tx.send(UpdateStatus::UpdateAvailable(info));
             } else {
-                eprintln!("[Updater] OTA: up to date (local v{}, server v{})", current_version, manifest.version);
+                eprintln!("[{} Updater] OTA: up to date (local v{}, server v{})", now_ts(), current_version, manifest.version);
                 let _ = status_tx.send(UpdateStatus::Idle);
             }
         }
         Err(e) => {
-            eprintln!("[Updater] OTA check failed: {}", e);
+            eprintln!("[{} Updater] OTA check failed: {}", now_ts(), e);
             log::warn!("Update check failed: {}", e);
             let _ = status_tx.send(UpdateStatus::Idle);
         }

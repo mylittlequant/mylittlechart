@@ -20,6 +20,7 @@
 
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 // =============================================================================
 // Trusted public keys
@@ -38,10 +39,10 @@ use ed25519_dalek::{Signature, VerifyingKey};
 /// ```
 ///
 const PRIMARY_PUBLIC_KEY: &[u8; 32] = &[
-    0xc7, 0xe8, 0x62, 0x2d, 0xe0, 0x1f, 0xda, 0x9c,
-    0xfc, 0xde, 0x5a, 0xcd, 0x8f, 0xbf, 0xa6, 0xbc,
-    0x87, 0x1c, 0x12, 0xfa, 0x49, 0x67, 0x0c, 0x4c,
-    0x8b, 0x83, 0x39, 0x71, 0x88, 0xa4, 0xe1, 0x2e,
+    0x12, 0x9a, 0xcc, 0x36, 0xb6, 0x12, 0x74, 0x4c,
+    0xd0, 0x52, 0xd0, 0xbc, 0x5f, 0x85, 0xf3, 0xab,
+    0x14, 0xb8, 0xb2, 0x21, 0x84, 0x7f, 0xc3, 0x82,
+    0x4a, 0xd1, 0xc8, 0x09, 0xdd, 0xee, 0xe4, 0x44,
 ];
 
 /// All currently trusted public keys.
@@ -115,6 +116,10 @@ pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> Verif
     };
     let signature = Signature::from_bytes(&sig_array);
 
+    // The signer signs SHA256(binary), not the raw binary.
+    // We must hash first so verify sees the same message.
+    let hash = Sha256::digest(binary_data);
+
     // Try each trusted public key.  The first match is sufficient.
     for pubkey_bytes in ALLOWED_PUBLIC_KEYS {
         let verifying_key = match VerifyingKey::from_bytes(pubkey_bytes) {
@@ -125,7 +130,7 @@ pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> Verif
             }
         };
 
-        if verifying_key.verify_strict(binary_data, &signature).is_ok() {
+        if verifying_key.verify_strict(&hash, &signature).is_ok() {
             return VerifyResult::Valid;
         }
     }
@@ -190,7 +195,9 @@ mod tests {
     }
 
     fn sign_b64(signing_key: &SigningKey, data: &[u8]) -> String {
-        let signature = signing_key.sign(data);
+        // Match the real signer: sign SHA256(data), not data directly.
+        let hash = Sha256::digest(data);
+        let signature = signing_key.sign(&hash);
         base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
     }
 
@@ -235,13 +242,13 @@ mod tests {
         let data = b"binary payload bytes";
         let sig_b64 = sign_b64(&signing_key, data);
 
-        // We can't override the global ALLOWED_PUBLIC_KEYS in tests, so we
-        // exercise VerifyingKey directly to confirm sign/verify round-trips.
+        // Verify round-trip: sign_b64 signs SHA256(data), verify checks SHA256(data).
         let verifying_key = VerifyingKey::from_bytes(&pubkey_bytes).unwrap();
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify_strict(data, &signature).is_ok());
+        let hash = Sha256::digest(data);
+        assert!(verifying_key.verify_strict(&hash, &signature).is_ok());
     }
 
     #[test]
@@ -256,7 +263,8 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify_strict(data, &signature).is_err());
+        let hash = Sha256::digest(data);
+        assert!(verifying_key.verify_strict(&hash, &signature).is_err());
     }
 
     #[test]
@@ -271,7 +279,8 @@ mod tests {
         let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_b64).unwrap();
         let sig_array: [u8; 64] = sig_bytes.try_into().unwrap();
         let signature = Signature::from_bytes(&sig_array);
-        assert!(verifying_key.verify_strict(tampered, &signature).is_err());
+        let hash = Sha256::digest(tampered);
+        assert!(verifying_key.verify_strict(&hash, &signature).is_err());
     }
 
     #[test]
