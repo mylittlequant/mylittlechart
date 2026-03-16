@@ -1965,6 +1965,7 @@ impl App<'_> {
                 zengeld_chart::active_profile_data_dir(),
                 build_attest,
                 profile.profile_id.clone(),
+                profile.server_port,
             );
 
             // Seed granular sync toggles from profile into the updater loop.

@@ -88,6 +88,7 @@ pub fn start(
     data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
     profile_id: String,
+    server_port: u16,
 ) -> UpdaterHandle {
     let (status_tx, status_rx) = watch::channel(UpdateStatus::Idle);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -119,7 +120,7 @@ pub fn start(
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id));
+    runtime.spawn(updater_loop(status_tx, auth_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, telemetry_enabled, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -146,6 +147,7 @@ async fn updater_loop(
     mut data_dir: std::path::PathBuf,
     build_attest: state::BuildAttestation,
     mut profile_id: String,
+    server_port: u16,
 ) {
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
@@ -208,7 +210,7 @@ async fn updater_loop(
         pending_update = Some(info.clone());
     }
     if let Some(ref info) = pending_update {
-        do_install(&status_tx, info).await;
+        do_install(&status_tx, info, server_port).await;
     }
 
     loop {
@@ -224,7 +226,7 @@ async fn updater_loop(
                         pending_update = Some(info.clone());
                     }
                     if let Some(ref info) = pending_update {
-                        do_install(&status_tx, info).await;
+                        do_install(&status_tx, info, server_port).await;
                     }
 
                     // Cloud sync is now event-driven (SyncPushChanged command).
@@ -245,7 +247,7 @@ async fn updater_loop(
                             }
                             // Auto-install on forced check as well.
                             if let Some(ref info) = pending_update {
-                                do_install(&status_tx, info).await;
+                                do_install(&status_tx, info, server_port).await;
                             }
                         } else {
                             log::warn!("[Updater] ForceCheck ignored — running in standalone mode");
@@ -253,7 +255,7 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::InstallNow => {
                         if let Some(ref info) = pending_update {
-                            do_install(&status_tx, info).await;
+                            do_install(&status_tx, info, server_port).await;
                         }
                     }
                     state::UpdaterCommand::DismissUpdate => {
@@ -311,7 +313,7 @@ async fn updater_loop(
                                 pending_update = Some(info.clone());
                             }
                             if let Some(ref info) = pending_update {
-                                do_install(&status_tx, info).await;
+                                do_install(&status_tx, info, server_port).await;
                             }
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
@@ -705,6 +707,7 @@ async fn do_check_and_telemetry(
 async fn do_install(
     status_tx: &watch::Sender<UpdateStatus>,
     info: &state::UpdateInfo,
+    server_port: u16,
 ) {
     // Rollback / downgrade protection — defense-in-depth on top of check::is_newer().
     // This catches any path that bypasses the check (e.g. ManualInstall command).
@@ -776,7 +779,7 @@ async fn do_install(
                 Ok(()) => {
                     let _ = status_tx.send(UpdateStatus::RestartPending);
                     // Spawn new process and exit
-                    if let Err(e) = replace::spawn_and_exit() {
+                    if let Err(e) = replace::spawn_and_exit(Some(server_port)) {
                         let _ = status_tx.send(UpdateStatus::Error(format!("Restart failed: {}", e)));
                     }
                 }
