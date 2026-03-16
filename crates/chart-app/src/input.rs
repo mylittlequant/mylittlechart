@@ -14570,6 +14570,27 @@ impl ChartApp {
                     eprintln!("[ChartApp] restored {} indicators", preset.indicators.len());
 
                     // ----------------------------------------------------------------
+                    // Step 6b: Immediately recalculate indicators for every window that
+                    // already has bars.  Bars were restored in Steps 2-4 so we can feed
+                    // them to the indicator engine right now — no need to wait for the
+                    // next BarsLoaded / TradeUpdate round-trip.
+                    // Collect (symbol, window_id, bars) first to avoid a split borrow of
+                    // `self` (panel_grid vs indicator_manager both live on `self`).
+                    // ----------------------------------------------------------------
+                    let window_bar_data: Vec<(String, u64, Vec<zengeld_chart::Bar>)> = self
+                        .panel_app
+                        .panel_grid
+                        .iter_windows()
+                        .filter(|(_, w)| !w.bars.is_empty())
+                        .map(|(_, w)| (w.symbol.clone(), w.id.0, w.bars.clone()))
+                        .collect();
+
+                    for (symbol, window_id, bars) in window_bar_data {
+                        self.indicator_manager.calculate_for_window(&symbol, window_id, &bars);
+                    }
+                    eprintln!("[ChartApp] recalculated indicators for all windows with bars");
+
+                    // ----------------------------------------------------------------
                     // Step 7: Clear stale per-leaf UI state
                     // ----------------------------------------------------------------
                     self.panel_app.indicator_overlay_states.clear();

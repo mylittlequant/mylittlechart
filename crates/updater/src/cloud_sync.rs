@@ -1086,14 +1086,22 @@ pub async fn do_cloud_sync(
     let conflicts: Vec<SyncConflict> = Vec::new();
 
     for local in &filtered {
+        // Skip if checksum matches what we last successfully pushed
+        if let Some(last_cs) = state.last_synced_checksums.get(&local.sync_id) {
+            if last_cs == &local.checksum {
+                log::trace!("[CloudSync] Skipping unchanged: {}", local.sync_id);
+                continue;
+            }
+        }
+        // Then check server state for conflict detection
         match server_index.get(local.sync_id.as_str()) {
             Some(server_meta)
                 if !server_meta.deleted && server_meta.checksum == local.checksum =>
             {
-                log::trace!("[CloudSync] In sync: {}", local.sync_id);
+                log::trace!("[CloudSync] In sync with server: {}", local.sync_id);
             }
             _ => {
-                log::debug!("[CloudSync] Will push (LWW): {}", local.sync_id);
+                log::debug!("[CloudSync] Will push (changed): {}", local.sync_id);
                 to_push.push(local.clone());
             }
         }
