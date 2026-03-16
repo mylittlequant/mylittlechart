@@ -329,6 +329,10 @@ impl ProfileManager {
             match crypto::encrypt_master_key_for_recovery(&master_key, &recovery_key, &salt) {
                 Ok(encrypted) => {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
+                    let recovery_path = profile_dir.join("recovery_key.enc");
+                    if let Err(e) = std::fs::write(&recovery_path, &encrypted) {
+                        eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
+                    }
                     self.encrypted_master_key = Some(encrypted);
                 }
                 Err(e) => {
@@ -374,6 +378,10 @@ impl ProfileManager {
             match crypto::encrypt_master_key_for_recovery(&master_key, &recovery_key, &salt) {
                 Ok(encrypted) => {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
+                    let recovery_path = dir.join("recovery_key.enc");
+                    if let Err(e) = std::fs::write(&recovery_path, &encrypted) {
+                        eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
+                    }
                     self.encrypted_master_key = Some(encrypted);
                 }
                 Err(e) => {

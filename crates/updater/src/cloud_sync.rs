@@ -430,8 +430,33 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
-    // recovery_key.enc is never written to disk — the recovery key goes directly
-    // to the server via upload_vault_params(). No collection block here.
+    // recovery_key.enc — ZtBlob tier (pre-encrypted recovery blob)
+    {
+        let path = data_dir.join("recovery_key.enc");
+        if path.exists() {
+            if let Ok(bytes) = std::fs::read(&path) {
+                let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let checksum = sha256_hex(&content);
+                let mtime = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64
+                    })
+                    .unwrap_or(0);
+                items.push(LocalItem {
+                    sync_id: "recovery_key".to_string(),
+                    category: "recovery_key".to_string(),
+                    name: "recovery_key".to_string(),
+                    content,
+                    checksum,
+                    modified_at: mtime,
+                    tier: SyncTier::ZtBlob,
+                });
+            }
+        }
+    }
 
     eprintln!(
         "[CloudSync] collect_local_items: {} total items",
@@ -676,6 +701,24 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 let tmp = target.with_extension("tmp");
                 std::fs::write(&tmp, &bytes)?;
                 std::fs::rename(&tmp, &target)?;
+            }
+            "recovery_key" => {
+                let target = data_dir.join("recovery_key.enc");
+                // Don't overwrite if already exists — recovery blob is immutable.
+                if !target.exists() {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(&item.content)
+                        .map_err(|e| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("recovery_key base64 decode: {}", e),
+                            )
+                        })?;
+                    backup_file(&target)?;
+                    let tmp = target.with_extension("tmp");
+                    std::fs::write(&tmp, &bytes)?;
+                    std::fs::rename(&tmp, &target)?;
+                }
             }
             "salt" => {
                 let target = data_dir.join("salt.hex");
