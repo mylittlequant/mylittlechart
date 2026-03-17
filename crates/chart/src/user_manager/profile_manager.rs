@@ -416,6 +416,63 @@ impl ProfileManager {
         self.encrypted_master_key.take()
     }
 
+    /// Re-key the vault with a new passphrase.
+    ///
+    /// Requires the vault to already be unlocked (`vault_key` must be `Some`).
+    /// Uses the **same salt** — only the passphrase changes.
+    ///
+    /// After this call:
+    /// - `vault.enc` is atomically re-encrypted with the key derived from `new_passphrase`.
+    /// - A new recovery key is generated and `recovery_key.enc` is overwritten.
+    ///   The old recovery key is invalidated.
+    /// - `self.vault_key` is updated to the new vault key.
+    /// - `self.pending_recovery_key` is set to the new formatted recovery key for the UI.
+    /// - `self.encrypted_master_key` is updated for optional server upload.
+    ///
+    /// Returns the new formatted recovery key string on success.
+    pub fn rekey_vault(&mut self, new_passphrase: &str) -> Result<String, String> {
+        let profile_dir = self.active_profile_dir();
+        let salt_path = profile_dir.join("salt.hex");
+        let vault_path = profile_dir.join("vault.enc");
+        let recovery_path = profile_dir.join("recovery_key.enc");
+
+        // 1. Load existing vault secrets with the current vault key.
+        let old_key = self.vault_key.ok_or("Vault is not unlocked — cannot re-key")?;
+        let secrets = if vault_path.exists() {
+            vault::load_encrypted::<VaultSecrets>(&old_key, &vault_path)
+                .map_err(|e| format!("Failed to read vault for re-key: {}", e))?
+        } else {
+            VaultSecrets::default()
+        };
+
+        // 2. Load the existing salt (keep it — only passphrase changes).
+        let salt = vault::load_or_create_salt(&salt_path)
+            .map_err(|e| format!("Failed to load salt: {}", e))?;
+
+        // 3. Derive the new key hierarchy from the new passphrase + same salt.
+        let new_master_key = crypto::derive_master_key(new_passphrase, &salt);
+        let new_vault_key = crypto::derive_vault_key(&new_master_key, &salt);
+
+        // 4. Re-encrypt vault.enc with the new vault key (atomic write).
+        vault::save_encrypted(&new_vault_key, &vault_path, &secrets)
+            .map_err(|e| format!("Failed to write re-keyed vault: {}", e))?;
+
+        // 5. Generate a new recovery key and overwrite recovery_key.enc.
+        let new_recovery_key = crypto::generate_recovery_key();
+        let encrypted_mk = crypto::encrypt_master_key_for_recovery(&new_master_key, &new_recovery_key, &salt)
+            .map_err(|e| format!("Failed to encrypt recovery key: {}", e))?;
+        std::fs::write(&recovery_path, &encrypted_mk)
+            .map_err(|e| format!("Failed to write recovery_key.enc: {}", e))?;
+
+        // 6. Update in-memory state.
+        self.vault_key = Some(new_vault_key);
+        let formatted = crypto::format_recovery_key(&new_recovery_key);
+        self.pending_recovery_key = Some(formatted.clone());
+        self.encrypted_master_key = Some(encrypted_mk);
+
+        Ok(formatted)
+    }
+
     /// Validate a passphrase against the existing `vault.enc`.
     ///
     /// Derives the key, then attempts decryption.  Returns the derived key on

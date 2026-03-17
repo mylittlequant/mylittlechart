@@ -3199,6 +3199,12 @@ pub enum ProfileManagerPage {
     ShowRecoveryKey,
     /// Enter a recovery key to restore access when passphrase is forgotten.
     UseRecoveryKey,
+    /// After recovery unlock — user must set a new passphrase before proceeding.
+    ///
+    /// Shown immediately after `UseRecoveryKey` succeeds for the active profile.
+    /// The user cannot skip this step — it is mandatory to ensure a valid passphrase
+    /// is set after vault access is restored via recovery key.
+    SetNewPassphrase,
 }
 
 impl Default for ProfileManagerPage {
@@ -3419,6 +3425,20 @@ pub struct UserSettingsState {
     pub new_profile_name_editing: TextEditingState,
     /// Whether the new profile name input field is focused for keyboard input.
     pub new_profile_name_focused: bool,
+
+    // ── Set New Passphrase (post-recovery re-key) ─────────────────────────────
+    /// In-memory buffer for the new passphrase during the SetNewPassphrase flow.
+    /// Never persisted to disk.
+    pub new_passphrase_editing: TextEditingState,
+    /// Whether the new passphrase input field has keyboard focus.
+    pub new_passphrase_focused: bool,
+    /// In-memory buffer for the confirm passphrase during the SetNewPassphrase flow.
+    /// Never persisted to disk.
+    pub confirm_passphrase_editing: TextEditingState,
+    /// Whether the confirm passphrase input field has keyboard focus.
+    pub confirm_passphrase_focused: bool,
+    /// Error message shown on the SetNewPassphrase page (e.g. "Passphrases do not match").
+    pub set_passphrase_error: String,
 }
 
 impl Default for UserSettingsState {
@@ -3524,6 +3544,23 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             new_profile_name_focused: false,
+            new_passphrase_editing: TextEditingState {
+                field_id: "new_passphrase".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            new_passphrase_focused: false,
+            confirm_passphrase_editing: TextEditingState {
+                field_id: "confirm_passphrase".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            confirm_passphrase_focused: false,
+            set_passphrase_error: String::new(),
         }
     }
 }

@@ -572,6 +572,17 @@ struct App<'s> {
     /// a recovery key must be shown before completing the profile switch.  Consumed
     /// by `recovery_key_confirmed` to trigger the actual switch.
     pending_switch_after_recovery: Option<(String, zengeld_chart::vault::VaultKey)>,
+
+    /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
+    ///
+    /// Stored temporarily so the `set_new_passphrase:` handler can re-derive a new
+    /// master key hierarchy and re-encrypt the vault without needing the old passphrase.
+    /// Cleared immediately after `set_new_passphrase:` completes (or on any error).
+    pending_recovery_master_key: Option<zengeld_chart::crypto::MasterKey>,
+
+    /// True when the user confirms they have saved the new recovery key after a
+    /// recovery re-key.  Skeleton promote is deferred until this flag is set.
+    pending_promote_after_recovery_key: bool,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2056,6 +2067,8 @@ impl App<'_> {
             pending_new_profile_id: None,
             pending_skeleton_promote: false,
             pending_switch_after_recovery: None,
+            pending_recovery_master_key: None,
+            pending_promote_after_recovery_key: false,
         }
     }
 
@@ -4808,7 +4821,9 @@ impl ApplicationHandler for App<'_> {
                                                     eprintln!("[App] recovery_unlock: master key recovered — vault key derived");
 
                                                     if self.needs_vault_unlock {
-                                                        // Active profile unlock via recovery
+                                                        // Active profile unlock via recovery — vault is
+                                                        // now readable but the user must set a new
+                                                        // passphrase before we promote the skeleton.
                                                         self.profile_manager.set_vault_key(vault_key);
                                                         if let Err(e) = self.profile_manager.load_vault_secrets() {
                                                             eprintln!("[App] failed to load vault secrets: {}", e);
@@ -4819,7 +4834,26 @@ impl ApplicationHandler for App<'_> {
                                                         self.app_state.local_agent_keys =
                                                             self.profile_manager.profile.local_agent_keys.clone();
                                                         self.needs_vault_unlock = false;
-                                                        self.pending_skeleton_promote = true;
+
+                                                        // Store master_key so set_new_passphrase: can re-key the vault.
+                                                        self.pending_recovery_master_key = Some(master_key);
+
+                                                        // Navigate to the mandatory SetNewPassphrase page.
+                                                        use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                                                        for pw in self.windows.values_mut() {
+                                                            pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                                            pw.chart.panel_app.user_settings_state.set_passphrase_error.clear();
+                                                            pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                                            pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                            pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
+                                                            pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                                                            pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
+                                                            pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                                            pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                                                ProfileManagerPage::SetNewPassphrase;
+                                                        }
+                                                        eprintln!("[App] recovery_unlock: navigating to SetNewPassphrase");
                                                     } else {
                                                         // Pre-switch recovery for a different profile
                                                         self.pending_switch_vault_key = Some(vault_key);
@@ -4882,11 +4916,73 @@ impl ApplicationHandler for App<'_> {
                         eprintln!("[App] recovery key confirmed — switching to new profile {}", profile_id);
                         self.pending_switch_vault_key = Some(vault_key);
                         self.pending_profile_switch = Some(profile_id);
+                    } else if self.pending_promote_after_recovery_key {
+                        // Recovery key was shown after a vault re-key (post-recovery passphrase reset).
+                        eprintln!("[App] recovery key confirmed (post re-key) — promoting skeleton to live");
+                        self.pending_promote_after_recovery_key = false;
+                        self.pending_skeleton_promote = true;
                     } else {
                         // Recovery key was shown during wizard / first-run — promote skeleton.
                         eprintln!("[App] recovery key confirmed — promoting skeleton to live");
                         // Don't patch windows — skeleton promote will recreate them.
                         self.pending_skeleton_promote = true;
+                    }
+                }
+
+                // ── Set new passphrase after recovery key unlock ─────────────────────────────
+                // Emitted by the SetNewPassphrase page after the user enters matching passphrases.
+                // Re-keys the vault: new passphrase + same salt → new master_key + vault_key,
+                // re-encrypts vault.enc, generates a fresh recovery key, then shows ShowRecoveryKey.
+                if let Some(new_passphrase) = cmd_str.strip_prefix("set_new_passphrase:") {
+                    use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+
+                    match self.pending_recovery_master_key.take() {
+                        None => {
+                            // This should never happen — guard state is invalid.
+                            eprintln!("[App] set_new_passphrase: no pending_recovery_master_key — ignoring");
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.set_passphrase_error =
+                                    "Internal error: no recovery context. Please restart.".to_string();
+                            }
+                        }
+                        Some(_old_master_key) => {
+                            // Re-key the vault using the profile_manager helper.
+                            match self.profile_manager.rekey_vault(new_passphrase) {
+                                Ok(new_recovery_key_fmt) => {
+                                    eprintln!("[App] set_new_passphrase: vault re-keyed successfully");
+
+                                    // Update app-level vault key reference.
+                                    if let Some(new_vk) = self.profile_manager.vault_key {
+                                        self.app_state.vault_key = Some(new_vk);
+                                    }
+
+                                    // Mark that skeleton promote should happen after recovery key is confirmed.
+                                    self.pending_promote_after_recovery_key = true;
+
+                                    // Navigate to ShowRecoveryKey so user can record the new key.
+                                    for pw in self.windows.values_mut() {
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                            Some(new_recovery_key_fmt.clone());
+                                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                        pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
+                                        pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                                        pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
+                                        pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                        pw.chart.panel_app.user_settings_state.set_passphrase_error.clear();
+                                        pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                            ProfileManagerPage::ShowRecoveryKey;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[App] set_new_passphrase: rekey_vault failed: {}", e);
+                                    for pw in self.windows.values_mut() {
+                                        pw.chart.panel_app.user_settings_state.set_passphrase_error =
+                                            format!("Failed to re-key vault: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -4966,6 +5062,7 @@ impl ApplicationHandler for App<'_> {
                         || cmd_str == "vault_skip_to_wizard"
                         || cmd_str == "recovery_key_confirmed"
                         || cmd_str.starts_with("recovery_unlock:")
+                        || cmd_str.starts_with("set_new_passphrase:")
                         || cmd_str.starts_with("profile_create:")
                         || cmd_str.starts_with("profile_rename:")
                         || cmd_str == "profile_delete"

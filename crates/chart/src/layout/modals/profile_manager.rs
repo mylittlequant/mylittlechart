@@ -80,6 +80,10 @@ pub fn render_profile_manager(
             ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
             current_time_ms, &layer_id, input_coordinator, result,
         ),
+        ProfileManagerPage::SetNewPassphrase => render_page_set_new_passphrase(
+            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
+            current_time_ms, &layer_id, input_coordinator, result,
+        ),
     }
 }
 
@@ -842,6 +846,218 @@ fn render_page_create_new(
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:create_confirm",
             create_rect,
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+}
+
+// =============================================================================
+// Page: SetNewPassphrase
+// =============================================================================
+
+/// Render the "Set New Passphrase" page.
+///
+/// Shown after a successful recovery key unlock. The user MUST set a new
+/// passphrase before the vault re-key completes and the app becomes usable.
+/// There is no back button — this step is mandatory.
+#[allow(clippy::too_many_arguments)]
+fn render_page_set_new_passphrase(
+    ctx: &mut dyn RenderContext,
+    window_w: f64,
+    window_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    let has_error = !state.set_passphrase_error.is_empty();
+    let modal_w: f64 = 480.0;
+    let modal_h: f64 = if has_error { 380.0 } else { 350.0 };
+    let modal_x = (window_w - modal_w) / 2.0;
+    let modal_y = (window_h - modal_h) / 2.0;
+
+    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.45)");
+    ctx.set_stroke_width(1.5);
+    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+
+    // Absorb clicks on the modal background
+    input_coordinator.register_on_layer(
+        "profile_manager:set_new_pass_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    let padding = 28.0;
+    let inner_x = modal_x + padding;
+    let inner_w = modal_w - padding * 2.0;
+    let mut cy = modal_y + 28.0;
+
+    // Title
+    ctx.set_font("bold 18px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Set New Passphrase", inner_x + inner_w / 2.0, cy);
+    cy += 28.0;
+
+    // Subtitle
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(
+        "Your vault was unlocked with recovery key.",
+        inner_x + inner_w / 2.0,
+        cy,
+    );
+    cy += 16.0;
+    ctx.fill_text(
+        "Set a new passphrase to continue.",
+        inner_x + inner_w / 2.0,
+        cy,
+    );
+    ctx.set_text_align(TextAlign::Left);
+    cy += 26.0;
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_h = 32.0;
+
+    // ── New Passphrase ────────────────────────────────────────────────────────
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("New Passphrase", inner_x, cy);
+    cy += 18.0;
+
+    let new_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let editing = &state.new_passphrase_editing;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let new_pass_config = InputConfig::new(&editing.text)
+        .with_focused(state.new_passphrase_focused)
+        .with_cursor(editing.cursor)
+        .with_placeholder("New passphrase\u{2026}")
+        .with_type(InputType::Password)
+        .with_selection(sel_start, sel_end);
+    let new_pass_result = draw_input(ctx, &new_pass_config, WidgetState::Normal, new_pass_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:new_passphrase_input".to_string(), new_pass_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:new_passphrase_input",
+        new_pass_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.new_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            new_pass_result.cursor_x,
+            new_pass_result.cursor_y,
+            new_pass_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+    cy += input_h + 14.0;
+
+    // ── Confirm Passphrase ────────────────────────────────────────────────────
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Confirm Passphrase", inner_x, cy);
+    cy += 18.0;
+
+    let confirm_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let editing2 = &state.confirm_passphrase_editing;
+    let (sel_start2, sel_end2) = if let Some((lo, hi)) = editing2.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let confirm_pass_config = InputConfig::new(&editing2.text)
+        .with_focused(state.confirm_passphrase_focused)
+        .with_cursor(editing2.cursor)
+        .with_placeholder("Confirm passphrase\u{2026}")
+        .with_type(InputType::Password)
+        .with_selection(sel_start2, sel_end2);
+    let confirm_pass_result = draw_input(ctx, &confirm_pass_config, WidgetState::Normal, confirm_pass_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:confirm_passphrase_input".to_string(), confirm_pass_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:confirm_passphrase_input",
+        confirm_pass_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.confirm_passphrase_focused && editing2.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            confirm_pass_result.cursor_x,
+            confirm_pass_result.cursor_y,
+            confirm_pass_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+    cy += input_h + 16.0;
+
+    // ── Error message ─────────────────────────────────────────────────────────
+    if has_error {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(state.set_passphrase_error.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.set_text_align(TextAlign::Left);
+        cy += 22.0;
+    }
+
+    // ── Save button ───────────────────────────────────────────────────────────
+    let new_text = &state.new_passphrase_editing.text;
+    let confirm_text = &state.confirm_passphrase_editing.text;
+    let save_disabled = new_text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+        || confirm_text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+        || new_text != confirm_text;
+
+    let is_save_hovered = !save_disabled && hovered == Some("profile_mgr:save_new_passphrase");
+    let save_bg = if save_disabled {
+        "rgba(244,205,99,0.20)"
+    } else if is_save_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    let save_text_col = if save_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_h = 32.0;
+    let btn_w = inner_w.min(180.0);
+    ctx.set_fill_color(save_bg);
+    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(save_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Save", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    if !save_disabled {
+        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        result.content_items.push(("profile_mgr:save_new_passphrase".to_string(), btn_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_mgr:save_new_passphrase",
+            btn_rect,
             Sense::CLICK,
             layer_id,
         );

@@ -4163,6 +4163,8 @@ impl ChartApp {
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
             && !self.panel_app.user_settings_state.recovery_key_focused
+            && !self.panel_app.user_settings_state.new_passphrase_focused
+            && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
             return;
         }
@@ -4437,6 +4439,101 @@ impl ChartApp {
                 c if !c.is_control() => {
                     // Any character typed — clear error.
                     self.panel_app.user_settings_state.vault_unlock_error = None;
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle new passphrase input in the SetNewPassphrase profile manager page
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.new_passphrase_focused
+        {
+            let editing = &mut self.panel_app.user_settings_state.new_passphrase_editing;
+            match ch {
+                '\r' | '\n' => {
+                    // Tab to next field (confirm passphrase).
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                }
+                '\x1b' => {
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                }
+                '\x08' => {
+                    self.panel_app.user_settings_state.set_passphrase_error.clear();
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
+                    }
+                }
+                c if !c.is_control() => {
+                    self.panel_app.user_settings_state.set_passphrase_error.clear();
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    }
+                    let byte_idx = editing.char_to_byte_pos(editing.cursor);
+                    editing.text.insert(byte_idx, c);
+                    editing.cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Handle confirm passphrase input in the SetNewPassphrase profile manager page
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.confirm_passphrase_focused
+        {
+            let passphrase_text = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
+            let editing = &mut self.panel_app.user_settings_state.confirm_passphrase_editing;
+            match ch {
+                '\r' | '\n' => {
+                    // Enter submits if passphrases match and meet min length.
+                    let confirm_text = editing.text.clone();
+                    use zengeld_chart::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+                    if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH
+                        && confirm_text == passphrase_text
+                    {
+                        self.panel_app.user_settings_state.set_passphrase_error.clear();
+                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                        self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
+                        eprintln!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
+                    } else if confirm_text != passphrase_text {
+                        self.panel_app.user_settings_state.set_passphrase_error =
+                            "Passphrases do not match".to_string();
+                    }
+                }
+                '\x09' => {
+                    // Tab cycles back to new passphrase field.
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = true;
+                }
+                '\x1b' => {
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                }
+                '\x08' => {
+                    self.panel_app.user_settings_state.set_passphrase_error.clear();
+                    if editing.has_selection() {
+                        editing.delete_selection();
+                    } else if editing.cursor > 0 {
+                        let byte_end = editing.char_to_byte_pos(editing.cursor);
+                        let byte_start = editing.char_to_byte_pos(editing.cursor - 1);
+                        editing.text.drain(byte_start..byte_end);
+                        editing.cursor -= 1;
+                    }
+                }
+                c if !c.is_control() => {
+                    self.panel_app.user_settings_state.set_passphrase_error.clear();
                     if editing.has_selection() {
                         editing.delete_selection();
                     }
@@ -5071,6 +5168,8 @@ impl ChartApp {
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
             && !self.panel_app.user_settings_state.recovery_key_focused
+            && !self.panel_app.user_settings_state.new_passphrase_focused
+            && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
             return;
         }
@@ -5234,6 +5333,22 @@ impl ChartApp {
             && self.panel_app.user_settings_state.recovery_key_focused
         {
             apply_key(&mut self.panel_app.user_settings_state.recovery_key_editing, key);
+            return;
+        }
+
+        // ── New passphrase text input key events (profile manager SetNewPassphrase page) ──
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.new_passphrase_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.new_passphrase_editing, key);
+            return;
+        }
+
+        // ── Confirm passphrase text input key events (profile manager SetNewPassphrase page) ──
+        if self.panel_app.user_settings_state.show_profile_manager
+            && self.panel_app.user_settings_state.confirm_passphrase_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.confirm_passphrase_editing, key);
             return;
         }
 
@@ -7550,7 +7665,43 @@ impl ChartApp {
                     self.panel_app.user_settings_state.recovery_key_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     eprintln!("[ChartApp] profile_mgr: recovery key input focused");
+                }
+                "profile_mgr:new_passphrase_input" => {
+                    self.panel_app.user_settings_state.new_passphrase_focused = true;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: new_passphrase_input focused");
+                }
+                "profile_mgr:confirm_passphrase_input" => {
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: confirm_passphrase_input focused");
+                }
+                "profile_mgr:save_new_passphrase" => {
+                    let passphrase_text = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
+                    let confirm_text = self.panel_app.user_settings_state.confirm_passphrase_editing.text.clone();
+                    use zengeld_chart::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+                    if passphrase_text.len() >= MIN_PASSPHRASE_LENGTH && passphrase_text == confirm_text {
+                        self.panel_app.user_settings_state.set_passphrase_error.clear();
+                        self.panel_app.user_settings_state.new_passphrase_focused = false;
+                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                        self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
+                        eprintln!("[ChartApp] profile_mgr: save_new_passphrase submitted");
+                    } else if passphrase_text != confirm_text {
+                        self.panel_app.user_settings_state.set_passphrase_error =
+                            "Passphrases do not match".to_string();
+                    } else {
+                        self.panel_app.user_settings_state.set_passphrase_error =
+                            format!("Passphrase must be at least {} characters", MIN_PASSPHRASE_LENGTH);
+                    }
                 }
                 "profile_mgr:recovery_unlock" => {
                     let recovery_key_text = self.panel_app.user_settings_state.recovery_key_editing.text.clone();
