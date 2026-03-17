@@ -51,31 +51,6 @@ pub trait RenderContext: uzor::render::RenderContext {
     );
 
     // =========================================================================
-    // Gradient Fill (re-exposed from supertrait for dyn dispatch)
-    // =========================================================================
-
-    /// Fill the current path with a linear gradient.
-    ///
-    /// Explicitly declared here so `fill_linear_gradient` is part of the
-    /// `dyn RenderContext` vtable.  The default mirrors the uzor supertrait
-    /// fallback (flat fill with first stop color).  Concrete backends that
-    /// support real gradients should override this method.
-    fn fill_linear_gradient(
-        &mut self,
-        stops: &[(f32, &str)],
-        x1: f64,
-        y1: f64,
-        x2: f64,
-        y2: f64,
-    ) {
-        let _ = (x1, y1, x2, y2);
-        if let Some((_, color)) = stops.first() {
-            self.set_fill_color(color);
-            self.fill();
-        }
-    }
-
-    // =========================================================================
     // Line Style Helper (chart-specific)
     // =========================================================================
 

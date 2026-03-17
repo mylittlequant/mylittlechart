@@ -101,6 +101,9 @@ impl<'a> UzorRenderContext for VelloGpuRenderContext<'a> {
     // Stroke/fill/clip
     fn stroke(&mut self) { self.inner.stroke() }
     fn fill(&mut self) { self.inner.fill() }
+    fn fill_linear_gradient(&mut self, stops: &[(f32, &str)], x1: f64, y1: f64, x2: f64, y2: f64) {
+        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2);
+    }
     fn clip(&mut self) { self.inner.clip() }
 
     // Shape helpers
@@ -243,7 +246,4 @@ impl<'a> ChartRenderContext for VelloGpuRenderContext<'a> {
         });
     }
 
-    fn fill_linear_gradient(&mut self, stops: &[(f32, &str)], x1: f64, y1: f64, x2: f64, y2: f64) {
-        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2);
-    }
 }

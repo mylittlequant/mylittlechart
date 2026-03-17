@@ -241,11 +241,4 @@ impl<'a> ChartRenderContext for VelloCpuChartRenderContext<'a> {
         });
     }
 
-    fn fill_linear_gradient(&mut self, stops: &[(f32, &str)], x1: f64, y1: f64, x2: f64, y2: f64) {
-        let _ = (x1, y1, x2, y2);
-        if let Some((_, color)) = stops.first() {
-            self.inner.set_fill_color(color);
-            self.inner.fill();
-        }
-    }
 }
