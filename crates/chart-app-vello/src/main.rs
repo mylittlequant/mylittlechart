@@ -4973,6 +4973,56 @@ impl ApplicationHandler for App<'_> {
                                         pw.chart.panel_app.user_settings_state.profile_manager_page =
                                             ProfileManagerPage::ShowRecoveryKey;
                                     }
+
+                                    // ── Upload re-keyed vault params to server ──
+                                    let salt_path = zengeld_chart::active_profile_data_dir().join("salt.hex");
+                                    let vault_salt = std::fs::read_to_string(&salt_path)
+                                        .unwrap_or_default()
+                                        .trim()
+                                        .to_string();
+
+                                    if !vault_salt.is_empty() {
+                                        let token = zengeld_updater::token_store::load_token();
+                                        if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
+                                            let client = reqwest::Client::builder()
+                                                .timeout(std::time::Duration::from_secs(15))
+                                                .build()
+                                                .unwrap_or_default();
+                                            let server_url = "https://chart.example".to_string();
+                                            let token_str = tok.token.clone();
+                                            let salt_hex_for_spawn = vault_salt;
+
+                                            let encrypted_master_key_for_spawn =
+                                                self.profile_manager.take_encrypted_master_key();
+
+                                            let build_attest_for_spawn = zengeld_updater::BuildAttestation {
+                                                attestation: env!("BUILD_ATTESTATION").to_string(),
+                                                version: env!("CARGO_PKG_VERSION").to_string(),
+                                                platform: env!("BUILD_PLATFORM").to_string(),
+                                                timestamp: env!("BUILD_TIMESTAMP").to_string(),
+                                            };
+                                            let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
+                                            let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
+                                            let iterations = zengeld_updater::vault_params::PBKDF2_ITERATIONS as i32;
+                                            self.bridge.runtime().spawn(async move {
+                                                match zengeld_updater::vault_params::upload_vault_params(
+                                                    &client,
+                                                    &server_url,
+                                                    &token_str,
+                                                    &salt_hex_for_spawn,
+                                                    iterations,
+                                                    encrypted_master_key_for_spawn.as_deref(),
+                                                    &build_attest_for_spawn,
+                                                    &profile_id_for_spawn,
+                                                    &device_id_for_spawn,
+                                                )
+                                                .await {
+                                                    Ok(_) => eprintln!("[App] Re-keyed vault params uploaded to server"),
+                                                    Err(e) => eprintln!("[App] Re-keyed vault params upload failed: {}", e),
+                                                }
+                                            });
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("[App] set_new_passphrase: rekey_vault failed: {}", e);
