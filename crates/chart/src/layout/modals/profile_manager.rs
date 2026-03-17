@@ -247,30 +247,34 @@ fn render_page_profile_list(
         ctx.fill_text(display_name.as_str(), name_x, row_mid_y);
 
         // Right-side badges and actions
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+
+        // Sync level badge — always visible for all profiles
+        let mode_label = match sync_level.as_str() {
+            "cloud_zt" => "Cloud ZT",
+            "cloud" => "Cloud",
+            "connected" => "Connected",
+            _ => "Local",
+        };
+
         if *has_vault {
             // Encrypted badge
-            ctx.set_font("10px sans-serif");
             ctx.set_fill_color("rgba(80,200,120,0.7)");
-            ctx.set_text_align(TextAlign::Right);
-            ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Encrypted", inner_x + inner_w - 8.0, row_mid_y);
 
-            // Sync level badge
-            let mode_label = match sync_level.as_str() {
-                "cloud_zt" => "Cloud ZT",
-                "cloud" => "Cloud",
-                "connected" => "Connected",
-                _ => "Local",
-            };
+            // Sync level badge to the left of Encrypted
             ctx.set_fill_color("rgba(254,255,238,0.30)");
             ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 8.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
         } else {
             // Unencrypted: show warning + delete button
-            ctx.set_font("10px sans-serif");
+            // Sync level badge to the left of Unprotected
+            ctx.set_fill_color("rgba(254,255,238,0.30)");
+            ctx.fill_text(mode_label, inner_x + inner_w - 70.0 - 60.0 - 8.0, row_mid_y);
+
             ctx.set_fill_color("rgba(255,100,80,0.8)");
-            ctx.set_text_align(TextAlign::Right);
-            ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Unprotected", inner_x + inner_w - 70.0, row_mid_y);
 
             // Delete button

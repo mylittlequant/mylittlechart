@@ -335,7 +335,27 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
         return None;
     }
     let json = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&json).ok()
+    let mut index: ProfileIndex = serde_json::from_str(&json).ok()?;
+
+    // Migrate old profiles that don't have sync_level set.
+    // Existing profiles all have OTA, so "connected" is the right default
+    // for profiles that had cloud_enabled=false; "cloud" for cloud_enabled=true.
+    let mut needs_save = false;
+    for meta in &mut index.profiles {
+        if meta.sync_level.is_empty() {
+            meta.sync_level = if meta.cloud_enabled {
+                "cloud".to_string()
+            } else {
+                "connected".to_string()
+            };
+            needs_save = true;
+        }
+    }
+    if needs_save {
+        let _ = save_profile_index(&index);
+    }
+
+    Some(index)
 }
 
 /// Save the profile index to `profiles/index.json`.

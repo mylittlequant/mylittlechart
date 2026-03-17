@@ -5113,6 +5113,10 @@ impl ApplicationHandler for App<'_> {
                     eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
                 }
 
+                // Flag set inside the `handle` borrow below; acted on after the borrow ends.
+                #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                let mut sync_level_changed = false;
+
                 #[cfg(all(feature = "updater", not(feature = "standalone")))]
                 if let Some(ref handle) = self.updater_handle {
                     use zengeld_updater::UpdaterCommand;
@@ -5230,6 +5234,10 @@ impl ApplicationHandler for App<'_> {
                         if let Err(e) = self.profile_manager.save_profile() {
                             eprintln!("[App] failed to save profile after sync_level change: {}", e);
                         }
+                        // Defer profile-list refresh to after the handle borrow ends
+                        // (sync_profiles_to_windows needs &mut self which conflicts with
+                        // the immutable `handle` borrow active through this entire block).
+                        sync_level_changed = true;
                         None
                     // ── Vault sub-toggles (kept for granular ZT control) ─────────
                     } else if let Some(rest) = cmd_str.strip_prefix("set_sync_vault:") {
@@ -5530,6 +5538,26 @@ impl ApplicationHandler for App<'_> {
                         if let Err(e) = handle.cmd_tx.send(command) {
                             eprintln!("[App] updater cmd_tx send failed: {}", e);
                         }
+                    }
+                }
+                // ── Deferred: refresh profile list after sync_level change ────
+                // The `handle` borrow above is now released, so &mut self is safe.
+                if sync_level_changed {
+                    self.profile_manager.refresh_index();
+                    self.sync_profiles_to_windows();
+                    // Push updated toggle states to all windows.
+                    let ota = self.profile_manager.profile.ota_enabled;
+                    let telemetry = self.profile_manager.profile.telemetry_enabled;
+                    let sync_en = self.profile_manager.profile.sync_state.enabled;
+                    let sync_vault = self.profile_manager.profile.sync_state.sync_vault;
+                    let sync_recovery = self.profile_manager.profile.sync_state.sync_recovery_key;
+                    for pw in self.windows.values_mut() {
+                        let us = &mut pw.chart.panel_app.user_settings_state;
+                        us.ota_enabled = ota;
+                        us.telemetry_enabled = telemetry;
+                        us.sync_enabled = sync_en;
+                        us.sync_vault_ui = sync_vault;
+                        us.sync_recovery_key_ui = sync_recovery;
                     }
                 }
             }
