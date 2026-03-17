@@ -4,3 +4,4 @@ Cargo.lock
 *.pdb
 *.stackdump
 DEPS_AUDIT.md
+docs/research/

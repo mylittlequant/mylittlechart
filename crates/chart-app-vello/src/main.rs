@@ -777,8 +777,14 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
 
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
 
+        // In skeleton mode (profile manager / welcome wizard active) the sidebar
+        // is hidden — its width is forced to 0 in render_to_scene() and we skip
+        // compositing the sidebar scene so no stale sidebar pixels appear.
+        let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+            || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+
         // Sidebar scene rebuild (after render, within the same input frame)
-        if sidebar_is_open && pw.sidebar_dirty_scene {
+        if sidebar_is_open && !skeleton_active && pw.sidebar_dirty_scene {
             pw.sidebar_scene.reset();
             let mut sb_ctx = VelloGpuRenderContext::new(
                 &mut pw.sidebar_scene,
@@ -792,7 +798,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         }
 
         // Composite cached sidebar on top of chart content (below toolbar).
-        if sidebar_is_open {
+        if sidebar_is_open && !skeleton_active {
             pw.scene.append(&pw.sidebar_scene, None);
         }
 

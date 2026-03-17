@@ -3044,7 +3044,16 @@ impl ChartApp {
         // Sidebar width — when open, the sidebar appears between the chart
         // content (price scale) and the right toolbar.  The right toolbar stays
         // fixed at the window edge.  Only the chart content area shrinks.
-        let sidebar_w = self.sidebar_state.right_width();
+        //
+        // In skeleton mode (profile manager / welcome wizard covering full screen),
+        // hide the sidebar completely so the login area fills the entire content area.
+        let sidebar_w = if self.panel_app.user_settings_state.show_profile_manager
+            || self.panel_app.user_settings_state.show_welcome_wizard
+        {
+            0.0
+        } else {
+            self.sidebar_state.right_width()
+        };
 
         // 1. Begin frame — propagate current pointer position
         let input_state = InputState::default()
@@ -4115,6 +4124,8 @@ impl ChartApp {
             ind_screen_h: h,
             chart_x: content_rect.x,
             chart_y: content_rect.y,
+            content_w: content_rect.width,
+            content_h: content_rect.height,
         };
 
         let toolbar_theme = self.panel_app.toolbar_theme_for_render();

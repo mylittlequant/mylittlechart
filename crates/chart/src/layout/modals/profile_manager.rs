@@ -24,14 +24,21 @@ use crate::layout::render_chart::FrameTheme;
 
 /// Render the unified Profile Manager overlay.
 ///
-/// This is a full-screen, non-closeable overlay that handles all profile-related
-/// flows: listing profiles, unlocking encrypted profiles, setting up passphrase
-/// for new profiles, and creating new profiles.
+/// This is a non-closeable overlay that handles all profile-related flows:
+/// listing profiles, unlocking encrypted profiles, setting up passphrase for
+/// new profiles, and creating new profiles.
+///
+/// `content_x/y` are the top-left origin of the content area (below the top
+/// toolbar, right of the left toolbar).  `content_w/h` are its dimensions.
+/// In skeleton mode these fill the area between all four toolbars; in
+/// non-skeleton mode the caller may pass the full window dimensions.
 #[allow(clippy::too_many_arguments)]
 pub fn render_profile_manager(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -40,9 +47,11 @@ pub fn render_profile_manager(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // ── Full-screen dimmer ────────────────────────────────────────────────────
+    // ── Content-area dimmer ───────────────────────────────────────────────────
+    // In skeleton mode the background is already an opaque solid; this dimmer
+    // provides the overlay effect when opened from User Settings over the chart.
     ctx.set_fill_color("rgba(0,0,0,0.72)");
-    ctx.fill_rect(0.0, 0.0, window_w, window_h);
+    ctx.fill_rect(content_x, content_y, content_w, content_h);
 
     // Push a high-z modal layer so the profile manager absorbs all input
     let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "profile_manager");
@@ -50,39 +59,39 @@ pub fn render_profile_manager(
     // Block all clicks on the dimmer (profile manager is non-closeable)
     input_coordinator.register_on_layer(
         "profile_manager:dimmer",
-        WidgetRect::new(0.0, 0.0, window_w, window_h),
+        WidgetRect::new(content_x, content_y, content_w, content_h),
         Sense::CLICK,
         &layer_id,
     );
 
     match &state.profile_manager_page {
         ProfileManagerPage::ProfileList => render_page_profile_list(
-            ctx, window_w, window_h, state, text_color, toolbar_theme,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
             &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::UnlockPassphrase => render_page_unlock(
-            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
-            current_time_ms, &layer_id, input_coordinator, result,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::CreatePassphrase => render_page_create_passphrase(
-            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
-            current_time_ms, &layer_id, input_coordinator, result,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::CreateNew => render_page_create_new(
-            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
-            current_time_ms, &layer_id, input_coordinator, result,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::ShowRecoveryKey => render_page_show_recovery_key(
-            ctx, window_w, window_h, state, text_color, toolbar_theme,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
             &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
-            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
-            current_time_ms, &layer_id, input_coordinator, result,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::SetNewPassphrase => render_page_set_new_passphrase(
-            ctx, window_w, window_h, state, text_color, toolbar_theme, frame_theme,
-            current_time_ms, &layer_id, input_coordinator, result,
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
     }
 }
@@ -94,8 +103,10 @@ pub fn render_profile_manager(
 #[allow(clippy::too_many_arguments)]
 fn render_page_profile_list(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -145,9 +156,9 @@ fn render_page_profile_list(
         + 16.0                          // gap before cloud section (or bottom pad)
         + cloud_section_h
         + 24.0;                         // bottom pad
-    let modal_h = calculated_h.clamp(160.0, window_h - 80.0);
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_h = calculated_h.clamp(160.0, content_h - 80.0);
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     // Modal background + border
     ctx.set_fill_color("rgba(24,26,32,0.98)");
@@ -505,8 +516,10 @@ fn render_page_profile_list(
 #[allow(clippy::too_many_arguments)]
 fn render_page_unlock(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -520,8 +533,8 @@ fn render_page_unlock(
 
     let modal_w: f64 = 460.0;
     let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     ctx.set_fill_color("rgba(24,26,32,0.98)");
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
@@ -643,8 +656,10 @@ fn render_page_unlock(
 #[allow(clippy::too_many_arguments)]
 fn render_page_create_passphrase(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -658,8 +673,8 @@ fn render_page_create_passphrase(
 
     let modal_w: f64 = 460.0;
     let modal_h: f64 = 280.0;
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     ctx.set_fill_color("rgba(24,26,32,0.98)");
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
@@ -773,8 +788,10 @@ fn render_page_create_passphrase(
 #[allow(clippy::too_many_arguments)]
 fn render_page_show_recovery_key(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -786,8 +803,8 @@ fn render_page_show_recovery_key(
 
     let modal_w: f64 = 500.0;
     let modal_h: f64 = 340.0;
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     // Modal background
     ctx.set_fill_color("rgba(24,26,32,0.98)");
@@ -908,8 +925,10 @@ fn render_page_show_recovery_key(
 #[allow(clippy::too_many_arguments)]
 fn render_page_create_new(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -923,8 +942,8 @@ fn render_page_create_new(
 
     let modal_w: f64 = 460.0;
     let modal_h: f64 = 240.0; // name input + create button only (no mode selection)
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     ctx.set_fill_color("rgba(24,26,32,0.98)");
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
@@ -1048,8 +1067,10 @@ fn render_page_create_new(
 #[allow(clippy::too_many_arguments)]
 fn render_page_set_new_passphrase(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -1064,8 +1085,8 @@ fn render_page_set_new_passphrase(
     let has_error = !state.set_passphrase_error.is_empty();
     let modal_w: f64 = 480.0;
     let modal_h: f64 = if has_error { 380.0 } else { 350.0 };
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     ctx.set_fill_color("rgba(24,26,32,0.98)");
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
@@ -1255,8 +1276,10 @@ fn render_page_set_new_passphrase(
 #[allow(clippy::too_many_arguments)]
 fn render_page_use_recovery_key(
     ctx: &mut dyn RenderContext,
-    window_w: f64,
-    window_h: f64,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -1270,8 +1293,8 @@ fn render_page_use_recovery_key(
 
     let modal_w: f64 = 520.0;
     let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let modal_x = content_x + (content_w - modal_w) / 2.0;
+    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
     ctx.set_fill_color("rgba(24,26,32,0.98)");
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);

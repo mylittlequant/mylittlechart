@@ -3067,11 +3067,19 @@ impl ChartPanelApp {
         // Skeleton overlay — opaque background fill that hides chart content
         // while the vault unlock / welcome wizard is shown.  Drawn BEFORE the
         // modal so the modal appears on top of the solid background.
+        //
+        // Fill only the content area (between toolbars) rather than the entire
+        // window so the toolbars remain visible above and below.
         if self.user_settings_state.show_welcome_wizard
             || self.user_settings_state.show_profile_manager
         {
             ctx.set_fill_color(&frame_theme.toolbar_bg);
-            ctx.fill_rect(0.0, 0.0, modal_layout.prim_screen_w, modal_layout.prim_screen_h);
+            ctx.fill_rect(
+                modal_layout.chart_x,
+                modal_layout.chart_y,
+                modal_layout.content_w,
+                modal_layout.content_h,
+            );
         }
 
         // Welcome Wizard — rendered on top of everything when active.
@@ -3102,6 +3110,9 @@ impl ChartPanelApp {
         // Profile Manager overlay — unified modal for profile selection, vault unlock,
         // passphrase creation, and new profile creation.
         // Replaces the old vault_unlock overlay and vault_profile_picker.
+        //
+        // In skeleton mode the content area is passed so the manager can render
+        // as a full-area login screen rather than a small centered modal.
         if self.user_settings_state.show_profile_manager {
             use crate::layout::modals::profile_manager::render_profile_manager;
             let text_color = &toolbar_theme.item_text.clone();
@@ -3111,8 +3122,10 @@ impl ChartPanelApp {
             if let Some(ref mut ws_result) = result.user_settings {
                 render_profile_manager(
                     ctx,
-                    modal_layout.prim_screen_w,
-                    modal_layout.prim_screen_h,
+                    modal_layout.chart_x,
+                    modal_layout.chart_y,
+                    modal_layout.content_w,
+                    modal_layout.content_h,
                     &self.user_settings_state,
                     text_color,
                     toolbar_theme,

@@ -359,6 +359,10 @@ pub struct ChartModalLayout {
     pub chart_x: f64,
     /// Top edge of the chart content area (below top toolbar).
     pub chart_y: f64,
+    /// Width of the full content area between toolbars (for full-area overlays like skeleton login).
+    pub content_w: f64,
+    /// Height of the full content area between toolbars (for full-area overlays like skeleton login).
+    pub content_h: f64,
 }
 
 // =============================================================================
