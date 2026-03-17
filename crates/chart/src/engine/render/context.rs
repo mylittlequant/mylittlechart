@@ -377,17 +377,44 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
     let has_fill_none = svg_root_has_fill_none(svg);
     let default_filled = !has_fill_none;
 
-    // Render path elements preserving each path's fill color
+    // Render path elements preserving each path's fill and stroke colors
     for path_info in parse_svg_paths(svg, default_filled) {
         ctx.begin_path();
         render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
+
         if path_info.filled {
             if let Some(ref color) = path_info.fill_color {
-                ctx.set_fill_color(color);
+                if color.starts_with("url(#") {
+                    // Gradient reference — use first stop-color as fallback
+                    let resolved = resolve_gradient_color(svg, color)
+                        .unwrap_or_else(|| "black".to_string());
+                    ctx.set_fill_color(&resolved);
+                } else {
+                    ctx.set_fill_color(color);
+                }
             } else {
                 ctx.set_fill_color("black");
             }
             ctx.fill();
+        }
+
+        if path_info.stroked {
+            let sc = path_info.stroke_color.as_deref().unwrap_or("black");
+            let sw = path_info.stroke_width.unwrap_or(1.0) * scale;
+            ctx.set_stroke_color(sc);
+            ctx.set_stroke_width(sw);
+            ctx.set_line_cap("round");
+            ctx.set_line_join("round");
+            if let Some(ref dash) = path_info.dash_array {
+                let scaled_dash: Vec<f64> = dash.iter().map(|d| d * scale).collect();
+                ctx.set_line_dash(&scaled_dash);
+            } else {
+                ctx.set_line_dash(&[]);
+            }
+            ctx.stroke();
+            if path_info.dash_array.is_some() {
+                ctx.set_line_dash(&[]);
+            }
         }
     }
 
@@ -429,6 +456,21 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
 // SVG Path Parsing
 // =============================================================================
 
+/// Resolve a gradient URL reference to a fallback solid color by extracting
+/// the first stop-color from the gradient definition in the SVG.
+///
+/// `url_ref` is like `"url(#paint0_linear_1_13)"`.
+fn resolve_gradient_color(svg: &str, url_ref: &str) -> Option<String> {
+    let id = url_ref.strip_prefix("url(#")?.strip_suffix(')')?;
+    let search = format!("id=\"{}\"", id);
+    let grad_pos = svg.find(&search)?;
+    let after_grad = &svg[grad_pos..];
+    let stop_pos = after_grad.find("stop-color=\"")?;
+    let color_start = stop_pos + 12; // len("stop-color=\"")
+    let color_end = after_grad[color_start..].find('"')?;
+    Some(after_grad[color_start..color_start + color_end].to_string())
+}
+
 /// Parse viewBox from SVG string
 /// Returns (width, height) or None if not found
 fn parse_viewbox(svg: &str) -> Option<(f64, f64)> {
@@ -454,7 +496,9 @@ struct PathInfo {
     filled: bool,
     stroked: bool,
     dash_array: Option<Vec<f64>>,
-    fill_color: Option<String>,  // Actual fill color from attribute (for multicolor SVGs)
+    fill_color: Option<String>,    // Actual fill color from attribute (for multicolor SVGs)
+    stroke_color: Option<String>,  // Actual stroke color from attribute (for multicolor SVGs)
+    stroke_width: Option<f64>,     // Stroke width from attribute
 }
 
 /// Extract all path elements from SVG with fill/stroke info
@@ -500,16 +544,32 @@ fn parse_svg_paths(svg: &str, default_filled: bool) -> Vec<PathInfo> {
                 };
 
                 // Check stroke attribute (default is stroked for icons)
-                let stroked = if let Some(stroke_start) = tag_content.find("stroke=\"") {
+                let (stroked, stroke_color) = if let Some(stroke_start) = tag_content.find("stroke=\"") {
                     let stroke_content_start = stroke_start + 8;
                     if let Some(stroke_end) = tag_content[stroke_content_start..].find('"') {
                         let stroke_value = &tag_content[stroke_content_start..stroke_content_start + stroke_end];
-                        stroke_value != "none"
+                        if stroke_value != "none" {
+                            (true, Some(stroke_value.to_string()))
+                        } else {
+                            (false, None)
+                        }
                     } else {
-                        true
+                        (true, None)
                     }
                 } else {
-                    !filled // If not filled, assume stroked
+                    (!filled, None) // If not filled, assume stroked
+                };
+
+                // Check stroke-width attribute
+                let stroke_width = if let Some(sw_start) = tag_content.find("stroke-width=\"") {
+                    let sw_content_start = sw_start + 14;
+                    if let Some(sw_end) = tag_content[sw_content_start..].find('"') {
+                        tag_content[sw_content_start..sw_content_start + sw_end].parse::<f64>().ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 };
 
                 // Check stroke-dasharray attribute (e.g., "4 2" for dashed lines)
@@ -534,7 +594,7 @@ fn parse_svg_paths(svg: &str, default_filled: bool) -> Vec<PathInfo> {
                     None
                 };
 
-                paths.push(PathInfo { d, filled, stroked, dash_array, fill_color });
+                paths.push(PathInfo { d, filled, stroked, dash_array, fill_color, stroke_color, stroke_width });
             }
         }
 

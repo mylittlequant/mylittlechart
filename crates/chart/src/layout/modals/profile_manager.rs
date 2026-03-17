@@ -294,11 +294,12 @@ fn render_page_profile_list(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
 
-    // Mascot at bottom of left panel
-    let mascot_size = 140.0;
-    let mascot_x = left_inner_x + (left_inner_w - mascot_size) / 2.0;
-    let mascot_y = modal_y + modal_h - mascot_size - 16.0;
-    draw_svg_multicolor(ctx, MASCOT_SVG, mascot_x, mascot_y, mascot_size, mascot_size);
+    // Mascot at bottom of left panel — viewBox is 197x251, maintain aspect ratio
+    let mascot_w = 140.0;
+    let mascot_h = mascot_w * (251.0 / 197.0); // ~178px
+    let mascot_x = left_inner_x + (left_inner_w - mascot_w) / 2.0;
+    let mascot_y = modal_y + modal_h - mascot_h - 8.0;
+    draw_svg_multicolor(ctx, MASCOT_SVG, mascot_x, mascot_y, mascot_w, mascot_h);
 
     // ── RIGHT COLUMN: Profile list ────────────────────────────────────────────
     let right_pad = 24.0;
