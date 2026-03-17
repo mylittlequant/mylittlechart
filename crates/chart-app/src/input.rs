@@ -5964,8 +5964,10 @@ impl ChartApp {
                 return;
             }
             // Dimmer click — dismiss profile manager if user has a live profile
+            // and is NOT in skeleton mode (vault unlocked, not first run).
             if widget_id == "profile_manager:dimmer" {
-                if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
+                let in_skeleton = self.panel_app.user_settings_state.needs_vault_unlock;
+                if !in_skeleton && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
                         zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
@@ -7991,6 +7993,14 @@ impl ChartApp {
                     self.panel_app.user_settings_state.cloud_profiles_error.clear();
                     self.pending_updater_cmd = Some(format!("restore_cloud_profile:{}", profile_id));
                     eprintln!("[ChartApp] profile_mgr: restore cloud profile id = {}", profile_id);
+                }
+                "profile_mgr:sign_in" => {
+                    self.pending_updater_cmd = Some("start_device_auth".to_string());
+                    eprintln!("[ChartApp] profile_mgr: sign_in via device auth link");
+                }
+                "profile_mgr:logout" => {
+                    self.pending_updater_cmd = Some("logout".to_string());
+                    eprintln!("[ChartApp] profile_mgr: logout requested");
                 }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);

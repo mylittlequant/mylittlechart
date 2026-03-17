@@ -2332,6 +2332,12 @@ impl App<'_> {
                         s.auth_display_name = display_name.clone();
                         s.auth_provider = provider.clone();
                         s.auth_user_id = *user_id;
+                        // Auto-fetch cloud profiles if entering skeleton while already logged in.
+                        if self.needs_vault_unlock || self.is_first_run || self.needs_migration {
+                            s.cloud_profiles_loading = true;
+                            s.cloud_profiles_error.clear();
+                            let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
+                        }
                     }
                     zengeld_updater::AuthStatus::NotLoggedIn => {}
                 }
@@ -5626,6 +5632,12 @@ impl ApplicationHandler for App<'_> {
                                 }
                             }
                             eprintln!("[App] auth: logged in as {} ({})", dn, prov);
+                            // Auto-fetch cloud profiles on login so skeleton shows them immediately.
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.cloud_profiles_loading = true;
+                                pw.chart.panel_app.user_settings_state.cloud_profiles_error.clear();
+                            }
+                            let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
                         }
                         zengeld_updater::AuthStatus::NotLoggedIn => {
                             for pw in self.windows.values_mut() {
