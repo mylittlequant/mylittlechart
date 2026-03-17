@@ -1154,7 +1154,10 @@ impl ChartApp {
             app.panel_app.active_preset_id = user_manager.profile.active_preset_id.clone();
         }
 
-        if restore.is_some() {
+        // Restore open_tabs from profile — both for saved windows and promote_skeleton().
+        // Without this, promote_skeleton (restore=None) would leave open_tabs empty,
+        // causing the phantom "__default__" Chart tab to appear.
+        {
             app.panel_app.open_tabs = user_manager.profile.open_tabs.clone();
             app.panel_app.open_tabs.retain(|id| app.panel_app.presets.contains_key(id));
 
@@ -1286,8 +1289,9 @@ impl ChartApp {
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-                // Create an "Untitled" preset for genuinely fresh windows.
-                if restore.map_or(true, |_| !has_saved_preset) {
+                // Create an "Untitled" preset for genuinely fresh windows
+                // (no presets at all — brand new profile).
+                if app.panel_app.presets.is_empty() {
                     let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
                     let untitled_id = untitled_preset.id.clone();
                     app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);

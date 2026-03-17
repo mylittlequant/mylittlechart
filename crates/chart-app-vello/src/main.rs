@@ -719,20 +719,17 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
             // Skeleton: no tabs at all, chrome draws only + and system buttons.
             tabs.clear();
         } else if tabs.is_empty() {
+            // Safety net: should not happen after open_tabs is always populated.
+            eprintln!("[Chrome] WARNING: tabs empty — injecting fallback Untitled");
             tabs.push(chrome::Tab {
-                id: "__default__".to_string(),
-                name: "Chart".to_string(),
+                id: "__fallback__".to_string(),
+                name: "Untitled".to_string(),
                 active: true,
             });
         } else if !tabs.iter().any(|t| t.active) {
-            tabs.insert(
-                0,
-                chrome::Tab {
-                    id: "__default__".to_string(),
-                    name: "Chart".to_string(),
-                    active: true,
-                },
-            );
+            if let Some(first) = tabs.first_mut() {
+                first.active = true;
+            }
         }
         pw.chrome_state.tabs = tabs;
     }
