@@ -43,9 +43,20 @@ pub struct VaultSetupParams {
 // HTTP helpers
 // =============================================================================
 
+/// Vault parameters fetched from the server for the authenticated user.
+pub struct VaultParams {
+    /// Hex-encoded 16-byte random salt used for PBKDF2 key derivation.
+    pub salt: String,
+    /// Number of PBKDF2 iterations.
+    pub iterations: i32,
+    /// AES-256-GCM blob containing the master key encrypted with the user's
+    /// recovery key (base64-encoded), if the server has stored one.
+    pub encrypted_master_key: Option<String>,
+}
+
 /// Fetch the vault parameters stored on the server for the authenticated user.
 ///
-/// Returns `Some((salt_hex, iterations))` if vault params have been uploaded,
+/// Returns `Some(VaultParams)` if vault params have been uploaded,
 /// or `None` if the user has not yet set up vault recovery on the server.
 pub async fn get_vault_params(
     client: &reqwest::Client,
@@ -53,7 +64,7 @@ pub async fn get_vault_params(
     token: &str,
     profile_id: &str,
     device_id: &str,
-) -> Result<Option<(String, i32)>, String> {
+) -> Result<Option<VaultParams>, String> {
     let resp = client
         .get(format!("{}/api/sync/e2e-params", server_url))
         .bearer_auth(token)
@@ -76,6 +87,8 @@ pub async fn get_vault_params(
     struct VaultParamsResponse {
         salt: String,
         iterations: i32,
+        #[serde(default)]
+        encrypted_master_key: Option<String>,
     }
 
     let data: VaultParamsResponse = resp
@@ -83,7 +96,11 @@ pub async fn get_vault_params(
         .await
         .map_err(|e| format!("e2e-params parse: {}", e))?;
 
-    Ok(Some((data.salt, data.iterations)))
+    Ok(Some(VaultParams {
+        salt: data.salt,
+        iterations: data.iterations,
+        encrypted_master_key: data.encrypted_master_key,
+    }))
 }
 
 /// Upload vault parameters to the server.

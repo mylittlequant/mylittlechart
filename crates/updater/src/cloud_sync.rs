@@ -886,6 +886,152 @@ pub async fn push_items(
     Ok(data.accepted)
 }
 
+// =============================================================================
+// Cloud Profile Restore — list profiles, pull a specific profile, write to disk
+// =============================================================================
+
+/// Summary information about one profile stored on the server.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CloudProfileInfo {
+    /// UUID identifier for this profile.
+    pub profile_id: String,
+    /// Total number of sync items for this profile.
+    pub item_count: i64,
+    /// Total bytes across all sync items.
+    pub total_bytes: i64,
+    /// Unix timestamp (milliseconds) of the most recently modified item.
+    pub last_modified: i64,
+    /// Whether the server holds a `vault` category item for this profile.
+    pub has_vault: bool,
+    /// Whether the server holds a `recovery_key` category item for this profile.
+    pub has_recovery_key: bool,
+}
+
+/// List all profiles the authenticated user has stored on the server.
+///
+/// Returns a vec of [`CloudProfileInfo`] — one entry per profile UUID.
+/// Returns an empty vec if the user has no synced profiles.
+pub async fn list_cloud_profiles(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    build_attest: &BuildAttestation,
+    device_id: &str,
+) -> Result<Vec<CloudProfileInfo>, String> {
+    let builder = client
+        .get(format!("{}/api/sync/profiles", server_url))
+        .bearer_auth(token)
+        .header("X-Device-Id", device_id)
+        .timeout(std::time::Duration::from_secs(15));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("list cloud profiles request: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("list cloud profiles: HTTP {}", resp.status()));
+    }
+
+    #[derive(Deserialize)]
+    struct Resp {
+        profiles: Vec<CloudProfileInfo>,
+    }
+
+    let data: Resp = resp
+        .json()
+        .await
+        .map_err(|e| format!("list cloud profiles parse: {}", e))?;
+
+    Ok(data.profiles)
+}
+
+/// Pull all sync items for a specific profile from the server.
+///
+/// Used during Cloud Profile Restore to download a profile the user has
+/// stored from another device.
+pub async fn pull_profile(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    build_attest: &BuildAttestation,
+    profile_id: &str,
+    device_id: &str,
+) -> Result<Vec<SyncItem>, String> {
+    let builder = client
+        .get(format!(
+            "{}/api/sync/pull-profile?profile_id={}",
+            server_url, profile_id
+        ))
+        .bearer_auth(token)
+        .header("X-Device-Id", device_id)
+        .timeout(std::time::Duration::from_secs(30));
+
+    let builder = crate::attest::with_attestation(builder, build_attest);
+
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("pull profile request: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("pull profile: HTTP {}", resp.status()));
+    }
+
+    #[derive(Deserialize)]
+    struct Resp {
+        items: Vec<SyncItem>,
+    }
+
+    let data: Resp = resp
+        .json()
+        .await
+        .map_err(|e| format!("pull profile parse: {}", e))?;
+
+    Ok(data.items)
+}
+
+/// Write a set of pulled sync items into a new profile directory on disk.
+///
+/// Creates `{profiles_dir}/{profile_id}/` and writes all items into it via
+/// [`write_sync_items_to_disk`].  If no `profile.json` was included in the
+/// sync items a minimal skeleton is written so the profile can be loaded.
+///
+/// Returns the path to the newly created profile directory.
+pub fn restore_profile_to_disk(
+    items: &[SyncItem],
+    profile_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    let profiles_dir = zengeld_chart::user_profile::storage::profiles_dir();
+    let profile_dir = profiles_dir.join(profile_id);
+
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|e| format!("create profile dir: {}", e))?;
+
+    write_sync_items_to_disk(&profile_dir, items)
+        .map_err(|e| format!("write sync items: {}", e))?;
+
+    // If no profile.json was produced by write_sync_items_to_disk, write a
+    // minimal skeleton so the profile can be opened by the app.
+    let profile_json = profile_dir.join("profile.json");
+    if !profile_json.exists() {
+        let skeleton = serde_json::json!({
+            "profile_id": profile_id,
+            "display_name": "Restored Profile",
+            "avatar": "chart",
+            "cloud_enabled": true,
+        });
+        let content = serde_json::to_string_pretty(&skeleton)
+            .map_err(|e| format!("serialize profile skeleton: {}", e))?;
+        std::fs::write(&profile_json, content)
+            .map_err(|e| format!("write profile.json skeleton: {}", e))?;
+    }
+
+    Ok(profile_dir)
+}
+
 /// Pull every item for this user from the server (full download).
 pub async fn pull_all(
     client: &reqwest::Client,

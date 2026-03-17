@@ -185,6 +185,20 @@ pub enum UpdaterCommand {
     ///
     /// Ignored if cloud sync is disabled or the user is not logged in.
     SyncPushChanged(Vec<String>),
+    /// Request a list of all profiles the authenticated user has stored on the
+    /// server.  The updater responds via [`SyncStatus::CloudProfilesLoaded`] or
+    /// [`SyncStatus::CloudProfilesError`].
+    ListCloudProfiles,
+    /// Restore a specific cloud profile to the local device.
+    ///
+    /// Downloads all sync items for `profile_id` from the server and writes
+    /// them into `profiles/{profile_id}/`.  Also registers the profile in the
+    /// local `index.json`.  The updater responds via
+    /// [`SyncStatus::ProfileRestored`] or [`SyncStatus::ProfileRestoreError`].
+    RestoreCloudProfile {
+        /// UUID of the profile to restore.
+        profile_id: String,
+    },
     /// Shut down the updater background task cleanly.
     ///
     /// After receiving this command the loop exits; no further network calls
@@ -220,6 +234,21 @@ pub enum SyncStatus {
     /// The UI should surface a conflict resolution modal.  Items not listed
     /// here were synced successfully; they do **not** need re-resolution.
     ConflictsDetected(Vec<SyncConflict>),
+    /// Response to [`UpdaterCommand::ListCloudProfiles`] — the server returned
+    /// the list of profiles the authenticated user has stored in the cloud.
+    CloudProfilesLoaded(Vec<crate::cloud_sync::CloudProfileInfo>),
+    /// Response to [`UpdaterCommand::ListCloudProfiles`] when the request
+    /// failed (network error, not authenticated, etc.).
+    CloudProfilesError(String),
+    /// Response to [`UpdaterCommand::RestoreCloudProfile`] — the profile was
+    /// downloaded from the server and written to disk successfully.
+    ProfileRestored {
+        /// UUID of the profile that was restored.
+        profile_id: String,
+    },
+    /// Response to [`UpdaterCommand::RestoreCloudProfile`] when the restore
+    /// operation failed.
+    ProfileRestoreError(String),
 }
 
 /// Handle for the UI to interact with the updater.

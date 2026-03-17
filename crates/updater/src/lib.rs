@@ -544,6 +544,204 @@ async fn updater_loop(
                             log::debug!("[Updater] SyncPushChanged ignored — cloud={} sync_enabled={}", connected, sync_state.enabled);
                         }
                     }
+                    state::UpdaterCommand::ListCloudProfiles => {
+                        if !connected {
+                            log::warn!("[Updater] ListCloudProfiles ignored — running in standalone mode");
+                            sync_status_tx.send_replace(state::SyncStatus::CloudProfilesError(
+                                "Cloud connectivity is disabled".to_string(),
+                            ));
+                            continue;
+                        }
+                        let token = token_store::load_token();
+                        match token {
+                            None => {
+                                sync_status_tx.send_replace(state::SyncStatus::CloudProfilesError(
+                                    "Not logged in".to_string(),
+                                ));
+                            }
+                            Some(ref td) => {
+                                match cloud_sync::list_cloud_profiles(
+                                    &http_client,
+                                    UPDATE_SERVER,
+                                    &td.token,
+                                    &build_attest,
+                                    &device_id,
+                                )
+                                .await
+                                {
+                                    Ok(profiles) => {
+                                        eprintln!(
+                                            "[{} Updater] ListCloudProfiles: {} profile(s) found",
+                                            now_ts(),
+                                            profiles.len()
+                                        );
+                                        sync_status_tx.send_replace(
+                                            state::SyncStatus::CloudProfilesLoaded(profiles),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] ListCloudProfiles failed: {}", e);
+                                        sync_status_tx.send_replace(
+                                            state::SyncStatus::CloudProfilesError(e),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::RestoreCloudProfile { profile_id: restore_id } => {
+                        if !connected {
+                            log::warn!("[Updater] RestoreCloudProfile ignored — running in standalone mode");
+                            sync_status_tx.send_replace(state::SyncStatus::ProfileRestoreError(
+                                "Cloud connectivity is disabled".to_string(),
+                            ));
+                            continue;
+                        }
+                        let token = token_store::load_token();
+                        match token {
+                            None => {
+                                sync_status_tx.send_replace(
+                                    state::SyncStatus::ProfileRestoreError(
+                                        "Not logged in".to_string(),
+                                    ),
+                                );
+                            }
+                            Some(ref td) => {
+                                eprintln!(
+                                    "[{} Updater] RestoreCloudProfile: downloading profile '{}'",
+                                    now_ts(),
+                                    restore_id
+                                );
+                                sync_status_tx.send_replace(state::SyncStatus::Syncing);
+
+                                // Step 1: pull all items for the target profile.
+                                let items = cloud_sync::pull_profile(
+                                    &http_client,
+                                    UPDATE_SERVER,
+                                    &td.token,
+                                    &build_attest,
+                                    &restore_id,
+                                    &device_id,
+                                )
+                                .await;
+
+                                let items = match items {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[Updater] RestoreCloudProfile pull failed: {}",
+                                            e
+                                        );
+                                        sync_status_tx.send_replace(
+                                            state::SyncStatus::ProfileRestoreError(e),
+                                        );
+                                        continue;
+                                    }
+                                };
+
+                                // Step 2: write items to disk inside the profile dir.
+                                match cloud_sync::restore_profile_to_disk(&items, &restore_id) {
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[Updater] RestoreCloudProfile write failed: {}",
+                                            e
+                                        );
+                                        sync_status_tx.send_replace(
+                                            state::SyncStatus::ProfileRestoreError(e),
+                                        );
+                                    }
+                                    Ok(profile_dir) => {
+                                        // Step 3: register the profile in the local index.
+                                        let dir_name = restore_id.clone();
+                                        let index =
+                                            zengeld_chart::load_profile_index();
+                                        let mut index = index.unwrap_or(
+                                            zengeld_chart::ProfileIndex {
+                                                active_profile_id: restore_id.clone(),
+                                                profiles: Vec::new(),
+                                            },
+                                        );
+                                        // Only add if not already present.
+                                        if !index.profiles.iter().any(|m| m.id == restore_id) {
+                                            // Derive a display name from the profile.json if
+                                            // available; fall back to the UUID.
+                                            let display_name = {
+                                                let pjson = profile_dir.join("profile.json");
+                                                std::fs::read_to_string(&pjson)
+                                                    .ok()
+                                                    .and_then(|s| {
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            &s,
+                                                        )
+                                                        .ok()
+                                                    })
+                                                    .and_then(|v| {
+                                                        v.get("display_name")
+                                                            .and_then(|n| n.as_str())
+                                                            .map(|s| s.to_string())
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        format!("Restored ({})", &restore_id[..8.min(restore_id.len())])
+                                                    })
+                                            };
+                                            let avatar = {
+                                                let pjson = profile_dir.join("profile.json");
+                                                std::fs::read_to_string(&pjson)
+                                                    .ok()
+                                                    .and_then(|s| {
+                                                        serde_json::from_str::<serde_json::Value>(
+                                                            &s,
+                                                        )
+                                                        .ok()
+                                                    })
+                                                    .and_then(|v| {
+                                                        v.get("avatar")
+                                                            .and_then(|n| n.as_str())
+                                                            .map(|s| s.to_string())
+                                                    })
+                                                    .unwrap_or_else(|| "chart".to_string())
+                                            };
+                                            let now_secs = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs()
+                                                as i64;
+                                            index.profiles.push(zengeld_chart::ProfileMeta {
+                                                id: restore_id.clone(),
+                                                display_name,
+                                                avatar,
+                                                created_at: now_secs,
+                                                dir_name,
+                                                cloud_enabled: true,
+                                            });
+                                        }
+                                        if let Err(e) =
+                                            zengeld_chart::save_profile_index(&index)
+                                        {
+                                            log::warn!(
+                                                "[Updater] RestoreCloudProfile: failed to save index: {}",
+                                                e
+                                            );
+                                            // Non-fatal — the files are on disk; index update
+                                            // will be retried on the next profile scan.
+                                        }
+
+                                        eprintln!(
+                                            "[{} Updater] RestoreCloudProfile: profile '{}' restored ({} item(s))",
+                                            now_ts(),
+                                            restore_id,
+                                            items.len()
+                                        );
+                                        sync_status_tx.send_replace(
+                                            state::SyncStatus::ProfileRestored {
+                                                profile_id: restore_id.clone(),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                     state::UpdaterCommand::Shutdown => {
                         log::info!("Updater shutdown requested");
                         break;
