@@ -244,13 +244,6 @@ impl<'a> ChartRenderContext for VelloGpuRenderContext<'a> {
     }
 
     fn fill_linear_gradient(&mut self, stops: &[(f32, &str)], x1: f64, y1: f64, x2: f64, y2: f64) {
-        // Do not delegate to inner — the published uzor crate does not expose
-        // `fill_linear_gradient` as a method on VelloGpuRenderContext.  Use the
-        // same flat-fill fallback that the trait's default impl provides.
-        let _ = (x1, y1, x2, y2);
-        if let Some((_, color)) = stops.first() {
-            self.set_fill_color(color);
-            self.fill();
-        }
+        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2);
     }
 }
