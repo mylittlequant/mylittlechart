@@ -1951,7 +1951,7 @@ impl App<'_> {
             #[cfg(feature = "standalone")]
             let connected = false;
             #[cfg(not(feature = "standalone"))]
-            let connected = profile.cloud_enabled;
+            let connected = profile.ota_enabled;
 
             // Build attestation — embedded at compile time by build.rs.
             // Empty string for dev builds (no RELEASE_SIGNING_KEY set).
