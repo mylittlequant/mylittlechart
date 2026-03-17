@@ -13744,6 +13744,15 @@ impl ChartApp {
                     self.panel_app.user_settings_state.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: user_settings closed");
                 }
+                "profile_manager" => {
+                    // In skeleton mode (vault unlock required), profile manager cannot be dismissed.
+                    if !self.panel_app.user_settings_state.needs_vault_unlock {
+                        self.panel_app.user_settings_state.show_profile_manager = false;
+                        self.panel_app.user_settings_state.profile_manager_page =
+                            zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
+                    }
+                    eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (needs_vault_unlock={})", self.panel_app.user_settings_state.needs_vault_unlock);
+                }
                 // Preset name input — close only this modal, not the search overlay underneath.
                 "preset_name_input" => {
                     self.panel_app.preset_name_input.close();

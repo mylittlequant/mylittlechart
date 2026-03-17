@@ -6918,47 +6918,67 @@ impl ApplicationHandler for App<'_> {
                             return;
                         }
                         chrome::ChromeHit::Tab(idx) => {
-                            if let Some(tab) = pw.chrome_state.tabs.get(idx) {
-                                let tab_id = tab.id.clone();
-                                pw.chart.load_preset(&tab_id);
+                            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                if let Some(tab) = pw.chrome_state.tabs.get(idx) {
+                                    let tab_id = tab.id.clone();
+                                    pw.chart.load_preset(&tab_id);
+                                }
                             }
                             return;
                         }
                         chrome::ChromeHit::TabClose(idx) => {
-                            // Close the tab without deleting the preset.
-                            // CloseTab handler in input.rs will switch to an adjacent tab automatically.
-                            if let Some(tab) = pw.chrome_state.tabs.get(idx).cloned() {
-                                pw.chart.close_tab(&tab.id);
+                            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                // Close the tab without deleting the preset.
+                                // CloseTab handler in input.rs will switch to an adjacent tab automatically.
+                                if let Some(tab) = pw.chrome_state.tabs.get(idx).cloned() {
+                                    pw.chart.close_tab(&tab.id);
+                                }
                             }
                             return;
                         }
                         chrome::ChromeHit::NewTabButton => {
-                            // Toggle the new_tab_menu dropdown (uses the chart toolbar dropdown system).
-                            let ts = &mut pw.chart.panel_app.toolbar_state;
-                            if ts.open_dropdown_id.as_deref() == Some("new_tab_menu") {
-                                ts.open_dropdown_id = None;
-                                ts.open_dropdown_position = None;
-                            } else {
-                                let btn_x = chrome::new_tab_button_x(&pw.chrome_state);
-                                // y=0 in chart-space (chart renders offset by CHROME_HEIGHT,
-                                // so 0 here = right below the chrome strip on screen).
-                                ts.open_dropdown_id = Some("new_tab_menu".to_string());
-                                ts.open_dropdown_position = Some((btn_x, 0.0));
+                            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                // Toggle the new_tab_menu dropdown (uses the chart toolbar dropdown system).
+                                let ts = &mut pw.chart.panel_app.toolbar_state;
+                                if ts.open_dropdown_id.as_deref() == Some("new_tab_menu") {
+                                    ts.open_dropdown_id = None;
+                                    ts.open_dropdown_position = None;
+                                } else {
+                                    let btn_x = chrome::new_tab_button_x(&pw.chrome_state);
+                                    // y=0 in chart-space (chart renders offset by CHROME_HEIGHT,
+                                    // so 0 here = right below the chrome strip on screen).
+                                    ts.open_dropdown_id = Some("new_tab_menu".to_string());
+                                    ts.open_dropdown_position = Some((btn_x, 0.0));
+                                }
+                                eprintln!(
+                                    "[Chrome] + clicked, new_tab_menu open={}",
+                                    pw.chart.panel_app.toolbar_state.open_dropdown_id.is_some()
+                                );
                             }
-                            eprintln!(
-                                "[Chrome] + clicked, new_tab_menu open={}",
-                                pw.chart.panel_app.toolbar_state.open_dropdown_id.is_some()
-                            );
                             return;
                         }
                         chrome::ChromeHit::SettingsButton => {
-                            pw.chart.open_user_settings();
+                            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                pw.chart.open_user_settings();
+                            }
                             return;
                         }
                         chrome::ChromeHit::NewWindowButton => {
-                            // Queue a new window spawn; it will be created in about_to_wait
-                            // once pw is no longer borrowed.
-                            pw.spawn_new_window = true;
+                            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                // Queue a new window spawn; it will be created in about_to_wait
+                                // once pw is no longer borrowed.
+                                pw.spawn_new_window = true;
+                            }
                             return;
                         }
                         chrome::ChromeHit::ResizeTop => {

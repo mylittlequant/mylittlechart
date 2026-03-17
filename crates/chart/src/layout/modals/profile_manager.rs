@@ -47,12 +47,6 @@ pub fn render_profile_manager(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // ── Content-area dimmer ───────────────────────────────────────────────────
-    // In skeleton mode the background is already an opaque solid; this dimmer
-    // provides the overlay effect when opened from User Settings over the chart.
-    ctx.set_fill_color("rgba(0,0,0,0.72)");
-    ctx.fill_rect(content_x, content_y, content_w, content_h);
-
     // Push a high-z modal layer so the profile manager absorbs all input
     let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "profile_manager");
 
@@ -122,12 +116,9 @@ fn render_page_profile_list(
     let modal_w = content_w;
     let modal_h = content_h;
 
-    // Modal background + border
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    // Modal background
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     // Absorb modal background clicks
     input_coordinator.register_on_layer(
@@ -678,16 +669,13 @@ fn render_page_unlock(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    let modal_w: f64 = 460.0;
-    let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     input_coordinator.register_on_layer(
         "profile_manager:unlock_bg",
@@ -696,10 +684,10 @@ fn render_page_unlock(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 20.0;
+    let form_w: f64 = 460.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 130.0;
 
     // Back button
     render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
@@ -818,16 +806,13 @@ fn render_page_create_passphrase(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    let modal_w: f64 = 460.0;
-    let modal_h: f64 = 280.0;
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     input_coordinator.register_on_layer(
         "profile_manager:create_pass_bg",
@@ -836,10 +821,10 @@ fn render_page_create_passphrase(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 20.0;
+    let form_w: f64 = 460.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 110.0;
 
     // Back button
     render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
@@ -948,17 +933,14 @@ fn render_page_show_recovery_key(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    let modal_w: f64 = 500.0;
-    let modal_h: f64 = 340.0;
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
     // Modal background
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.45)");
-    ctx.set_stroke_width(1.5);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     // Absorb clicks on the modal background
     input_coordinator.register_on_layer(
@@ -968,10 +950,10 @@ fn render_page_show_recovery_key(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 24.0;
+    let form_w: f64 = 500.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 140.0;
 
     // Title
     ctx.set_font("bold 18px sans-serif");
@@ -1087,16 +1069,13 @@ fn render_page_create_new(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    let modal_w: f64 = 460.0;
-    let modal_h: f64 = 240.0; // name input + create button only (no mode selection)
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     input_coordinator.register_on_layer(
         "profile_manager:create_new_bg",
@@ -1105,10 +1084,10 @@ fn render_page_create_new(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 20.0;
+    let form_w: f64 = 460.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 100.0;
 
     // Back button
     render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
@@ -1228,18 +1207,15 @@ fn render_page_set_new_passphrase(
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
-
     let has_error = !state.set_passphrase_error.is_empty();
-    let modal_w: f64 = 480.0;
-    let modal_h: f64 = if has_error { 380.0 } else { 350.0 };
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
 
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.45)");
-    ctx.set_stroke_width(1.5);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
+
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     // Absorb clicks on the modal background
     input_coordinator.register_on_layer(
@@ -1249,10 +1225,10 @@ fn render_page_set_new_passphrase(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 28.0;
+    let form_w: f64 = 480.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 150.0;
 
     // Title
     ctx.set_font("bold 18px sans-serif");
@@ -1438,16 +1414,13 @@ fn render_page_use_recovery_key(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    let modal_w: f64 = 520.0;
-    let modal_h: f64 = if state.vault_unlock_error.is_some() { 340.0 } else { 310.0 };
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
 
     input_coordinator.register_on_layer(
         "profile_manager:recovery_input_bg",
@@ -1456,10 +1429,10 @@ fn render_page_use_recovery_key(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 20.0;
+    let form_w: f64 = 520.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    let mut cy = modal_y + (modal_h / 2.0) - 130.0;
 
     // Back button
     render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
