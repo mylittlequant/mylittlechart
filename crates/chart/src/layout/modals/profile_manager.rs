@@ -9,7 +9,8 @@
 //!   CreatePassphrase  — Set a new passphrase for a profile that has no vault.
 //!   CreateNew         — Enter name for a brand-new profile (sync toggled in settings).
 
-use crate::engine::render::RenderContext;
+use crate::engine::render::{RenderContext, draw_svg_icon};
+use crate::ui::Icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::sense::Sense;
@@ -208,15 +209,13 @@ fn render_page_profile_list(
         };
         ctx.set_fill_color(logout_bg);
         ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, logout_btn_h, 4.0);
+        let logout_text_color = if is_logout_hovered { "rgba(255,120,100,1.0)" } else { "rgba(255,120,100,0.75)" };
+        draw_svg_icon(ctx, Icon::LogOut.svg(), left_inner_x + 10.0, left_cy + (logout_btn_h - 14.0) / 2.0, 14.0, 14.0, logout_text_color);
         ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color(if is_logout_hovered {
-            "rgba(255,120,100,1.0)"
-        } else {
-            "rgba(255,120,100,0.75)"
-        });
+        ctx.set_fill_color(logout_text_color);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Log Out", left_inner_x + left_inner_w / 2.0, left_cy + logout_btn_h / 2.0);
+        ctx.fill_text("Log Out", left_inner_x + left_inner_w / 2.0 + 7.0, left_cy + logout_btn_h / 2.0);
         ctx.set_text_align(TextAlign::Left);
 
         let logout_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, logout_btn_h);
@@ -250,11 +249,12 @@ fn render_page_profile_list(
         };
         ctx.set_fill_color(signin_bg);
         ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, signin_btn_h, 4.0);
+        draw_svg_icon(ctx, Icon::LogIn.svg(), left_inner_x + 10.0, left_cy + (signin_btn_h - 16.0) / 2.0, 16.0, 16.0, "rgba(0,0,0,0.85)");
         ctx.set_font("bold 11px sans-serif");
         ctx.set_fill_color("rgba(0,0,0,0.85)");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Sign In via Browser", left_inner_x + left_inner_w / 2.0, left_cy + signin_btn_h / 2.0);
+        ctx.fill_text("Sign In via Browser", left_inner_x + left_inner_w / 2.0 + 8.0, left_cy + signin_btn_h / 2.0);
         ctx.set_text_align(TextAlign::Left);
 
         let signin_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, signin_btn_h);
@@ -329,11 +329,8 @@ fn render_page_profile_list(
             ctx.fill_rounded_rect(close_x, close_y, close_size, close_size, 4.0);
         }
 
-        ctx.set_font("16px sans-serif");
-        ctx.set_fill_color(if close_hovered { "rgba(255,255,255,0.9)" } else { "rgba(255,255,255,0.5)" });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("\u{2715}", close_x + close_size / 2.0, close_y + close_size / 2.0);
+        draw_svg_icon(ctx, Icon::Close.svg(), close_x + 4.0, close_y + 4.0, 20.0, 20.0,
+            if close_hovered { "rgba(255,255,255,0.9)" } else { "rgba(255,255,255,0.5)" });
 
         let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
         result.content_items.push(("profile_mgr:close".to_string(), close_rect));
@@ -360,6 +357,51 @@ fn render_page_profile_list(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Select a profile to load", inner_x, cy);
     cy += 20.0 + 16.0;
+
+    // ── Scrollable viewport for profile rows + cloud section ──────────────────
+    let create_btn_h = 36.0;
+    let create_btn_margin = 12.0;
+    // Viewport spans from below the subtitle down to just above the Create button.
+    let scroll_viewport_y = cy;
+    let scroll_viewport_h = ((modal_y + modal_h) - scroll_viewport_y
+        - create_btn_h - create_btn_margin - 12.0)
+        .max(0.0);
+
+    // Measure total unclipped content height (profile rows + optional cloud section).
+    let mut total_content_h: f64 = 0.0;
+    for _ in &state.profiles_with_vault_status {
+        total_content_h += profile_row_h + 6.0;
+    }
+    if has_cloud_section {
+        total_content_h += 16.0; // gap before section header
+        total_content_h += 24.0; // section header row
+        if state.cloud_profiles_loading || !state.cloud_profiles_error.is_empty() {
+            total_content_h += 24.0;
+        }
+        for _ in &cloud_profiles_to_show {
+            total_content_h += cloud_row_h + 6.0;
+        }
+    }
+
+    // Clamp scroll offset against the actual max.
+    let max_scroll = (total_content_h - scroll_viewport_h).max(0.0);
+    let scroll_offset = state.profile_list_scroll_offset.min(max_scroll);
+
+    // Store viewport rect and total content height in result for the scroll handler.
+    result.profile_list_viewport_rect = WidgetRect::new(
+        inner_x,
+        scroll_viewport_y,
+        inner_w,
+        scroll_viewport_h,
+    );
+    result.profile_list_total_content_h = total_content_h;
+
+    // Apply clip rect — all profile rows and cloud section render inside.
+    ctx.save();
+    ctx.clip_rect(inner_x, scroll_viewport_y, inner_w, scroll_viewport_h);
+
+    // Shift starting y by the scroll offset.
+    cy = scroll_viewport_y - scroll_offset;
 
     // Profile rows
     for (id, display_name, _avatar, _client_mode, has_vault, sync_level) in &state.profiles_with_vault_status {
@@ -406,13 +448,18 @@ fn render_page_profile_list(
         };
 
         if *has_vault {
-            // Encrypted badge
+            // Encrypted badge: shield icon + text (right-aligned)
+            // "Encrypted" text is ~62px wide; icon is 12px, placed just to its left
+            draw_svg_icon(ctx, Icon::ShieldCheck.svg(),
+                inner_x + inner_w - 8.0 - 62.0 - 2.0 - 12.0,
+                row_mid_y - 6.0,
+                12.0, 12.0, "rgba(80,200,120,0.7)");
             ctx.set_fill_color("rgba(80,200,120,0.7)");
             ctx.fill_text("Encrypted", inner_x + inner_w - 8.0, row_mid_y);
 
-            // Sync level badge to the left of Encrypted
+            // Sync level badge to the left of the shield icon
             ctx.set_fill_color("rgba(254,255,238,0.30)");
-            ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 8.0, row_mid_y);
+            ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 16.0 - 8.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
         } else {
             // Unencrypted: show warning + delete button
@@ -443,7 +490,7 @@ fn render_page_profile_list(
             let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
             result.content_items.push((widget_id.clone(), row_rect));
             let hit_id = format!("user_settings:{}", widget_id);
-            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
             // Register delete button SECOND (higher priority — on top of row)
             let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
@@ -451,7 +498,7 @@ fn render_page_profile_list(
             input_coordinator.register_on_layer(
                 format!("user_settings:{}", del_id).as_str(),
                 del_rect,
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
         }
@@ -461,43 +508,13 @@ fn render_page_profile_list(
             let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
             result.content_items.push((widget_id.clone(), row_rect));
             let hit_id = format!("user_settings:{}", widget_id);
-            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK, layer_id);
+            input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
         }
 
         cy += profile_row_h + 6.0;
     }
 
-    cy += 12.0;
-
-    // "Create New Profile" button
-    let create_btn_h = 36.0;
-    let is_create_hovered = hovered == Some("profile_mgr:create_new");
-    let create_bg = if is_create_hovered {
-        "rgba(255,255,255,0.92)"
-    } else {
-        toolbar_theme.accent.as_str()
-    };
-    ctx.set_fill_color(create_bg);
-    ctx.fill_rounded_rect(inner_x, cy, inner_w, create_btn_h, 4.0);
-    ctx.set_font("bold 12px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Create New Profile", inner_x + inner_w / 2.0, cy + create_btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let create_rect = WidgetRect::new(inner_x, cy, inner_w, create_btn_h);
-    let create_id = "profile_mgr:create_new";
-    result.content_items.push((create_id.to_string(), create_rect));
-    input_coordinator.register_on_layer(
-        format!("user_settings:{}", create_id).as_str(),
-        create_rect,
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += create_btn_h;
-
-    // ── CLOUD PROFILES section ────────────────────────────────────────────────
+    // ── CLOUD PROFILES section (inside clip) ──────────────────────────────────
     if has_cloud_section {
         cy += 16.0;
 
@@ -566,16 +583,18 @@ fn render_page_profile_list(
 
             // Short profile ID (first 8 chars)
             let short_id: String = cp.profile_id.chars().take(8).collect();
-            let display_label = if cp.has_vault {
-                format!("\u{1F512} {}", short_id)
+            // Draw lock icon for encrypted cloud profiles instead of emoji
+            let label_x = if cp.has_vault {
+                draw_svg_icon(ctx, Icon::Lock.svg(), inner_x + 6.0, row_mid_y - 7.0, 14.0, 14.0, "rgba(254,255,238,0.5)");
+                inner_x + 26.0
             } else {
-                short_id
+                inner_x + 8.0
             };
             ctx.set_font("bold 13px sans-serif");
             ctx.set_fill_color("rgba(254,255,238,0.75)");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&display_label, inner_x + 8.0, row_mid_y);
+            ctx.fill_text(&short_id, label_x, row_mid_y);
 
             // Item count + size
             let size_str = if cp.total_bytes >= 1_048_576 {
@@ -643,8 +662,47 @@ fn render_page_profile_list(
         }
     }
 
-    // suppress unused-variable warning when cloud section is absent
-    let _ = cy;
+    // End clip — scrollbar and Create button are drawn outside.
+    ctx.restore();
+
+    // ── Scrollbar thumb (drawn outside clip, over the viewport) ───────────────
+    if total_content_h > scroll_viewport_h {
+        let scrollbar_w = 4.0;
+        let track_x = inner_x + inner_w - scrollbar_w - 2.0;
+        let ratio = (scroll_viewport_h / total_content_h).min(1.0);
+        let thumb_h = (scroll_viewport_h * ratio).max(24.0);
+        let scroll_ratio = if max_scroll > 0.0 { scroll_offset / max_scroll } else { 0.0 };
+        let thumb_y = scroll_viewport_y + scroll_ratio * (scroll_viewport_h - thumb_h);
+        ctx.set_fill_color("rgba(255,255,255,0.18)");
+        ctx.fill_rounded_rect(track_x, thumb_y, scrollbar_w, thumb_h, 2.0);
+    }
+
+    // ── "Create New Profile" button — pinned at bottom, outside the clip ──────
+    let create_y = modal_y + modal_h - create_btn_h - 12.0;
+    let is_create_hovered = hovered == Some("profile_mgr:create_new");
+    let create_bg = if is_create_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    ctx.set_fill_color(create_bg);
+    ctx.fill_rounded_rect(inner_x, create_y, inner_w, create_btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Create New Profile", inner_x + inner_w / 2.0, create_y + create_btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let create_rect = WidgetRect::new(inner_x, create_y, inner_w, create_btn_h);
+    let create_id = "profile_mgr:create_new";
+    result.content_items.push((create_id.to_string(), create_rect));
+    input_coordinator.register_on_layer(
+        format!("user_settings:{}", create_id).as_str(),
+        create_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
 }
 
 // =============================================================================
@@ -746,7 +804,7 @@ fn render_page_unlock(
     if !unlock_disabled {
         let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:unlock".to_string(), btn_rect));
-        input_coordinator.register_on_layer("user_settings:profile_mgr:unlock", btn_rect, Sense::CLICK, layer_id);
+        input_coordinator.register_on_layer("user_settings:profile_mgr:unlock", btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
     }
     cy += btn_h + 10.0;
 
@@ -780,7 +838,7 @@ fn render_page_unlock(
     let link_rect = WidgetRect::new(link_x, cy, link_w, link_h);
     result.content_items.push(("profile_mgr:use_recovery_key".to_string(), link_rect));
     input_coordinator.register_on_layer(
-        "user_settings:profile_mgr:use_recovery_key", link_rect, Sense::CLICK, layer_id,
+        "user_settings:profile_mgr:use_recovery_key", link_rect, Sense::CLICK | Sense::HOVER, layer_id,
     );
 }
 
@@ -902,7 +960,7 @@ fn render_page_create_passphrase(
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:create_passphrase",
             btn_rect,
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1042,7 +1100,7 @@ fn render_page_show_recovery_key(
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:recovery_key_confirm",
         btn_rect,
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 }
@@ -1175,7 +1233,7 @@ fn render_page_create_new(
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:create_confirm",
             create_rect,
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1386,7 +1444,7 @@ fn render_page_set_new_passphrase(
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:save_new_passphrase",
             btn_rect,
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1519,7 +1577,7 @@ fn render_page_use_recovery_key(
         let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:recovery_unlock".to_string(), btn_rect));
         input_coordinator.register_on_layer(
-            "user_settings:profile_mgr:recovery_unlock", btn_rect, Sense::CLICK, layer_id,
+            "user_settings:profile_mgr:recovery_unlock", btn_rect, Sense::CLICK | Sense::HOVER, layer_id,
         );
     }
     cy += btn_h + 10.0;
@@ -1560,19 +1618,20 @@ fn render_back_button(
     ctx.set_stroke_color(stroke_color);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
+    // Draw chevron-left icon (small, 14x14) at left of button
+    draw_svg_icon(ctx, Icon::ChevronLeft.svg(), x + 4.0, *cy + (btn_h - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text);
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("\u{2190} Back to profiles", x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Back to profiles", x + 22.0, *cy + btn_h / 2.0);
 
     let back_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
     result.content_items.push(("profile_mgr:back".to_string(), back_rect));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:back",
         back_rect,
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
     *cy += btn_h;

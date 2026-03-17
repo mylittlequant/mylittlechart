@@ -401,6 +401,10 @@ pub struct UserSettingsResult {
     pub tab_rects: Vec<(String, WidgetRect)>,
     /// Content item rects for hit testing: (item_id, rect).
     pub content_items: Vec<(String, WidgetRect)>,
+    /// Scrollable viewport rect for the profile list (ProfileList page only).
+    pub profile_list_viewport_rect: WidgetRect,
+    /// Total content height of the profile list (profiles + cloud section).
+    pub profile_list_total_content_h: f64,
 }
 
 // =============================================================================

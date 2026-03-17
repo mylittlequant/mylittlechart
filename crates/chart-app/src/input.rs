@@ -3930,6 +3930,31 @@ impl ChartApp {
                 return;
             }
 
+            // Profile manager — scroll the profile list viewport.
+            if self.panel_app.user_settings_state.show_profile_manager {
+                use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                if matches!(
+                    self.panel_app.user_settings_state.profile_manager_page,
+                    ProfileManagerPage::ProfileList
+                ) {
+                    if let Some(ref us) = self.frame_result
+                        .as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .cloned()
+                    {
+                        if us.profile_list_viewport_rect.contains(x, y) {
+                            let viewport_h = us.profile_list_viewport_rect.height;
+                            let total_h = us.profile_list_total_content_h;
+                            let max_scroll = (total_h - viewport_h).max(0.0);
+                            let current = self.panel_app.user_settings_state.profile_list_scroll_offset;
+                            self.panel_app.user_settings_state.profile_list_scroll_offset =
+                                (current - dy * 40.0).clamp(0.0, max_scroll);
+                        }
+                    }
+                }
+                return;
+            }
+
             // Watchlist modal list scroll
             if self.watchlist_modal.is_open() {
                 if let Some(ref wl) = self.last_watchlist_modal_result {

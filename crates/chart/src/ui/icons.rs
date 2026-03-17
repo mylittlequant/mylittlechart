@@ -256,6 +256,19 @@ pub enum Icon {
 
     // === Window Management ===
     NewWindow,
+
+    // === User / Auth / Cloud ===
+    Cloud,
+    CloudDownload,
+    User,
+    LogIn,
+    LogOut,
+    ChevronLeft,
+    Refresh,
+    Shield,
+    ShieldCheck,
+    Globe,
+    Key,
 }
 
 // =============================================================================
@@ -1143,6 +1156,32 @@ pub const ICON_NEW_WINDOW: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
   <path d="M18 13L18 19C18 20.1046 17.1046 21 16 21L5 21C3.89543 21 3 20.1046 3 19L3 8C3 6.89543 3.89543 6 5 6L11 6"/>
 </svg>"##;
 
+// =============================================================================
+// User / Auth / Cloud Icons
+// =============================================================================
+
+pub const ICON_CLOUD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>"##;
+
+pub const ICON_CLOUD_DOWNLOAD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>"##;
+
+pub const ICON_USER: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>"##;
+
+pub const ICON_LOG_IN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>"##;
+
+pub const ICON_LOG_OUT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>"##;
+
+pub const ICON_CHEVRON_LEFT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>"##;
+
+pub const ICON_REFRESH: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>"##;
+
+pub const ICON_SHIELD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>"##;
+
+pub const ICON_SHIELD_CHECK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>"##;
+
+pub const ICON_GLOBE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>"##;
+
+pub const ICON_KEY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>"##;
+
 pub const ICON_MENU: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 6h16"/>
   <path d="M4 12h16"/>
@@ -1468,6 +1507,17 @@ impl Icon {
             Icon::Screenshot => ICON_SCREENSHOT,
             Icon::CircuitBoard => ICON_CIRCUIT_BOARD,
             Icon::NewWindow => ICON_NEW_WINDOW,
+            Icon::Cloud => ICON_CLOUD,
+            Icon::CloudDownload => ICON_CLOUD_DOWNLOAD,
+            Icon::User => ICON_USER,
+            Icon::LogIn => ICON_LOG_IN,
+            Icon::LogOut => ICON_LOG_OUT,
+            Icon::ChevronLeft => ICON_CHEVRON_LEFT,
+            Icon::Refresh => ICON_REFRESH,
+            Icon::Shield => ICON_SHIELD,
+            Icon::ShieldCheck => ICON_SHIELD_CHECK,
+            Icon::Globe => ICON_GLOBE,
+            Icon::Key => ICON_KEY,
         }
     }
 
@@ -1651,6 +1701,17 @@ impl Icon {
             "projection" => Some(Icon::Projection),
             "circuit_board" | "circuitboard" | "connectors" => Some(Icon::CircuitBoard),
             "new_window" | "newwindow" | "external_link" | "open_new" => Some(Icon::NewWindow),
+            "cloud" => Some(Icon::Cloud),
+            "cloud_download" | "clouddownload" => Some(Icon::CloudDownload),
+            "user" => Some(Icon::User),
+            "log_in" | "login" => Some(Icon::LogIn),
+            "log_out" | "logout" => Some(Icon::LogOut),
+            "chevron_left" | "chevronleft" => Some(Icon::ChevronLeft),
+            "refresh" | "refresh_cw" | "refreshcw" => Some(Icon::Refresh),
+            "shield" => Some(Icon::Shield),
+            "shield_check" | "shieldcheck" => Some(Icon::ShieldCheck),
+            "globe" => Some(Icon::Globe),
+            "key" => Some(Icon::Key),
             _ => None,
         }
     }
@@ -1866,6 +1927,17 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "circuit_board" | "circuitboard" | "connectors" => Some(ICON_CIRCUIT_BOARD),
         "cpu" | "activity" | "performance" => Some(ICON_CPU),
         "new_window" | "newwindow" | "external_link" | "open_new" => Some(ICON_NEW_WINDOW),
+        "cloud" => Some(ICON_CLOUD),
+        "cloud_download" | "clouddownload" => Some(ICON_CLOUD_DOWNLOAD),
+        "user" => Some(ICON_USER),
+        "log_in" | "login" => Some(ICON_LOG_IN),
+        "log_out" | "logout" => Some(ICON_LOG_OUT),
+        "chevron_left" | "chevronleft" => Some(ICON_CHEVRON_LEFT),
+        "refresh" | "refresh_cw" | "refreshcw" => Some(ICON_REFRESH),
+        "shield" => Some(ICON_SHIELD),
+        "shield_check" | "shieldcheck" => Some(ICON_SHIELD_CHECK),
+        "globe" => Some(ICON_GLOBE),
+        "key" => Some(ICON_KEY),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),

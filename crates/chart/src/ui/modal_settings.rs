@@ -3474,6 +3474,10 @@ pub struct UserSettingsState {
     pub confirm_passphrase_focused: bool,
     /// Error message shown on the SetNewPassphrase page (e.g. "Passphrases do not match").
     pub set_passphrase_error: String,
+
+    // ── Profile list scroll ───────────────────────────────────────────────────
+    /// Vertical scroll offset (pixels) for the profile list in the ProfileList page.
+    pub profile_list_scroll_offset: f64,
 }
 
 impl Default for UserSettingsState {
@@ -3600,6 +3604,7 @@ impl Default for UserSettingsState {
             },
             confirm_passphrase_focused: false,
             set_passphrase_error: String::new(),
+            profile_list_scroll_offset: 0.0,
         }
     }
 }
