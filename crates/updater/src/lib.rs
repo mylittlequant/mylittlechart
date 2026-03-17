@@ -36,8 +36,8 @@ pub fn now_ts() -> String {
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
 
-/// Interval between update checks (5 minutes — testing; bump to 4h for production).
-const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// Interval between update checks (2 minutes — active debugging; bump to 4h for production).
+const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// Base URL for the update server.
 const UPDATE_SERVER: &str = "https://chart.example";
