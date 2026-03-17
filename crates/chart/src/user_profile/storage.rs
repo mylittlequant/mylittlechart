@@ -338,16 +338,46 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
     let mut index: ProfileIndex = serde_json::from_str(&json).ok()?;
 
     // Migrate old profiles that don't have sync_level set.
-    // Existing profiles all have OTA, so "connected" is the right default
-    // for profiles that had cloud_enabled=false; "cloud" for cloud_enabled=true.
+    // Read each profile's profile.json to determine the real level.
+    let pdir = profiles_dir();
     let mut needs_save = false;
     for meta in &mut index.profiles {
         if meta.sync_level.is_empty() {
-            meta.sync_level = if meta.cloud_enabled {
-                "cloud".to_string()
+            // Try to read profile.json to determine the actual level.
+            let profile_json = pdir.join(&meta.dir_name).join("profile.json");
+            let level = if let Ok(json) = fs::read_to_string(&profile_json) {
+                // Lightweight parse — only need a few fields.
+                #[derive(serde::Deserialize)]
+                struct Probe {
+                    #[serde(default)]
+                    ota_enabled: bool,
+                    #[serde(default)]
+                    cloud_enabled: bool,
+                    #[serde(default)]
+                    sync_state: ProbeSync,
+                }
+                #[derive(serde::Deserialize, Default)]
+                struct ProbeSync {
+                    #[serde(default)]
+                    enabled: bool,
+                }
+                if let Ok(p) = serde_json::from_str::<Probe>(&json) {
+                    if p.cloud_enabled && p.sync_state.enabled {
+                        "cloud"
+                    } else if p.ota_enabled {
+                        "connected"
+                    } else {
+                        "local"
+                    }
+                } else {
+                    "local"
+                }
             } else {
-                "connected".to_string()
+                "local"
             };
+            meta.sync_level = level.to_string();
+            // Also fix cloud_enabled in index to match reality.
+            meta.cloud_enabled = level == "cloud" || level == "cloud_zt";
             needs_save = true;
         }
     }
