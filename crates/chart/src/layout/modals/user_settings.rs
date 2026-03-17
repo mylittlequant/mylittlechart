@@ -1240,7 +1240,7 @@ fn render_sync_tab(
         (SyncLevel::Local,     "local",     "Local",      "No network activity. Data stays on this device."),
         (SyncLevel::Connected, "connected", "Connected",  "Auto-updates + telemetry."),
         (SyncLevel::Cloud,     "cloud",     "Cloud",      "+ presets, templates, watchlists, theme."),
-        (SyncLevel::CloudZt,   "cloud_zt",  "Cloud + ZT", "+ encrypted vault sync."),
+        (SyncLevel::CloudZt,   "cloud_zt",  "Cloud ZT", "+ encrypted vault sync."),
     ];
 
     let radio_row_h = 28.0;

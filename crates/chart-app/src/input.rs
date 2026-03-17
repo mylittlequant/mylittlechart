@@ -7462,7 +7462,8 @@ impl ChartApp {
                     s.sync_templates = true;
                     s.sync_watchlists = true;
                     s.sync_theme_toggle = true;
-                    s.sync_vault_ui = true;
+                    // Vault off by default (user opts in), recovery key on by default
+                    s.sync_vault_ui = false;
                     s.sync_recovery_key_ui = true;
                     self.pending_updater_cmd = Some("set_sync_level:cloud_zt".to_string());
                     eprintln!("[ChartApp] sync_level = cloud_zt");

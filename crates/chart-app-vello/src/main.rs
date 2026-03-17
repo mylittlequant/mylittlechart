@@ -5215,7 +5215,8 @@ impl ApplicationHandler for App<'_> {
                                 p.sync_state.sync_templates = true;
                                 p.sync_state.sync_watchlists = true;
                                 p.sync_state.sync_theme = true;
-                                p.sync_state.sync_vault = true;
+                                // Vault off by default, recovery key on
+                                p.sync_state.sync_vault = false;
                                 p.sync_state.sync_recovery_key = true;
                                 p.cloud_enabled = true;
                                 self.profile.cloud_enabled = true;

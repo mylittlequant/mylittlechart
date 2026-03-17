@@ -255,8 +255,8 @@ fn render_page_profile_list(
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Encrypted", inner_x + inner_w - 8.0, row_mid_y);
 
-            // Client mode badge
-            let mode_label = if *client_mode { "Cloud" } else { "Offline" };
+            // Sync level badge
+            let mode_label = if *client_mode { "Cloud" } else { "Local" };
             ctx.set_fill_color("rgba(254,255,238,0.30)");
             ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 8.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
