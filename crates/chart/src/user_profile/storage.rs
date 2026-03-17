@@ -362,9 +362,24 @@ pub fn active_profile_data_dir() -> PathBuf {
             let _ = fs::create_dir_all(&dir);
             return dir;
         }
+        // Index exists but active_profile_id not found — pick the first profile
+        // or create a fresh one.  Never fall back to root app_data_dir().
+        if let Some(first) = index.profiles.first() {
+            eprintln!(
+                "[storage] WARNING: active_profile_id '{}' not found in index, falling back to first profile '{}'",
+                index.active_profile_id, first.id
+            );
+            let dir = profiles_dir().join(&first.dir_name);
+            let _ = fs::create_dir_all(&dir);
+            return dir;
+        }
     }
-    // Legacy fallback — root app data dir
-    app_data_dir()
+    // No index or empty index — create a default profile instead of falling
+    // back to the root app data dir (which causes cross-profile data leaks).
+    eprintln!("[storage] WARNING: no profile index — creating default profile");
+    let meta = create_profile("Default", "chart", false)
+        .expect("failed to create default profile");
+    profiles_dir().join(&meta.dir_name)
 }
 
 // =============================================================================
