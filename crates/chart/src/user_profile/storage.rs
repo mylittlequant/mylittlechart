@@ -337,51 +337,62 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
     let json = fs::read_to_string(&path).ok()?;
     let mut index: ProfileIndex = serde_json::from_str(&json).ok()?;
 
-    // Migrate old profiles that don't have sync_level set.
-    // Read each profile's profile.json to determine the real level.
+    // Always derive sync_level from profile.json — it's the source of truth.
+    // index.json sync_level is just a UI cache, recomputed every load.
     let pdir = profiles_dir();
-    let mut needs_save = false;
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        #[serde(default)]
+        ota_enabled: bool,
+        #[serde(default)]
+        cloud_enabled: bool,
+        #[serde(default)]
+        sync_state: ProbeSync,
+        #[serde(default)]
+        sync_level: String,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct ProbeSync {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default)]
+        sync_vault: bool,
+        #[serde(default)]
+        sync_recovery_key: bool,
+    }
+    let mut changed = false;
     for meta in &mut index.profiles {
-        if meta.sync_level.is_empty() {
-            // Try to read profile.json to determine the actual level.
-            let profile_json = pdir.join(&meta.dir_name).join("profile.json");
-            let level = if let Ok(json) = fs::read_to_string(&profile_json) {
-                // Lightweight parse — only need a few fields.
-                #[derive(serde::Deserialize)]
-                struct Probe {
-                    #[serde(default)]
-                    ota_enabled: bool,
-                    #[serde(default)]
-                    cloud_enabled: bool,
-                    #[serde(default)]
-                    sync_state: ProbeSync,
-                }
-                #[derive(serde::Deserialize, Default)]
-                struct ProbeSync {
-                    #[serde(default)]
-                    enabled: bool,
-                }
-                if let Ok(p) = serde_json::from_str::<Probe>(&json) {
-                    if p.cloud_enabled && p.sync_state.enabled {
-                        "cloud"
-                    } else if p.ota_enabled {
-                        "connected"
-                    } else {
-                        "local"
-                    }
+        let profile_json = pdir.join(&meta.dir_name).join("profile.json");
+        let level = if let Ok(json) = fs::read_to_string(&profile_json) {
+            if let Ok(p) = serde_json::from_str::<Probe>(&json) {
+                // If profile.json already has an explicit sync_level, trust it.
+                if !p.sync_level.is_empty() {
+                    p.sync_level
+                } else if p.cloud_enabled && p.sync_state.enabled
+                    && (p.sync_state.sync_vault || p.sync_state.sync_recovery_key)
+                {
+                    "cloud_zt".to_string()
+                } else if p.cloud_enabled && p.sync_state.enabled {
+                    "cloud".to_string()
+                } else if p.ota_enabled {
+                    "connected".to_string()
                 } else {
-                    "local"
+                    "local".to_string()
                 }
             } else {
-                "local"
-            };
-            meta.sync_level = level.to_string();
-            // Also fix cloud_enabled in index to match reality.
-            meta.cloud_enabled = level == "cloud" || level == "cloud_zt";
-            needs_save = true;
+                "local".to_string()
+            }
+        } else {
+            "local".to_string()
+        };
+        let cloud = level == "cloud" || level == "cloud_zt";
+        if meta.sync_level != level || meta.cloud_enabled != cloud {
+            meta.sync_level = level;
+            meta.cloud_enabled = cloud;
+            changed = true;
         }
     }
-    if needs_save {
+    if changed {
         let _ = save_profile_index(&index);
     }
 

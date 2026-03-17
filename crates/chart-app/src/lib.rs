@@ -5640,6 +5640,7 @@ impl ChartApp {
             bar_count: existing.bar_count,
             recalc_mode: existing.recalc_mode.clone(),
             cloud_enabled: existing.cloud_enabled,
+            sync_level: existing.sync_level.clone(),
             ota_enabled: self.panel_app.user_settings_state.ota_enabled,
             server_enabled: self.panel_app.user_settings_state.server_enabled,
             server_port: self.panel_app.user_settings_state.server_port,

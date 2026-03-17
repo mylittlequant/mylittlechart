@@ -5228,6 +5228,8 @@ impl ApplicationHandler for App<'_> {
                             }
                         };
                         self.profile.cloud_enabled = cloud;
+                        // Write sync_level into the profile itself (source of truth).
+                        self.profile_manager.profile.sync_level = level.to_string();
                         let _ = zengeld_chart::set_profile_sync_level(&self.profile.profile_id, cloud, level);
                         eprintln!("[App] sync_level = {}", level);
                         // Persist immediately — OTA restart may kill the process before save_all().

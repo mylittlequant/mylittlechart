@@ -241,6 +241,11 @@ pub struct UserProfile {
     #[serde(default)]
     pub cloud_enabled: bool,
 
+    /// Sync level: "local", "connected", "cloud", "cloud_zt".
+    /// Source of truth — index.json derives from this on every load.
+    #[serde(default)]
+    pub sync_level: String,
+
     /// Whether OTA (over-the-air) updates are enabled.
     ///
     /// When `false`, the app will not check for updates on startup.
@@ -416,6 +421,7 @@ impl UserProfile {
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
             cloud_enabled: false,
+            sync_level: String::new(),
             ota_enabled: true,
             telemetry_enabled: false,
             telemetry: TelemetryData::default(),
