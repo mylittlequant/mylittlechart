@@ -5487,6 +5487,12 @@ impl ApplicationHandler for App<'_> {
                             }
                         }
                         None
+                    } else if cmd_str == "list_cloud_profiles" {
+                        Some(UpdaterCommand::ListCloudProfiles)
+                    } else if let Some(profile_id) = cmd_str.strip_prefix("restore_cloud_profile:") {
+                        Some(UpdaterCommand::RestoreCloudProfile {
+                            profile_id: profile_id.to_string(),
+                        })
                     } else {
                         eprintln!("[App] unknown updater command: {}", cmd_str);
                         None
@@ -5737,6 +5743,30 @@ impl ApplicationHandler for App<'_> {
                             false,
                             false,
                         ),
+                        zengeld_updater::SyncStatus::CloudProfilesLoaded(_) => (
+                            "Idle".to_string(),
+                            "#888888".to_string(),
+                            false,
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::CloudProfilesError(msg) => (
+                            format!("Cloud profiles error: {}", msg),
+                            "#d9534f".to_string(),
+                            false,
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::ProfileRestored { .. } => (
+                            "Idle".to_string(),
+                            "#888888".to_string(),
+                            false,
+                            false,
+                        ),
+                        zengeld_updater::SyncStatus::ProfileRestoreError(msg) => (
+                            format!("Restore error: {}", msg),
+                            "#d9534f".to_string(),
+                            false,
+                            false,
+                        ),
                     };
 
                 let is_completed = matches!(
@@ -5752,6 +5782,40 @@ impl ApplicationHandler for App<'_> {
                 // Show it once per launch: only if the banner has not already been shown.
                 let compose_launch_banner = is_completed;
 
+                // Pre-extract cloud profile state changes before the windows loop
+                // so we can call methods that need &mut self after the loop.
+                let cloud_profiles_loaded: Option<Vec<zengeld_chart::ui::modal_settings::CloudProfileEntry>> =
+                    if let zengeld_updater::SyncStatus::CloudProfilesLoaded(ref profiles) = sync_status {
+                        Some(profiles.iter().map(|p| zengeld_chart::ui::modal_settings::CloudProfileEntry {
+                            profile_id: p.profile_id.clone(),
+                            item_count: p.item_count,
+                            total_bytes: p.total_bytes,
+                            last_modified: p.last_modified,
+                            has_vault: p.has_vault,
+                            has_recovery_key: p.has_recovery_key,
+                        }).collect())
+                    } else {
+                        None
+                    };
+                let cloud_profiles_error: Option<String> =
+                    if let zengeld_updater::SyncStatus::CloudProfilesError(ref msg) = sync_status {
+                        Some(msg.clone())
+                    } else {
+                        None
+                    };
+                let profile_restored: Option<String> =
+                    if let zengeld_updater::SyncStatus::ProfileRestored { ref profile_id } = sync_status {
+                        Some(profile_id.clone())
+                    } else {
+                        None
+                    };
+                let profile_restore_error: Option<String> =
+                    if let zengeld_updater::SyncStatus::ProfileRestoreError(ref msg) = sync_status {
+                        Some(msg.clone())
+                    } else {
+                        None
+                    };
+
                 for pw in self.windows.values_mut() {
                     let uss = &mut pw.chart.panel_app.user_settings_state;
                     uss.sync_status_label = label.clone();
@@ -5760,6 +5824,24 @@ impl ApplicationHandler for App<'_> {
 
                     if is_completed {
                         uss.last_sync_timestamp = now_ts;
+                    }
+
+                    // ── Cloud profile restore state updates ───────────────────
+                    if let Some(ref profiles) = cloud_profiles_loaded {
+                        uss.cloud_profiles = profiles.clone();
+                        uss.cloud_profiles_loading = false;
+                        uss.cloud_profiles_error.clear();
+                    }
+                    if let Some(ref msg) = cloud_profiles_error {
+                        uss.cloud_profiles_loading = false;
+                        uss.cloud_profiles_error = msg.clone();
+                    }
+                    if profile_restored.is_some() {
+                        uss.restoring_profile_id = None;
+                    }
+                    if let Some(ref msg) = profile_restore_error {
+                        uss.restoring_profile_id = None;
+                        uss.cloud_profiles_error = msg.clone();
                     }
 
                     // Reset attestation_rejected on any non-error status
@@ -5791,6 +5873,29 @@ impl ApplicationHandler for App<'_> {
                         );
                         pw.chart.launch_banner_visible = true;
                         pw.chart.launch_banner_shown_at = Some(std::time::Instant::now());
+                    }
+                }
+
+                // ── ProfileRestored: refresh the local profile index ──────────
+                // Must be done after the windows loop because sync_profiles_to_windows
+                // needs &mut self which conflicts with the pw borrow above.
+                if let Some(ref restored_id) = profile_restored {
+                    eprintln!("[App] ProfileRestored: refreshing index for profile {}", restored_id);
+                    self.profile_manager.refresh_index();
+                    self.sync_profiles_to_windows();
+                    // Remove the restored profile from cloud_profiles in all windows
+                    // (it now exists locally, no need to offer restore again).
+                    let rid = restored_id.clone();
+                    for pw in self.windows.values_mut() {
+                        let uss = &mut pw.chart.panel_app.user_settings_state;
+                        uss.cloud_profiles.retain(|cp| cp.profile_id != rid);
+                    }
+                    // Re-fetch the cloud list so the server-side view is also current.
+                    if let Some(ref handle) = self.updater_handle {
+                        let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
+                        for pw in self.windows.values_mut() {
+                            pw.chart.panel_app.user_settings_state.cloud_profiles_loading = true;
+                        }
                     }
                 }
 

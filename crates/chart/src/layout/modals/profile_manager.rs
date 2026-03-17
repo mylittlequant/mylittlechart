@@ -108,7 +108,33 @@ fn render_page_profile_list(
     // ── Modal geometry ────────────────────────────────────────────────────────
     let modal_w: f64 = 500.0;
     let profile_row_h: f64 = 52.0;
+    let cloud_row_h: f64 = 44.0;
     let n = state.profiles_with_vault_status.len();
+
+    // Filter cloud profiles: exclude any that are already present locally.
+    let local_ids: std::collections::HashSet<&str> = state
+        .profiles_with_vault_status
+        .iter()
+        .map(|(id, _, _, _, _)| id.as_str())
+        .collect();
+    let cloud_profiles_to_show: Vec<&crate::ui::modal_settings::CloudProfileEntry> = state
+        .cloud_profiles
+        .iter()
+        .filter(|cp| !local_ids.contains(cp.profile_id.as_str()))
+        .collect();
+    let has_cloud_section = !cloud_profiles_to_show.is_empty()
+        || state.cloud_profiles_loading
+        || !state.cloud_profiles_error.is_empty();
+
+    let cloud_section_h: f64 = if has_cloud_section {
+        24.0                                                          // section header
+        + cloud_profiles_to_show.len() as f64 * (cloud_row_h + 6.0) // rows
+        + (if state.cloud_profiles_loading || !state.cloud_profiles_error.is_empty() { 24.0 } else { 0.0 })
+        + 8.0                                                         // bottom gap
+    } else {
+        0.0
+    };
+
     let calculated_h: f64 = 30.0       // top pad
         + 28.0                          // title
         + 20.0                          // subtitle
@@ -116,6 +142,8 @@ fn render_page_profile_list(
         + n as f64 * (profile_row_h + 6.0) // rows + gaps
         + 12.0                          // gap before button
         + 36.0                          // create button
+        + 16.0                          // gap before cloud section (or bottom pad)
+        + cloud_section_h
         + 24.0;                         // bottom pad
     let modal_h = calculated_h.clamp(160.0, window_h - 80.0);
     let modal_x = (window_w - modal_w) / 2.0;
@@ -312,6 +340,153 @@ fn render_page_profile_list(
         Sense::CLICK,
         layer_id,
     );
+    cy += create_btn_h;
+
+    // ── CLOUD PROFILES section ────────────────────────────────────────────────
+    if has_cloud_section {
+        cy += 16.0;
+
+        // Section header row: "CLOUD PROFILES" label + "Refresh" link
+        ctx.set_font("bold 10px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("CLOUD PROFILES", inner_x, cy + 10.0);
+
+        // "Refresh" link on the right
+        let refresh_id = "profile_mgr:refresh_cloud_profiles";
+        let is_refresh_hovered = hovered == Some(refresh_id);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if is_refresh_hovered {
+            "rgba(244,205,99,0.9)"
+        } else {
+            "rgba(244,205,99,0.55)"
+        });
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text("Refresh", inner_x + inner_w, cy + 10.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        let refresh_rect = WidgetRect::new(inner_x + inner_w - 50.0, cy, 50.0, 20.0);
+        result.content_items.push((refresh_id.to_string(), refresh_rect));
+        input_coordinator.register_on_layer(
+            format!("user_settings:{}", refresh_id).as_str(),
+            refresh_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        cy += 24.0;
+
+        // Loading / error state
+        if state.cloud_profiles_loading {
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.45)");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text("Loading\u{2026}", inner_x, cy);
+            cy += 24.0;
+        } else if !state.cloud_profiles_error.is_empty() {
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(255,100,80,0.85)");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text(&state.cloud_profiles_error, inner_x, cy);
+            cy += 24.0;
+        }
+
+        // Cloud profile rows
+        for cp in &cloud_profiles_to_show {
+            let row_id = format!("profile_mgr:cloud_restore:{}", cp.profile_id);
+            let is_row_hovered = hovered == Some(row_id.as_str());
+
+            // Row background
+            let row_bg = if is_row_hovered {
+                "rgba(255,255,255,0.07)"
+            } else {
+                "rgba(255,255,255,0.03)"
+            };
+            ctx.set_fill_color(row_bg);
+            ctx.fill_rounded_rect(inner_x, cy, inner_w, cloud_row_h, 4.0);
+
+            let row_mid_y = cy + cloud_row_h / 2.0;
+
+            // Short profile ID (first 8 chars)
+            let short_id: String = cp.profile_id.chars().take(8).collect();
+            let display_label = if cp.has_vault {
+                format!("\u{1F512} {}", short_id)
+            } else {
+                short_id
+            };
+            ctx.set_font("bold 13px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.75)");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&display_label, inner_x + 8.0, row_mid_y);
+
+            // Item count + size
+            let size_str = if cp.total_bytes >= 1_048_576 {
+                format!(
+                    "{} items, {:.1} MB",
+                    cp.item_count,
+                    cp.total_bytes as f64 / 1_048_576.0
+                )
+            } else {
+                format!(
+                    "{} items, {} KB",
+                    cp.item_count,
+                    cp.total_bytes / 1024
+                )
+            };
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&size_str, inner_x + 8.0, row_mid_y + 13.0);
+
+            // Restore button (right side)
+            let btn_w = 60.0;
+            let btn_h = 22.0;
+            let btn_x = inner_x + inner_w - btn_w - 6.0;
+            let btn_y = row_mid_y - btn_h / 2.0;
+
+            let is_restoring = state.restoring_profile_id.as_deref() == Some(&cp.profile_id);
+            let btn_label = if is_restoring { "Restoring\u{2026}" } else { "Restore" };
+            let btn_bg = if is_restoring {
+                "rgba(100,100,100,0.4)"
+            } else if is_row_hovered {
+                "rgba(244,205,99,0.6)"
+            } else {
+                "rgba(244,205,99,0.30)"
+            };
+            ctx.set_fill_color(btn_bg);
+            ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
+
+            let btn_text_color = if is_restoring {
+                "rgba(200,200,200,0.7)"
+            } else {
+                "rgba(0,0,0,0.85)"
+            };
+            ctx.set_font("bold 10px sans-serif");
+            ctx.set_fill_color(btn_text_color);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(btn_label, btn_x + btn_w / 2.0, row_mid_y);
+            ctx.set_text_align(TextAlign::Left);
+
+            // Register row click area (covers entire row including button)
+            let row_rect = WidgetRect::new(inner_x, cy, inner_w, cloud_row_h);
+            result.content_items.push((row_id.clone(), row_rect));
+            if !is_restoring {
+                input_coordinator.register_on_layer(
+                    format!("user_settings:{}", row_id).as_str(),
+                    row_rect,
+                    Sense::CLICK | Sense::HOVER,
+                    layer_id,
+                );
+            }
+
+            cy += cloud_row_h + 6.0;
+        }
+    }
 }
 
 // =============================================================================

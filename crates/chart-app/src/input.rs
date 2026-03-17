@@ -7615,6 +7615,14 @@ impl ChartApp {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                         self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                         eprintln!("[ChartApp] profile_mgr: back to profile list");
+                        // Auto-fetch cloud profiles when returning to ProfileList (connected mode).
+                        if self.panel_app.user_settings_state.client_mode_connected
+                            && self.panel_app.user_settings_state.is_logged_in
+                        {
+                            self.panel_app.user_settings_state.cloud_profiles_loading = true;
+                            self.panel_app.user_settings_state.cloud_profiles_error.clear();
+                            self.pending_updater_cmd = Some("list_cloud_profiles".to_string());
+                        }
                     }
                 }
                 "profile_mgr:create_new" => {
@@ -7965,6 +7973,19 @@ impl ChartApp {
                     let id = &rest["profile_delete:".len()..];
                     self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
                     eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
+                }
+                "profile_mgr:refresh_cloud_profiles" => {
+                    self.panel_app.user_settings_state.cloud_profiles_loading = true;
+                    self.panel_app.user_settings_state.cloud_profiles_error.clear();
+                    self.pending_updater_cmd = Some("list_cloud_profiles".to_string());
+                    eprintln!("[ChartApp] profile_mgr: refresh cloud profiles requested");
+                }
+                rest if rest.starts_with("profile_mgr:cloud_restore:") => {
+                    let profile_id = rest["profile_mgr:cloud_restore:".len()..].to_string();
+                    self.panel_app.user_settings_state.restoring_profile_id = Some(profile_id.clone());
+                    self.panel_app.user_settings_state.cloud_profiles_error.clear();
+                    self.pending_updater_cmd = Some(format!("restore_cloud_profile:{}", profile_id));
+                    eprintln!("[ChartApp] profile_mgr: restore cloud profile id = {}", profile_id);
                 }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);

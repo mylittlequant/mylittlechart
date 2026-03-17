@@ -3229,6 +3229,31 @@ pub struct ManagedKeyInfo {
 /// Preferred new name for the key display info type.
 pub type LocalAgentKeyInfo = ManagedKeyInfo;
 
+// =============================================================================
+// Cloud Profile Entry
+// =============================================================================
+
+/// A local mirror of `zengeld_updater::cloud_sync::CloudProfileInfo`.
+///
+/// Stored in `UserSettingsState` without requiring the `zengeld-updater` crate
+/// as a dependency of `zengeld-chart`.  The binary crate converts from the
+/// updater type before writing into this state.
+#[derive(Clone, Debug, Default)]
+pub struct CloudProfileEntry {
+    /// UUID identifier for this profile.
+    pub profile_id: String,
+    /// Total number of sync items for this profile.
+    pub item_count: i64,
+    /// Total bytes across all sync items.
+    pub total_bytes: i64,
+    /// Unix timestamp (milliseconds) of the most recently modified item.
+    pub last_modified: i64,
+    /// Whether the server holds a `vault` category item for this profile.
+    pub has_vault: bool,
+    /// Whether the server holds a `recovery_key` category item for this profile.
+    pub has_recovery_key: bool,
+}
+
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
 pub struct UserSettingsState {
@@ -3426,6 +3451,16 @@ pub struct UserSettingsState {
     /// Whether the new profile name input field is focused for keyboard input.
     pub new_profile_name_focused: bool,
 
+    // ── Cloud Profile Restore ─────────────────────────────────────────────────
+    /// Cloud profiles loaded from server (profiles not present locally).
+    pub cloud_profiles: Vec<CloudProfileEntry>,
+    /// Whether cloud profiles are currently being fetched.
+    pub cloud_profiles_loading: bool,
+    /// Error message from the cloud profiles fetch.
+    pub cloud_profiles_error: String,
+    /// Profile ID currently being restored from cloud.
+    pub restoring_profile_id: Option<String>,
+
     // ── Set New Passphrase (post-recovery re-key) ─────────────────────────────
     /// In-memory buffer for the new passphrase during the SetNewPassphrase flow.
     /// Never persisted to disk.
@@ -3544,6 +3579,10 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             new_profile_name_focused: false,
+            cloud_profiles: Vec::new(),
+            cloud_profiles_loading: false,
+            cloud_profiles_error: String::new(),
+            restoring_profile_id: None,
             new_passphrase_editing: TextEditingState {
                 field_id: "new_passphrase".to_string(),
                 text: String::new(),
