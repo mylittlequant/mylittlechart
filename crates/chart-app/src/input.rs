@@ -7418,47 +7418,56 @@ impl ChartApp {
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
-                "telemetry_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.telemetry_enabled;
-                    self.panel_app.user_settings_state.telemetry_enabled = new_val;
-                    self.pending_updater_cmd = Some(if new_val {
-                        "set_telemetry_enabled:true".to_string()
-                    } else {
-                        "set_telemetry_enabled:false".to_string()
-                    });
-                    eprintln!("[ChartApp] telemetry_enabled = {}", new_val);
+                // ── Sync level radio handlers ──────────────────────────────────
+                "sync_level:local" => {
+                    let s = &mut self.panel_app.user_settings_state;
+                    s.ota_enabled = false;
+                    s.telemetry_enabled = false;
+                    s.sync_enabled = false;
+                    s.sync_vault_ui = false;
+                    s.sync_recovery_key_ui = false;
+                    self.pending_updater_cmd = Some("set_sync_level:local".to_string());
+                    eprintln!("[ChartApp] sync_level = local");
                 }
-                // ── Sync tab handlers ──────────────────────────────────────────
-                "sync_toggle" => {
-                    let new_val = !self.panel_app.user_settings_state.sync_enabled;
-                    self.panel_app.user_settings_state.sync_enabled = new_val;
-                    self.pending_updater_cmd = Some(if new_val {
-                        "set_sync_enabled:true".to_string()
-                    } else {
-                        "set_sync_enabled:false".to_string()
-                    });
-                    eprintln!("[ChartApp] sync_enabled = {}", new_val);
+                "sync_level:connected" => {
+                    let s = &mut self.panel_app.user_settings_state;
+                    s.ota_enabled = true;
+                    s.telemetry_enabled = true;
+                    s.sync_enabled = false;
+                    s.sync_vault_ui = false;
+                    s.sync_recovery_key_ui = false;
+                    self.pending_updater_cmd = Some("set_sync_level:connected".to_string());
+                    eprintln!("[ChartApp] sync_level = connected");
                 }
-                "sync_presets_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_presets;
-                    self.panel_app.user_settings_state.sync_presets = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_presets:{}", v));
+                "sync_level:cloud" => {
+                    let s = &mut self.panel_app.user_settings_state;
+                    s.ota_enabled = true;
+                    s.telemetry_enabled = true;
+                    s.sync_enabled = true;
+                    s.sync_presets = true;
+                    s.sync_templates = true;
+                    s.sync_watchlists = true;
+                    s.sync_theme_toggle = true;
+                    s.sync_vault_ui = false;
+                    s.sync_recovery_key_ui = false;
+                    self.pending_updater_cmd = Some("set_sync_level:cloud".to_string());
+                    eprintln!("[ChartApp] sync_level = cloud");
                 }
-                "sync_templates_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_templates;
-                    self.panel_app.user_settings_state.sync_templates = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_templates:{}", v));
+                "sync_level:cloud_zt" => {
+                    let s = &mut self.panel_app.user_settings_state;
+                    s.ota_enabled = true;
+                    s.telemetry_enabled = true;
+                    s.sync_enabled = true;
+                    s.sync_presets = true;
+                    s.sync_templates = true;
+                    s.sync_watchlists = true;
+                    s.sync_theme_toggle = true;
+                    s.sync_vault_ui = true;
+                    s.sync_recovery_key_ui = true;
+                    self.pending_updater_cmd = Some("set_sync_level:cloud_zt".to_string());
+                    eprintln!("[ChartApp] sync_level = cloud_zt");
                 }
-                "sync_watchlists_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_watchlists;
-                    self.panel_app.user_settings_state.sync_watchlists = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_watchlists:{}", v));
-                }
-                "sync_theme_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_theme_toggle;
-                    self.panel_app.user_settings_state.sync_theme_toggle = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_theme:{}", v));
-                }
+                // ── Vault sub-toggles (within Cloud+ZT level) ────────────────
                 "sync_vault_toggle" => {
                     let v = !self.panel_app.user_settings_state.sync_vault_ui;
                     self.panel_app.user_settings_state.sync_vault_ui = v;
@@ -7468,11 +7477,6 @@ impl ChartApp {
                     let v = !self.panel_app.user_settings_state.sync_recovery_key_ui;
                     self.panel_app.user_settings_state.sync_recovery_key_ui = v;
                     self.pending_updater_cmd = Some(format!("set_sync_recovery_key:{}", v));
-                }
-                "ota_toggle" => {
-                    let v = !self.panel_app.user_settings_state.ota_enabled;
-                    self.panel_app.user_settings_state.ota_enabled = v;
-                    self.pending_updater_cmd = Some(format!("set_ota_enabled:{}", v));
                 }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;

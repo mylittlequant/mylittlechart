@@ -398,8 +398,7 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 /// Create a new profile with the given display name, avatar, and cloud mode.
 ///
 /// Creates `profiles/{uuid}/profile.json` and adds the entry to the index.
-/// Does NOT switch the active profile.  The `cloud_enabled` flag is stored in
-/// ProfileMeta and is immutable after creation.
+/// Does NOT switch the active profile.
 pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = std::time::SystemTime::now()
@@ -447,6 +446,19 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
     save_profile_index(&index)?;
 
     Ok(meta)
+}
+
+/// Update the `cloud_enabled` flag for a profile in the index.
+///
+/// This must be called whenever the user toggles cloud sync so the
+/// profile list UI shows the correct Cloud/Offline badge.
+pub fn set_profile_cloud_enabled(profile_id: &str, enabled: bool) -> Result<(), String> {
+    let mut index = load_profile_index()
+        .ok_or_else(|| "No profile index found".to_string())?;
+    if let Some(meta) = index.profiles.iter_mut().find(|m| m.id == profile_id) {
+        meta.cloud_enabled = enabled;
+    }
+    save_profile_index(&index)
 }
 
 // =============================================================================

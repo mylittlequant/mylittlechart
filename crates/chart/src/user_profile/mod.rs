@@ -33,6 +33,7 @@ pub use storage::{
     active_profile_data_dir,
     migrate_legacy_profile_if_needed,
     create_profile,
+    set_profile_cloud_enabled,
     delete_profile,
     watchlists_path,
 };

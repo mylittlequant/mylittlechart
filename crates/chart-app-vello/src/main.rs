@@ -5161,43 +5161,76 @@ impl ApplicationHandler for App<'_> {
                         }
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetCloudEnabled(false))
-                    } else if cmd_str == "set_telemetry_enabled:true" {
-                        self.profile_manager.profile.telemetry_enabled = true;
-                        Some(UpdaterCommand::SetTelemetryEnabled(true))
-                    } else if cmd_str == "set_telemetry_enabled:false" {
-                        self.profile_manager.profile.telemetry_enabled = false;
-                        Some(UpdaterCommand::SetTelemetryEnabled(false))
-                    } else if cmd_str == "set_sync_enabled:true" {
-                        self.profile_manager.profile.sync_state.enabled = true;
-                        self.profile.cloud_enabled = true;
-                        self.profile_manager.profile.cloud_enabled = true;
-                        eprintln!("[App] sync enabled");
-                        // Sync requires cloud connection — enable it.
-                        let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                        Some(UpdaterCommand::SetSyncEnabled(true))
-                    } else if cmd_str == "set_sync_enabled:false" {
-                        self.profile_manager.profile.sync_state.enabled = false;
-                        Some(UpdaterCommand::SetSyncEnabled(false))
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_presets:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_presets = val;
-                        eprintln!("[App] sync_presets = {}", val);
+                    // ── Sync level commands ────────────────────────────────────
+                    } else if let Some(level) = cmd_str.strip_prefix("set_sync_level:") {
+                        let p = &mut self.profile_manager.profile;
+                        match level {
+                            "local" => {
+                                p.ota_enabled = false;
+                                p.telemetry_enabled = false;
+                                p.sync_state.enabled = false;
+                                p.cloud_enabled = false;
+                                self.profile.cloud_enabled = false;
+                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, false);
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(false));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(false));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
+                                eprintln!("[App] sync_level = local");
+                            }
+                            "connected" => {
+                                p.ota_enabled = true;
+                                p.telemetry_enabled = true;
+                                p.sync_state.enabled = false;
+                                p.cloud_enabled = false;
+                                self.profile.cloud_enabled = false;
+                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, false);
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
+                                eprintln!("[App] sync_level = connected");
+                            }
+                            "cloud" => {
+                                p.ota_enabled = true;
+                                p.telemetry_enabled = true;
+                                p.sync_state.enabled = true;
+                                p.sync_state.sync_presets = true;
+                                p.sync_state.sync_templates = true;
+                                p.sync_state.sync_watchlists = true;
+                                p.sync_state.sync_theme = true;
+                                p.sync_state.sync_vault = false;
+                                p.sync_state.sync_recovery_key = false;
+                                p.cloud_enabled = true;
+                                self.profile.cloud_enabled = true;
+                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, true);
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
+                                eprintln!("[App] sync_level = cloud");
+                            }
+                            "cloud_zt" => {
+                                p.ota_enabled = true;
+                                p.telemetry_enabled = true;
+                                p.sync_state.enabled = true;
+                                p.sync_state.sync_presets = true;
+                                p.sync_state.sync_templates = true;
+                                p.sync_state.sync_watchlists = true;
+                                p.sync_state.sync_theme = true;
+                                p.sync_state.sync_vault = true;
+                                p.sync_state.sync_recovery_key = true;
+                                p.cloud_enabled = true;
+                                self.profile.cloud_enabled = true;
+                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, true);
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
+                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
+                                eprintln!("[App] sync_level = cloud_zt");
+                            }
+                            _ => {
+                                eprintln!("[App] unknown sync_level: {}", level);
+                            }
+                        }
                         None
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_templates:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_templates = val;
-                        eprintln!("[App] sync_templates = {}", val);
-                        None
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_watchlists:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_watchlists = val;
-                        eprintln!("[App] sync_watchlists = {}", val);
-                        None
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_theme:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_theme = val;
-                        eprintln!("[App] sync_theme = {}", val);
-                        None
+                    // ── Vault sub-toggles (kept for granular ZT control) ─────────
                     } else if let Some(rest) = cmd_str.strip_prefix("set_sync_vault:") {
                         let val = rest == "true";
                         self.profile_manager.profile.sync_state.sync_vault = val;
@@ -5207,11 +5240,6 @@ impl ApplicationHandler for App<'_> {
                         let val = rest == "true";
                         self.profile_manager.profile.sync_state.sync_recovery_key = val;
                         eprintln!("[App] sync_recovery_key = {}", val);
-                        None
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_ota_enabled:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.ota_enabled = val;
-                        eprintln!("[App] ota_enabled = {}", val);
                         None
                     } else if cmd_str == "force_sync" {
                         Some(UpdaterCommand::ForceSync)

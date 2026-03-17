@@ -1207,182 +1207,132 @@ fn render_sync_tab(
         cy += banner_h + 8.0;
     }
 
-    // ── Section 1: CLOUD BACKUP ───────────────────────────────────────────────
+    // ── Section: SYNC LEVEL ───────────────────────────────────────────────────
+
+    // Determine current sync level from state fields
+    // Level 3 (Cloud+ZT): sync enabled AND at least one vault item enabled
+    // Level 2 (Cloud):    sync enabled AND no vault items
+    // Level 1 (Connected): OTA or telemetry enabled, no sync
+    // Level 0 (Local):    nothing enabled
+    #[derive(PartialEq, Clone, Copy)]
+    enum SyncLevel { Local, Connected, Cloud, CloudZt }
+
+    let current_level = if state.sync_enabled && (state.sync_vault_ui || state.sync_recovery_key_ui) {
+        SyncLevel::CloudZt
+    } else if state.sync_enabled {
+        SyncLevel::Cloud
+    } else if state.ota_enabled || state.telemetry_enabled {
+        SyncLevel::Connected
+    } else {
+        SyncLevel::Local
+    };
+
+    // Section header
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
     ctx.set_text_align(uzor::render::TextAlign::Left);
     ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("CLOUD BACKUP", x, cy);
+    ctx.fill_text("SYNC LEVEL", x, cy);
     cy += section_gap;
 
-    // Toggle: Cloud Backup (sync_enabled)
-    {
-        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Cloud Backup", state.sync_enabled, effective_text_color, toolbar_theme);
-        result.content_items.push(("sync_toggle".to_string(), row_rect));
+    // Radio rows — (level, click_id, label, description)
+    let radio_rows: &[(SyncLevel, &str, &str, &str)] = &[
+        (SyncLevel::Local,     "local",     "Local",      "No network activity. Data stays on this device."),
+        (SyncLevel::Connected, "connected", "Connected",  "Auto-updates + telemetry."),
+        (SyncLevel::Cloud,     "cloud",     "Cloud",      "+ presets, templates, watchlists, theme."),
+        (SyncLevel::CloudZt,   "cloud_zt",  "Cloud + ZT", "+ encrypted vault sync."),
+    ];
+
+    let radio_row_h = 28.0;
+    let radio_circle_r = 5.0;
+    let radio_cx = x + radio_circle_r;
+
+    for (level, id, label, desc) in radio_rows {
+        let is_active = *level == current_level;
+        let row_rect = uzor::types::Rect::new(x, cy, available_w, radio_row_h);
+
+        // Register click area
         if !sync_tab_locked {
+            let click_id = format!("user_settings:sync_level:{}", id);
+            result.content_items.push((format!("sync_level:{}", id), row_rect));
             input_coordinator.register_on_layer(
-                "user_settings:sync_toggle",
+                &*click_id,
                 row_rect,
                 uzor::input::sense::Sense::CLICK,
                 layer_id,
             );
         }
-    }
-    cy += row_gap;
 
-    // ── Live Sync Status Row ──────────────────────────────────────────────────
-    {
-        let dot_char = "\u{25CF}"; // filled circle ●
+        // Draw radio circle (vertically centred in the row)
+        let circle_cy = cy + radio_row_h / 2.0;
+
+        if is_active {
+            // Filled gold circle
+            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.begin_path();
+            ctx.arc(radio_cx, circle_cy, radio_circle_r, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        } else {
+            // Empty ring in muted colour
+            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.arc(radio_cx, circle_cy, radio_circle_r, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+        }
+
+        // Label
+        let label_color = if is_active { effective_text_color } else { "rgba(254,255,238,0.45)" };
         ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(&state.sync_status_color);
+        ctx.set_fill_color(label_color);
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text(label, x + radio_circle_r * 2.0 + 8.0, circle_cy);
+
+        // Description (right-aligned, muted)
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(uzor::render::TextAlign::Right);
+        ctx.fill_text(desc, x + available_w, circle_cy);
         ctx.set_text_align(uzor::render::TextAlign::Left);
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text(dot_char, x, cy);
 
-        ctx.set_fill_color(effective_text_color);
-        ctx.fill_text(&state.sync_status_label, x + 14.0, cy);
-        cy += 16.0;
-
-        let ts_str = if state.last_sync_timestamp > 0 {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            let elapsed = (now - state.last_sync_timestamp).max(0) as u64;
-            let mins = elapsed / 60;
-            let hours = mins / 60;
-            let days = hours / 24;
-            format!("Last synced: {}d {}h ago", days, hours % 24)
-        } else {
-            "Last synced: Never".to_string()
-        };
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.45)");
-        ctx.fill_text(&ts_str, x, cy);
-        cy += 18.0;
+        cy += radio_row_h;
     }
 
-    // ── Storage Usage Bar ─────────────────────────────────────────────────────
-    {
-        const QUOTA_LIMIT_BYTES: i64 = 50 * 1024 * 1024; // 50 MB
+    cy += 8.0;
 
-        if state.quota_used_bytes == 0 {
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.30)");
-            ctx.set_text_align(uzor::render::TextAlign::Left);
-            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-            ctx.fill_text("Storage: \u{2014}", x, cy);
-            cy += 20.0;
-        } else {
-            let used_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
-            let limit_mb = QUOTA_LIMIT_BYTES as f64 / (1024.0 * 1024.0);
-            let used_pct = (state.quota_used_bytes as f64 / QUOTA_LIMIT_BYTES as f64).min(1.0);
+    // ── VAULT SYNC sub-section (only when Cloud+ZT is selected) ───────────────
+    if current_level == SyncLevel::CloudZt {
+        // Divider line
+        ctx.set_stroke_color("rgba(254,255,238,0.12)");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, cy);
+        ctx.line_to(x + available_w, cy);
+        ctx.stroke();
+        cy += 10.0;
 
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.55)");
-            ctx.set_text_align(uzor::render::TextAlign::Left);
-            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-            ctx.fill_text("Storage", x, cy);
-
-            let used_str = format!("{:.1} MB / {:.0} MB", used_mb, limit_mb);
-            ctx.set_text_align(uzor::render::TextAlign::Right);
-            ctx.fill_text(&used_str, x + available_w, cy);
-            ctx.set_text_align(uzor::render::TextAlign::Left);
-            cy += 14.0;
-
-            let bar_h = 8.0;
-            ctx.set_fill_color("#333333");
-            ctx.fill_rounded_rect(x, cy, available_w, bar_h, 3.0);
-
-            let fill_color = if used_pct >= 0.90 {
-                "#d9534f"
-            } else if used_pct >= 0.70 {
-                "#f0ad4e"
-            } else {
-                "#5cb85c"
-            };
-            let fill_w = available_w * used_pct;
-            if fill_w > 0.0 {
-                ctx.set_fill_color(fill_color);
-                ctx.fill_rounded_rect(x, cy, fill_w, bar_h, 3.0);
-            }
-            cy += bar_h + 8.0;
-        }
-    }
-
-    cy += section_gap;
-
-    // ── Section 2: WHAT TO SYNC (only shown when sync is enabled) ─────────────
-    if state.sync_enabled && !sync_tab_locked {
+        // Sub-section header
         ctx.set_font("600 11px sans-serif");
         ctx.set_fill_color("rgba(244,205,99,0.7)");
         ctx.set_text_align(uzor::render::TextAlign::Left);
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("WHAT TO SYNC", x, cy);
+        ctx.fill_text("VAULT SYNC", x, cy);
         cy += section_gap;
-
-        // Toggle: Presets
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "Presets", state.sync_presets, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_presets_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_presets_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
-        }
-        cy += row_gap;
-
-        // Toggle: Templates
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "Templates", state.sync_templates, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_templates_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_templates_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
-        }
-        cy += row_gap;
-
-        // Toggle: Watchlists
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "Watchlists", state.sync_watchlists, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_watchlists_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_watchlists_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
-        }
-        cy += row_gap;
-
-        // Toggle: Theme
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "Theme", state.sync_theme_toggle, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_theme_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_theme_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
-        }
-        cy += row_gap;
 
         // Toggle: API Keys (Vault)
         {
             let row_rect = render_toggle_row(ctx, x, cy, available_w, "API Keys (Vault)", state.sync_vault_ui, effective_text_color, toolbar_theme);
             result.content_items.push(("sync_vault_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_vault_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
+            if !sync_tab_locked {
+                input_coordinator.register_on_layer(
+                    "user_settings:sync_vault_toggle",
+                    row_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
         }
         cy += row_gap;
 
@@ -1390,72 +1340,119 @@ fn render_sync_tab(
         {
             let row_rect = render_toggle_row(ctx, x, cy, available_w, "Recovery Key", state.sync_recovery_key_ui, effective_text_color, toolbar_theme);
             result.content_items.push(("sync_recovery_key_toggle".to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                "user_settings:sync_recovery_key_toggle",
-                row_rect,
-                uzor::input::sense::Sense::CLICK,
-                layer_id,
-            );
+            if !sync_tab_locked {
+                input_coordinator.register_on_layer(
+                    "user_settings:sync_recovery_key_toggle",
+                    row_rect,
+                    uzor::input::sense::Sense::CLICK,
+                    layer_id,
+                );
+            }
         }
         cy += row_gap;
 
-        // Muted note
+        // Muted encryption note
         ctx.set_font("10px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(uzor::render::TextAlign::Left);
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);
         ctx.fill_text("Your data is encrypted before leaving this device.", x, cy);
         cy += 18.0;
 
-        cy += section_gap;
+        cy += 8.0;
     }
 
-    // ── Section 3: UPDATES & PRIVACY (always shown) ────────────────────────────
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("UPDATES & PRIVACY", x, cy);
-    cy += section_gap;
+    // ── Sync status + storage bar (shown when level >= Cloud) ─────────────────
+    if current_level == SyncLevel::Cloud || current_level == SyncLevel::CloudZt {
+        // Divider line
+        ctx.set_stroke_color("rgba(254,255,238,0.12)");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, cy);
+        ctx.line_to(x + available_w, cy);
+        ctx.stroke();
+        cy += 10.0;
 
-    // Toggle: Auto-Updates (OTA)
-    {
-        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Auto-Updates (OTA)", state.ota_enabled, text_color, toolbar_theme);
-        result.content_items.push(("ota_toggle".to_string(), row_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:ota_toggle",
-            row_rect,
-            uzor::input::sense::Sense::CLICK,
-            layer_id,
-        );
+        // Live sync status dot + label
+        {
+            let dot_char = "\u{25CF}"; // filled circle ●
+            ctx.set_font("13px sans-serif");
+            ctx.set_fill_color(&state.sync_status_color);
+            ctx.set_text_align(uzor::render::TextAlign::Left);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text(dot_char, x, cy);
+
+            ctx.set_fill_color(effective_text_color);
+            ctx.fill_text(&state.sync_status_label, x + 14.0, cy);
+            cy += 16.0;
+
+            let ts_str = if state.last_sync_timestamp > 0 {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let elapsed = (now - state.last_sync_timestamp).max(0) as u64;
+                let mins = elapsed / 60;
+                let hours = mins / 60;
+                let days = hours / 24;
+                format!("Last synced: {}d {}h ago", days, hours % 24)
+            } else {
+                "Last synced: Never".to_string()
+            };
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.45)");
+            ctx.fill_text(&ts_str, x, cy);
+            cy += 18.0;
+        }
+
+        // Storage usage bar
+        {
+            const QUOTA_LIMIT_BYTES: i64 = 50 * 1024 * 1024; // 50 MB
+
+            if state.quota_used_bytes == 0 {
+                ctx.set_font("11px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.30)");
+                ctx.set_text_align(uzor::render::TextAlign::Left);
+                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+                ctx.fill_text("Storage: \u{2014}", x, cy);
+                cy += 20.0;
+            } else {
+                let used_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
+                let limit_mb = QUOTA_LIMIT_BYTES as f64 / (1024.0 * 1024.0);
+                let used_pct = (state.quota_used_bytes as f64 / QUOTA_LIMIT_BYTES as f64).min(1.0);
+
+                ctx.set_font("11px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.55)");
+                ctx.set_text_align(uzor::render::TextAlign::Left);
+                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+                ctx.fill_text("Storage", x, cy);
+
+                let used_str = format!("{:.1} MB / {:.0} MB", used_mb, limit_mb);
+                ctx.set_text_align(uzor::render::TextAlign::Right);
+                ctx.fill_text(&used_str, x + available_w, cy);
+                ctx.set_text_align(uzor::render::TextAlign::Left);
+                cy += 14.0;
+
+                let bar_h = 8.0;
+                ctx.set_fill_color("#333333");
+                ctx.fill_rounded_rect(x, cy, available_w, bar_h, 3.0);
+
+                let fill_color = if used_pct >= 0.90 {
+                    "#d9534f"
+                } else if used_pct >= 0.70 {
+                    "#f0ad4e"
+                } else {
+                    "#5cb85c"
+                };
+                let fill_w = available_w * used_pct;
+                if fill_w > 0.0 {
+                    ctx.set_fill_color(fill_color);
+                    ctx.fill_rounded_rect(x, cy, fill_w, bar_h, 3.0);
+                }
+                cy += bar_h + 8.0;
+            }
+        }
     }
-    cy += row_gap;
-
-    // Muted note: OTA
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("Checks for updates on startup.", x, cy);
-    cy += 18.0;
-
-    // Toggle: Anonymous Telemetry
-    {
-        let row_rect = render_toggle_row(ctx, x, cy, available_w, "Anonymous Telemetry", state.telemetry_enabled, text_color, toolbar_theme);
-        result.content_items.push(("telemetry_toggle".to_string(), row_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:telemetry_toggle",
-            row_rect,
-            uzor::input::sense::Sense::CLICK,
-            layer_id,
-        );
-    }
-    cy += row_gap;
-
-    // Muted note: Telemetry
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("Sends anonymous usage stats. No personal data.", x, cy);
-    cy += 18.0;
 
     cy += 8.0;
     let total_content_h = cy - container.content_y() + container.scroll_offset();

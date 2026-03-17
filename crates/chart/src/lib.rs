@@ -471,6 +471,7 @@ pub use user_profile::{
     load_profile_index,
     save_profile_index,
     create_profile,
+    set_profile_cloud_enabled,
     delete_profile,
 };
 
