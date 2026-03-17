@@ -3430,8 +3430,8 @@ pub struct UserSettingsState {
     /// the truly-active profile so that Rename/Avatar/Delete buttons appear on the
     /// correct row.
     pub runtime_profile_id: String,
-    /// All available profiles as (id, display_name, avatar, client_mode) tuples.
-    pub available_profiles: Vec<(String, String, String, bool)>,
+    /// All available profiles as (id, display_name, avatar, sync_level) tuples.
+    pub available_profiles: Vec<(String, String, String, String)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
     /// Text editing state for the inline rename input.

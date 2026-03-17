@@ -536,7 +536,7 @@ fn render_vault_profile_picker(
     let hovered = state.hovered_item_id.as_deref();
 
     // Collect profiles excluding the currently locked one.
-    let other_profiles: Vec<&(String, String, String, bool)> = state
+    let other_profiles: Vec<&(String, String, String, String)> = state
         .available_profiles
         .iter()
         .filter(|(id, _, _, _)| id != &state.profile_id)
@@ -601,7 +601,7 @@ fn render_vault_profile_picker(
     cy += 24.0 + 12.0; // subtitle + gap
 
     // ── Profile rows ─────────────────────────────────────────────────────────
-    for (id, name, _avatar, mode) in &other_profiles {
+    for (id, name, _avatar, sync_level) in &other_profiles {
         let widget_id = format!("vault_picker_profile:{}", id);
         let is_row_hovered = hovered == Some(widget_id.as_str());
 
@@ -622,7 +622,12 @@ fn render_vault_profile_picker(
         ctx.fill_text(name.as_str(), inner_x + 12.0, row_mid_y);
 
         // Client mode badge (10px, dimmed, right-aligned)
-        let badge_label = if *mode { "Connected" } else { "Standalone" };
+        let badge_label = match sync_level.as_str() {
+            "cloud_zt" => "Cloud ZT",
+            "cloud" => "Cloud",
+            "connected" => "Connected",
+            _ => "Local",
+        };
         ctx.set_font("10px sans-serif");
         ctx.set_fill_color("rgba(254,255,238,0.35)");
         ctx.set_text_align(TextAlign::Right);

@@ -2281,7 +2281,7 @@ impl App<'_> {
                     .parent()
                     .map(|p| p.to_path_buf());
                 uss.available_profiles = index.profiles.iter().map(|m| {
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled)
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.sync_level.clone())
                 }).collect();
                 uss.profiles_with_vault_status = index.profiles.iter().map(|m| {
                     let has_vault = if let Some(ref pd) = profiles_dir {
@@ -2297,7 +2297,7 @@ impl App<'_> {
                     uss.profile_id.clone(),
                     uss.profile_display_name.clone(),
                     uss.profile_avatar.clone(),
-                    false,
+                    "local".to_string(),
                 )];
             }
         }
@@ -2439,9 +2439,9 @@ impl App<'_> {
             .iter()
             .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled, p.has_vault, p.sync_level.clone()))
             .collect();
-        let available: Vec<(String, String, String, bool)> = profiles
+        let available: Vec<(String, String, String, String)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.sync_level.clone()))
             .collect();
         for pw in self.windows.values_mut() {
             pw.chart.panel_app.user_settings_state.available_profiles = available.clone();
@@ -4648,7 +4648,7 @@ impl ApplicationHandler for App<'_> {
                         .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
                         .unwrap_or_default();
                     let current_id = self.profile_manager.profile.profile_id.clone();
-                    if !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock {
+                    if !target_id.is_empty() && target_id != current_id {
                         // Find the target profile's data dir
                         let profiles_dir = zengeld_chart::active_profile_data_dir()
                             .parent()

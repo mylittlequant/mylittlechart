@@ -604,7 +604,7 @@ fn render_profile_section(
     let btn_gap = 6.0;
     let small_btn_w = 46.0;
 
-    for (id, name, avatar, mode) in &state.available_profiles {
+    for (id, name, avatar, sync_level) in &state.available_profiles {
         // Use runtime_profile_id (the ACTUALLY loaded profile) so that buttons
         // remain on the correct row even after a pending profile_switch.
         let is_active = *id == state.runtime_profile_id;
@@ -762,7 +762,12 @@ fn render_profile_section(
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(name.as_str(), name_x, row_cy);
 
-            let mode_label = if *mode { " (connected)" } else { " (standalone)" };
+            let mode_label = match sync_level.as_str() {
+                "cloud_zt" => " (Cloud ZT)",
+                "cloud" => " (Cloud)",
+                "connected" => " (Connected)",
+                _ => " (Local)",
+            };
             let mode_tag_x = name_x + name.chars().count() as f64 * 7.5 + 4.0;
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color("rgba(254,255,238,0.35)");
