@@ -4335,7 +4335,9 @@ impl ChartApp {
         // sidebar_scene on top via Scene::append, visually covering these
         // pixels when the scene is unchanged.
         let out_last_sidebar_result: Option<sidebar_content::render::RightSidebarResult>;
-        if self.sidebar_state.is_right_open() {
+        let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
+            || self.panel_app.user_settings_state.show_welcome_wizard;
+        if self.sidebar_state.is_right_open() && !skeleton_active {
             let top_h = panel_layout.top_toolbar_rect.height;
             let bottom_h = panel_layout.bottom_toolbar_rect.height;
             let sidebar_x = content_rect.x + content_rect.width;

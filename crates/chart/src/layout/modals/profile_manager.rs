@@ -116,49 +116,11 @@ fn render_page_profile_list(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    // ── Modal geometry ────────────────────────────────────────────────────────
-    let modal_w: f64 = 500.0;
-    let profile_row_h: f64 = 52.0;
-    let cloud_row_h: f64 = 44.0;
-    let n = state.profiles_with_vault_status.len();
-
-    // Filter cloud profiles: exclude any that are already present locally.
-    let local_ids: std::collections::HashSet<&str> = state
-        .profiles_with_vault_status
-        .iter()
-        .map(|(id, _, _, _, _, _)| id.as_str())
-        .collect();
-    let cloud_profiles_to_show: Vec<&crate::ui::modal_settings::CloudProfileEntry> = state
-        .cloud_profiles
-        .iter()
-        .filter(|cp| !local_ids.contains(cp.profile_id.as_str()))
-        .collect();
-    let has_cloud_section = !cloud_profiles_to_show.is_empty()
-        || state.cloud_profiles_loading
-        || !state.cloud_profiles_error.is_empty();
-
-    let cloud_section_h: f64 = if has_cloud_section {
-        24.0                                                          // section header
-        + cloud_profiles_to_show.len() as f64 * (cloud_row_h + 6.0) // rows
-        + (if state.cloud_profiles_loading || !state.cloud_profiles_error.is_empty() { 24.0 } else { 0.0 })
-        + 8.0                                                         // bottom gap
-    } else {
-        0.0
-    };
-
-    let calculated_h: f64 = 30.0       // top pad
-        + 28.0                          // title
-        + 20.0                          // subtitle
-        + 16.0                          // gap
-        + n as f64 * (profile_row_h + 6.0) // rows + gaps
-        + 12.0                          // gap before button
-        + 36.0                          // create button
-        + 16.0                          // gap before cloud section (or bottom pad)
-        + cloud_section_h
-        + 24.0;                         // bottom pad
-    let modal_h = calculated_h.clamp(160.0, content_h - 80.0);
-    let modal_x = content_x + (content_w - modal_w) / 2.0;
-    let modal_y = content_y + (content_h - modal_h) / 2.0;
+    // ── Full-area modal geometry ──────────────────────────────────────────────
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
 
     // Modal background + border
     ctx.set_fill_color("rgba(24,26,32,0.98)");
@@ -175,15 +137,198 @@ fn render_page_profile_list(
         layer_id,
     );
 
-    let padding = 28.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 30.0;
+    // ── Split layout ─────────────────────────────────────────────────────────
+    // Left column: account info, updates
+    // Right column: profile list, create button, cloud profiles
+    let left_col_w: f64 = 240.0;
+    let divider_x = modal_x + left_col_w;
+    let right_col_x = divider_x + 1.0;
+    let right_col_w = modal_w - left_col_w - 1.0;
 
-    // Close button (×) — only when a live profile is running
-    if !state.runtime_profile_id.is_empty() {
+    // Vertical divider
+    ctx.set_stroke_color("rgba(255,255,255,0.08)");
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(divider_x, modal_y + 20.0);
+    ctx.line_to(divider_x, modal_y + modal_h - 20.0);
+    ctx.stroke();
+
+    // ── LEFT COLUMN: Account panel ────────────────────────────────────────────
+    let left_pad = 20.0;
+    let left_inner_x = modal_x + left_pad;
+    let left_inner_w = left_col_w - left_pad * 2.0;
+    let mut left_cy = modal_y + 28.0;
+
+    // "ACCOUNT" section header
+    ctx.set_font("bold 10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("ACCOUNT", left_inner_x, left_cy);
+    left_cy += 20.0;
+
+    if state.is_logged_in {
+        // Display name
+        ctx.set_font("bold 14px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(&state.auth_display_name, left_inner_x, left_cy);
+        left_cy += 20.0;
+
+        // Provider label
+        if !state.auth_provider.is_empty() {
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(254,255,238,0.45)");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text(&format!("via {}", state.auth_provider), left_inner_x, left_cy);
+            left_cy += 18.0;
+        }
+
+        left_cy += 10.0;
+
+        // Connection status dot + text
+        let status_color = if state.client_mode_connected {
+            "rgba(80,200,120,0.85)"
+        } else {
+            "rgba(255,180,50,0.75)"
+        };
+        let status_label = if state.client_mode_connected { "Connected" } else { "Offline" };
+        ctx.set_fill_color(status_color);
+        ctx.fill_rounded_rect(left_inner_x, left_cy + 4.0, 6.0, 6.0, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(status_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(status_label, left_inner_x + 10.0, left_cy);
+        left_cy += 22.0;
+
+        left_cy += 8.0;
+
+        // "Log Out" button
+        let logout_btn_h = 30.0;
+        let logout_id = "profile_mgr:logout";
+        let is_logout_hovered = hovered == Some(logout_id);
+        let logout_bg = if is_logout_hovered {
+            "rgba(255,80,80,0.35)"
+        } else {
+            "rgba(255,80,80,0.15)"
+        };
+        ctx.set_fill_color(logout_bg);
+        ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, logout_btn_h, 4.0);
+        ctx.set_font("bold 11px sans-serif");
+        ctx.set_fill_color(if is_logout_hovered {
+            "rgba(255,120,100,1.0)"
+        } else {
+            "rgba(255,120,100,0.75)"
+        });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Log Out", left_inner_x + left_inner_w / 2.0, left_cy + logout_btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        let logout_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, logout_btn_h);
+        result.content_items.push((logout_id.to_string(), logout_rect));
+        input_coordinator.register_on_layer(
+            format!("user_settings:{}", logout_id).as_str(),
+            logout_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        left_cy += logout_btn_h;
+    } else {
+        // Not logged in — brief description
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.40)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Sign in to enable cloud", left_inner_x, left_cy);
+        left_cy += 16.0;
+        ctx.fill_text("sync and profile backup.", left_inner_x, left_cy);
+        left_cy += 24.0;
+
+        // "Sign In via Browser" button
+        let signin_btn_h = 32.0;
+        let signin_id = "profile_mgr:sign_in";
+        let is_signin_hovered = hovered == Some(signin_id);
+        let signin_bg = if is_signin_hovered {
+            "rgba(255,255,255,0.92)"
+        } else {
+            toolbar_theme.accent.as_str()
+        };
+        ctx.set_fill_color(signin_bg);
+        ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, signin_btn_h, 4.0);
+        ctx.set_font("bold 11px sans-serif");
+        ctx.set_fill_color("rgba(0,0,0,0.85)");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Sign In via Browser", left_inner_x + left_inner_w / 2.0, left_cy + signin_btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        let signin_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, signin_btn_h);
+        result.content_items.push((signin_id.to_string(), signin_rect));
+        input_coordinator.register_on_layer(
+            format!("user_settings:{}", signin_id).as_str(),
+            signin_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        left_cy += signin_btn_h;
+    }
+
+    // ── Separator ─────────────────────────────────────────────────────────────
+    left_cy += 20.0;
+    ctx.set_stroke_color("rgba(255,255,255,0.08)");
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(left_inner_x, left_cy);
+    ctx.line_to(left_inner_x + left_inner_w, left_cy);
+    ctx.stroke();
+    left_cy += 16.0;
+
+    // ── UPDATES section ────────────────────────────────────────────────────────
+    ctx.set_font("bold 10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("UPDATES", left_inner_x, left_cy);
+    left_cy += 18.0;
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
+
+    // ── RIGHT COLUMN: Profile list ────────────────────────────────────────────
+    let right_pad = 24.0;
+    let inner_x = right_col_x + right_pad;
+    let inner_w = right_col_w - right_pad * 2.0;
+    let mut cy = modal_y + 28.0;
+
+    let profile_row_h: f64 = 52.0;
+    let cloud_row_h: f64 = 44.0;
+
+    // Filter cloud profiles: exclude any that are already present locally.
+    let local_ids: std::collections::HashSet<&str> = state
+        .profiles_with_vault_status
+        .iter()
+        .map(|(id, _, _, _, _, _)| id.as_str())
+        .collect();
+    let cloud_profiles_to_show: Vec<&crate::ui::modal_settings::CloudProfileEntry> = state
+        .cloud_profiles
+        .iter()
+        .filter(|cp| !local_ids.contains(cp.profile_id.as_str()))
+        .collect();
+    let has_cloud_section = !cloud_profiles_to_show.is_empty()
+        || state.cloud_profiles_loading
+        || !state.cloud_profiles_error.is_empty();
+
+    // Close button (×) — only when a live profile is running AND not in skeleton lock
+    if !state.runtime_profile_id.is_empty() && !state.needs_vault_unlock {
         let close_size = 28.0;
-        let close_x = modal_x + modal_w - padding - close_size + 4.0;
+        let close_x = right_col_x + right_col_w - right_pad - close_size + 4.0;
         let close_y = modal_y + 8.0;
         let close_id = "user_settings:profile_mgr:close";
         let close_hovered = hovered == Some("profile_mgr:close");
@@ -212,18 +357,17 @@ fn render_page_profile_list(
     // Title
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Profiles", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text("Profiles", inner_x, cy);
     cy += 28.0;
 
     // Subtitle
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.50)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Select a profile to load", inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Select a profile to load", inner_x, cy);
     cy += 20.0 + 16.0;
 
     // Profile rows
@@ -507,6 +651,9 @@ fn render_page_profile_list(
             cy += cloud_row_h + 6.0;
         }
     }
+
+    // suppress unused-variable warning when cloud section is absent
+    let _ = cy;
 }
 
 // =============================================================================
