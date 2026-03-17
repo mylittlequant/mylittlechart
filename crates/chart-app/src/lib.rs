@@ -1289,10 +1289,16 @@ impl ChartApp {
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-                // Create an "Untitled" preset for genuinely fresh windows
-                // (no presets at all — brand new profile).
+                // Create "Untitled 1" preset for genuinely fresh windows
+                // (no presets at all — brand new profile).  Uses same numbering
+                // logic as OpenPresetNewChart (input.rs) for consistency.
                 if app.panel_app.presets.is_empty() {
-                    let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new("Untitled".to_string());
+                    let max_n = app.panel_app.presets.values()
+                        .filter_map(|p| p.name.strip_prefix("Untitled "))
+                        .filter_map(|s| s.parse::<u32>().ok())
+                        .max()
+                        .unwrap_or(0);
+                    let untitled_preset = zengeld_chart::preset::preset::ChartPreset::new(format!("Untitled {}", max_n + 1));
                     let untitled_id = untitled_preset.id.clone();
                     app.panel_app.presets.insert(untitled_id.clone(), untitled_preset);
                     app.panel_app.open_tabs = vec![untitled_id.clone()];

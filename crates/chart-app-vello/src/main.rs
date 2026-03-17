@@ -2214,6 +2214,21 @@ impl App<'_> {
         for (k, v) in self.app_state.presets.iter() {
             chart.panel_app.presets.entry(k.clone()).or_insert_with(|| v.clone());
         }
+        // Sync back: if new_window() created an Untitled preset for a fresh profile,
+        // propagate it to app_state so chrome tabs and preset list can see it.
+        for (k, v) in chart.panel_app.presets.iter() {
+            self.app_state.presets.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        // Also sync open_tabs and active_preset_id back to profile_manager
+        // so save_all() persists them.
+        if !chart.panel_app.active_preset_id.is_empty() {
+            self.profile_manager.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
+            self.profile.active_preset_id = chart.panel_app.active_preset_id.clone();
+        }
+        if !chart.panel_app.open_tabs.is_empty() {
+            self.profile_manager.profile.open_tabs = chart.panel_app.open_tabs.clone();
+            self.profile.open_tabs = chart.panel_app.open_tabs.clone();
+        }
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
         chart.panel_app.template_manager = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
