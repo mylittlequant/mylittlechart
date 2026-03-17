@@ -713,6 +713,7 @@ async fn updater_loop(
                                                 created_at: now_secs,
                                                 dir_name,
                                                 cloud_enabled: true,
+                                                sync_level: "cloud".to_string(),
                                             });
                                         }
                                         if let Err(e) =

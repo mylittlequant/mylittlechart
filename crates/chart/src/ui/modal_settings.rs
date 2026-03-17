@@ -3405,8 +3405,8 @@ pub struct UserSettingsState {
     /// Display name of the target profile (for showing in headers).
     pub profile_manager_target_name: String,
     /// Whether each profile has vault encryption.
-    /// Vec<(id, display_name, avatar, client_mode, has_vault)>.
-    pub profiles_with_vault_status: Vec<(String, String, String, bool, bool)>,
+    /// Vec<(id, display_name, avatar, client_mode, has_vault, sync_level)>.
+    pub profiles_with_vault_status: Vec<(String, String, String, bool, bool, String)>,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
     /// 8-char device code for device linking displayed on page 1.

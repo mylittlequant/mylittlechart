@@ -115,7 +115,7 @@ fn render_page_profile_list(
     let local_ids: std::collections::HashSet<&str> = state
         .profiles_with_vault_status
         .iter()
-        .map(|(id, _, _, _, _)| id.as_str())
+        .map(|(id, _, _, _, _, _)| id.as_str())
         .collect();
     let cloud_profiles_to_show: Vec<&crate::ui::modal_settings::CloudProfileEntry> = state
         .cloud_profiles
@@ -216,7 +216,7 @@ fn render_page_profile_list(
     cy += 20.0 + 16.0;
 
     // Profile rows
-    for (id, display_name, _avatar, client_mode, has_vault) in &state.profiles_with_vault_status {
+    for (id, display_name, _avatar, _client_mode, has_vault, sync_level) in &state.profiles_with_vault_status {
         let widget_id = format!("profile_mgr:select:{}", id);
         let is_row_hovered = hovered == Some(widget_id.as_str());
         let is_active = *id == state.runtime_profile_id;
@@ -256,7 +256,12 @@ fn render_page_profile_list(
             ctx.fill_text("Encrypted", inner_x + inner_w - 8.0, row_mid_y);
 
             // Sync level badge
-            let mode_label = if *client_mode { "Cloud" } else { "Local" };
+            let mode_label = match sync_level.as_str() {
+                "cloud_zt" => "Cloud ZT",
+                "cloud" => "Cloud",
+                "connected" => "Connected",
+                _ => "Local",
+            };
             ctx.set_fill_color("rgba(254,255,238,0.30)");
             ctx.fill_text(mode_label, inner_x + inner_w - 8.0 - 62.0 - 8.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);

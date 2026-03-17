@@ -435,6 +435,7 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
         created_at: now,
         dir_name,
         cloud_enabled,
+        sync_level: if cloud_enabled { "cloud".to_string() } else { "local".to_string() },
     };
 
     // Append to existing index (or create one if it doesn't exist yet).
@@ -448,15 +449,21 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
     Ok(meta)
 }
 
-/// Update the `cloud_enabled` flag for a profile in the index.
+/// Update the `cloud_enabled` flag and `sync_level` for a profile in the index.
 ///
-/// This must be called whenever the user toggles cloud sync so the
-/// profile list UI shows the correct Cloud/Offline badge.
+/// This must be called whenever the user changes sync level so the
+/// profile list UI shows the correct badge.
 pub fn set_profile_cloud_enabled(profile_id: &str, enabled: bool) -> Result<(), String> {
+    set_profile_sync_level(profile_id, enabled, if enabled { "cloud" } else { "local" })
+}
+
+/// Update sync level and cloud_enabled for a profile in the index.
+pub fn set_profile_sync_level(profile_id: &str, cloud_enabled: bool, level: &str) -> Result<(), String> {
     let mut index = load_profile_index()
         .ok_or_else(|| "No profile index found".to_string())?;
     if let Some(meta) = index.profiles.iter_mut().find(|m| m.id == profile_id) {
-        meta.cloud_enabled = enabled;
+        meta.cloud_enabled = cloud_enabled;
+        meta.sync_level = level.to_string();
     }
     save_profile_index(&index)
 }

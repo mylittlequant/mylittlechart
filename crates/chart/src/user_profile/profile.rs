@@ -683,6 +683,10 @@ pub struct ProfileMeta {
     /// Old index.json files without this field default to false (cloud disabled).
     #[serde(default)]
     pub cloud_enabled: bool,
+    /// Sync level label for display: "local", "connected", "cloud", "cloud_zt".
+    /// Old index.json files without this field derive it from cloud_enabled.
+    #[serde(default)]
+    pub sync_level: String,
 }
 
 /// The profile index file — lists all profiles and which is active.

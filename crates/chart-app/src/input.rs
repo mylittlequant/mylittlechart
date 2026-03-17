@@ -7802,13 +7802,13 @@ impl ChartApp {
                     let profile_id = &rest["vault_picker_profile:".len()..];
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _)| name.clone())
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
@@ -7837,13 +7837,13 @@ impl ChartApp {
                     // Check if target profile has vault (encrypted)
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _)| name.clone())
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
                         // Unencrypted profile — show CreatePassphrase inline (NO hot-reload)
@@ -7923,13 +7923,13 @@ impl ChartApp {
                     // Check if target profile has vault
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault)| *has_vault)
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _)| name.clone())
+                        .find(|(id, _, _, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _, _, _)| name.clone())
                         .unwrap_or_default();
                     if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         // Already on this profile — dismiss

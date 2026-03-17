@@ -49,6 +49,8 @@ pub struct ProfileInfo {
     pub has_vault: bool,
     /// Whether this profile is the currently active one.
     pub is_active: bool,
+    /// Sync level label: "local", "connected", "cloud", "cloud_zt".
+    pub sync_level: String,
 }
 
 // =============================================================================
@@ -607,6 +609,7 @@ impl ProfileManager {
                     cloud_enabled: m.cloud_enabled,
                     has_vault,
                     is_active,
+                    sync_level: m.sync_level.clone(),
                 }
             })
             .collect()

@@ -34,6 +34,7 @@ pub use storage::{
     migrate_legacy_profile_if_needed,
     create_profile,
     set_profile_cloud_enabled,
+    set_profile_sync_level,
     delete_profile,
     watchlists_path,
 };

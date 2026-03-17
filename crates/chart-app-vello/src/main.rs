@@ -2289,7 +2289,7 @@ impl App<'_> {
                     } else {
                         false
                     };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault, m.sync_level.clone())
                 }).collect();
             } else {
                 // No index yet — synthesize a single entry from the current profile.
@@ -2358,7 +2358,7 @@ impl App<'_> {
                     } else {
                         false
                     };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault)
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault, m.sync_level.clone())
                 }).collect();
             }
         }
@@ -2435,9 +2435,9 @@ impl App<'_> {
     /// windows so the user-settings modal always shows up-to-date data.
     fn sync_profiles_to_windows(&mut self) {
         let profiles = self.profile_manager.available_profiles();
-        let profiles_with_vault: Vec<(String, String, String, bool, bool)> = profiles
+        let profiles_with_vault: Vec<(String, String, String, bool, bool, String)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled, p.has_vault))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled, p.has_vault, p.sync_level.clone()))
             .collect();
         let available: Vec<(String, String, String, bool)> = profiles
             .iter()
@@ -5164,30 +5164,26 @@ impl ApplicationHandler for App<'_> {
                     // ── Sync level commands ────────────────────────────────────
                     } else if let Some(level) = cmd_str.strip_prefix("set_sync_level:") {
                         let p = &mut self.profile_manager.profile;
-                        match level {
+                        let cloud = match level {
                             "local" => {
                                 p.ota_enabled = false;
                                 p.telemetry_enabled = false;
                                 p.sync_state.enabled = false;
                                 p.cloud_enabled = false;
-                                self.profile.cloud_enabled = false;
-                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, false);
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(false));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(false));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
-                                eprintln!("[App] sync_level = local");
+                                false
                             }
                             "connected" => {
                                 p.ota_enabled = true;
                                 p.telemetry_enabled = true;
                                 p.sync_state.enabled = false;
                                 p.cloud_enabled = false;
-                                self.profile.cloud_enabled = false;
-                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, false);
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
-                                eprintln!("[App] sync_level = connected");
+                                false
                             }
                             "cloud" => {
                                 p.ota_enabled = true;
@@ -5200,12 +5196,10 @@ impl ApplicationHandler for App<'_> {
                                 p.sync_state.sync_vault = false;
                                 p.sync_state.sync_recovery_key = false;
                                 p.cloud_enabled = true;
-                                self.profile.cloud_enabled = true;
-                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, true);
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
-                                eprintln!("[App] sync_level = cloud");
+                                true
                             }
                             "cloud_zt" => {
                                 p.ota_enabled = true;
@@ -5219,16 +5213,22 @@ impl ApplicationHandler for App<'_> {
                                 p.sync_state.sync_vault = false;
                                 p.sync_state.sync_recovery_key = true;
                                 p.cloud_enabled = true;
-                                self.profile.cloud_enabled = true;
-                                let _ = zengeld_chart::set_profile_cloud_enabled(&self.profile.profile_id, true);
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
-                                eprintln!("[App] sync_level = cloud_zt");
+                                true
                             }
                             _ => {
                                 eprintln!("[App] unknown sync_level: {}", level);
+                                false
                             }
+                        };
+                        self.profile.cloud_enabled = cloud;
+                        let _ = zengeld_chart::set_profile_sync_level(&self.profile.profile_id, cloud, level);
+                        eprintln!("[App] sync_level = {}", level);
+                        // Persist immediately — OTA restart may kill the process before save_all().
+                        if let Err(e) = self.profile_manager.save_profile() {
+                            eprintln!("[App] failed to save profile after sync_level change: {}", e);
                         }
                         None
                     // ── Vault sub-toggles (kept for granular ZT control) ─────────
