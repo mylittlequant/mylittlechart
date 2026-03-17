@@ -358,6 +358,73 @@ pub fn draw_svg_icon(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f64, wid
     }
 }
 
+/// Render a multi-color SVG, preserving each path element's original `fill` color
+/// attribute instead of overriding with a single color. Suitable for mascot/logo SVGs
+/// that use multiple fill colors across their paths.
+///
+/// # Arguments
+/// * `ctx` - Render context
+/// * `svg` - SVG string content
+/// * `x`, `y` - Top-left position
+/// * `width`, `height` - Target dimensions
+pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f64, width: f64, height: f64) {
+    let (vb_width, vb_height) = parse_viewbox(svg).unwrap_or((24.0, 24.0));
+    let scale_x = width / vb_width;
+    let scale_y = height / vb_height;
+    let scale = scale_x.min(scale_y);
+    let offset_x = x + (width - vb_width * scale) / 2.0;
+    let offset_y = y + (height - vb_height * scale) / 2.0;
+    let has_fill_none = svg_root_has_fill_none(svg);
+    let default_filled = !has_fill_none;
+
+    // Render path elements preserving each path's fill color
+    for path_info in parse_svg_paths(svg, default_filled) {
+        ctx.begin_path();
+        render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
+        if path_info.filled {
+            if let Some(ref color) = path_info.fill_color {
+                ctx.set_fill_color(color);
+            } else {
+                ctx.set_fill_color("black");
+            }
+            ctx.fill();
+        }
+    }
+
+    // Render rect elements (skip full-size background rects)
+    for (rx, ry, rw, rh, rounding, filled) in parse_svg_rects(svg, default_filled) {
+        if filled {
+            // Skip full-size background rects that cover the entire viewbox
+            if rw >= vb_width * 0.95 && rh >= vb_height * 0.95 {
+                continue;
+            }
+            let tx = offset_x + rx * scale;
+            let ty = offset_y + ry * scale;
+            let tw = rw * scale;
+            let th = rh * scale;
+            ctx.set_fill_color("black");
+            if rounding > 0.0 {
+                ctx.fill_rounded_rect(tx, ty, tw, th, rounding * scale);
+            } else {
+                ctx.fill_rect(tx, ty, tw, th);
+            }
+        }
+    }
+
+    // Render circle elements
+    for (cx_val, cy_val, r, filled) in parse_svg_circles(svg, default_filled) {
+        if filled {
+            let tx = offset_x + cx_val * scale;
+            let ty = offset_y + cy_val * scale;
+            let tr = r * scale;
+            ctx.begin_path();
+            ctx.arc(tx, ty, tr, 0.0, std::f64::consts::PI * 2.0);
+            ctx.set_fill_color("black");
+            ctx.fill();
+        }
+    }
+}
+
 // =============================================================================
 // SVG Path Parsing
 // =============================================================================
@@ -387,6 +454,7 @@ struct PathInfo {
     filled: bool,
     stroked: bool,
     dash_array: Option<Vec<f64>>,
+    fill_color: Option<String>,  // Actual fill color from attribute (for multicolor SVGs)
 }
 
 /// Extract all path elements from SVG with fill/stroke info
@@ -415,16 +483,20 @@ fn parse_svg_paths(svg: &str, default_filled: bool) -> Vec<PathInfo> {
                 let d = tag_content[d_content_start..d_content_start + d_end].to_string();
 
                 // Check fill attribute
-                let filled = if let Some(fill_start) = tag_content.find("fill=\"") {
+                let (filled, fill_color) = if let Some(fill_start) = tag_content.find("fill=\"") {
                     let fill_content_start = fill_start + 6;
                     if let Some(fill_end) = tag_content[fill_content_start..].find('"') {
                         let fill_value = &tag_content[fill_content_start..fill_content_start + fill_end];
-                        fill_value != "none"
+                        if fill_value != "none" {
+                            (true, Some(fill_value.to_string()))
+                        } else {
+                            (false, None)
+                        }
                     } else {
-                        false
+                        (false, None)
                     }
                 } else {
-                    default_filled // Use inherited default from root SVG
+                    (default_filled, None) // Use inherited default from root SVG
                 };
 
                 // Check stroke attribute (default is stroked for icons)
@@ -462,7 +534,7 @@ fn parse_svg_paths(svg: &str, default_filled: bool) -> Vec<PathInfo> {
                     None
                 };
 
-                paths.push(PathInfo { d, filled, stroked, dash_array });
+                paths.push(PathInfo { d, filled, stroked, dash_array, fill_color });
             }
         }
 

@@ -58,6 +58,7 @@ pub use uzor::render::{
 // Re-export chart-specific helpers
 pub use context::{
     draw_svg_icon,
+    draw_svg_multicolor,
     render_primitive_text, render_primitive_text_rotated,
     render_text_with_background, measure_primitive_text,
 };

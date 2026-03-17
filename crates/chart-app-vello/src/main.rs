@@ -2087,7 +2087,7 @@ impl App<'_> {
         cascade_from: Option<WindowId>,
     ) {
         let mut attrs = Window::default_attributes()
-            .with_title("chart-app-vello")
+            .with_title("mylittlechart")
             .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 800u32))
             .with_decorations(false)
             // Hidden until the first GPU frame completes to eliminate the

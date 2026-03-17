@@ -9,7 +9,9 @@
 //!   CreatePassphrase  — Set a new passphrase for a profile that has no vault.
 //!   CreateNew         — Enter name for a brand-new profile (sync toggled in settings).
 
-use crate::engine::render::{RenderContext, draw_svg_icon};
+use crate::engine::render::{RenderContext, draw_svg_icon, draw_svg_multicolor};
+
+const MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mascot.svg");
 use crate::ui::Icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
@@ -291,6 +293,12 @@ fn render_page_profile_list(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
+
+    // Mascot at bottom of left panel
+    let mascot_size = 140.0;
+    let mascot_x = left_inner_x + (left_inner_w - mascot_size) / 2.0;
+    let mascot_y = modal_y + modal_h - mascot_size - 16.0;
+    draw_svg_multicolor(ctx, MASCOT_SVG, mascot_x, mascot_y, mascot_size, mascot_size);
 
     // ── RIGHT COLUMN: Profile list ────────────────────────────────────────────
     let right_pad = 24.0;

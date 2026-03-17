@@ -171,7 +171,7 @@ pub async fn send_test(
         client,
         bot_token,
         chat_id,
-        "✅ <b>Zengeld Alert Bot connected!</b>\n\nYou will receive trading alerts here.",
+        "✅ <b>mylittlechart Alert Bot connected!</b>\n\nYou will receive trading alerts here.",
     )
     .await
 }
