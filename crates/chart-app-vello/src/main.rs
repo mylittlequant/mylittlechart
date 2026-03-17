@@ -91,7 +91,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{CursorIcon, Window, WindowId},
+    window::{CursorIcon, Icon, Window, WindowId},
 };
 use zengeld_chart::CursorStyle;
 use sysinfo::{System, Pid, ProcessesToUpdate, ProcessRefreshKind};
@@ -113,6 +113,31 @@ fn cursor_style_to_winit(style: CursorStyle) -> CursorIcon {
         CursorStyle::NotAllowed => CursorIcon::NotAllowed,
         CursorStyle::None => CursorIcon::Default,
     }
+}
+
+/// Decode the embedded 32x32 PNG icon and return a winit [`Icon`].
+///
+/// The PNG bytes are embedded at compile time so there is no runtime I/O.
+/// Returns `None` if decoding fails so a missing icon never crashes the app.
+fn load_window_icon() -> Option<Icon> {
+    let icon_bytes = include_bytes!("../../../assets/mascot/icon_32.png");
+    let decoder = png::Decoder::new(std::io::Cursor::new(icon_bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let raw = &buf[..info.buffer_size()];
+
+    // Ensure we have RGBA data; convert RGB → RGBA if needed.
+    let rgba: Vec<u8> = match info.color_type {
+        png::ColorType::Rgba => raw.to_vec(),
+        png::ColorType::Rgb => raw
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255u8])
+            .collect(),
+        _ => return None,
+    };
+
+    Icon::from_rgba(rgba, info.width, info.height).ok()
 }
 
 /// Per-window state: GPU resources, chart instance, and input state.
@@ -2092,7 +2117,8 @@ impl App<'_> {
             .with_decorations(false)
             // Hidden until the first GPU frame completes to eliminate the
             // white-flash that appears before any pixels are drawn.
-            .with_visible(false);
+            .with_visible(false)
+            .with_window_icon(load_window_icon());
 
         #[cfg(target_os = "windows")]
         {

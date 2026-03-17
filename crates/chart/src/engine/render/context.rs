@@ -385,17 +385,37 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
         if path_info.filled {
             if let Some(ref color) = path_info.fill_color {
                 if color.starts_with("url(#") {
-                    // Gradient reference — use first stop-color as fallback
-                    let resolved = resolve_gradient_color(svg, color)
-                        .unwrap_or_else(|| "black".to_string());
-                    ctx.set_fill_color(&resolved);
+                    let grad_id = color.strip_prefix("url(#").and_then(|s| s.strip_suffix(')'));
+                    if let Some(id) = grad_id {
+                        if let Some(grad) = parse_gradient(svg, id) {
+                            // Transform gradient coordinates from SVG space to screen space
+                            let gx1 = offset_x + grad.x1 * scale;
+                            let gy1 = offset_y + grad.y1 * scale;
+                            let gx2 = offset_x + grad.x2 * scale;
+                            let gy2 = offset_y + grad.y2 * scale;
+                            let stops_refs: Vec<(f32, &str)> = grad
+                                .stops
+                                .iter()
+                                .map(|(o, c)| (*o, c.as_str()))
+                                .collect();
+                            ctx.fill_linear_gradient(&stops_refs, gx1, gy1, gx2, gy2);
+                        } else {
+                            // Gradient not found — flat black fallback
+                            ctx.set_fill_color("black");
+                            ctx.fill();
+                        }
+                    } else {
+                        ctx.set_fill_color("black");
+                        ctx.fill();
+                    }
                 } else {
                     ctx.set_fill_color(color);
+                    ctx.fill();
                 }
             } else {
                 ctx.set_fill_color("black");
+                ctx.fill();
             }
-            ctx.fill();
         }
 
         if path_info.stroked {
@@ -469,6 +489,94 @@ fn resolve_gradient_color(svg: &str, url_ref: &str) -> Option<String> {
     let color_start = stop_pos + 12; // len("stop-color=\"")
     let color_end = after_grad[color_start..].find('"')?;
     Some(after_grad[color_start..color_start + color_end].to_string())
+}
+
+/// Parsed gradient info extracted from an SVG `<linearGradient>` element.
+struct GradientInfo {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    /// (offset 0.0..=1.0, color hex/name)
+    stops: Vec<(f32, String)>,
+}
+
+/// Parse a `<linearGradient>` element from the SVG source by its `id` attribute.
+///
+/// Returns `None` if the gradient is not found or cannot be parsed.
+fn parse_gradient(svg: &str, gradient_id: &str) -> Option<GradientInfo> {
+    let search = format!("id=\"{}\"", gradient_id);
+    let grad_pos = svg.find(&search)?;
+    let after = &svg[grad_pos..];
+
+    let grad_end = after.find("</linearGradient>")?;
+    let grad_text = &after[..grad_end];
+
+    // Parse coordinate attributes; default to a top→bottom gradient when missing
+    let x1 = extract_attr(grad_text, "x1=\"")
+        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let y1 = extract_attr(grad_text, "y1=\"")
+        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let x2 = extract_attr(grad_text, "x2=\"")
+        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let y2 = extract_attr(grad_text, "y2=\"")
+        .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok())
+        .unwrap_or(1.0);
+
+    // Parse all <stop …/> elements within the gradient block
+    let mut stops: Vec<(f32, String)> = Vec::new();
+    let mut search_from = 0usize;
+    while let Some(stop_rel) = grad_text[search_from..].find("<stop") {
+        let abs = search_from + stop_rel;
+        let remaining = &grad_text[abs..];
+        let stop_end = match remaining.find("/>") {
+            Some(e) => e,
+            None => break,
+        };
+        let stop_tag = &remaining[..stop_end + 2];
+
+        let offset = extract_attr(stop_tag, "offset=\"")
+            .and_then(|s| {
+                // offset may be a bare number ("0.5") or a percentage ("50%")
+                let s = s.trim_end_matches('%');
+                s.parse::<f32>().ok().map(|v| if v > 1.0 { v / 100.0 } else { v })
+            })
+            .unwrap_or(0.0);
+
+        // stop-color can appear as an attribute or inside a style="..." attribute
+        let color = extract_attr(stop_tag, "stop-color=\"")
+            .or_else(|| {
+                // Try style="stop-color:#xxx"
+                extract_attr(stop_tag, "style=\"").and_then(|style| {
+                    let sc_pos = style.find("stop-color:")?;
+                    let after_sc = style[sc_pos + 11..].trim_start();
+                    let end = after_sc.find(|c: char| c == ';' || c == '"').unwrap_or(after_sc.len());
+                    Some(after_sc[..end].trim().to_string())
+                })
+            })
+            .unwrap_or_else(|| "black".to_string());
+
+        stops.push((offset, color));
+        search_from = abs + stop_end + 2;
+    }
+
+    if stops.is_empty() {
+        return None;
+    }
+
+    Some(GradientInfo { x1, y1, x2, y2, stops })
+}
+
+/// Extract the value of a quoted attribute from a tag snippet.
+///
+/// `attr_prefix` should include the opening quote, e.g. `"x1=\""`.
+fn extract_attr(text: &str, attr_prefix: &str) -> Option<String> {
+    let start = text.find(attr_prefix)? + attr_prefix.len();
+    let end = text[start..].find('"')?;
+    Some(text[start..start + end].to_string())
 }
 
 /// Parse viewBox from SVG string
