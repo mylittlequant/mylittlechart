@@ -5646,6 +5646,9 @@ impl ApplicationHandler for App<'_> {
                                 s.auth_display_name = String::new();
                                 s.auth_provider = String::new();
                                 s.auth_user_id = 0;
+                                s.cloud_profiles.clear();
+                                s.cloud_profiles_loading = false;
+                                s.cloud_profiles_error.clear();
                             }
                             // Clear the profile mirror on logout / missing token.
                             self.profile_manager.profile.linked_account = None;
@@ -5741,8 +5744,28 @@ impl ApplicationHandler for App<'_> {
                                 uss.auth_display_name = display_name.clone();
                                 uss.auth_provider = provider.clone();
                                 uss.auth_user_id = user_id;
+                                // Auto-fetch cloud profiles immediately after link auth.
+                                uss.cloud_profiles_loading = true;
+                                uss.cloud_profiles_error.clear();
                                 // Do NOT close wizard on link — passphrase still required (zero-trust).
                                 // Just update linking status for visual feedback.
+                            }
+                            // Mirror cloud_enabled into profile.
+                            self.profile_manager.profile.cloud_enabled = true;
+                            self.profile.cloud_enabled = true;
+                            for pw in self.windows.values_mut() {
+                                pw.chart.panel_app.user_settings_state.client_mode_connected = true;
+                            }
+                            // Mirror the bearer token into the OS keychain (best-effort).
+                            if let Some(stored) = zengeld_updater::token_store::load_token() {
+                                if let Err(e) = keychain::store_auth_token(&stored.token) {
+                                    eprintln!("[App] keychain: failed to mirror auth token: {}", e);
+                                }
+                            }
+                            // Trigger cloud profiles fetch via updater.
+                            #[cfg(all(feature = "updater", not(feature = "standalone")))]
+                            if let Some(ref handle) = self.updater_handle {
+                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
                             }
                             link_done = true;
                         }
@@ -6723,7 +6746,21 @@ impl ApplicationHandler for App<'_> {
                 let size = pw.window.inner_size();
                 let hit =
                     chrome::hit_test(x, y, size.width as f64, size.height as f64, &pw.chrome_state);
-                pw.chrome_state.hovered = hit;
+                // In skeleton mode, suppress hover for chrome buttons that are blocked.
+                let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                    || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                pw.chrome_state.hovered = if skeleton_active {
+                    match hit {
+                        chrome::ChromeHit::NewTabButton
+                        | chrome::ChromeHit::SettingsButton
+                        | chrome::ChromeHit::NewWindowButton
+                        | chrome::ChromeHit::Tab(_)
+                        | chrome::ChromeHit::TabClose(_) => chrome::ChromeHit::None,
+                        other => other,
+                    }
+                } else {
+                    hit
+                };
 
                 match hit {
                     chrome::ChromeHit::ResizeTop | chrome::ChromeHit::ResizeBottom => {
