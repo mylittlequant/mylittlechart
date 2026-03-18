@@ -130,7 +130,14 @@ impl UserManager {
                     "[UserManager] failed to load profile: {}, using defaults",
                     e
                 );
-                UserProfile::new()
+                let mut fallback = UserProfile::new();
+                if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
+                    if !dir_name.is_empty() {
+                        fallback.profile_id = dir_name.to_string();
+                        fallback.display_name = dir_name.to_string();
+                    }
+                }
+                fallback
             }
         };
 
@@ -224,7 +231,14 @@ impl UserManager {
                         e
                     );
                 }
-                UserProfile::new()
+                let mut fallback = UserProfile::new();
+                if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
+                    if !dir_name.is_empty() {
+                        fallback.profile_id = dir_name.to_string();
+                        fallback.display_name = dir_name.to_string();
+                    }
+                }
+                fallback
             }
         };
 
