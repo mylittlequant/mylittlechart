@@ -686,7 +686,10 @@ impl ChartWindow {
         }
     }
 
-    /// Set bars and recalculate derived data
+    /// Set bars for initial load — resets viewport position and auto-scales.
+    ///
+    /// Use this only for the first data load. For backfill / incremental
+    /// updates use [`update_bars`] which preserves the user's viewport.
     pub fn set_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
         self.calc_moving_averages();
@@ -712,8 +715,32 @@ impl ChartWindow {
         } else {
             self.viewport.view_start = 0.0;
         }
-        self.price_scale.scale_mode = ScaleMode::Auto;
         self.calc_auto_scale();
+    }
+
+    /// Replace bars without resetting viewport position or scale mode.
+    ///
+    /// Used for backfill / WebSocket reconnect — the user's current pan/zoom
+    /// and scale mode are preserved.  Only `bar_count` and derived data
+    /// (MAs, prev-close) are recalculated.
+    pub fn update_bars(&mut self, bars: Vec<Bar>) {
+        self.bars = bars;
+        self.calc_moving_averages();
+
+        if !self.bars.is_empty() {
+            self.prev_close_price = Some(self.bars[0].open);
+        } else {
+            self.prev_close_price = None;
+        }
+        self.update_prev_close_line();
+
+        // Update bar_count so viewport knows the data length, but do NOT
+        // touch view_start or scale_mode.
+        self.viewport.bar_count = self.bars.len();
+
+        if self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale();
+        }
     }
 
     /// Change symbol (requires data reload)

@@ -295,6 +295,10 @@ struct AppState {
     /// Synced to every window's `indicator_manager.recalc_mode` each frame.
     recalc_mode: chart_app::RecalcMode,
 
+    /// User's preferred price scale mode (Auto / Focus / Manual).
+    /// Applied as the default when windows load bars for the first time.
+    scale_mode: zengeld_chart::ScaleMode,
+
     // ── Agent API server settings ────────────────────────────────────────────
     /// Whether the server is enabled.
     server_enabled: bool,
@@ -352,6 +356,13 @@ impl AppState {
             _         => chart_app::RecalcMode::PerFrame, // default / "PerFrame"
         };
 
+        // Parse scale_mode from the profile string.
+        let scale_mode = match profile.scale_mode.as_str() {
+            "Focus"  => zengeld_chart::ScaleMode::Focus,
+            "Manual" => zengeld_chart::ScaleMode::Manual,
+            _        => zengeld_chart::ScaleMode::Auto, // default / "Auto"
+        };
+
         Self {
             watchlist_manager,
             connector_enabled: profile.connector_enabled.clone(),
@@ -369,6 +380,7 @@ impl AppState {
             watchlists_dirty: true,
             connectors_dirty: true,
             recalc_mode,
+            scale_mode,
             server_enabled: profile.server_enabled,
             server_port: profile.server_port,
             local_agent_keys: {
@@ -2849,6 +2861,11 @@ impl App<'_> {
             chart_app::RecalcMode::PerTick  => "PerTick".to_string(),
             chart_app::RecalcMode::PerFrame => "PerFrame".to_string(),
             chart_app::RecalcMode::PerBar   => "PerBar".to_string(),
+        };
+        profile.scale_mode = match self.app_state.scale_mode {
+            zengeld_chart::ScaleMode::Auto   => "Auto".to_string(),
+            zengeld_chart::ScaleMode::Focus  => "Focus".to_string(),
+            zengeld_chart::ScaleMode::Manual => "Manual".to_string(),
         };
         profile.server_enabled = self.app_state.server_enabled;
         profile.server_port = self.app_state.server_port;
@@ -6204,8 +6221,10 @@ impl ApplicationHandler for App<'_> {
             // Sync recalc_mode to every window's indicator manager.
             // This is a cheap copy (Copy enum) so no dirty flag is needed.
             let recalc_mode = self.app_state.recalc_mode;
+            let scale_mode = self.app_state.scale_mode;
             for pw in self.windows.values_mut() {
                 pw.chart.indicator_manager.recalc_mode = recalc_mode;
+                pw.chart.default_scale_mode = scale_mode;
             }
 
             let frame_time = now_ms();
@@ -6213,6 +6232,18 @@ impl ApplicationHandler for App<'_> {
                 pw.chart.tick(frame_time);
             }
         }
+        // Capture the active window's scale mode back to AppState so it
+        // persists across sessions.  Reading after tick() ensures any toggle
+        // from this frame is captured.
+        if let Some(pw) = self.last_focused
+            .and_then(|id| self.windows.get(&id))
+            .or_else(|| self.windows.values().next())
+        {
+            if let Some(w) = pw.chart.panel_app.panel_grid.active_window() {
+                self.app_state.scale_mode = w.price_scale.scale_mode;
+            }
+        }
+
         let _t5 = std::time::Instant::now();
 
         // ── Populate performance panel data ─────────────────────────────────

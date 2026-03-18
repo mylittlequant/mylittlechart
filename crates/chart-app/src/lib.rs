@@ -202,6 +202,10 @@ pub struct ChartApp {
     /// max_scroll values when dispatching chevron clicks.
     pub(crate) last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult>,
 
+    /// User's preferred default scale mode, synced from profile settings.
+    /// Applied to windows on initial bar load.
+    pub default_scale_mode: ScaleMode,
+
     /// Alert manager — owns all alert items, crossing detection, and ID generation.
     alert_manager: alerts::AlertManager,
 
@@ -660,6 +664,7 @@ impl ChartApp {
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
+            default_scale_mode: ScaleMode::Auto,
             alert_manager: alerts::AlertManager::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
@@ -913,6 +918,7 @@ impl ChartApp {
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
+            default_scale_mode: ScaleMode::Auto,
             alert_manager: alerts::AlertManager::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
@@ -1072,6 +1078,7 @@ impl ChartApp {
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
             leaf_tab_hovered_leaf: None,
             last_toolbar_result: None,
+            default_scale_mode: ScaleMode::Auto,
             alert_manager: alerts::AlertManager::new(),
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
@@ -1778,11 +1785,22 @@ impl ChartApp {
                             if let Some(ref tf) = loaded_tf {
                                 window.timeframe = tf.clone();
                             }
-                            window.set_bars(bars.clone());
+                            // Use update_bars for backfill (preserves viewport),
+                            // set_bars for initial load (resets viewport to end).
+                            let is_backfill = !window.bars.is_empty();
+                            if is_backfill {
+                                window.update_bars(bars.clone());
+                            } else {
+                                window.set_bars(bars.clone());
+                                // Apply the user's preferred scale mode on initial load.
+                                window.price_scale.scale_mode = self.default_scale_mode;
+                            }
                             // Recalculate bar-index caches for all drawings so primitives
                             // render at correct positions now that real bars are available.
                             window.drawing_manager.recalculate_all_bar_caches(&window.bars);
                             // Apply deferred viewport from preset restore (if any).
+                            // This overrides the default scale mode with the preset's
+                            // saved value.
                             if let Some(vp) = window.pending_viewport_restore.take() {
                                 window.viewport.view_start = vp.view_start;
                                 window.viewport.bar_spacing = vp.bar_spacing;
@@ -1879,13 +1897,40 @@ impl ChartApp {
                             if window.price_scale.scale_mode.is_auto_y() {
                                 window.calc_auto_scale();
                             }
-                            // Follow mode: keep last bar visible.
+
+                            let count = window.bars.len();
+                            let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+                            let visible_bars = visible_f as usize;
+
+                            // Dynamic right margin based on zoom level.
+                            let dynamic_margin = if visible_bars <= 10 { 1.0 }
+                                else if visible_bars <= 20 { 2.0 }
+                                else if visible_bars <= 50 { 3.0 }
+                                else if visible_bars <= 100 { 4.0 }
+                                else { 5.0 };
+
+                            // Follow mode: keep last bar visible with dynamic margin.
                             if window.price_scale.scale_mode.is_follow() {
-                                let count = window.bars.len();
-                                let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                                let right_margin = 2.0_f64;
-                                window.viewport.view_start = (count as f64 + right_margin - visible_f).max(0.0);
+                                window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
                             }
+
+                            // Auto mode guard: if a new bar appeared and the last
+                            // bar is near the right edge, shift viewport to keep it
+                            // visible.  If the user scrolled far away, don't disturb.
+                            if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
+                                let right_edge_bar = window.viewport.view_start + visible_f;
+                                let last_bar = (count - 1) as f64;
+                                // If the last bar is within 5 bars of the right edge,
+                                // nudge viewport so it stays visible with margin.
+                                if last_bar <= right_edge_bar + 5.0 {
+                                    let target = count as f64 + dynamic_margin - visible_f;
+                                    if target > window.viewport.view_start {
+                                        window.viewport.view_start = target.max(0.0);
+                                    }
+                                }
+                            }
+                            // Manual mode: no viewport adjustments.
+
                             window.calc_moving_averages();
                         }
                     }
@@ -5652,6 +5697,11 @@ impl ChartApp {
             telemetry: existing.telemetry.clone(),
             bar_count: existing.bar_count,
             recalc_mode: existing.recalc_mode.clone(),
+            scale_mode: match self.default_scale_mode {
+                ScaleMode::Auto   => "Auto".to_string(),
+                ScaleMode::Focus  => "Focus".to_string(),
+                ScaleMode::Manual => "Manual".to_string(),
+            },
             cloud_enabled: existing.cloud_enabled,
             sync_level: existing.sync_level.clone(),
             ota_enabled: self.panel_app.user_settings_state.ota_enabled,

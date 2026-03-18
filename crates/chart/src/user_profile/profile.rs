@@ -179,6 +179,13 @@ pub struct UserProfile {
     #[serde(default = "default_recalc_mode")]
     pub recalc_mode: String,
 
+    /// Price scale mode preference.
+    ///
+    /// Valid values: `"Auto"`, `"Focus"`, `"Manual"`.
+    /// Defaults to `"Auto"` when the field is absent (older profiles).
+    #[serde(default = "default_scale_mode")]
+    pub scale_mode: String,
+
     // -------------------------------------------------------------------------
     // Agent API server
     // -------------------------------------------------------------------------
@@ -415,6 +422,7 @@ impl UserProfile {
             linked_account: None,
             bar_count: default_bar_count(),
             recalc_mode: default_recalc_mode(),
+            scale_mode: default_scale_mode(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
             legacy_single_agent_key: String::new(),
@@ -794,6 +802,10 @@ fn default_bar_count() -> u16 {
 
 fn default_recalc_mode() -> String {
     "PerFrame".to_string()
+}
+
+fn default_scale_mode() -> String {
+    "Auto".to_string()
 }
 
 fn default_server_enabled() -> bool {
