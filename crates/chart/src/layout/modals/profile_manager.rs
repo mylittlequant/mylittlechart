@@ -687,7 +687,7 @@ fn render_page_profile_list(
     // ── Scrollbar thumb (drawn outside clip, over the viewport) ───────────────
     if total_content_h > scroll_viewport_h {
         let scrollbar_w = 4.0;
-        let track_x = inner_x + inner_w - scrollbar_w - 2.0;
+        let track_x = inner_x + inner_w + 2.0;
         let ratio = (scroll_viewport_h / total_content_h).min(1.0);
         let thumb_h = (scroll_viewport_h * ratio).max(24.0);
         let scroll_ratio = if max_scroll > 0.0 { scroll_offset / max_scroll } else { 0.0 };
