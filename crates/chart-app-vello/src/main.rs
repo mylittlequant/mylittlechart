@@ -618,6 +618,10 @@ struct App<'s> {
     /// which applies the chosen sync level and then completes the profile switch.
     pending_switch_after_sync_level: Option<(String, zengeld_chart::vault::VaultKey)>,
 
+    /// Sync level chosen by the user on the ChooseSyncLevel page.
+    /// Applied to the NEW profile AFTER it is loaded from disk in `execute_profile_switch`.
+    pending_switch_sync_level: Option<String>,
+
     /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
     ///
     /// Stored temporarily so the `set_new_passphrase:` handler can re-derive a new
@@ -2114,6 +2118,7 @@ impl App<'_> {
             pending_skeleton_promote: false,
             pending_switch_after_recovery: None,
             pending_switch_after_sync_level: None,
+            pending_switch_sync_level: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
         }
@@ -2568,6 +2573,53 @@ impl App<'_> {
             self.app_state.vault_key = Some(key);
             self.needs_vault_unlock = false;
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
+        }
+
+        // 6c. Apply deferred sync level to the freshly loaded profile.
+        if let Some(level) = self.pending_switch_sync_level.take() {
+            eprintln!("[App] hot-reload: applying deferred sync_level={}", level);
+            let p = &mut self.profile_manager.profile;
+            match level.as_str() {
+                "local" => {
+                    p.ota_enabled = false;
+                    p.telemetry_enabled = false;
+                    p.sync_state.enabled = false;
+                    p.cloud_enabled = false;
+                }
+                "connected" => {
+                    p.ota_enabled = true;
+                    p.telemetry_enabled = true;
+                    p.sync_state.enabled = false;
+                    p.cloud_enabled = false;
+                }
+                "cloud" => {
+                    p.ota_enabled = true;
+                    p.telemetry_enabled = true;
+                    p.sync_state.enabled = true;
+                    p.sync_state.sync_presets = true;
+                    p.sync_state.sync_templates = true;
+                    p.sync_state.sync_watchlists = true;
+                    p.sync_state.sync_theme = true;
+                    p.sync_state.sync_vault = true;
+                    p.sync_state.sync_recovery_key = true;
+                    p.cloud_enabled = true;
+                }
+                _ => {
+                    eprintln!("[App] hot-reload: unknown sync level '{}' — skipping", level);
+                }
+            }
+            p.sync_level = level.clone();
+            // Persist sync level to profile.json and index.
+            if let Err(e) = self.profile_manager.save_profile() {
+                eprintln!("[App] hot-reload: failed to save profile after sync level: {}", e);
+            }
+            let _ = zengeld_chart::set_profile_sync_level(
+                &self.profile_manager.profile.profile_id,
+                self.profile_manager.profile.cloud_enabled,
+                &level,
+            );
+            // Re-sync self.profile from the updated profile_manager.
+            self.profile = self.profile_manager.profile.clone();
         }
 
         self.is_first_run = false;
@@ -5032,47 +5084,10 @@ impl ApplicationHandler for App<'_> {
                 if let Some(level) = cmd_str.strip_prefix("sync_level_chosen:") {
                     eprintln!("[App] sync_level_chosen: level={}", level);
                     if let Some((profile_id, vault_key)) = self.pending_switch_after_sync_level.take() {
-                        eprintln!("[App] sync_level_chosen — applying level={} and switching to profile {}", level, profile_id);
-                        // Apply sync level settings to the profile that is about to be switched to.
-                        {
-                            let p = &mut self.profile_manager.profile;
-                            match level {
-                                "local" => {
-                                    p.ota_enabled = false;
-                                    p.telemetry_enabled = false;
-                                    p.sync_state.enabled = false;
-                                    p.cloud_enabled = false;
-                                }
-                                "connected" => {
-                                    p.ota_enabled = true;
-                                    p.telemetry_enabled = true;
-                                    p.sync_state.enabled = false;
-                                    p.cloud_enabled = false;
-                                }
-                                "cloud" => {
-                                    p.ota_enabled = true;
-                                    p.telemetry_enabled = true;
-                                    p.sync_state.enabled = true;
-                                    p.sync_state.sync_presets = true;
-                                    p.sync_state.sync_templates = true;
-                                    p.sync_state.sync_watchlists = true;
-                                    p.sync_state.sync_theme = true;
-                                    p.sync_state.sync_vault = true;
-                                    p.sync_state.sync_recovery_key = true;
-                                    p.cloud_enabled = true;
-                                }
-                                _ => {
-                                    eprintln!("[App] sync_level_chosen: unknown level '{}', defaulting to connected", level);
-                                }
-                            }
-                            p.sync_level = level.to_string();
-                        }
-                        // Persist the sync level for the target profile.
-                        let _ = zengeld_chart::set_profile_sync_level(
-                            &profile_id,
-                            self.profile_manager.profile.cloud_enabled,
-                            level,
-                        );
+                        eprintln!("[App] sync_level_chosen — storing level={} for profile {} (will apply after reload)", level, profile_id);
+                        // Store the sync level — it will be applied to the NEW profile
+                        // AFTER execute_profile_switch reloads it from disk.
+                        self.pending_switch_sync_level = Some(level.to_string());
                         // Complete the deferred profile switch.
                         self.pending_switch_vault_key = Some(vault_key);
                         self.pending_profile_switch = Some(profile_id);

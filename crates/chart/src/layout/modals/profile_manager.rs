@@ -186,24 +186,6 @@ fn render_page_profile_list(
 
         left_cy += 10.0;
 
-        // Connection status dot + text
-        let status_color = if state.client_mode_connected {
-            "rgba(80,200,120,0.85)"
-        } else {
-            "rgba(255,180,50,0.75)"
-        };
-        let status_label = if state.client_mode_connected { "Connected" } else { "Offline" };
-        ctx.set_fill_color(status_color);
-        ctx.fill_rounded_rect(left_inner_x, left_cy + 4.0, 6.0, 6.0, 3.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(status_color);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(status_label, left_inner_x + 10.0, left_cy);
-        left_cy += 22.0;
-
-        left_cy += 8.0;
-
         // "Log Out" button
         let logout_btn_h = 30.0;
         let logout_id = "profile_mgr:logout";
