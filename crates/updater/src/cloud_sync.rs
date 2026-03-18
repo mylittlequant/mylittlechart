@@ -409,6 +409,30 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
+    // Profile metadata (display_name, avatar) — synced so restore knows the name.
+    {
+        let profile_path = data_dir.join("profile.json");
+        if let Ok(raw) = std::fs::read_to_string(&profile_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                let meta = serde_json::json!({
+                    "display_name": val.get("display_name").and_then(|v| v.as_str()).unwrap_or("Profile"),
+                    "avatar": val.get("avatar").and_then(|v| v.as_str()).unwrap_or("chart"),
+                });
+                let content = meta.to_string();
+                let checksum = sha256_hex(&content);
+                items.push(LocalItem {
+                    sync_id: "profile_meta".to_string(),
+                    category: "profile_meta".to_string(),
+                    name: "profile_meta".to_string(),
+                    content,
+                    checksum,
+                    modified_at: file_modified_ms(&profile_path),
+                    tier: SyncTier::CloudSync,
+                });
+            }
+        }
+    }
+
     // --- ZtBlob tier ---
 
     {
@@ -728,6 +752,33 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                 std::fs::write(&tmp, &item.content)?;
                 std::fs::rename(&tmp, &target)?;
             }
+            "profile_meta" => {
+                // Profile metadata (display_name, avatar) — merged into profile.json.
+                // Also ensures cloud-restored profiles have correct sync_level.
+                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&item.content) {
+                    let target = data_dir.join("profile.json");
+                    let mut profile_val: serde_json::Value = if target.exists() {
+                        let raw = std::fs::read_to_string(&target)?;
+                        serde_json::from_str(&raw).unwrap_or(serde_json::json!({}))
+                    } else {
+                        serde_json::json!({})
+                    };
+                    if let Some(name) = meta.get("display_name").and_then(|v| v.as_str()) {
+                        profile_val["display_name"] = serde_json::Value::String(name.to_string());
+                    }
+                    if let Some(avatar) = meta.get("avatar").and_then(|v| v.as_str()) {
+                        profile_val["avatar"] = serde_json::Value::String(avatar.to_string());
+                    }
+                    // Ensure cloud fields are set for restored profiles.
+                    profile_val["cloud_enabled"] = serde_json::Value::Bool(true);
+                    profile_val["sync_level"] = serde_json::Value::String("cloud".to_string());
+                    let updated = serde_json::to_string_pretty(&profile_val)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                    let tmp = target.with_extension("tmp");
+                    std::fs::write(&tmp, &updated)?;
+                    std::fs::rename(&tmp, &target)?;
+                }
+            }
             other => {
                 log::warn!(
                     "[CloudSync] Unknown sync category '{}' — skipping write",
@@ -1022,6 +1073,7 @@ pub fn restore_profile_to_disk(
             "display_name": "Restored Profile",
             "avatar": "chart",
             "cloud_enabled": true,
+            "sync_level": "cloud",
         });
         let content = serde_json::to_string_pretty(&skeleton)
             .map_err(|e| format!("serialize profile skeleton: {}", e))?;
