@@ -4619,6 +4619,11 @@ impl ApplicationHandler for App<'_> {
                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                             pw.chart.panel_app.user_settings_state.recovery_key_display =
                                 recovery_key.clone();
+                            // Sync read-only display editing state so it can be selected/copied.
+                            let key_str = recovery_key.as_deref().unwrap_or("");
+                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
+                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
+                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             pw.chart.panel_app.user_settings_state.profile_manager_page =
                                 ProfileManagerPage::ShowRecoveryKey;
                             pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -4666,6 +4671,11 @@ impl ApplicationHandler for App<'_> {
                                                 pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.recovery_key_display =
                                                     recovery_key.clone();
+                                                // Sync read-only display editing state so it can be selected/copied.
+                                                let key_str = recovery_key.as_deref().unwrap_or("");
+                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
+                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
+                                                pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                                                 pw.chart.panel_app.user_settings_state.profile_manager_page =
                                                     ProfileManagerPage::ShowRecoveryKey;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -4823,6 +4833,11 @@ impl ApplicationHandler for App<'_> {
                                         pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
                                             recovery_key.clone();
+                                        // Sync read-only display editing state so it can be selected/copied.
+                                        let key_str = recovery_key.as_deref().unwrap_or("");
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                                         pw.chart.panel_app.user_settings_state.profile_manager_page =
                                             ProfileManagerPage::ShowRecoveryKey;
                                         pw.chart.panel_app.user_settings_state.show_profile_manager = true;
@@ -5031,6 +5046,10 @@ impl ApplicationHandler for App<'_> {
                                     for pw in self.windows.values_mut() {
                                         pw.chart.panel_app.user_settings_state.recovery_key_display =
                                             Some(new_recovery_key_fmt.clone());
+                                        // Sync read-only display editing state so it can be selected/copied.
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = new_recovery_key_fmt.clone();
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_recovery_key_fmt.chars().count();
+                                        pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                                         pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                                         pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                                         pw.chart.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();

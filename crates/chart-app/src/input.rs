@@ -780,6 +780,59 @@ impl ChartApp {
                     }
                 }
             }
+            // Profile manager inputs — text select drag on any active profile manager input.
+            if self.panel_app.user_settings_state.show_profile_manager {
+                if let Some(ref us) = result.user_settings {
+                    // Iterate all registered input char-position entries and check if
+                    // the drag started inside that input's rect.
+                    let mut drag_field: Option<String> = None;
+                    let mut drag_cursor: usize = 0;
+                    for (field_id, char_positions) in &us.input_char_positions {
+                        // Find the matching content_item rect.
+                        if let Some((_, input_rect)) = us.content_items.iter().find(|(k, _)| k == field_id) {
+                            if input_rect.contains(x, y) && !char_positions.is_empty() {
+                                let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(char_positions, x);
+                                drag_field = Some(field_id.clone());
+                                drag_cursor = new_cursor;
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(field_id) = drag_field {
+                        // Set cursor and selection anchor on the appropriate editing state.
+                        match field_id.as_str() {
+                            "e2e_passphrase_input" => {
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = Some(drag_cursor);
+                            }
+                            "profile_mgr:name_input" => {
+                                self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = Some(drag_cursor);
+                            }
+                            "profile_mgr:recovery_key_input" => {
+                                self.panel_app.user_settings_state.recovery_key_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.recovery_key_editing.selection_start = Some(drag_cursor);
+                            }
+                            "profile_mgr:new_passphrase_input" => {
+                                self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
+                            }
+                            "profile_mgr:confirm_passphrase_input" => {
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = Some(drag_cursor);
+                            }
+                            "profile_mgr:recovery_key_display" => {
+                                self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
+                            }
+                            _ => {}
+                        }
+                        self.panel_app.user_settings_state.profile_mgr_text_select_dragging = Some(field_id.clone());
+                        eprintln!("[ChartApp] profile_mgr text select drag started: {} at char {}", field_id, drag_cursor);
+                        return;
+                    }
+                }
+            }
             // Preset name input — text select drag on the input field
             if let Some(ref pni) = result.preset_name_input {
                 if pni.input_rect.contains(x, y) && self.panel_app.preset_name_input.is_open {
@@ -1818,6 +1871,41 @@ impl ChartApp {
             self.panel_app.user_settings_state.update_drag(x, y);
             return;
         }
+        // Profile manager text select drag move.
+        if self.panel_app.user_settings_state.profile_mgr_text_select_dragging.is_some() {
+            let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.clone().unwrap_or_default();
+            let char_positions: Vec<f64> = self.frame_result.as_ref()
+                .and_then(|r| r.user_settings.as_ref())
+                .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == &field_id))
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            if !char_positions.is_empty() {
+                let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                match field_id.as_str() {
+                    "e2e_passphrase_input" => {
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
+                    }
+                    "profile_mgr:name_input" => {
+                        self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
+                    }
+                    "profile_mgr:recovery_key_input" => {
+                        self.panel_app.user_settings_state.recovery_key_editing.cursor = new_cursor;
+                    }
+                    "profile_mgr:new_passphrase_input" => {
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                    }
+                    "profile_mgr:confirm_passphrase_input" => {
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
+                    }
+                    "profile_mgr:recovery_key_display" => {
+                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
+                    }
+                    _ => {}
+                }
+                // selection_start stays as the anchor set during drag_start
+            }
+            return;
+        }
         if self.panel_app.preset_name_input.text_select_dragging {
             // Update text selection cursor from mouse X position.
             if let Some(ref pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
@@ -2328,6 +2416,63 @@ impl ChartApp {
         if self.panel_app.user_settings_state.is_dragging {
             self.panel_app.user_settings_state.end_drag();
             eprintln!("[ChartApp] user_settings modal drag ended");
+            return;
+        }
+        // Profile manager text select drag end.
+        if self.panel_app.user_settings_state.profile_mgr_text_select_dragging.is_some() {
+            let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.take().unwrap_or_default();
+            // Finalize: if anchor == cursor (plain click jitter), clear the selection.
+            let (anchor, cursor) = match field_id.as_str() {
+                "e2e_passphrase_input" => (
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start,
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.cursor,
+                ),
+                "profile_mgr:name_input" => (
+                    self.panel_app.user_settings_state.new_profile_name_editing.selection_start,
+                    self.panel_app.user_settings_state.new_profile_name_editing.cursor,
+                ),
+                "profile_mgr:recovery_key_input" => (
+                    self.panel_app.user_settings_state.recovery_key_editing.selection_start,
+                    self.panel_app.user_settings_state.recovery_key_editing.cursor,
+                ),
+                "profile_mgr:new_passphrase_input" => (
+                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
+                    self.panel_app.user_settings_state.new_passphrase_editing.cursor,
+                ),
+                "profile_mgr:confirm_passphrase_input" => (
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start,
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.cursor,
+                ),
+                "profile_mgr:recovery_key_display" => (
+                    self.panel_app.user_settings_state.recovery_key_display_editing.selection_start,
+                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor,
+                ),
+                _ => (None, 0),
+            };
+            if anchor == Some(cursor) {
+                match field_id.as_str() {
+                    "e2e_passphrase_input" => {
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    }
+                    "profile_mgr:name_input" => {
+                        self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                    }
+                    "profile_mgr:recovery_key_input" => {
+                        self.panel_app.user_settings_state.recovery_key_editing.selection_start = None;
+                    }
+                    "profile_mgr:new_passphrase_input" => {
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
+                    }
+                    "profile_mgr:confirm_passphrase_input" => {
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                    }
+                    "profile_mgr:recovery_key_display" => {
+                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                    }
+                    _ => {}
+                }
+            }
+            eprintln!("[ChartApp] profile_mgr text select drag ended: {}", field_id);
             return;
         }
         if self.panel_app.preset_name_input.text_select_dragging {
@@ -4184,6 +4329,7 @@ impl ChartApp {
         // and name inputs may receive keyboard events.  All other char routing is
         // blocked to prevent data leaking into hidden inputs or triggering chart
         // keyboard shortcuts.
+        // The recovery key DISPLAY box (read-only) is also excluded from char input.
         if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
@@ -5189,6 +5335,9 @@ impl ChartApp {
         // While the profile manager is shown, only allow key events to reach the
         // passphrase, recovery key, or name input fields.  This prevents keyboard
         // shortcuts (Escape, arrow keys, etc.) from operating on the hidden chart UI.
+        // Special case: when the read-only recovery key display box is focused, allow
+        // SelectAll (Ctrl+A) through so the user can select all text.  Ctrl+C is
+        // handled passively via on_copy_selection() without needing a key event.
         if self.panel_app.user_settings_state.show_profile_manager
             && !self.panel_app.user_settings_state.e2e_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
@@ -5196,6 +5345,13 @@ impl ChartApp {
             && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
+            // Allow Ctrl+A (SelectAll) to reach the recovery key display box.
+            if self.panel_app.user_settings_state.recovery_key_display_focused {
+                if matches!(key, KeyPress::SelectAll) {
+                    self.panel_app.user_settings_state.recovery_key_display_editing.select_all();
+                    return;
+                }
+            }
             return;
         }
 
@@ -5588,6 +5744,10 @@ impl ChartApp {
                 return Some(text);
             }
             if let Some(text) = get_selection(&uss.confirm_passphrase_editing) {
+                return Some(text);
+            }
+            // Recovery key DISPLAY — read-only, but user can select and copy text.
+            if let Some(text) = get_selection(&uss.recovery_key_display_editing) {
                 return Some(text);
             }
         }
@@ -6020,7 +6180,8 @@ impl ChartApp {
             let allowed = widget_id.starts_with("profile_manager:")
                 || widget_id.starts_with("user_settings:profile_mgr:")
                 || widget_id.starts_with("user_settings:profile_delete:")
-                || widget_id == "user_settings:e2e_passphrase_input";
+                || widget_id == "user_settings:e2e_passphrase_input"
+                || widget_id == "user_settings:profile_mgr:recovery_key_display";
             if !allowed {
                 return;
             }
@@ -7512,6 +7673,17 @@ impl ChartApp {
                 }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    // Position cursor at click point using pre-computed char positions.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "e2e_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] e2e_passphrase_input: focused");
                 }
                 "show_wizard" => {
@@ -7694,6 +7866,17 @@ impl ChartApp {
                 "profile_mgr:name_input" => {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    // Position cursor at click point.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:name_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] profile_mgr: name input focused");
                 }
                 "profile_mgr:use_recovery_key" => {
@@ -7711,6 +7894,17 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    // Position cursor at click point.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:recovery_key_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.recovery_key_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.recovery_key_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] profile_mgr: recovery key input focused");
                 }
                 "profile_mgr:new_passphrase_input" => {
@@ -7719,6 +7913,17 @@ impl ChartApp {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     self.panel_app.user_settings_state.recovery_key_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    // Position cursor at click point.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:new_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] profile_mgr: new_passphrase_input focused");
                 }
                 "profile_mgr:confirm_passphrase_input" => {
@@ -7727,6 +7932,17 @@ impl ChartApp {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     self.panel_app.user_settings_state.recovery_key_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    // Position cursor at click point.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:confirm_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] profile_mgr: confirm_passphrase_input focused");
                 }
                 "profile_mgr:save_new_passphrase" => {
@@ -7754,6 +7970,29 @@ impl ChartApp {
                         self.pending_updater_cmd = Some(format!("recovery_unlock:{}", recovery_key_text));
                         eprintln!("[ChartApp] profile_mgr: recovery unlock submitted");
                     }
+                }
+                "profile_mgr:recovery_key_display" => {
+                    // User clicked the recovery key display box — position cursor at click point.
+                    self.panel_app.user_settings_state.recovery_key_display_focused = true;
+                    let key_text = self.panel_app.user_settings_state.recovery_key_display
+                        .clone()
+                        .unwrap_or_default();
+                    // Sync the display editing state text in case it hasn't been set yet.
+                    if self.panel_app.user_settings_state.recovery_key_display_editing.text != key_text {
+                        self.panel_app.user_settings_state.recovery_key_display_editing.text = key_text.clone();
+                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_text.chars().count();
+                    }
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:recovery_key_display"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                    }
+                    eprintln!("[ChartApp] profile_mgr: recovery_key_display clicked, cursor positioned");
                 }
                 "profile_mgr:recovery_key_copy" => {
                     // Copy the recovery key to the system clipboard.

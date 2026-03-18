@@ -80,7 +80,7 @@ pub fn render_profile_manager(
         ),
         ProfileManagerPage::ShowRecoveryKey => render_page_show_recovery_key(
             ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            &layer_id, input_coordinator, result,
+            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
             ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
@@ -1004,6 +1004,8 @@ fn render_page_show_recovery_key(
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
@@ -1060,36 +1062,75 @@ fn render_page_show_recovery_key(
     ctx.set_text_align(TextAlign::Left);
     cy += 26.0;
 
-    // Recovery key box
-    let key_box_h = 80.0;
-    ctx.set_fill_color("rgba(0,0,0,0.35)");
-    ctx.fill_rounded_rect(inner_x, cy, inner_w, key_box_h, 4.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.35)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(inner_x, cy, inner_w, key_box_h, 4.0);
-
-    // Recovery key text (monospace)
+    // Recovery key display box — rendered as a selectable read-only text input so the
+    // user can click-to-cursor and drag-to-select the key text for manual copying.
     let key_text = state
         .recovery_key_display
         .as_deref()
         .unwrap_or("(key not available)");
 
-    ctx.set_font("bold 13px monospace");
-    ctx.set_fill_color("rgba(244,205,99,1.0)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    // Split into two lines at the midpoint dash for readability
-    let mid = key_text.len() / 2;
-    // Find the nearest dash to mid for a clean break
-    let break_pos = key_text[..mid + 5]
-        .rfind('-')
-        .map(|i| i + 1)
-        .unwrap_or(mid);
-    let line1 = &key_text[..break_pos.min(key_text.len())];
-    let line2 = &key_text[break_pos.min(key_text.len())..];
-    ctx.fill_text(line1, inner_x + inner_w / 2.0, cy + key_box_h / 2.0 - 10.0);
-    ctx.fill_text(line2, inner_x + inner_w / 2.0, cy + key_box_h / 2.0 + 10.0);
-    ctx.set_text_align(TextAlign::Left);
+    let key_box_h = 40.0;
+    let key_display_rect = WidgetRect::new(inner_x, cy, inner_w, key_box_h);
+
+    // Build a WidgetTheme that matches the gold recovery key color scheme.
+    let key_widget_theme = crate::ui::widgets::types::WidgetTheme {
+        bg_normal: "rgba(0,0,0,0.35)".to_string(),
+        bg_hover: "rgba(0,0,0,0.40)".to_string(),
+        bg_pressed: "rgba(0,0,0,0.45)".to_string(),
+        bg_disabled: "rgba(0,0,0,0.20)".to_string(),
+        text_normal: "rgba(244,205,99,1.0)".to_string(),
+        text_hover: "rgba(244,205,99,1.0)".to_string(),
+        text_disabled: "rgba(244,205,99,0.5)".to_string(),
+        border_normal: "rgba(244,205,99,0.35)".to_string(),
+        border_hover: "rgba(244,205,99,0.55)".to_string(),
+        border_focused: "rgba(244,205,99,0.70)".to_string(),
+        accent: "rgba(244,205,99,0.30)".to_string(),
+        accent_hover: "rgba(244,205,99,0.40)".to_string(),
+        success: "#26a69a".to_string(),
+        warning: "#ff9800".to_string(),
+        danger: "#ef5350".to_string(),
+    };
+
+    let editing = &state.recovery_key_display_editing;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let display_focused = state.recovery_key_display_focused;
+    let key_display_config = InputConfig::new(key_text)
+        .with_focused(display_focused)
+        .with_cursor(editing.cursor)
+        .with_type(InputType::Text)
+        .with_font_size(13.0)
+        .with_padding(10.0)
+        .with_radius(4.0)
+        .with_selection(sel_start, sel_end);
+
+    let key_display_result = draw_input(ctx, &key_display_config, crate::ui::widgets::types::WidgetState::Normal, key_display_rect, &key_widget_theme);
+
+    // Register the display box for click events (focus, cursor positioning) and
+    // hover so the mouse cursor changes.
+    result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
+    result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_display",
+        key_display_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+
+    // Draw blinking cursor if the display is focused.
+    let _ = frame_theme; // frame_theme reserved for future use (e.g. accent color)
+    if display_focused && editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            key_display_result.cursor_x,
+            key_display_result.cursor_y,
+            key_display_result.cursor_height,
+            "rgba(244,205,99,0.9)",
+        );
+    }
 
     cy += key_box_h + 10.0;
 
@@ -1239,6 +1280,7 @@ fn render_page_create_new(
     let name_result = draw_input(ctx, &name_config, WidgetState::Normal, name_rect, &widget_theme);
 
     result.content_items.push(("profile_mgr:name_input".to_string(), name_rect));
+    result.input_char_positions.push(("profile_mgr:name_input".to_string(), name_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:name_input",
         name_rect,
@@ -1394,6 +1436,7 @@ fn render_page_set_new_passphrase(
     let new_pass_result = draw_input(ctx, &new_pass_config, WidgetState::Normal, new_pass_rect, &widget_theme);
 
     result.content_items.push(("profile_mgr:new_passphrase_input".to_string(), new_pass_rect));
+    result.input_char_positions.push(("profile_mgr:new_passphrase_input".to_string(), new_pass_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:new_passphrase_input",
         new_pass_rect,
@@ -1435,6 +1478,7 @@ fn render_page_set_new_passphrase(
     let confirm_pass_result = draw_input(ctx, &confirm_pass_config, WidgetState::Normal, confirm_pass_rect, &widget_theme);
 
     result.content_items.push(("profile_mgr:confirm_passphrase_input".to_string(), confirm_pass_rect));
+    result.input_char_positions.push(("profile_mgr:confirm_passphrase_input".to_string(), confirm_pass_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:confirm_passphrase_input",
         confirm_pass_rect,
@@ -1586,6 +1630,7 @@ fn render_page_use_recovery_key(
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
 
     result.content_items.push(("profile_mgr:recovery_key_input".to_string(), input_rect));
+    result.input_char_positions.push(("profile_mgr:recovery_key_input".to_string(), input_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:recovery_key_input",
         input_rect,
@@ -1733,6 +1778,7 @@ fn render_passphrase_input(
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
 
     result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
+    result.input_char_positions.push(("e2e_passphrase_input".to_string(), input_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
         "user_settings:e2e_passphrase_input",
         input_rect,

@@ -3476,6 +3476,21 @@ pub struct UserSettingsState {
     // ── Profile list scroll ───────────────────────────────────────────────────
     /// Vertical scroll offset (pixels) for the profile list in the ProfileList page.
     pub profile_list_scroll_offset: f64,
+
+    // ── Profile manager text selection drag ───────────────────────────────────
+    /// Which profile manager input field is currently being drag-selected.
+    /// The value is the widget ID (e.g. "e2e_passphrase_input", "profile_mgr:name_input").
+    /// None = no drag in progress.
+    pub profile_mgr_text_select_dragging: Option<String>,
+
+    // ── Recovery key display editing state ────────────────────────────────────
+    /// Read-only editing state for the recovery key display box (ShowRecoveryKey page).
+    /// Populated from `recovery_key_display` each frame so the user can select/copy
+    /// the key text by clicking and dragging inside the display box.
+    pub recovery_key_display_editing: TextEditingState,
+    /// Whether the recovery key display box has logical focus (user clicked it).
+    /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
+    pub recovery_key_display_focused: bool,
 }
 
 impl Default for UserSettingsState {
@@ -3601,6 +3616,15 @@ impl Default for UserSettingsState {
             confirm_passphrase_focused: false,
             set_passphrase_error: String::new(),
             profile_list_scroll_offset: 0.0,
+            profile_mgr_text_select_dragging: None,
+            recovery_key_display_editing: TextEditingState {
+                field_id: "recovery_key_display".to_string(),
+                text: String::new(),
+                cursor: 0,
+                selection_start: None,
+                blink_time: 0,
+            },
+            recovery_key_display_focused: false,
         }
     }
 }
