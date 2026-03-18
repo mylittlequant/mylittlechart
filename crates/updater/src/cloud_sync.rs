@@ -1141,6 +1141,10 @@ pub async fn pull_all(
 ///
 /// Items are pushed as plaintext — no client-side encryption.
 /// Vault blobs are handled separately by [`do_zt_blob_push`].
+///
+/// Returns early with zero pushed/pulled if `profile_id` is empty —
+/// pushing without a profile_id would get rejected by the server and
+/// should never block the UI.
 pub async fn do_cloud_sync(
     client: &reqwest::Client,
     server_url: &str,
@@ -1151,6 +1155,16 @@ pub async fn do_cloud_sync(
     profile_id: &str,
     device_id: &str,
 ) -> Result<SyncCycleResult, String> {
+    if profile_id.is_empty() {
+        eprintln!("[CloudSync] skipping sync — empty profile_id");
+        return Ok(SyncCycleResult {
+            pushed: 0,
+            pulled: 0,
+            conflicts: vec![],
+            new_state: state.clone(),
+        });
+    }
+
     // Filter to CloudSync tier and apply toggle gates.
     // For presets, strip heavy fields before computing effective checksum.
     let filtered: Vec<SyncItem> = local_items
@@ -1446,6 +1460,11 @@ pub async fn do_zt_blob_push(
     profile_id: &str,
     device_id: &str,
 ) -> Result<ZtBlobResult, String> {
+    if profile_id.is_empty() {
+        eprintln!("[CloudSync] skipping ZT blob push — empty profile_id");
+        return Ok(ZtBlobResult { pushed: 0, id_to_checksum: Default::default() });
+    }
+
     // Cloud = always ZT: push both vault and recovery key unconditionally.
     let blobs: Vec<SyncItem> = local_items
         .zt_blob_items()

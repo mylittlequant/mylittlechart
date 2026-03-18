@@ -126,7 +126,7 @@ impl ProfileManager {
         let key_ref = key.as_ref();
 
         // Load the profile (profile.json + optional vault.enc merge).
-        let profile = match load_profile(key_ref) {
+        let mut profile = match load_profile(key_ref) {
             Ok(p) => {
                 eprintln!(
                     "[ProfileManager] loaded profile (active_preset={})",
@@ -158,6 +158,16 @@ impl ProfileManager {
                 fallback
             }
         };
+
+        // Generate profile_id for legacy profiles that have none.
+        if profile.profile_id.is_empty() {
+            let generated = uuid::Uuid::new_v4().to_string();
+            eprintln!(
+                "[ProfileManager] profile_id was empty — generated {}",
+                generated
+            );
+            profile.profile_id = generated;
+        }
 
         // Templates.
         let template_manager = {
