@@ -589,20 +589,31 @@ fn render_page_profile_list(
 
             let row_mid_y = cy + cloud_row_h / 2.0;
 
-            // Short profile ID (first 8 chars)
-            let short_id: String = cp.profile_id.chars().take(8).collect();
-            // Draw lock icon for encrypted cloud profiles instead of emoji
+            // Lock icon for encrypted cloud profiles
             let label_x = if cp.has_vault {
                 draw_svg_icon(ctx, Icon::Lock.svg(), inner_x + 6.0, row_mid_y - 7.0, 14.0, 14.0, "rgba(254,255,238,0.5)");
                 inner_x + 26.0
             } else {
                 inner_x + 8.0
             };
-            ctx.set_font("bold 13px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.75)");
+            // Display name (bold) + short profile ID (dimmer)
+            let short_id: String = cp.profile_id.chars().take(8).collect();
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&short_id, label_x, row_mid_y);
+            let mut text_x = label_x;
+            if let Some(ref name) = cp.display_name {
+                ctx.set_font("bold 13px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.85)");
+                ctx.fill_text(name, text_x, row_mid_y);
+                text_x += ctx.measure_text(name) + 6.0;
+                ctx.set_font("11px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.35)");
+                ctx.fill_text(&format!("({})", short_id), text_x, row_mid_y);
+            } else {
+                ctx.set_font("bold 13px sans-serif");
+                ctx.set_fill_color("rgba(254,255,238,0.75)");
+                ctx.fill_text(&short_id, text_x, row_mid_y);
+            }
 
             // Item count + size
             let size_str = if cp.total_bytes >= 1_048_576 {

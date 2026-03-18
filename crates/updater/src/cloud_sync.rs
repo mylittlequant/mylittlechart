@@ -952,6 +952,9 @@ pub async fn push_items(
 pub struct CloudProfileInfo {
     /// UUID identifier for this profile.
     pub profile_id: String,
+    /// Human-readable name (from profile_meta sync item, if available).
+    #[serde(default)]
+    pub display_name: Option<String>,
     /// Total number of sync items for this profile.
     pub item_count: i64,
     /// Total bytes across all sync items.

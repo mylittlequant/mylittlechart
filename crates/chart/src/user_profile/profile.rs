@@ -24,6 +24,7 @@ pub const PROFILE_VERSION: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     /// Unique window identifier (e.g. "win_1728503941").
+    #[serde(default)]
     pub window_id: String,
     /// Ordered list of preset IDs open as tabs in this window.
     #[serde(default)]

@@ -5884,6 +5884,7 @@ impl ApplicationHandler for App<'_> {
                     if let zengeld_updater::SyncStatus::CloudProfilesLoaded(ref profiles) = sync_status {
                         Some(profiles.iter().map(|p| zengeld_chart::ui::modal_settings::CloudProfileEntry {
                             profile_id: p.profile_id.clone(),
+                            display_name: p.display_name.clone(),
                             item_count: p.item_count,
                             total_bytes: p.total_bytes,
                             last_modified: p.last_modified,
