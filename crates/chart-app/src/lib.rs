@@ -1914,21 +1914,17 @@ impl ChartApp {
                                 window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
                             }
 
-                            // Auto mode guard: if a new bar appeared and the last
-                            // bar was near the right edge, nudge viewport so the
-                            // last bar stays visible with dynamic_margin empty bars
-                            // on the right.  If the user scrolled far away, don't
-                            // disturb.
+                            // Auto mode guard: if a new bar appeared and it would
+                            // be off-screen or at the very edge, nudge viewport by
+                            // exactly 1 bar so it stays visible.  No margin — A-mode
+                            // just keeps the last bar in view without adding space.
+                            // If the user scrolled far away, don't disturb.
                             if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
                                 let right_edge_bar = window.viewport.view_start + visible_f;
-                                let last_bar = (count - 1) as f64;
-                                // Only nudge if the last bar is near the right edge
-                                // (within dynamic_margin bars of it).
-                                if last_bar >= right_edge_bar - dynamic_margin - 1.0 {
-                                    let target = count as f64 + dynamic_margin - visible_f;
-                                    if target > window.viewport.view_start {
-                                        window.viewport.view_start = target.max(0.0);
-                                    }
+                                let last_bar = count as f64; // one past last bar index
+                                // Nudge if the new bar is at or beyond the right edge
+                                if last_bar >= right_edge_bar {
+                                    window.viewport.view_start += 1.0;
                                 }
                             }
                             // Manual mode: no viewport adjustments.
