@@ -7376,13 +7376,16 @@ fn main() {
         }
         const ERROR_ALREADY_EXISTS: u32 = 183;
 
-        let name: Vec<u16> = "Global\\mylittlechart_single_instance\0"
+        let name: Vec<u16> = "Local\\mylittlechart_single_instance\0"
             .encode_utf16()
             .collect();
         let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
         if handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             eprintln!("[App] another instance is already running — exiting.");
             std::process::exit(0);
+        }
+        if handle == 0 {
+            eprintln!("[App] WARNING: CreateMutexW failed (error {}), continuing without single-instance guard", unsafe { GetLastError() });
         }
         handle // keep alive for process lifetime
     };
