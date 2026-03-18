@@ -15,7 +15,7 @@ alert-delivery = { path = "../alert-delivery" }
 live-data = { path = "../live-data" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
-uzor = "1.0.6"
+uzor = "1.0.7"
 vello = "0.7"
 winit = "0.30"
 pollster = "0.4"
