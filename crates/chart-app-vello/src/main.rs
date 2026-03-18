@@ -4454,17 +4454,26 @@ impl ApplicationHandler for App<'_> {
                 // NOT the profile's mode.
 
                 // ── Profile commands (all build configs) ─────────────────────
-                if let Some(new_name) = cmd_str.strip_prefix("profile_rename:") {
-                    let active_id = self.profile_manager.profile.profile_id.clone();
-                    match self.profile_manager.rename_profile(&active_id, new_name) {
+                if let Some(rest) = cmd_str.strip_prefix("profile_rename:") {
+                    // Format: "profile_rename:{id}:{new_name}"
+                    let (target_id, new_name) = if let Some(idx) = rest.find(':') {
+                        (rest[..idx].to_string(), rest[idx + 1..].to_string())
+                    } else {
+                        // Fallback for old format "profile_rename:{name}"
+                        (self.profile_manager.profile.profile_id.clone(), rest.to_string())
+                    };
+                    let is_active = target_id == self.profile_manager.profile.profile_id;
+                    match self.profile_manager.rename_profile(&target_id, &new_name) {
                         Ok(()) => {
-                            self.profile.display_name = new_name.to_string();
-                            self.sync_profiles_to_windows();
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.profile_display_name =
-                                    new_name.to_string();
+                            if is_active {
+                                self.profile.display_name = new_name.clone();
+                                for pw in self.windows.values_mut() {
+                                    pw.chart.panel_app.user_settings_state.profile_display_name =
+                                        new_name.clone();
+                                }
                             }
-                            eprintln!("[App] profile renamed to: {}", new_name);
+                            self.sync_profiles_to_windows();
+                            eprintln!("[App] profile renamed: id={} name={}", target_id, new_name);
                         }
                         Err(e) => eprintln!("[App] profile_rename failed: {}", e),
                     }

@@ -260,11 +260,22 @@ impl ProfileManager {
             return Err("Profile name must not be empty".to_string());
         }
 
-        // If renaming the active profile, update the in-memory profile too.
         if id == self.profile.profile_id {
+            // Active profile — update in-memory + save via normal path.
             self.profile.display_name = new_name.to_string();
             save_profile(&self.profile, self.vault_key.as_ref())
                 .map_err(|e| e.to_string())?;
+        } else {
+            // Non-active profile — patch profile.json on disk directly.
+            let pj = profiles_dir().join(id).join("profile.json");
+            if pj.exists() {
+                if let Ok(raw) = std::fs::read_to_string(&pj) {
+                    if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        val["display_name"] = serde_json::Value::String(new_name.to_string());
+                        let _ = std::fs::write(&pj, serde_json::to_string_pretty(&val).unwrap_or(raw));
+                    }
+                }
+            }
         }
 
         // Update the index entry.

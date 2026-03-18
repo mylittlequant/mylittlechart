@@ -7746,15 +7746,17 @@ impl ChartApp {
                 // ── Profile handlers ───────────────────────────────────────────
                 "profile_rename_confirm" => {
                     let new_name = self.panel_app.user_settings_state.profile_rename_editing.text.trim().to_string();
+                    let target_id = self.panel_app.user_settings_state.profile_rename_target_id.clone();
                     if !new_name.is_empty() {
-                        // Update display name for active profile (rename target is always the active profile
-                        // since only the active row shows the Rename button).
-                        self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        if target_id.as_deref() == Some(&self.panel_app.user_settings_state.profile_id) {
+                            self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        }
                         self.panel_app.user_settings_state.profile_rename_mode = false;
                         self.panel_app.user_settings_state.profile_rename_focused = false;
+                        let tid = target_id.unwrap_or_else(|| self.panel_app.user_settings_state.profile_id.clone());
                         self.panel_app.user_settings_state.profile_rename_target_id = None;
-                        self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
-                        eprintln!("[ChartApp] profile_rename_confirm: new name = {}", new_name);
+                        self.pending_updater_cmd = Some(format!("profile_rename:{}:{}", tid, new_name));
+                        eprintln!("[ChartApp] profile_rename_confirm: id={} new name = {}", tid, new_name);
                     }
                 }
                 "profile_rename_cancel" => {
