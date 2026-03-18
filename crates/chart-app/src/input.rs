@@ -14933,29 +14933,47 @@ impl ChartApp {
                                         scale_mode: snap.price_scale.scale_mode.clone(),
                                     };
                                     eprintln!("[ChartApp] LoadPreset window {}: snap.bars.len()={}", snap.window_id, snap.bars.len());
+                                    // Detect whether the viewport was stripped for persistence
+                                    // (view_start=0, bar_count=0 = default).  If so, use set_bars()
+                                    // which auto-positions the viewport to show the latest bars.
+                                    let viewport_is_stripped = snap.viewport.bar_count == 0
+                                        && snap.viewport.view_start == 0.0;
+
                                     if !snap.bars.is_empty() {
-                                        // Bars from snapshot — instant restore with exact coordinates.
                                         eprintln!("[ChartApp] → restoring {} bars from snapshot for {}", snap.bars.len(), snap.symbol);
-                                        window.bars = snap.bars.clone();
-                                        window.calc_moving_averages();
+                                        if viewport_is_stripped {
+                                            // Viewport was stripped — use set_bars() for auto-positioning.
+                                            window.set_bars(snap.bars.clone());
+                                        } else {
+                                            // Full viewport available — exact restore.
+                                            window.bars = snap.bars.clone();
+                                            window.calc_moving_averages();
+                                            window.viewport = snap.viewport.clone();
+                                        }
                                         window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                                        // Restore full viewport + price_scale (all fields persisted).
-                                        window.viewport = snap.viewport.clone();
-                                        window.price_scale = snap.price_scale.clone();
+                                        if !viewport_is_stripped {
+                                            window.price_scale = snap.price_scale.clone();
+                                        }
                                         // Still kick off a background refresh to pull the latest candles.
                                         let _ = window.data_provider.get_bars(&snap.symbol, &snap.timeframe);
                                     } else if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
                                         window.set_bars(bars);
                                         window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                                        window.viewport = snap.viewport.clone();
-                                        window.viewport.bar_count = window.bars.len();
-                                        window.price_scale = snap.price_scale.clone();
+                                        if !viewport_is_stripped {
+                                            window.viewport = snap.viewport.clone();
+                                            window.viewport.bar_count = window.bars.len();
+                                            window.price_scale = snap.price_scale.clone();
+                                        }
                                         window.calc_auto_scale();
                                         // No pending restore needed — bars arrived synchronously.
                                     } else {
                                         // Bars will arrive asynchronously via BarsLoaded.
-                                        // Stash the desired viewport so it can be applied then.
-                                        window.pending_viewport_restore = Some(deferred_vp);
+                                        // Stash the desired viewport so it can be applied then
+                                        // (but only if the viewport wasn't stripped — a stripped
+                                        // viewport would just position at bar 0).
+                                        if !viewport_is_stripped {
+                                            window.pending_viewport_restore = Some(deferred_vp);
+                                        }
                                     }
 
                                     eprintln!(
