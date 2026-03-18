@@ -5345,6 +5345,17 @@ impl ChartApp {
             return;
         }
 
+        // ── E2E passphrase text input key events (settings modal, wizard, vault unlock, or profile manager) ──
+        if (self.panel_app.user_settings_state.is_open
+            || self.panel_app.user_settings_state.show_welcome_wizard
+            || self.panel_app.user_settings_state.needs_vault_unlock
+            || self.panel_app.user_settings_state.show_profile_manager)
+            && self.panel_app.user_settings_state.e2e_passphrase_focused
+        {
+            apply_key(&mut self.panel_app.user_settings_state.e2e_passphrase_editing, key);
+            return;
+        }
+
         // ── New profile name text input key events (settings modal OR profile manager) ──
         if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager)
             && self.panel_app.user_settings_state.new_profile_name_focused
@@ -5559,6 +5570,31 @@ impl ChartApp {
         // Search modal input (symbol search, indicator search, compare search)
         if let Some(ref editing) = self.modal_state.editing_text {
             return get_selection(editing);
+        }
+
+        // Profile manager text fields
+        {
+            let uss = &self.panel_app.user_settings_state;
+            if let Some(text) = get_selection(&uss.e2e_passphrase_editing) {
+                return Some(text);
+            }
+            if let Some(text) = get_selection(&uss.new_profile_name_editing) {
+                return Some(text);
+            }
+            if let Some(text) = get_selection(&uss.recovery_key_editing) {
+                return Some(text);
+            }
+            if let Some(text) = get_selection(&uss.new_passphrase_editing) {
+                return Some(text);
+            }
+            if let Some(text) = get_selection(&uss.confirm_passphrase_editing) {
+                return Some(text);
+            }
+        }
+
+        // User settings profile rename field
+        if let Some(text) = get_selection(&self.panel_app.user_settings_state.profile_rename_editing) {
+            return Some(text);
         }
 
         None
@@ -7717,6 +7753,13 @@ impl ChartApp {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("recovery_unlock:{}", recovery_key_text));
                         eprintln!("[ChartApp] profile_mgr: recovery unlock submitted");
+                    }
+                }
+                "profile_mgr:recovery_key_copy" => {
+                    // Copy the recovery key to the system clipboard.
+                    if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
+                        self.clipboard_text = Some(key.clone());
+                        eprintln!("[ChartApp] profile_mgr: recovery key copied to clipboard");
                     }
                 }
                 "profile_mgr:recovery_key_confirm" => {

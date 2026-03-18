@@ -1091,7 +1091,41 @@ fn render_page_show_recovery_key(
     ctx.fill_text(line2, inner_x + inner_w / 2.0, cy + key_box_h / 2.0 + 10.0);
     ctx.set_text_align(TextAlign::Left);
 
-    cy += key_box_h + 18.0;
+    cy += key_box_h + 10.0;
+
+    // Copy button: copies the recovery key to clipboard
+    let copy_btn_label = "Скопировать ключ";
+    let is_copy_hovered = hovered == Some("profile_mgr:recovery_key_copy");
+    let copy_btn_bg = if is_copy_hovered {
+        "rgba(244,205,99,0.2)"
+    } else {
+        "rgba(244,205,99,0.08)"
+    };
+    let copy_btn_h = 28.0;
+    let copy_btn_w = inner_w.min(200.0);
+    let copy_btn_x = inner_x + (inner_w - copy_btn_w) / 2.0;
+    ctx.set_fill_color(copy_btn_bg);
+    ctx.fill_rounded_rect(copy_btn_x, cy, copy_btn_w, copy_btn_h, 4.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.4)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(copy_btn_x, cy, copy_btn_w, copy_btn_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(copy_btn_label, copy_btn_x + copy_btn_w / 2.0, cy + copy_btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let copy_btn_rect = WidgetRect::new(copy_btn_x, cy, copy_btn_w, copy_btn_h);
+    result.content_items.push(("profile_mgr:recovery_key_copy".to_string(), copy_btn_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_copy",
+        copy_btn_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+
+    cy += copy_btn_h + 12.0;
 
     // Confirm button: "Я записал"
     let btn_label = "Я записал — продолжить";
