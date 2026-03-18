@@ -1915,16 +1915,20 @@ impl ChartApp {
                             }
 
                             // Auto mode guard: if a new bar appeared and the last
-                            // bar was near the right edge, nudge viewport by 1 bar
-                            // so the new bar stays visible.  If the user scrolled
-                            // far away, don't disturb.
+                            // bar was near the right edge, nudge viewport so the
+                            // last bar stays visible with dynamic_margin empty bars
+                            // on the right.  If the user scrolled far away, don't
+                            // disturb.
                             if is_new_bar && window.price_scale.scale_mode == ScaleMode::Auto {
                                 let right_edge_bar = window.viewport.view_start + visible_f;
                                 let last_bar = (count - 1) as f64;
-                                // If the new bar is within 5 bars of the right edge,
-                                // nudge by exactly 1 bar to keep it in view.
-                                if last_bar <= right_edge_bar + 5.0 && last_bar >= right_edge_bar - 1.0 {
-                                    window.viewport.view_start += 1.0;
+                                // Only nudge if the last bar is near the right edge
+                                // (within dynamic_margin bars of it).
+                                if last_bar >= right_edge_bar - dynamic_margin - 1.0 {
+                                    let target = count as f64 + dynamic_margin - visible_f;
+                                    if target > window.viewport.view_start {
+                                        window.viewport.view_start = target.max(0.0);
+                                    }
                                 }
                             }
                             // Manual mode: no viewport adjustments.

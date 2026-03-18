@@ -63,8 +63,9 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let wick_x = crisp(cx, dpr);
         let screen_x = rect.x + wick_x;
 
-        // Skip if X is outside chart bounds (unless clipping disabled for Glass styles)
-        if !disable_clip && !bounds.x_in_bounds(screen_x) {
+        // Skip if the bar body is entirely outside chart bounds
+        // (extend by half bar width so partially-visible bars still render)
+        if !disable_clip && (screen_x + bar_w * 0.5 < bounds.left || screen_x - bar_w * 0.5 > bounds.right) {
             continue;
         }
 
@@ -177,8 +178,8 @@ pub fn draw_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let color = if is_up { &theme.candle_up } else { &theme.candle_down };
         let screen_x = rect.x + cx;
 
-        // Skip if X is outside chart bounds
-        if !bounds.x_in_bounds(screen_x) {
+        // Skip if the bar is entirely outside chart bounds
+        if screen_x + bar_w * 0.5 < bounds.left || screen_x - bar_w * 0.5 > bounds.right {
             continue;
         }
 
@@ -251,8 +252,8 @@ pub fn draw_hollow_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState
         let wick_x = crisp(cx, dpr);
         let screen_x = rect.x + wick_x;
 
-        // Skip if X is outside chart bounds
-        if !bounds.x_in_bounds(screen_x) {
+        // Skip if the bar is entirely outside chart bounds
+        if screen_x + bar_w * 0.5 < bounds.left || screen_x - bar_w * 0.5 > bounds.right {
             continue;
         }
 
@@ -362,8 +363,8 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let wick_x = crisp(cx, dpr);
         let screen_x = rect.x + wick_x;
 
-        // Skip if X is outside chart bounds
-        if !bounds.x_in_bounds(screen_x) {
+        // Skip if the bar is entirely outside chart bounds
+        if screen_x + bar_w * 0.5 < bounds.left || screen_x - bar_w * 0.5 > bounds.right {
             // Still need to update HA values for next iteration
             prev_ha_open = ha_open;
             prev_ha_close = ha_close;
