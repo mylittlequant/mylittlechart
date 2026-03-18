@@ -754,7 +754,7 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
             }
             "profile_meta" => {
                 // Profile metadata (display_name, avatar) — merged into profile.json.
-                // Also ensures cloud-restored profiles have correct sync_level.
+                // Also ensures cloud-restored profiles have correct sync_level + profile_id.
                 if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&item.content) {
                     let target = data_dir.join("profile.json");
                     let mut profile_val: serde_json::Value = if target.exists() {
@@ -768,6 +768,12 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                     }
                     if let Some(avatar) = meta.get("avatar").and_then(|v| v.as_str()) {
                         profile_val["avatar"] = serde_json::Value::String(avatar.to_string());
+                    }
+                    // Ensure profile_id is set (dir name = profile_id).
+                    if profile_val.get("profile_id").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+                        if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
+                            profile_val["profile_id"] = serde_json::Value::String(dir_name.to_string());
+                        }
                     }
                     // Ensure cloud fields are set for restored profiles.
                     profile_val["cloud_enabled"] = serde_json::Value::Bool(true);
