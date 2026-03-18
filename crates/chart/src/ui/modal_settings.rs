@@ -3197,6 +3197,11 @@ pub enum ProfileManagerPage {
     /// Shown immediately after `CreatePassphrase` succeeds.  The user must
     /// acknowledge ("I have written it down") before proceeding.
     ShowRecoveryKey,
+    /// Choose the sync level for the newly created profile.
+    ///
+    /// Shown after `ShowRecoveryKey` is confirmed during new profile creation.
+    /// The user picks Local / Connected / Cloud before the profile switch completes.
+    ChooseSyncLevel,
     /// Enter a recovery key to restore access when passphrase is forgotten.
     UseRecoveryKey,
     /// After recovery unlock — user must set a new passphrase before proceeding.
@@ -3491,6 +3496,12 @@ pub struct UserSettingsState {
     /// Whether the recovery key display box has logical focus (user clicked it).
     /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
     pub recovery_key_display_focused: bool,
+
+    // ── ChooseSyncLevel page ──────────────────────────────────────────────────
+    /// The sync level the user has selected on the `ChooseSyncLevel` page during
+    /// new profile creation.  One of "local", "connected", "cloud".
+    /// Defaults to "connected".  Consumed when the user clicks "Продолжить".
+    pub new_profile_sync_level: String,
 }
 
 impl Default for UserSettingsState {
@@ -3625,6 +3636,7 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             recovery_key_display_focused: false,
+            new_profile_sync_level: "connected".to_string(),
         }
     }
 }

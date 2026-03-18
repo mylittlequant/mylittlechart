@@ -8008,6 +8008,24 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
                     eprintln!("[ChartApp] profile_mgr: recovery key confirmed by user");
                 }
+                // ── ChooseSyncLevel page handlers ──────────────────────────────
+                "profile_mgr:sync_level:local" => {
+                    self.panel_app.user_settings_state.new_profile_sync_level = "local".to_string();
+                    eprintln!("[ChartApp] profile_mgr: sync_level selection = local");
+                }
+                "profile_mgr:sync_level:connected" => {
+                    self.panel_app.user_settings_state.new_profile_sync_level = "connected".to_string();
+                    eprintln!("[ChartApp] profile_mgr: sync_level selection = connected");
+                }
+                "profile_mgr:sync_level:cloud" => {
+                    self.panel_app.user_settings_state.new_profile_sync_level = "cloud".to_string();
+                    eprintln!("[ChartApp] profile_mgr: sync_level selection = cloud");
+                }
+                "profile_mgr:sync_level_confirm" => {
+                    let level = self.panel_app.user_settings_state.new_profile_sync_level.clone();
+                    self.pending_updater_cmd = Some(format!("sync_level_chosen:{}", level));
+                    eprintln!("[ChartApp] profile_mgr: sync_level confirmed = {}", level);
+                }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {
                     self.panel_app.user_settings_state.wizard_e2e_chosen = true;

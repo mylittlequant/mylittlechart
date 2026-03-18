@@ -610,6 +610,14 @@ struct App<'s> {
     /// by `recovery_key_confirmed` to trigger the actual switch.
     pending_switch_after_recovery: Option<(String, zengeld_chart::vault::VaultKey)>,
 
+    /// Profile switch deferred until the user chooses a sync level.
+    ///
+    /// Set by the `recovery_key_confirmed` handler when `pending_switch_after_recovery`
+    /// is consumed: instead of completing the switch immediately, the user is shown
+    /// the `ChooseSyncLevel` page.  Consumed by the `sync_level_chosen:` handler
+    /// which applies the chosen sync level and then completes the profile switch.
+    pending_switch_after_sync_level: Option<(String, zengeld_chart::vault::VaultKey)>,
+
     /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
     ///
     /// Stored temporarily so the `set_new_passphrase:` handler can re-derive a new
@@ -2105,6 +2113,7 @@ impl App<'_> {
             pending_new_profile_id: None,
             pending_skeleton_promote: false,
             pending_switch_after_recovery: None,
+            pending_switch_after_sync_level: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
         }
@@ -4995,10 +5004,14 @@ impl ApplicationHandler for App<'_> {
                 if cmd_str == "recovery_key_confirmed" {
                     self.profile_manager.clear_pending_recovery_key();
                     if let Some((profile_id, vault_key)) = self.pending_switch_after_recovery.take() {
-                        // Recovery key was shown for a NEW profile — complete the profile switch.
-                        eprintln!("[App] recovery key confirmed — switching to new profile {}", profile_id);
-                        self.pending_switch_vault_key = Some(vault_key);
-                        self.pending_profile_switch = Some(profile_id);
+                        // Recovery key was shown for a NEW profile — defer switch until sync level chosen.
+                        eprintln!("[App] recovery key confirmed — navigating to ChooseSyncLevel for new profile {}", profile_id);
+                        self.pending_switch_after_sync_level = Some((profile_id.clone(), vault_key));
+                        for pw in self.windows.values_mut() {
+                            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
+                            pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ChooseSyncLevel;
+                            pw.chart.panel_app.user_settings_state.new_profile_sync_level = "connected".to_string();
+                        }
                     } else if self.pending_promote_after_recovery_key {
                         // Recovery key was shown after a vault re-key (post-recovery passphrase reset).
                         eprintln!("[App] recovery key confirmed (post re-key) — promoting skeleton to live");
@@ -5009,6 +5022,62 @@ impl ApplicationHandler for App<'_> {
                         eprintln!("[App] recovery key confirmed — promoting skeleton to live");
                         // Don't patch windows — skeleton promote will recreate them.
                         self.pending_skeleton_promote = true;
+                    }
+                }
+
+                // ── Sync level chosen (ChooseSyncLevel page) ────────────────────────────────
+                // Emitted when the user clicks "Продолжить" on the ChooseSyncLevel page.
+                // Applies the chosen sync level to the newly created profile and completes
+                // the deferred profile switch from `pending_switch_after_sync_level`.
+                if let Some(level) = cmd_str.strip_prefix("sync_level_chosen:") {
+                    eprintln!("[App] sync_level_chosen: level={}", level);
+                    if let Some((profile_id, vault_key)) = self.pending_switch_after_sync_level.take() {
+                        eprintln!("[App] sync_level_chosen — applying level={} and switching to profile {}", level, profile_id);
+                        // Apply sync level settings to the profile that is about to be switched to.
+                        {
+                            let p = &mut self.profile_manager.profile;
+                            match level {
+                                "local" => {
+                                    p.ota_enabled = false;
+                                    p.telemetry_enabled = false;
+                                    p.sync_state.enabled = false;
+                                    p.cloud_enabled = false;
+                                }
+                                "connected" => {
+                                    p.ota_enabled = true;
+                                    p.telemetry_enabled = true;
+                                    p.sync_state.enabled = false;
+                                    p.cloud_enabled = false;
+                                }
+                                "cloud" => {
+                                    p.ota_enabled = true;
+                                    p.telemetry_enabled = true;
+                                    p.sync_state.enabled = true;
+                                    p.sync_state.sync_presets = true;
+                                    p.sync_state.sync_templates = true;
+                                    p.sync_state.sync_watchlists = true;
+                                    p.sync_state.sync_theme = true;
+                                    p.sync_state.sync_vault = true;
+                                    p.sync_state.sync_recovery_key = true;
+                                    p.cloud_enabled = true;
+                                }
+                                _ => {
+                                    eprintln!("[App] sync_level_chosen: unknown level '{}', defaulting to connected", level);
+                                }
+                            }
+                            p.sync_level = level.to_string();
+                        }
+                        // Persist the sync level for the target profile.
+                        let _ = zengeld_chart::set_profile_sync_level(
+                            &profile_id,
+                            self.profile_manager.profile.cloud_enabled,
+                            level,
+                        );
+                        // Complete the deferred profile switch.
+                        self.pending_switch_vault_key = Some(vault_key);
+                        self.pending_profile_switch = Some(profile_id);
+                    } else {
+                        eprintln!("[App] sync_level_chosen: no pending switch — ignoring (level={})", level);
                     }
                 }
 
@@ -5202,6 +5271,7 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str.starts_with("profile_switch:")
                         || cmd_str == "vault_skip_to_wizard"
                         || cmd_str == "recovery_key_confirmed"
+                        || cmd_str.starts_with("sync_level_chosen:")
                         || cmd_str.starts_with("recovery_unlock:")
                         || cmd_str.starts_with("set_new_passphrase:")
                         || cmd_str.starts_with("profile_create:")

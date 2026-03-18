@@ -82,6 +82,10 @@ pub fn render_profile_manager(
             ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
             frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
+        ProfileManagerPage::ChooseSyncLevel => render_page_choose_sync_level(
+            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            &layer_id, input_coordinator, result,
+        ),
         ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
             ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
             frame_theme, current_time_ms, &layer_id, input_coordinator, result,
@@ -1193,6 +1197,174 @@ fn render_page_show_recovery_key(
     result.content_items.push(("profile_mgr:recovery_key_confirm".to_string(), btn_rect));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:recovery_key_confirm",
+        btn_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+}
+
+// =============================================================================
+// Page: ChooseSyncLevel
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page_choose_sync_level(
+    ctx: &mut dyn RenderContext,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+    content_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    let modal_x = content_x;
+    let modal_y = content_y;
+    let modal_w = content_w;
+    let modal_h = content_h;
+
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
+
+    input_coordinator.register_on_layer(
+        "profile_manager:sync_level_bg",
+        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
+        Sense::CLICK,
+        layer_id,
+    );
+
+    let form_w: f64 = 460.0;
+    let inner_x = modal_x + (modal_w - form_w) / 2.0;
+    let inner_w = form_w;
+    // Centre the form vertically with a slight upward bias
+    let mut cy = modal_y + (modal_h / 2.0) - 120.0;
+
+    // ── Title ─────────────────────────────────────────────────────────────────
+    ctx.set_font("bold 18px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Sync Level", inner_x + inner_w / 2.0, cy);
+    cy += 28.0;
+
+    // ── Subtitle ──────────────────────────────────────────────────────────────
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(
+        "Выберите режим подключения для нового профиля",
+        inner_x + inner_w / 2.0,
+        cy,
+    );
+    ctx.set_text_align(TextAlign::Left);
+    cy += 28.0;
+
+    // ── Radio rows ────────────────────────────────────────────────────────────
+    // Each row: (level_id, label, description)
+    let radio_rows: &[(&str, &str, &str)] = &[
+        ("local",     "Local",     "Полностью автономный режим"),
+        ("connected", "Connected", "OTA обновления и телеметрия"),
+        ("cloud",     "Cloud",     "Полная синхронизация данных"),
+    ];
+
+    let radio_row_h = 34.0;
+    let radio_circle_r = 5.0;
+    let radio_cx = inner_x + radio_circle_r;
+
+    for (id, label, desc) in radio_rows {
+        let is_active = state.new_profile_sync_level.as_str() == *id;
+        let row_rect = WidgetRect::new(inner_x, cy, inner_w, radio_row_h);
+
+        // Register click area
+        let click_id = format!("profile_mgr:sync_level:{}", id);
+        let full_id = format!("user_settings:{}", click_id);
+        result.content_items.push((click_id.clone(), row_rect));
+        input_coordinator.register_on_layer(
+            full_id.as_str(),
+            row_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+
+        // Highlight hovered / active row background
+        let is_row_hovered = hovered == Some(click_id.as_str());
+        if is_active {
+            ctx.set_fill_color("rgba(244,205,99,0.08)");
+            ctx.fill_rounded_rect(inner_x, cy, inner_w, radio_row_h, 4.0);
+            ctx.set_stroke_color("rgba(244,205,99,0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(inner_x, cy, inner_w, radio_row_h, 4.0);
+        } else if is_row_hovered {
+            ctx.set_fill_color("rgba(254,255,238,0.05)");
+            ctx.fill_rounded_rect(inner_x, cy, inner_w, radio_row_h, 4.0);
+        }
+
+        // Draw radio circle (vertically centred in the row)
+        let circle_cy = cy + radio_row_h / 2.0;
+        if is_active {
+            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.begin_path();
+            ctx.arc(radio_cx, circle_cy, radio_circle_r, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        } else {
+            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.arc(radio_cx, circle_cy, radio_circle_r, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+        }
+
+        // Label
+        let label_color = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.55)" };
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(label_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, radio_cx + radio_circle_r + 8.0, circle_cy);
+
+        // Description (right-aligned, muted)
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(desc, inner_x + inner_w - 8.0, circle_cy);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+
+        cy += radio_row_h + 6.0;
+    }
+
+    cy += 12.0;
+
+    // ── Continue button ───────────────────────────────────────────────────────
+    let btn_label = "Продолжить";
+    let is_btn_hovered = hovered == Some("profile_mgr:sync_level_confirm");
+    let btn_bg = if is_btn_hovered {
+        "rgba(255,255,255,0.92)"
+    } else {
+        toolbar_theme.accent.as_str()
+    };
+    let btn_h = 34.0;
+    let btn_w = inner_w.min(200.0);
+    let btn_x = inner_x + (inner_w - btn_w) / 2.0;
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(btn_label, btn_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, cy, btn_w, btn_h);
+    result.content_items.push(("profile_mgr:sync_level_confirm".to_string(), btn_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:sync_level_confirm",
         btn_rect,
         Sense::CLICK | Sense::HOVER,
         layer_id,
