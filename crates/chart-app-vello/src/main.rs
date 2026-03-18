@@ -2675,13 +2675,21 @@ impl App<'_> {
             let _ = handle.cmd_tx.send(UpdaterCommand::SetProfileId(
                 self.profile_manager.profile.profile_id.clone(),
             ));
+            // Sync OTA/cloud mode from the new profile so the updater
+            // starts or stops OTA checks accordingly.
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(
+                self.profile_manager.profile.ota_enabled,
+            ));
+            let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(
+                self.profile_manager.profile.telemetry_enabled,
+            ));
             let ss = &self.profile_manager.profile.sync_state;
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(ss.enabled));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
-            eprintln!("[App] sent SetDataDir + sync toggles to updater after profile switch");
+            eprintln!("[App] sent SetDataDir + sync toggles + SetCloudEnabled to updater after profile switch");
         }
 
         eprintln!(

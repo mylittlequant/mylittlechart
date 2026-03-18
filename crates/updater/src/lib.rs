@@ -538,13 +538,9 @@ async fn updater_loop(
                         }
                     }
                     state::UpdaterCommand::ListCloudProfiles => {
-                        if !connected {
-                            log::warn!("[Updater] ListCloudProfiles ignored — running in standalone mode");
-                            sync_status_tx.send_replace(state::SyncStatus::CloudProfilesError(
-                                "Cloud connectivity is disabled".to_string(),
-                            ));
-                            continue;
-                        }
+                        // Account-level operation — works regardless of OTA/sync
+                        // mode. Profile manager needs this even when the active
+                        // profile is "local".  Only requires a valid OAuth token.
                         let token = token_store::load_token();
                         match token {
                             None => {
@@ -583,13 +579,8 @@ async fn updater_loop(
                         }
                     }
                     state::UpdaterCommand::RestoreCloudProfile { profile_id: restore_id } => {
-                        if !connected {
-                            log::warn!("[Updater] RestoreCloudProfile ignored — running in standalone mode");
-                            sync_status_tx.send_replace(state::SyncStatus::ProfileRestoreError(
-                                "Cloud connectivity is disabled".to_string(),
-                            ));
-                            continue;
-                        }
+                        // Account-level — same as ListCloudProfiles: works
+                        // regardless of OTA mode, only needs OAuth token.
                         let token = token_store::load_token();
                         match token {
                             None => {
