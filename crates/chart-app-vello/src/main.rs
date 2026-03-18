@@ -2358,12 +2358,10 @@ impl App<'_> {
                         s.auth_display_name = display_name.clone();
                         s.auth_provider = provider.clone();
                         s.auth_user_id = *user_id;
-                        // Auto-fetch cloud profiles if entering skeleton while already logged in.
-                        if self.needs_vault_unlock || self.is_first_run || self.needs_migration {
-                            s.cloud_profiles_loading = true;
-                            s.cloud_profiles_error.clear();
-                            let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
-                        }
+                        // Always fetch cloud profiles when entering skeleton while logged in.
+                        s.cloud_profiles_loading = true;
+                        s.cloud_profiles_error.clear();
+                        let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
                     }
                     zengeld_updater::AuthStatus::NotLoggedIn => {}
                 }
@@ -2376,13 +2374,13 @@ impl App<'_> {
             chart.panel_app.user_settings_state.show_welcome_wizard = true;
         }
 
-        // Show the vault unlock overlay when the profile is encrypted but no key has
-        // been derived yet (returning user with encrypted data).
+        // Show the profile list when vault needs unlocking (returning user with encrypted data).
+        // User picks their profile from the list, then gets the passphrase form.
         if self.needs_vault_unlock {
             use zengeld_chart::ui::modal_settings::ProfileManagerPage;
             chart.panel_app.user_settings_state.needs_vault_unlock = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
-            chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+            chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
             chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.profile_id.clone();
             chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.display_name.clone();
             // Populate profile vault status list
