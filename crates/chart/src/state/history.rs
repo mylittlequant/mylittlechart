@@ -106,6 +106,18 @@ impl CommandHistory {
     pub fn redo_count(&self) -> usize {
         self.redo_stack.len()
     }
+
+    /// Return a copy with all `ViewportChange` commands removed.
+    ///
+    /// Viewport is device-local — it gets recalculated on bar load, so
+    /// persisting it to disk or cloud causes stale-viewport bugs on restart.
+    pub fn stripped_for_persistence(&self) -> Self {
+        Self {
+            undo_stack: self.undo_stack.iter().filter(|c| !c.is_viewport_change()).cloned().collect(),
+            redo_stack: self.redo_stack.iter().filter(|c| !c.is_viewport_change()).cloned().collect(),
+            max_size: self.max_size,
+        }
+    }
 }
 
 #[cfg(test)]

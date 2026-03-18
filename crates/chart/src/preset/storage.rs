@@ -120,7 +120,29 @@ pub fn save_preset(preset: &ChartPreset, _key: Option<&VaultKey>) -> Result<Path
     let dir = presets_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.json", preset.id));
-    let json = serde_json::to_string_pretty(preset)?;
+
+    // Strip viewport-related data before writing to disk.
+    // Viewport is device-local — recalculated on bar load. Persisting it
+    // causes stale-viewport conflicts on restart (set_bars margin vs saved
+    // view_start).  ViewportChange commands are also stripped from undo/redo
+    // stacks since they reference stale positions.
+    let mut stripped = preset.clone();
+    for win in &mut stripped.windows {
+        win.viewport = Default::default();
+        if let Some(ref mut history) = win.command_history {
+            *history = history.stripped_for_persistence();
+        }
+        if let Some(ref mut stashed) = win.stashed_command_history {
+            *stashed = stashed.stripped_for_persistence();
+        }
+    }
+    for group in &mut stripped.sync_groups {
+        if let Some(ref mut history) = group.command_history {
+            *history = history.stripped_for_persistence();
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&stripped)?;
     fs::write(&path, &json)?;
     // Remove any leftover encrypted version from before the plaintext-only policy.
     let _ = fs::remove_file(dir.join(format!("{}.enc", preset.id)));

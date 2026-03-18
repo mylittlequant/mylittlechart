@@ -864,6 +864,11 @@ impl Command {
             Command::MoveObject { .. } => "Move",
         }
     }
+
+    /// Whether this command is a viewport change (pan/zoom).
+    pub fn is_viewport_change(&self) -> bool {
+        matches!(self, Command::ViewportChange { .. })
+    }
 }
 
 /// Result of executing a command
