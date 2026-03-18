@@ -7361,6 +7361,32 @@ fn main() {
     #[cfg(all(feature = "updater", not(feature = "standalone")))]
     zengeld_updater::wait_for_parent_exit_if_needed();
 
+    // ── Single-instance guard (Windows named mutex) ──────────────────
+    // If another mylittlechart process is already running, exit immediately
+    // instead of spawning a zombie that retries port binding forever.
+    #[cfg(target_os = "windows")]
+    let _single_instance_mutex = {
+        extern "system" {
+            fn CreateMutexW(
+                lp_mutex_attributes: *const std::ffi::c_void,
+                b_initial_owner: i32,
+                lp_name: *const u16,
+            ) -> isize;
+            fn GetLastError() -> u32;
+        }
+        const ERROR_ALREADY_EXISTS: u32 = 183;
+
+        let name: Vec<u16> = "Global\\mylittlechart_single_instance\0"
+            .encode_utf16()
+            .collect();
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
+        if handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            eprintln!("[App] another instance is already running — exiting.");
+            std::process::exit(0);
+        }
+        handle // keep alive for process lifetime
+    };
+
     eprintln!("[App] chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
     println!("chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
     println!("===============");

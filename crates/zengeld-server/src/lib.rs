@@ -75,22 +75,33 @@ pub fn start_server(
 
         // Prefer SO_REUSEADDR so a zombie socket left by process::exit(0) on
         // Windows does not block the new process from binding the same port.
-        // Fall back to the plain tokio bind on any unexpected error.
-        let listener = loop {
-            match bind_with_reuse(addr) {
-                Ok(std_listener) => {
-                    std_listener
-                        .set_nonblocking(true)
-                        .expect("set_nonblocking");
-                    break tokio::net::TcpListener::from_std(std_listener)
-                        .expect("tokio TcpListener from_std");
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[zengeld-server] port {} unavailable ({}), retrying in 5s",
-                        port, e
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        // Retry up to 3 times (15s total) then give up — avoids zombie loops.
+        let listener = {
+            let mut attempts = 0u32;
+            loop {
+                match bind_with_reuse(addr) {
+                    Ok(std_listener) => {
+                        std_listener
+                            .set_nonblocking(true)
+                            .expect("set_nonblocking");
+                        break tokio::net::TcpListener::from_std(std_listener)
+                            .expect("tokio TcpListener from_std");
+                    }
+                    Err(e) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            eprintln!(
+                                "[zengeld-server] port {} unavailable after {} attempts — giving up: {}",
+                                port, attempts, e
+                            );
+                            return;
+                        }
+                        eprintln!(
+                            "[zengeld-server] port {} unavailable ({}), retry {}/3 in 5s",
+                            port, e, attempts
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
                 }
             }
         };
