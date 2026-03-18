@@ -294,7 +294,7 @@ fn render_page_profile_list(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
 
-    // Mascot at bottom of left panel — viewBox is 197x251, maintain aspect ratio
+    // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
     let mascot_w = 140.0;
     let mascot_h = mascot_w * (251.0 / 197.0); // ~178px
     let mascot_x = left_inner_x + (left_inner_w - mascot_w) / 2.0;

@@ -264,24 +264,23 @@ pub fn draw_svg_icon(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f64, wid
     ctx.set_line_join("round");
     ctx.set_line_dash(&[]);
 
-    // Parse and render all path elements
+    // Parse and render all path elements.
+    // Build path twice when both fill and stroke are needed (fill consumes the path).
     for path_info in parse_svg_paths(svg, default_filled) {
-        ctx.begin_path();
-        render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
-
-        // Fill first, then stroke (so stroke is on top)
         if path_info.filled {
+            ctx.begin_path();
+            render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
             ctx.set_fill_color(color);
             ctx.fill();
         }
         if path_info.stroked {
-            // Apply dash array if present (scaled)
+            ctx.begin_path();
+            render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
             if let Some(ref dash) = path_info.dash_array {
                 let scaled_dash: Vec<f64> = dash.iter().map(|d| d * scale).collect();
                 ctx.set_line_dash(&scaled_dash);
             }
             ctx.stroke();
-            // Reset dash after stroke
             if path_info.dash_array.is_some() {
                 ctx.set_line_dash(&[]);
             }
@@ -377,18 +376,21 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
     let has_fill_none = svg_root_has_fill_none(svg);
     let default_filled = !has_fill_none;
 
-    // Render path elements preserving each path's fill and stroke colors
+    // Render path elements preserving each path's fill and stroke colors.
+    // NOTE: vello's fill()/stroke()/fill_linear_gradient() consume the path
+    // (path_builder.take()), so when a path needs BOTH fill AND stroke we must
+    // build the path geometry twice.
     for path_info in parse_svg_paths(svg, default_filled) {
-        ctx.begin_path();
-        render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
-
+        // ── Fill pass ───────────────────────────────────────────────────
         if path_info.filled {
+            ctx.begin_path();
+            render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
+
             if let Some(ref color) = path_info.fill_color {
                 if color.starts_with("url(#") {
                     let grad_id = color.strip_prefix("url(#").and_then(|s| s.strip_suffix(')'));
                     if let Some(id) = grad_id {
                         if let Some(grad) = parse_gradient(svg, id) {
-                            // Transform gradient coordinates from SVG space to screen space
                             let gx1 = offset_x + grad.x1 * scale;
                             let gy1 = offset_y + grad.y1 * scale;
                             let gx2 = offset_x + grad.x2 * scale;
@@ -400,7 +402,6 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
                                 .collect();
                             ctx.fill_linear_gradient(&stops_refs, gx1, gy1, gx2, gy2);
                         } else {
-                            // Gradient not found — flat black fallback
                             ctx.set_fill_color("black");
                             ctx.fill();
                         }
@@ -418,7 +419,11 @@ pub fn draw_svg_multicolor(ctx: &mut dyn RenderContext, svg: &str, x: f64, y: f6
             }
         }
 
+        // ── Stroke pass (rebuild path since fill consumed it) ───────────
         if path_info.stroked {
+            ctx.begin_path();
+            render_path_data(ctx, &path_info.d, offset_x, offset_y, scale);
+
             let sc = path_info.stroke_color.as_deref().unwrap_or("black");
             let sw = path_info.stroke_width.unwrap_or(1.0) * scale;
             ctx.set_stroke_color(sc);
