@@ -623,8 +623,7 @@ fn render_vault_profile_picker(
 
         // Client mode badge (10px, dimmed, right-aligned)
         let badge_label = match sync_level.as_str() {
-            "cloud_zt" => "Cloud ZT",
-            "cloud" => "Cloud",
+            "cloud" | "cloud_zt" => "Cloud",
             "connected" => "Connected",
             _ => "Local",
         };

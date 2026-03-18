@@ -49,7 +49,7 @@ pub struct ProfileInfo {
     pub has_vault: bool,
     /// Whether this profile is the currently active one.
     pub is_active: bool,
-    /// Sync level label: "local", "connected", "cloud", "cloud_zt".
+    /// Sync level label: "local", "connected", "cloud".
     pub sync_level: String,
 }
 

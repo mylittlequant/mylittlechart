@@ -3359,10 +3359,6 @@ pub struct UserSettingsState {
     pub sync_watchlists: bool,
     /// Whether the active theme is included in cloud sync.
     pub sync_theme_toggle: bool,
-    /// Whether the vault (API keys / exchange credentials) is included in cloud sync.
-    pub sync_vault_ui: bool,
-    /// Whether the recovery key is included in cloud sync.
-    pub sync_recovery_key_ui: bool,
     /// Whether OTA auto-updates are enabled.
     pub ota_enabled: bool,
 
@@ -3535,8 +3531,6 @@ impl Default for UserSettingsState {
             sync_templates: true,
             sync_watchlists: true,
             sync_theme_toggle: true,
-            sync_vault_ui: true,
-            sync_recovery_key_ui: true,
             ota_enabled: true,
             sync_status_label: "Idle".to_string(),
             sync_status_color: "#888888".to_string(),

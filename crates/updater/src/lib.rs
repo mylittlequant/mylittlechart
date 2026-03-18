@@ -356,14 +356,7 @@ async fn updater_loop(
                         sync_state.sync_theme = val;
                         log::debug!("[Updater] sync_theme: {}", val);
                     }
-                    state::UpdaterCommand::SetSyncVault(val) => {
-                        sync_state.sync_vault = val;
-                        log::debug!("[Updater] sync_vault: {}", val);
-                    }
-                    state::UpdaterCommand::SetSyncRecoveryKey(val) => {
-                        sync_state.sync_recovery_key = val;
-                        log::debug!("[Updater] sync_recovery_key: {}", val);
-                    }
+                    // sync_vault and sync_recovery_key are always true (Cloud = always ZT)
                     state::UpdaterCommand::SetDataDir(path) => {
                         data_dir = path;
                         eprintln!("[{} Updater] data_dir updated to {:?}", now_ts(), data_dir);
@@ -815,8 +808,8 @@ async fn run_sync_pipeline(
         }
     }
 
-    // Step 3: ZT blob push — vault.enc, recovery_key.enc.
-    if sync_state.sync_vault || sync_state.sync_recovery_key {
+    // Step 3: ZT blob push — vault.enc, recovery_key.enc (always for Cloud).
+    {
         match cloud_sync::do_zt_blob_push(
             client, UPDATE_SERVER, auth_token, sync_state,
             &local_items, build_attest, profile_id, device_id,

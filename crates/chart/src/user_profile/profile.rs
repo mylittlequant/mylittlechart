@@ -241,7 +241,7 @@ pub struct UserProfile {
     #[serde(default)]
     pub cloud_enabled: bool,
 
-    /// Sync level: "local", "connected", "cloud", "cloud_zt".
+    /// Sync level: "local", "connected", "cloud".
     /// Source of truth — index.json derives from this on every load.
     #[serde(default)]
     pub sync_level: String,
@@ -689,7 +689,7 @@ pub struct ProfileMeta {
     /// Old index.json files without this field default to false (cloud disabled).
     #[serde(default)]
     pub cloud_enabled: bool,
-    /// Sync level label for display: "local", "connected", "cloud", "cloud_zt".
+    /// Sync level label for display: "local", "connected", "cloud".
     /// Old index.json files without this field derive it from cloud_enabled.
     #[serde(default)]
     pub sync_level: String,

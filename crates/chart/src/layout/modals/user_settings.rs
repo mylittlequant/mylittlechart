@@ -763,8 +763,7 @@ fn render_profile_section(
             ctx.fill_text(name.as_str(), name_x, row_cy);
 
             let mode_label = match sync_level.as_str() {
-                "cloud_zt" => " (Cloud ZT)",
-                "cloud" => " (Cloud)",
+                "cloud" | "cloud_zt" => " (Cloud)",
                 "connected" => " (Connected)",
                 _ => " (Local)",
             };
@@ -1220,11 +1219,9 @@ fn render_sync_tab(
     // Level 1 (Connected): OTA or telemetry enabled, no sync
     // Level 0 (Local):    nothing enabled
     #[derive(PartialEq, Clone, Copy)]
-    enum SyncLevel { Local, Connected, Cloud, CloudZt }
+    enum SyncLevel { Local, Connected, Cloud }
 
-    let current_level = if state.sync_enabled && (state.sync_vault_ui || state.sync_recovery_key_ui) {
-        SyncLevel::CloudZt
-    } else if state.sync_enabled {
+    let current_level = if state.sync_enabled {
         SyncLevel::Cloud
     } else if state.ota_enabled || state.telemetry_enabled {
         SyncLevel::Connected
@@ -1244,8 +1241,7 @@ fn render_sync_tab(
     let radio_rows: &[(SyncLevel, &str, &str, &str)] = &[
         (SyncLevel::Local,     "local",     "Local",      "No network activity. Data stays on this device."),
         (SyncLevel::Connected, "connected", "Connected",  "Auto-updates + telemetry."),
-        (SyncLevel::Cloud,     "cloud",     "Cloud",      "+ presets, templates, watchlists, theme."),
-        (SyncLevel::CloudZt,   "cloud_zt",  "Cloud ZT", "+ encrypted vault sync."),
+        (SyncLevel::Cloud,     "cloud",     "Cloud",      "Full sync: presets, vault, recovery key."),
     ];
 
     let radio_row_h = 28.0;
@@ -1307,68 +1303,8 @@ fn render_sync_tab(
 
     cy += 8.0;
 
-    // ── VAULT SYNC sub-section (only when Cloud+ZT is selected) ───────────────
-    if current_level == SyncLevel::CloudZt {
-        // Divider line
-        ctx.set_stroke_color("rgba(254,255,238,0.12)");
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, cy);
-        ctx.line_to(x + available_w, cy);
-        ctx.stroke();
-        cy += 10.0;
-
-        // Sub-section header
-        ctx.set_font("600 11px sans-serif");
-        ctx.set_fill_color("rgba(244,205,99,0.7)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("VAULT SYNC", x, cy);
-        cy += section_gap;
-
-        // Toggle: API Keys (Vault)
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "API Keys (Vault)", state.sync_vault_ui, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_vault_toggle".to_string(), row_rect));
-            if !sync_tab_locked {
-                input_coordinator.register_on_layer(
-                    "user_settings:sync_vault_toggle",
-                    row_rect,
-                    uzor::input::sense::Sense::CLICK,
-                    layer_id,
-                );
-            }
-        }
-        cy += row_gap;
-
-        // Toggle: Recovery Key
-        {
-            let row_rect = render_toggle_row(ctx, x, cy, available_w, "Recovery Key", state.sync_recovery_key_ui, effective_text_color, toolbar_theme);
-            result.content_items.push(("sync_recovery_key_toggle".to_string(), row_rect));
-            if !sync_tab_locked {
-                input_coordinator.register_on_layer(
-                    "user_settings:sync_recovery_key_toggle",
-                    row_rect,
-                    uzor::input::sense::Sense::CLICK,
-                    layer_id,
-                );
-            }
-        }
-        cy += row_gap;
-
-        // Muted encryption note
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.35)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("Your data is encrypted before leaving this device.", x, cy);
-        cy += 18.0;
-
-        cy += 8.0;
-    }
-
-    // ── Sync status + storage bar (shown when level >= Cloud) ─────────────────
-    if current_level == SyncLevel::Cloud || current_level == SyncLevel::CloudZt {
+    // ── Sync status + storage bar (shown when Cloud is selected) ────────────────
+    if current_level == SyncLevel::Cloud {
         // Divider line
         ctx.set_stroke_color("rgba(254,255,238,0.12)");
         ctx.set_stroke_width(1.0);

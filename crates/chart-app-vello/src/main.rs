@@ -2017,8 +2017,6 @@ impl App<'_> {
                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncVault(ss.sync_vault));
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncRecoveryKey(ss.sync_recovery_key));
             }
 
             Some(handle)
@@ -2289,8 +2287,6 @@ impl App<'_> {
             uss.sync_templates = ss.sync_templates;
             uss.sync_watchlists = ss.sync_watchlists;
             uss.sync_theme_toggle = ss.sync_theme;
-            uss.sync_vault_ui = ss.sync_vault;
-            uss.sync_recovery_key_ui = ss.sync_recovery_key;
         }
         {
             let uss = &mut chart.panel_app.user_settings_state;
@@ -2612,8 +2608,6 @@ impl App<'_> {
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncVault(ss.sync_vault));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncRecoveryKey(ss.sync_recovery_key));
             eprintln!("[App] sent SetDataDir + sync toggles to updater after profile switch");
         }
 
@@ -5233,24 +5227,8 @@ impl ApplicationHandler for App<'_> {
                                 p.sync_state.sync_templates = true;
                                 p.sync_state.sync_watchlists = true;
                                 p.sync_state.sync_theme = true;
-                                p.sync_state.sync_vault = false;
-                                p.sync_state.sync_recovery_key = false;
-                                p.cloud_enabled = true;
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
-                                true
-                            }
-                            "cloud_zt" => {
-                                p.ota_enabled = true;
-                                p.telemetry_enabled = true;
-                                p.sync_state.enabled = true;
-                                p.sync_state.sync_presets = true;
-                                p.sync_state.sync_templates = true;
-                                p.sync_state.sync_watchlists = true;
-                                p.sync_state.sync_theme = true;
-                                // Vault off by default, recovery key on
-                                p.sync_state.sync_vault = false;
+                                // Cloud = always ZT: vault + recovery key always synced
+                                p.sync_state.sync_vault = true;
                                 p.sync_state.sync_recovery_key = true;
                                 p.cloud_enabled = true;
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
@@ -5276,17 +5254,6 @@ impl ApplicationHandler for App<'_> {
                         // (sync_profiles_to_windows needs &mut self which conflicts with
                         // the immutable `handle` borrow active through this entire block).
                         sync_level_changed = true;
-                        None
-                    // ── Vault sub-toggles (kept for granular ZT control) ─────────
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_vault:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_vault = val;
-                        eprintln!("[App] sync_vault = {}", val);
-                        None
-                    } else if let Some(rest) = cmd_str.strip_prefix("set_sync_recovery_key:") {
-                        let val = rest == "true";
-                        self.profile_manager.profile.sync_state.sync_recovery_key = val;
-                        eprintln!("[App] sync_recovery_key = {}", val);
                         None
                     } else if cmd_str == "force_sync" {
                         Some(UpdaterCommand::ForceSync)
@@ -5587,15 +5554,11 @@ impl ApplicationHandler for App<'_> {
                     let ota = self.profile_manager.profile.ota_enabled;
                     let telemetry = self.profile_manager.profile.telemetry_enabled;
                     let sync_en = self.profile_manager.profile.sync_state.enabled;
-                    let sync_vault = self.profile_manager.profile.sync_state.sync_vault;
-                    let sync_recovery = self.profile_manager.profile.sync_state.sync_recovery_key;
                     for pw in self.windows.values_mut() {
                         let us = &mut pw.chart.panel_app.user_settings_state;
                         us.ota_enabled = ota;
                         us.telemetry_enabled = telemetry;
                         us.sync_enabled = sync_en;
-                        us.sync_vault_ui = sync_vault;
-                        us.sync_recovery_key_ui = sync_recovery;
                     }
                 }
             }

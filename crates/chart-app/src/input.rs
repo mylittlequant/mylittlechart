@@ -7451,8 +7451,6 @@ impl ChartApp {
                     s.ota_enabled = false;
                     s.telemetry_enabled = false;
                     s.sync_enabled = false;
-                    s.sync_vault_ui = false;
-                    s.sync_recovery_key_ui = false;
                     self.pending_updater_cmd = Some("set_sync_level:local".to_string());
                     eprintln!("[ChartApp] sync_level = local");
                 }
@@ -7461,8 +7459,6 @@ impl ChartApp {
                     s.ota_enabled = true;
                     s.telemetry_enabled = true;
                     s.sync_enabled = false;
-                    s.sync_vault_ui = false;
-                    s.sync_recovery_key_ui = false;
                     self.pending_updater_cmd = Some("set_sync_level:connected".to_string());
                     eprintln!("[ChartApp] sync_level = connected");
                 }
@@ -7475,36 +7471,8 @@ impl ChartApp {
                     s.sync_templates = true;
                     s.sync_watchlists = true;
                     s.sync_theme_toggle = true;
-                    s.sync_vault_ui = false;
-                    s.sync_recovery_key_ui = false;
                     self.pending_updater_cmd = Some("set_sync_level:cloud".to_string());
                     eprintln!("[ChartApp] sync_level = cloud");
-                }
-                "sync_level:cloud_zt" => {
-                    let s = &mut self.panel_app.user_settings_state;
-                    s.ota_enabled = true;
-                    s.telemetry_enabled = true;
-                    s.sync_enabled = true;
-                    s.sync_presets = true;
-                    s.sync_templates = true;
-                    s.sync_watchlists = true;
-                    s.sync_theme_toggle = true;
-                    // Vault off by default (user opts in), recovery key on by default
-                    s.sync_vault_ui = false;
-                    s.sync_recovery_key_ui = true;
-                    self.pending_updater_cmd = Some("set_sync_level:cloud_zt".to_string());
-                    eprintln!("[ChartApp] sync_level = cloud_zt");
-                }
-                // ── Vault sub-toggles (within Cloud+ZT level) ────────────────
-                "sync_vault_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_vault_ui;
-                    self.panel_app.user_settings_state.sync_vault_ui = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_vault:{}", v));
-                }
-                "sync_recovery_key_toggle" => {
-                    let v = !self.panel_app.user_settings_state.sync_recovery_key_ui;
-                    self.panel_app.user_settings_state.sync_recovery_key_ui = v;
-                    self.pending_updater_cmd = Some(format!("set_sync_recovery_key:{}", v));
                 }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;

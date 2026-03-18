@@ -1343,12 +1343,12 @@ pub async fn do_cloud_sync(
     let new_state = SyncState {
         last_sync_timestamp: sync_timestamp,
         enabled: state.enabled,
-        sync_vault: state.sync_vault,
+        sync_vault: true,
         sync_presets: state.sync_presets,
         sync_templates: state.sync_templates,
         sync_watchlists: state.sync_watchlists,
         sync_theme: state.sync_theme,
-        sync_recovery_key: state.sync_recovery_key,
+        sync_recovery_key: true,
         last_synced_checksums: new_checksums,
         synced_items: new_synced_items,
     };
@@ -1385,13 +1385,9 @@ pub async fn do_zt_blob_push(
     profile_id: &str,
     device_id: &str,
 ) -> Result<ZtBlobResult, String> {
+    // Cloud = always ZT: push both vault and recovery key unconditionally.
     let blobs: Vec<SyncItem> = local_items
         .zt_blob_items()
-        .filter(|item| match item.sync_id.as_str() {
-            "vault" => state.sync_vault,
-            "recovery_key" => state.sync_recovery_key,
-            _ => true,
-        })
         .filter(|item| {
             state
                 .last_synced_checksums

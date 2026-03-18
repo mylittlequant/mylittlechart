@@ -355,10 +355,6 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
     struct ProbeSync {
         #[serde(default)]
         enabled: bool,
-        #[serde(default)]
-        sync_vault: bool,
-        #[serde(default)]
-        sync_recovery_key: bool,
     }
     let mut changed = false;
     for meta in &mut index.profiles {
@@ -366,12 +362,8 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
         let level = if let Ok(json) = fs::read_to_string(&profile_json) {
             if let Ok(p) = serde_json::from_str::<Probe>(&json) {
                 // If profile.json already has an explicit sync_level, trust it.
-                if !p.sync_level.is_empty() {
+                if !p.sync_level.is_empty() && p.sync_level != "cloud_zt" {
                     p.sync_level
-                } else if p.cloud_enabled && p.sync_state.enabled
-                    && (p.sync_state.sync_vault || p.sync_state.sync_recovery_key)
-                {
-                    "cloud_zt".to_string()
                 } else if p.cloud_enabled && p.sync_state.enabled {
                     "cloud".to_string()
                 } else if p.ota_enabled {
@@ -385,7 +377,7 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
         } else {
             "local".to_string()
         };
-        let cloud = level == "cloud" || level == "cloud_zt";
+        let cloud = level == "cloud";
         if meta.sync_level != level || meta.cloud_enabled != cloud {
             meta.sync_level = level;
             meta.cloud_enabled = cloud;

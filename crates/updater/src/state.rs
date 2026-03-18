@@ -152,10 +152,6 @@ pub enum UpdaterCommand {
     SetSyncWatchlists(bool),
     /// Enable or disable syncing of the active theme at runtime.
     SetSyncTheme(bool),
-    /// Enable or disable syncing of the vault (API keys / exchange credentials) at runtime.
-    SetSyncVault(bool),
-    /// Enable or disable syncing of the recovery key at runtime.
-    SetSyncRecoveryKey(bool),
     /// Update the data directory path used for collecting sync items.
     ///
     /// Must be sent after a profile switch so the updater reads from the

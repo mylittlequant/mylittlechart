@@ -5669,12 +5669,12 @@ impl ChartApp {
                 zengeld_chart::user_profile::profile::SyncState {
                     enabled: ui.sync_enabled,
                     last_sync_timestamp: existing.sync_state.last_sync_timestamp,
-                    sync_vault: ui.sync_vault_ui,
+                    sync_vault: true,
                     sync_presets: ui.sync_presets,
                     sync_templates: ui.sync_templates,
                     sync_watchlists: ui.sync_watchlists,
                     sync_theme: ui.sync_theme_toggle,
-                    sync_recovery_key: ui.sync_recovery_key_ui,
+                    sync_recovery_key: true,
                     // Preserve the synced_items set — it is managed by the updater
                     // loop and must not be reset when the user changes settings.
                     synced_items: existing.sync_state.synced_items.clone(),

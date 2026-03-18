@@ -450,8 +450,7 @@ fn render_page_profile_list(
 
         // Sync level badge — always visible for all profiles
         let mode_label = match sync_level.as_str() {
-            "cloud_zt" => "Cloud ZT",
-            "cloud" => "Cloud",
+            "cloud" | "cloud_zt" => "Cloud",
             "connected" => "Connected",
             _ => "Local",
         };
