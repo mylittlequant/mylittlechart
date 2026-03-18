@@ -42,6 +42,22 @@ fn main() {
     // Ensure cargo reruns this script if the env vars change.
     println!("cargo:rerun-if-env-changed=RELEASE_SIGNING_KEY");
     println!("cargo:rerun-if-env-changed=BUILD_PLATFORM");
+
+    // Windows executable metadata (icon, product name, company, description).
+    #[cfg(target_os = "windows")]
+    {
+        let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon("../../assets/mascot/icon.ico");
+        res.set("ProductName",      "My Little Chart");
+        res.set("CompanyName",      "chart.example");
+        res.set("FileDescription",  "My Little Chart — Trading Terminal");
+        res.set("LegalCopyright",   "Copyright © 2026 chart.example");
+        res.set("OriginalFilename", "mylittlechart.exe");
+        res.set("ProductVersion",   &version);
+        res.set("FileVersion",      &version);
+        res.compile().expect("winresource: failed to compile .rc");
+    }
 }
 
 fn sign_attestation(key_b64: &str, message: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
