@@ -707,9 +707,14 @@ impl ChartWindow {
         // Update viewport
         let count = self.bars.len();
         self.viewport.bar_count = count;
-        // Position so last bar has ~5 bars of right margin (polling space)
+        // Position so last bar has a dynamic right margin (polling space).
+        // Margin scales with zoom level so it looks proportional.
         let visible = self.viewport.visible_bars();
-        let right_margin: usize = 5;
+        let right_margin: usize = if visible <= 10 { 1 }
+            else if visible <= 20 { 2 }
+            else if visible <= 50 { 3 }
+            else if visible <= 100 { 4 }
+            else { 5 };
         if count + right_margin > visible {
             self.viewport.view_start = (count + right_margin - visible) as f64;
         } else {

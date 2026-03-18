@@ -93,11 +93,17 @@ impl Viewport {
     ///
     /// Returns indices that can be used to iterate over visible bars.
     /// End index is exclusive (one past the last visible bar).
+    /// Extends by 1 bar on each side so partially-visible bars (whose
+    /// body/wick extends into the viewport) are still rendered.
     #[inline]
     pub fn visible_range(&self) -> (usize, usize) {
-        let start = self.view_start_idx();
+        let start = if self.view_start_idx() > 0 {
+            self.view_start_idx() - 1
+        } else {
+            0
+        };
         let visible_f = self.chart_width / self.bar_spacing;
-        let end = ((self.view_start + visible_f).ceil() as usize)
+        let end = ((self.view_start + visible_f).ceil() as usize + 1)
             .min(self.bar_count);
         (start, end)
     }
