@@ -101,7 +101,7 @@ impl Primitive for PriceLabel {
         ctx.set_font(&font);
 
         // Price text
-        let price_text = format!("{:.2}", self.price);
+        let price_text = super::super::fmt_price(self.price);
 
         // Measure actual text width and calculate label dimensions
         let text_width = ctx.measure_text(&price_text);

@@ -137,7 +137,7 @@ impl Primitive for PriceNote {
         // Build label text
         let text_content = self.get_text();
         let label_text = if self.show_price {
-            format!("{:.2} - {}", self.price1, text_content)
+            format!("{} - {}", super::super::fmt_price(self.price1), text_content)
         } else {
             text_content.to_string()
         };

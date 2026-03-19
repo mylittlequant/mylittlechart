@@ -108,9 +108,9 @@ impl Primitive for PriceDateRange {
         let mut y_offset = center_y - 15.0;
         if self.show_pips {
             let price_label = if self.show_percentage {
-                format!("{:.2} ({:.2}%)", price_diff, percentage)
+                format!("{} ({:.2}%)", super::super::fmt_price(price_diff), percentage)
             } else {
-                format!("{:.2}", price_diff)
+                super::super::fmt_price(price_diff)
             };
             ctx.fill_text(&price_label, center_x, y_offset);
             y_offset += 15.0;

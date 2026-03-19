@@ -423,7 +423,7 @@ impl Primitive for FibChannel {
                 if self.show_prices {
                     // Price at this level point (use average of line endpoints)
                     let level_price = (self.price1 + offset_price * level + self.price2 + offset_price * level) / 2.0;
-                    label_parts.push(format!("{:.2}", level_price));
+                    label_parts.push(super::super::fmt_price(level_price));
                 }
                 Some(label_parts.join(" "))
             } else {

@@ -107,13 +107,13 @@ impl Primitive for PriceRange {
         ctx.set_font("12px sans-serif");
 
         let label = if self.show_percentage && self.show_pips {
-            format!("{:.2} ({:.2}%)", price_diff, percentage)
+            format!("{} ({:.2}%)", super::super::fmt_price(price_diff), percentage)
         } else if self.show_percentage {
             format!("{:.2}%", percentage)
         } else if self.show_pips {
-            format!("{:.2}", price_diff)
+            super::super::fmt_price(price_diff)
         } else {
-            format!("{:.2}", price_diff)
+            super::super::fmt_price(price_diff)
         };
 
         ctx.fill_text(&label, crisp(x + 10.0, dpr), crisp(min_y + h / 2.0, dpr));

@@ -86,6 +86,46 @@ mod types;
 pub mod registry;
 pub mod config;
 
+/// Format a price value with smart precision for display in drawing primitives.
+/// Handles everything from BTC ($70000) to PEPE ($0.000000003).
+/// For prices below 1e-8, uses scientific notation (e.g. "1.23e-10").
+pub fn fmt_price(price: f64) -> String {
+    if price != 0.0 && price.abs() < 1e-8 {
+        let exp = price.abs().log10().floor() as i32;
+        let mantissa = price / 10f64.powi(exp);
+        return format!("{:.2}e{}", mantissa, exp);
+    }
+
+    let precision = if price.abs() >= 10000.0 {
+        2
+    } else if price.abs() >= 1000.0 {
+        2
+    } else if price.abs() >= 100.0 {
+        3
+    } else if price.abs() >= 1.0 {
+        4
+    } else if price.abs() >= 0.01 {
+        6
+    } else {
+        8
+    };
+
+    let formatted = format!("{:.prec$}", price, prec = precision);
+
+    if formatted.contains('.') {
+        let trimmed = formatted.trim_end_matches('0');
+        let dot_pos = trimmed.find('.').unwrap();
+        let decimals_len = trimmed.len() - dot_pos - 1;
+        if decimals_len < 2 {
+            format!("{:.2}", price)
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        format!("{:.2}", price)
+    }
+}
+
 // Category modules
 pub mod lines;
 pub mod channels;
