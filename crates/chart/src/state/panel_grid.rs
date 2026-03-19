@@ -511,22 +511,12 @@ impl ChartPanelGrid {
             (parent_id, child_a, child_b, sep.orientation)
         };
 
-        // Compute the rect of the parent branch to get the correct total_size.
-        // Using content_rect dimensions was wrong — nested branches span only
-        // a fraction of the full content area.
-        let total_size = {
-            let parent_rect = self.docking.tree()
-                .rect_for_branch(parent_id, content_width, content_height);
-            match parent_rect {
-                Some(r) => match orientation {
-                    SeparatorOrientation::Horizontal => r.height,
-                    SeparatorOrientation::Vertical => r.width,
-                },
-                None => match orientation {
-                    SeparatorOrientation::Horizontal => content_height,
-                    SeparatorOrientation::Vertical => content_width,
-                },
-            }
+        // Always use the full content area (root rect) for proportion
+        // calculation.  Proportions are relative to the root, not to
+        // the parent branch.
+        let total_size = match orientation {
+            SeparatorOrientation::Horizontal => content_height,
+            SeparatorOrientation::Vertical => content_width,
         };
 
         // Retrieve the current proportions of the parent branch.

@@ -2974,6 +2974,14 @@ impl ChartApp {
             };
             self.panel_app.panel_grid.layout(split_rect);
 
+            // DEBUG: log expand layout results
+            if self.panel_app.panel_grid.is_expanded() {
+                let dbg_rects: Vec<_> = self.panel_app.panel_grid.panel_rects()
+                    .iter().map(|(&lid, &r)| (lid, r)).collect();
+                eprintln!("[EXPAND DEBUG] split_rect=({:.0}x{:.0}) expanded=true leaf_rects={:?}",
+                    split_rect.width, split_rect.height, dbg_rects);
+            }
+
             let leaf_rects: Vec<_> = self.panel_app.panel_grid.panel_rects()
                 .iter()
                 .map(|(&leaf_id, &sub_rect)| (leaf_id, sub_rect))
