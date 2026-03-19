@@ -266,13 +266,6 @@ impl ChartPanelGrid {
     ///
     /// Must be called every frame before calling [`panel_rects`].
     pub fn layout(&mut self, area: PanelRect) {
-        if self.expanded {
-            // Expanded: active leaf gets the entire area, skip tree recursion.
-            if let Some(leaf_id) = self.docking.active_leaf() {
-                self.docking.set_single_panel_rect(leaf_id, area);
-                return;
-            }
-        }
         self.docking.layout(area);
     }
 
