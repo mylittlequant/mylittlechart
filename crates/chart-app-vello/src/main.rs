@@ -6963,6 +6963,20 @@ impl ApplicationHandler for App<'_> {
                         pw.toolbar_dirty = true;
                     }
 
+                    // Dropdowns extend below the toolbar zone — always rebuild toolbar
+                    // scene when any dropdown is open so hover highlights update.
+                    if pw.chart.panel_app.toolbar_state.open_dropdown_id.is_some()
+                        || pw.chart.panel_app.toolbar_state.open_inline_style_dropdown
+                        || pw.chart.panel_app.toolbar_state.open_inline_width_dropdown
+                    {
+                        pw.toolbar_dirty = true;
+                    }
+
+                    // Inline bar dragging moves the toolbar — always rebuild while drag is active.
+                    if pw.chart.panel_app.toolbar_state.floating_inline_bar.dragging {
+                        pw.toolbar_dirty = true;
+                    }
+
                     // Mark sidebar dirty only when the hovered row changes, not on
                     // every sub-pixel cursor movement within the same row.
                     // Row height is 36 px; the scroll offset shifts which row is

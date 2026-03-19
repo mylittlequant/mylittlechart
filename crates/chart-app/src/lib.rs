@@ -1798,6 +1798,10 @@ impl ChartApp {
                             // Recalculate bar-index caches for all drawings so primitives
                             // render at correct positions now that real bars are available.
                             window.drawing_manager.recalculate_all_bar_caches(&window.bars);
+                            // Belt-and-suspenders: ensure every primitive has timestamps
+                            // populated (catches any created without sync, e.g. via undo
+                            // restore or deserialization without timestamp migration).
+                            window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                             // Apply deferred viewport from preset restore (if any).
                             // This overrides the default scale mode with the preset's
                             // saved value.
@@ -4191,94 +4195,9 @@ impl ChartApp {
         };
 
         // Build ChartSettingsData from current panel_app state and theme.
-        let chart_settings_data = {
-            use zengeld_chart::layout::modals::chart_settings::{
-                ChartSettingsData, InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
-            };
-            let rt = self.panel_app.theme_manager.current();
-            let series = &rt.series;
-
-            let (auto_scale, vert_lines, horz_lines,
-                 price_scale_width, time_scale_height,
-                 time_fmt_use_24h, time_fmt_show_dow, tz_label, date_fmt_label, precision_lbl) =
-                self.panel_app
-                .panel_grid
-                .active_window()
-                .map(|w| {
-                    let tf = &w.scale_settings.time_format;
-                    (
-                        w.price_scale.scale_mode.is_auto_y(),
-                        w.grid_options.vert_lines.visible,
-                        w.grid_options.horz_lines.visible,
-                        w.scale_settings.price_scale_width,
-                        w.scale_settings.time_scale_height,
-                        tf.use_24h,
-                        tf.show_day_of_week,
-                        tf.timezone_label(),
-                        tf.date_format.label().to_string(),
-                        zengeld_chart::scale_settings::precision_label(
-                            w.scale_settings.user_precision,
-                        ).to_string(),
-                    )
-                })
-                .unwrap_or_else(|| (
-                    true, true, true, 70.0, 30.0,
-                    true, false,
-                    "(UTC+0) Лондон".to_string(),
-                    "21.01.2026".to_string(),
-                    "Авто".to_string(),
-                ));
-
-            let css = &self.panel_app.chart_settings_state;
-
-            ChartSettingsData {
-                instrument: InstrumentSettings {
-                    use_prev_close_color: css.instrument_use_prev_close,
-                    body_enabled:   css.instrument_body_enabled,
-                    body_up_color:  series.candle_up_body.clone(),
-                    body_down_color: series.candle_down_body.clone(),
-                    border_enabled: css.instrument_border_enabled,
-                    border_up_color: series.candle_up_body.clone(),
-                    border_down_color: series.candle_down_body.clone(),
-                    wick_enabled:   css.instrument_wick_enabled,
-                    wick_up_color:  series.candle_up_wick.clone(),
-                    wick_down_color: series.candle_down_wick.clone(),
-                    precision_label: precision_lbl.clone(),
-                    timezone_label: tz_label.clone(),
-                    use_24h: time_fmt_use_24h,
-                    date_format_label: date_fmt_label.clone(),
-                    show_day_of_week: time_fmt_show_dow,
-                },
-                status_line: StatusLineSettings {
-                    legend_show_ohlc: true,
-                    legend_show_change: true,
-                    legend_show_percent: true,
-                    ..Default::default()
-                },
-                scales: ScalesLinesSettings {
-                    show_grid: vert_lines || horz_lines,
-                    vert_lines,
-                    horz_lines,
-                    auto_scale,
-                    price_scale_right: true,
-                    time_scale_bottom: true,
-                    price_scale_width,
-                    time_scale_height,
-                    crosshair_mode: "Normal".to_string(),
-                    crosshair_line_style: "Dashed".to_string(),
-                    crosshair_line_width: 1.0,
-                    crosshair_line_color: rt.chart.crosshair_line.clone(),
-                    price_scale_position: "right".to_string(),
-                    time_scale_position: "bottom".to_string(),
-                    corner_visibility: "on_hover".to_string(),
-                    date_format: "day_month_year".to_string(),
-                    use_24h: time_fmt_use_24h,
-                    show_day_of_week: time_fmt_show_dow,
-                    timezone_label: tz_label,
-                    ..Default::default()
-                },
-            }
-        };
+        // Uses build_chart_settings_data() so legend/tooltip fields are read
+        // from the actual window state instead of being hardcoded.
+        let chart_settings_data = self.build_chart_settings_data();
 
         // Snapshot the theme_manager pointer so render_modals can borrow it.
         let theme_manager_ptr: *const zengeld_chart::theme::ThemeManager =
@@ -5956,7 +5875,9 @@ impl ChartApp {
 
         let (auto_scale, vert_lines, horz_lines,
              price_scale_width, time_scale_height,
-             time_fmt_use_24h, time_fmt_show_dow, tz_label, date_fmt_label, precision_lbl) =
+             time_fmt_use_24h, time_fmt_show_dow, tz_label, date_fmt_label, precision_lbl,
+             legend_show_ohlc, legend_show_change, legend_show_percent,
+             tooltip_visible, tooltip_follow_cursor) =
             self.panel_app
             .panel_grid
             .active_window()
@@ -5975,6 +5896,11 @@ impl ChartApp {
                     zengeld_chart::scale_settings::precision_label(
                         w.scale_settings.user_precision,
                     ).to_string(),
+                    w.legend.show_ohlc,
+                    w.legend.show_change,
+                    w.legend.show_percent,
+                    w.tooltip.visible,
+                    w.tooltip.follow_cursor,
                 )
             })
             .unwrap_or_else(|| (
@@ -5983,6 +5909,8 @@ impl ChartApp {
                 "(UTC+0) Лондон".to_string(),
                 "21.01.2026".to_string(),
                 "Авто".to_string(),
+                true, true, true,
+                false, false,
             ));
 
         let css = &self.panel_app.chart_settings_state;
@@ -6006,9 +5934,11 @@ impl ChartApp {
                 show_day_of_week: time_fmt_show_dow,
             },
             status_line: StatusLineSettings {
-                legend_show_ohlc: true,
-                legend_show_change: true,
-                legend_show_percent: true,
+                legend_show_ohlc,
+                legend_show_change,
+                legend_show_percent,
+                tooltip_visible,
+                tooltip_follow_cursor,
                 ..Default::default()
             },
             scales: ScalesLinesSettings {

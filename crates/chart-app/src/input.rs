@@ -13608,6 +13608,12 @@ impl ChartApp {
                     .unwrap_or(false);
 
                 if primitive_created {
+                    // Populate point_timestamps immediately so TF switching keeps
+                    // the primitive anchored to the correct time position.
+                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        let bars = window.bars.clone();
+                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                    }
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.2}", bar, price);
                     // For grouped windows: move the completed primitive to TagManager so
                     // all group members see it via the per-frame render-cache sync.
@@ -13732,6 +13738,12 @@ impl ChartApp {
                     .unwrap_or(false);
 
                 if primitive_created {
+                    // Populate point_timestamps immediately so TF switching keeps
+                    // the primitive anchored to the correct time position.
+                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        let bars = window.bars.clone();
+                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                    }
                     eprintln!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     // For grouped windows: move the completed primitive to TagManager.
                     // For standalone windows: keep in drawing_manager and propagate to peers.

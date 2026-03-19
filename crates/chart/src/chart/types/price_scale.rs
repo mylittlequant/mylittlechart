@@ -170,8 +170,14 @@ pub fn price_precision(step: f64) -> usize {
         3
     } else if step >= 0.0001 {
         4
-    } else {
+    } else if step >= 0.00001 {
         5
+    } else if step >= 0.000001 {
+        6
+    } else if step >= 0.0000001 {
+        7
+    } else {
+        8
     }
 }
 
@@ -191,7 +197,7 @@ pub fn format_price_with_precision(price: f64, step: f64, user_precision: Option
         6 => format!("{:.6}", price),
         7 => format!("{:.7}", price),
         8 => format!("{:.8}", price),
-        _ => format!("{:.5}", price),
+        _ => format!("{:.8}", price),
     }
 }
 
@@ -382,7 +388,7 @@ impl PriceScale {
         // Minimum range protection: at least 0.0001% of the center price
         // This prevents the price axis from collapsing into a line
         // Works for both cheap ($0.01) and expensive ($100000) instruments
-        let min_range = center_price.abs().max(1.0) * 0.000001;
+        let min_range = center_price.abs().max(1e-10) * 0.000001;
         let clamped_range = new_range.max(min_range);
 
         let center_ratio = (center_price - self.price_min) / current_range.max(0.001);
@@ -407,7 +413,7 @@ impl PriceScale {
         let requested_range = new_max - new_min;
 
         // Minimum range: 0.0001% of center price (same as zoom())
-        let min_range = center.abs().max(1.0) * 0.000001;
+        let min_range = center.abs().max(1e-10) * 0.000001;
 
         if requested_range < min_range {
             // Don't apply - range too small

@@ -8,8 +8,7 @@
 //! # Styles
 //! - **Solid**: Opaque backgrounds (default, current behavior)
 //! - **Glass**: Semi-transparent backgrounds with subtle transparency
-//! - **FrostedGlass**: Blur effect (gaussian blur on background)
-//! - **LiquidGlass**: Interactive blur + animated wave effects on cursor movement
+//! - **FrostedGlassFlat**: Blur effect with flat buttons
 
 use serde::{Deserialize, Serialize};
 
@@ -74,12 +73,6 @@ pub enum UIStyle {
     Glass,
     /// Frosted glass with flat blur buttons
     FrostedGlassFlat,
-    /// Frosted glass with 3D convex glass buttons
-    FrostedGlass3D,
-    /// Liquid glass with flat blur buttons
-    LiquidGlassFlat,
-    /// Liquid glass with 3D convex glass buttons
-    LiquidGlass3D,
 }
 
 impl UIStyle {
@@ -88,10 +81,7 @@ impl UIStyle {
         match self {
             Self::Solid => "Solid",
             Self::Glass => "Glass",
-            Self::FrostedGlassFlat => "Frosted Glass (Flat)",
-            Self::FrostedGlass3D => "Frosted Glass (3D)",
-            Self::LiquidGlassFlat => "Liquid Glass (Flat)",
-            Self::LiquidGlass3D => "Liquid Glass (3D)",
+            Self::FrostedGlassFlat => "Frosted Glass",
         }
     }
 
@@ -101,9 +91,6 @@ impl UIStyle {
             Self::Solid => "Opaque backgrounds (default)",
             Self::Glass => "Semi-transparent backgrounds",
             Self::FrostedGlassFlat => "Blur effect with flat buttons",
-            Self::FrostedGlass3D => "Blur effect with 3D glass buttons",
-            Self::LiquidGlassFlat => "Interactive blur with flat buttons",
-            Self::LiquidGlass3D => "Interactive blur with 3D glass buttons",
         }
     }
 
@@ -113,9 +100,6 @@ impl UIStyle {
             Self::Solid,
             Self::Glass,
             Self::FrostedGlassFlat,
-            Self::FrostedGlass3D,
-            Self::LiquidGlassFlat,
-            Self::LiquidGlass3D,
         ]
     }
 
@@ -135,23 +119,12 @@ impl UIStyle {
             Self::Solid => StyleParams::solid(),
             Self::Glass => StyleParams::glass(),
             Self::FrostedGlassFlat => StyleParams::frosted_glass_flat(),
-            Self::FrostedGlass3D => StyleParams::frosted_glass_3d(),
-            Self::LiquidGlassFlat => StyleParams::liquid_glass_flat(),
-            Self::LiquidGlass3D => StyleParams::liquid_glass_3d(),
         }
     }
 
     /// Check if this style uses blur effects
     pub fn has_blur(&self) -> bool {
-        matches!(
-            self,
-            Self::FrostedGlassFlat | Self::FrostedGlass3D | Self::LiquidGlassFlat | Self::LiquidGlass3D
-        )
-    }
-
-    /// Check if this style is liquid glass (interactive effects)
-    pub fn is_liquid(&self) -> bool {
-        matches!(self, Self::LiquidGlassFlat | Self::LiquidGlass3D)
+        matches!(self, Self::FrostedGlassFlat)
     }
 }
 
@@ -354,111 +327,6 @@ impl StyleParams {
             liquid_trail_length: 0,
             liquid_ripple_speed: 0.0,
             liquid_ripple_duration: 0.0,
-        }
-    }
-
-    /// Frosted Glass style with 3D convex glass buttons
-    pub fn frosted_glass_3d() -> Self {
-        Self {
-            toolbar_bg_opacity: 0.0,
-            modal_bg_opacity: 0.0,
-            sidebar_bg_opacity: 0.0,
-            menu_bg_opacity: 0.0,
-            scale_bg_opacity: 0.0,
-            sub_pane_bg_opacity: 0.0,
-            hover_bg_opacity: 0.5,
-            active_bg_opacity: 0.4,
-            crosshair_label_bg_opacity: 0.3,
-            blur_radius: 12.0,
-            border_opacity: 0.4,
-            border_glow: false,
-            border_glow_color: "rgba(41, 98, 255, 0.3)".to_string(),
-            border_glow_spread: 0.0,
-            hover_highlight_intensity: 0.15,
-            hover_shimmer: false,
-            shimmer_duration_ms: 0,
-            shadow_opacity: 0.6,
-            soft_shadow: true,
-            toolbar_sidebar_style: true,
-            glass_button_style: GlassButtonStyle::Convex3D,
-            liquid_refraction: 1.0,
-            liquid_chromatic: 0.0,
-            liquid_specular: 0.0,
-            liquid_amplitude: 0.0,
-            liquid_cursor_radius: 0.0,
-            liquid_trail_length: 0,
-            liquid_ripple_speed: 0.0,
-            liquid_ripple_duration: 0.0,
-        }
-    }
-
-    /// Liquid Glass style with flat blur buttons
-    pub fn liquid_glass_flat() -> Self {
-        Self {
-            toolbar_bg_opacity: 0.0,
-            modal_bg_opacity: 0.0,
-            sidebar_bg_opacity: 0.0,
-            menu_bg_opacity: 0.0,
-            scale_bg_opacity: 0.0,
-            sub_pane_bg_opacity: 0.0,
-            hover_bg_opacity: 0.5,
-            active_bg_opacity: 0.4,
-            crosshair_label_bg_opacity: 0.3,
-            blur_radius: 12.0,
-            border_opacity: 0.4,
-            border_glow: true,
-            border_glow_color: "rgba(41, 98, 255, 0.4)".to_string(),
-            border_glow_spread: 4.0,
-            hover_highlight_intensity: 0.2,
-            hover_shimmer: true,
-            shimmer_duration_ms: 800,
-            shadow_opacity: 0.6,
-            soft_shadow: true,
-            toolbar_sidebar_style: true,
-            glass_button_style: GlassButtonStyle::Flat,
-            liquid_refraction: 1.12,
-            liquid_chromatic: 0.006,
-            liquid_specular: 0.12,
-            liquid_amplitude: 5.0,
-            liquid_cursor_radius: 150.0,
-            liquid_trail_length: 20,
-            liquid_ripple_speed: 250.0,
-            liquid_ripple_duration: 2.5,
-        }
-    }
-
-    /// Liquid Glass style with 3D convex glass buttons
-    pub fn liquid_glass_3d() -> Self {
-        Self {
-            toolbar_bg_opacity: 0.0,
-            modal_bg_opacity: 0.0,
-            sidebar_bg_opacity: 0.0,
-            menu_bg_opacity: 0.0,
-            scale_bg_opacity: 0.0,
-            sub_pane_bg_opacity: 0.0,
-            hover_bg_opacity: 0.5,
-            active_bg_opacity: 0.4,
-            crosshair_label_bg_opacity: 0.3,
-            blur_radius: 12.0,
-            border_opacity: 0.4,
-            border_glow: true,
-            border_glow_color: "rgba(41, 98, 255, 0.4)".to_string(),
-            border_glow_spread: 4.0,
-            hover_highlight_intensity: 0.2,
-            hover_shimmer: true,
-            shimmer_duration_ms: 800,
-            shadow_opacity: 0.6,
-            soft_shadow: true,
-            toolbar_sidebar_style: true,
-            glass_button_style: GlassButtonStyle::Convex3D,
-            liquid_refraction: 1.12,
-            liquid_chromatic: 0.006,
-            liquid_specular: 0.12,
-            liquid_amplitude: 5.0,
-            liquid_cursor_radius: 150.0,
-            liquid_trail_length: 20,
-            liquid_ripple_speed: 250.0,
-            liquid_ripple_duration: 2.5,
         }
     }
 
