@@ -2520,7 +2520,13 @@ impl ChartApp {
         self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
 
         // Sync viewport dimensions.
-        self.sync_viewport_from_layout();
+        // In split mode, viewport sync is handled later in the split-pane
+        // layout block (after panel_grid.layout() computes up-to-date rects).
+        // Running it here too would read stale panel_rects from the previous
+        // frame and apply an incorrect bar_shift to view_start.
+        if !self.panel_app.panel_grid.is_split() {
+            self.sync_viewport_from_layout();
+        }
 
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
@@ -2993,6 +2999,7 @@ impl ChartApp {
                         window.viewport.view_start += bar_shift;
                     }
                     window.viewport.chart_width = new_w;
+                    window.viewport.chart_height = leaf_content.height;
                 }
             }
 
