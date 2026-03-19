@@ -15052,6 +15052,11 @@ impl ChartApp {
                                     new_leaf_to_chart.insert(leaf_id, chart_id);
                                 }
 
+                                // Bump global ChartId counter past any restored window IDs.
+                                for snap in &preset.windows {
+                                    zengeld_chart::bump_chart_id_past(snap.window_id);
+                                }
+
                                 // Step 3: Restore the docking tree
                                 match layout_snap.restore_tree(|_type_id| {
                                     Some(zengeld_chart::state::sub_panel::ChartSubPanel::new(
@@ -15278,10 +15283,12 @@ impl ChartApp {
                     self.alert_manager.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
 
+                    self.sidebar_data_dirty = true;
                     eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
                 } else {
                     eprintln!("[ChartApp] preset '{}' not found in memory", id);
                 }
+                state_mutated = true;
             }
 
             ChartOutEvent::DeletePreset { id } => {
@@ -15546,6 +15553,7 @@ impl ChartApp {
 
         // Full reset — single pane, no indicators, no primitives.
         self.panel_app.panel_grid.set_layout_single();
+        self.panel_app.panel_grid.reassign_active_chart_id();
         for w in self.panel_app.panel_grid.windows_mut().values_mut() {
             w.drawing_manager.clear_all_primitives();
         }

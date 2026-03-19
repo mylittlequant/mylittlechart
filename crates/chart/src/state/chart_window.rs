@@ -49,6 +49,10 @@ pub fn generate_chart_id() -> ChartId {
     ChartId(NEXT_CHART_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
 }
 
+pub fn bump_chart_id_past(min_id: u64) {
+    NEXT_CHART_ID.fetch_max(min_id + 1, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Connection/data feed status for a chart window
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ConnectionStatus {

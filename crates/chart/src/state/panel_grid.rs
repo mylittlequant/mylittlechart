@@ -241,6 +241,23 @@ impl ChartPanelGrid {
         self.leaf_to_chart = map;
     }
 
+    pub fn reassign_active_chart_id(&mut self) {
+        let active_leaf = match self.docking.active_leaf() {
+            Some(id) => id,
+            None => return,
+        };
+        let old_chart_id = match self.leaf_to_chart.get(&active_leaf).copied() {
+            Some(id) => id,
+            None => return,
+        };
+        let new_chart_id = generate_chart_id();
+        if let Some(mut window) = self.windows.remove(&old_chart_id) {
+            window.id = new_chart_id;
+            self.windows.insert(new_chart_id, window);
+        }
+        self.leaf_to_chart.insert(active_leaf, new_chart_id);
+    }
+
     // =========================================================================
     // Layout
     // =========================================================================

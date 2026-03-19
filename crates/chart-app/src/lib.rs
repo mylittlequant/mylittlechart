@@ -3665,14 +3665,6 @@ impl ChartApp {
                 // Use content_rect as the full rect with minimal toolbar config
                 // so render_full_chart_panel treats the entire rect as chart area
                 // (toolbars are rendered separately via render_toolbars_with_theme).
-                {
-                    static DIAG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                    let c = DIAG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if c % 300 == 0 { // ~every 5 seconds at 60fps
-                        eprintln!("[RENDER_DIAG] frame={} dm_prims={} is_split=false",
-                            c, window.drawing_manager.primitives().len());
-                    }
-                }
                 let chart_render_rect = content_rect;
                 let mut chart_panel_data = panel_data;
                 let no_toolbar = zengeld_chart::ToolbarConfig::minimal();

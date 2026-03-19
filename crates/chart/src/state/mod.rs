@@ -72,7 +72,7 @@ pub use action_executor::{
 };
 
 // ChartWindow - the main chart state aggregate
-pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP, generate_chart_id};
+pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP, generate_chart_id, bump_chart_id_past};
 
 // Chart-internal split/expand system (uzor-panels integration)
 pub use sub_panel::ChartSubPanel;

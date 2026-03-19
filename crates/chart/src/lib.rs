@@ -333,7 +333,7 @@ pub use state::{
     // Chart-internal split/expand system
     ChartPanelGrid, ChartSubPanel, SplitHitResult, ChartInputTarget,
     // ChartId for the chart crate's ChartWindow
-    generate_chart_id,
+    generate_chart_id, bump_chart_id_past,
     // Unified chart action executor (operates on ChartWindow, returns external events)
     execute_chart_action, ChartExternalEvent, OpenModalRequest,
 };
