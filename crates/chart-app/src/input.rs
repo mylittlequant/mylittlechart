@@ -6423,6 +6423,7 @@ impl ChartApp {
                             window.exchange = item_exchange.clone();
                             window.update_title();
                             window.bars.clear();
+                            window.viewport.bar_count = 0;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(&symbol);
                         }
@@ -12956,6 +12957,7 @@ impl ChartApp {
                     window.exchange = exchange_part.to_string();
                     window.update_title();
                     window.bars.clear();
+                    window.viewport.bar_count = 0;
                     window.drawing_manager.clear_all_primitives();
                     window.restore_drawings_for_symbol(sym_part);
                 }
@@ -13317,6 +13319,7 @@ impl ChartApp {
                             window.exchange = resolved_exchange.as_str().to_string();
                             window.update_title();
                             window.bars.clear();
+                            window.viewport.bar_count = 0;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(symbol_part);
                         }
@@ -14513,6 +14516,7 @@ impl ChartApp {
                         window.timeframe = tf.clone();
                         window.update_title();
                         window.bars.clear();
+                        window.viewport.bar_count = 0;
                     }
                     // Unsubscribe old WS and fetch bars for new timeframe.
                     self.bridge.unsubscribe_all();

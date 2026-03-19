@@ -2375,6 +2375,20 @@ pub fn render_full_chart_panel(
     ctx.set_fill_color(&corrected_state.theme.background);
     ctx.fill_rect(window_rect.x, window_rect.y, window_rect.width, window_rect.height);
 
+    // Loading state — when there are no bars yet (e.g. after a symbol or
+    // timeframe switch), show a centred "Loading..." label and skip all
+    // chart content so primitives don't render over an empty canvas.
+    if corrected_state.bars.is_empty() {
+        let cx = corrected_chart_rect.x + corrected_chart_rect.width / 2.0;
+        let cy = corrected_chart_rect.y + corrected_chart_rect.height / 2.0;
+        ctx.set_fill_color(&corrected_state.theme.text);
+        ctx.set_font("14px sans-serif");
+        ctx.set_text_align(crate::render::TextAlign::Center);
+        ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+        ctx.fill_text("Loading...", cx, cy);
+        return ScaleCornerHitZones::default();
+    }
+
     // 2. Grid — extended variant covers the content area (under scales, excluding toolbars).
     draw_grid_extended(ctx, &corrected_state, content_rect);
 
