@@ -53,6 +53,10 @@ pub struct ChartPreset {
     /// Alert items associated with this preset.
     #[serde(default)]
     pub alerts: Vec<AlertItem>,
+    /// Per-leaf color tag assignments (LeafId → [r,g,b,a]).
+    /// Persisted so tags survive preset switching.
+    #[serde(default)]
+    pub leaf_color_tags: std::collections::HashMap<u64, [f32; 4]>,
 }
 
 impl ChartPreset {
@@ -78,6 +82,7 @@ impl ChartPreset {
             sync_groups: Vec::new(),
             indicators: Vec::new(),
             alerts: Vec::new(),
+            leaf_color_tags: std::collections::HashMap::new(),
         }
     }
 
