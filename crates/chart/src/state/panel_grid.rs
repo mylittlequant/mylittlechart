@@ -492,13 +492,13 @@ impl ChartPanelGrid {
     /// `sep_idx` is an index into `docking.separators()`.  `delta` is the
     /// signed pixel movement along the separator's axis (positive = right/down).
     ///
-    /// The total size of the content area along the separator axis must be
-    /// supplied so that pixel deltas can be converted to proportions.
-    pub fn apply_separator_drag(&mut self, sep_idx: usize, delta: f32, total_size: f32) {
+    /// The content area width/height must be supplied so that the parent
+    /// branch rect can be computed for correct proportion calculation.
+    pub fn apply_separator_drag(&mut self, sep_idx: usize, delta: f32, content_width: f32, content_height: f32) {
         use uzor::panels::SeparatorLevel;
 
         // Snapshot separator info to avoid borrow conflicts.
-        let (parent_id, child_a_raw, child_b_raw) = {
+        let (parent_id, child_a_raw, child_b_raw, orientation) = {
             let sep = match self.docking.separators().get(sep_idx) {
                 Some(s) => s,
                 None => return,
@@ -508,7 +508,25 @@ impl ChartPanelGrid {
                     (*parent_id, *child_a, *child_b)
                 }
             };
-            (parent_id, child_a, child_b)
+            (parent_id, child_a, child_b, sep.orientation)
+        };
+
+        // Compute the rect of the parent branch to get the correct total_size.
+        // Using content_rect dimensions was wrong — nested branches span only
+        // a fraction of the full content area.
+        let total_size = {
+            let parent_rect = self.docking.tree()
+                .rect_for_branch(parent_id, content_width, content_height);
+            match parent_rect {
+                Some(r) => match orientation {
+                    SeparatorOrientation::Horizontal => r.height,
+                    SeparatorOrientation::Vertical => r.width,
+                },
+                None => match orientation {
+                    SeparatorOrientation::Horizontal => content_height,
+                    SeparatorOrientation::Vertical => content_width,
+                },
+            }
         };
 
         // Retrieve the current proportions of the parent branch.

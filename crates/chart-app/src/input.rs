@@ -1819,19 +1819,16 @@ impl ChartApp {
         // If a split separator drag is active, update separator proportion.
         if let Some(sep_drag) = self.split_separator_drag.take() {
             use zengeld_chart::SeparatorOrientation;
-            let (delta, total_size) = match sep_drag.orientation {
-                SeparatorOrientation::Horizontal => {
-                    let delta = (y - sep_drag.start_y) as f32;
-                    let total_size = self.content_rect.height as f32;
-                    (delta, total_size)
-                }
-                SeparatorOrientation::Vertical => {
-                    let delta = (x - sep_drag.start_x) as f32;
-                    let total_size = self.content_rect.width as f32;
-                    (delta, total_size)
-                }
+            let delta = match sep_drag.orientation {
+                SeparatorOrientation::Horizontal => (y - sep_drag.start_y) as f32,
+                SeparatorOrientation::Vertical => (x - sep_drag.start_x) as f32,
             };
-            self.panel_app.panel_grid.apply_separator_drag(sep_drag.separator_idx, delta, total_size);
+            self.panel_app.panel_grid.apply_separator_drag(
+                sep_drag.separator_idx,
+                delta,
+                self.content_rect.width as f32,
+                self.content_rect.height as f32,
+            );
             // Update start position for incremental delta.
             self.split_separator_drag = Some(crate::SplitSeparatorDragState {
                 start_x: x,
