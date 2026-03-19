@@ -564,8 +564,8 @@ impl ChartWindow {
             // === Connection Status ===
             connection_status: self.connection_status,
 
-            // === Sync Group (inherited from source) ===
-            group_id: self.group_id,
+            // === Sync Group (NOT inherited — do_split assigns the correct group) ===
+            group_id: None,
             // Split child has no pre-tag state — everything comes from the tag.
             pre_tag_indicator_ids: Vec::new(),
             stashed_primitives: Vec::new(),

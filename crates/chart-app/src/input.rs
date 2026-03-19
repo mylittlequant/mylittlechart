@@ -16428,17 +16428,43 @@ impl ChartApp {
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
         self.propagate_crosshair_after_split(&new_leaves);
 
-        // TagManager: if the source was already in a group, connect new leaves
-        // to THAT group. Otherwise get the next unused color from TagManager's
-        // preset palette (NOT the legacy SYNC_COLORS).
+        // TagManager: if the source was already in a user-tagged group, connect new
+        // leaves to THAT group.  If the source was in an auto_created group (every
+        // window gets one automatically), we must NOT share it — each split window
+        // must get its own fresh auto group so primitives don't bleed between
+        // supposedly independent windows.  If there was no group at all, create a
+        // new user-visible group (same as before).
         if !new_leaves.is_empty() {
+            // Determine whether the pre-existing group is auto_created.
+            let pre_split_is_auto = pre_split_group_id
+                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .map(|g| g.auto_created)
+                .unwrap_or(false);
+
             let group_id = if let Some(existing_group) = pre_split_group_id {
-                // Source leaf was already in a group — reuse it.
-                if let Some(old_cid) = pre_split_chart_id {
-                    let _ = self.panel_app.tag_manager.disconnect(old_cid);
-                    eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, existing_group);
+                if pre_split_is_auto {
+                    // Auto group: the original window keeps its own auto group.
+                    // The split window(s) will each receive a brand-new auto group
+                    // below (after leaf_chart_ids is built), so here we just
+                    // disconnect the old chart id from the original group so the
+                    // group stays in sync, and we create one placeholder group id
+                    // for the source leaf.  The non-source leaves are handled
+                    // individually in the per-leaf loop further down.
+                    if let Some(old_cid) = pre_split_chart_id {
+                        let _ = self.panel_app.tag_manager.disconnect(old_cid);
+                        eprintln!("[TagManager] Disconnected destroyed chart {:?} from auto group {:?}", old_cid, existing_group);
+                    }
+                    // Re-use the original auto group only for the source (first) leaf.
+                    // Non-source leaves will get fresh auto groups in the loop below.
+                    existing_group
+                } else {
+                    // User-tagged group: all split windows intentionally share it.
+                    if let Some(old_cid) = pre_split_chart_id {
+                        let _ = self.panel_app.tag_manager.disconnect(old_cid);
+                        eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, existing_group);
+                    }
+                    existing_group
                 }
-                existing_group
             } else {
                 // No existing group — pick color from TagManager's palette.
                 let color = pre_split_color
@@ -16452,6 +16478,46 @@ impl ChartApp {
                     ));
                 self.panel_app.tag_manager.create_group(color, symbol, timeframe)
             };
+
+            // Auto-group split: each new split leaf gets its own independent auto group.
+            // Only the source (first) leaf keeps the original auto group.
+            // User-tagged groups share normally (all leaves get the same group_id).
+            if pre_split_is_auto {
+                // Source leaf — reconnect to its original auto group.
+                if let Some(&source_leaf_id) = new_leaves.first() {
+                    if let Some(source_cid) = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf_id) {
+                        let _ = self.panel_app.tag_manager.connect(source_cid, group_id);
+                        if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(source_leaf_id) {
+                            window.group_id = Some(group_id);
+                        }
+                        eprintln!("[TagManager] Source leaf {:?} reconnected to auto group {:?}", source_leaf_id, group_id);
+                    }
+                }
+                // Non-source leaves — each gets a brand-new independent auto group.
+                for &leaf_id in new_leaves.iter().skip(1) {
+                    if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                        let (sym, tf) = self.panel_app.panel_grid
+                            .window_for_leaf(leaf_id)
+                            .map(|w| (w.symbol.clone(), w.timeframe.clone()))
+                            .unwrap_or_else(|| ("BTCUSDT".to_string(), zengeld_chart::state::Timeframe::h1()));
+                        let new_auto_gid = self.panel_app.tag_manager
+                            .create_group_auto([0.5, 0.5, 0.5, 1.0], sym, tf);
+                        let _ = self.panel_app.tag_manager.connect(chart_id, new_auto_gid);
+                        if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                            window.group_id = Some(new_auto_gid);
+                            // Clear any primitives that were cloned from the source window.
+                            window.drawing_manager.clear_all_primitives();
+                        }
+                        // Auto groups are invisible in the UI — no leaf_color_tags entry.
+                        eprintln!("[TagManager] New split leaf {:?} gets fresh auto group {:?}", leaf_id, new_auto_gid);
+                    }
+                }
+                // Early-return: skip the shared-group logic below entirely.
+                self.sync_sub_panes_from_manager();
+                return;
+            }
+
+            // --- Shared group path (user-tagged groups or brand-new groups) ---
 
             // Assign the group's color to leaf_color_tags for UI display.
             let group_color = self.panel_app.tag_manager.group(group_id)
