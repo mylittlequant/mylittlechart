@@ -15548,6 +15548,58 @@ impl ChartApp {
                 }
             }
 
+            ChartOutEvent::InternalToggleSyncSymbol => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_symbol = !group.sync_flags.sync_symbol;
+                        eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, group.sync_flags.sync_symbol);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncSymbol: no active group");
+                }
+                state_mutated = true;
+            }
+
+            ChartOutEvent::InternalToggleSyncTimeframe => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_timeframe = !group.sync_flags.sync_timeframe;
+                        eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, group.sync_flags.sync_timeframe);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncTimeframe: no active group");
+                }
+                state_mutated = true;
+            }
+
+            ChartOutEvent::InternalToggleSyncCrosshair => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_crosshair = !group.sync_flags.sync_crosshair;
+                        eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, group.sync_flags.sync_crosshair);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncCrosshair: no active group");
+                }
+                state_mutated = true;
+            }
+
+            ChartOutEvent::InternalToggleSyncViewport => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_viewport = !group.sync_flags.sync_viewport;
+                        eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, group.sync_flags.sync_viewport);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
+                }
+                state_mutated = true;
+            }
+
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);
             }

@@ -2540,16 +2540,25 @@ impl ChartApp {
             // --- ObjectTree: drawing primitives (from TagManager group) ---
             self.sidebar_state.object_tree_items.clear();
 
-            // All windows are grouped — read primitives from the sync group.
+            // All windows are grouped — read primitives from the sync group,
+            // filtered to only those matching the active window's symbol.
+            let active_symbol: Option<String> = self.panel_app.panel_grid.active_window()
+                .map(|w| w.symbol.clone());
             let group_prims: Vec<_> = self.panel_app.panel_grid.active_window()
                 .and_then(|w| w.group_id)
                 .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| g.primitives.iter().map(|p| {
-                    let data = p.data();
-                    let kind = p.kind();
-                    let display = p.display_name().to_string();
-                    (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                }).collect())
+                .map(|g| g.primitives.iter()
+                    .filter(|p| {
+                        active_symbol.as_deref()
+                            .map(|sym| p.data().symbol == sym)
+                            .unwrap_or(true)
+                    })
+                    .map(|p| {
+                        let data = p.data();
+                        let kind = p.kind();
+                        let display = p.display_name().to_string();
+                        (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                    }).collect())
                 .unwrap_or_default();
 
             for (id, display, type_id, kind, visible, locked, stroke) in &group_prims {
