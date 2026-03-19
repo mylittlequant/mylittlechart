@@ -378,7 +378,15 @@ pub fn draw_chart_tooltip(
 
 /// Format price smartly - removes trailing zeros after decimal point
 /// Examples: 180.10 -> "180.1", 21323.00 -> "21323", 0.00123000 -> "0.00123"
+/// For prices below 1e-8, uses scientific notation: 1.23e-10
 pub fn format_price_smart(price: f64) -> String {
+    // Scientific notation for extremely small prices
+    if price != 0.0 && price.abs() < 1e-8 {
+        let exp = price.abs().log10().floor() as i32;
+        let mantissa = price / 10f64.powi(exp);
+        return format!("{:.2}e{}", mantissa, exp);
+    }
+
     let precision = if price >= 10000.0 {
         2
     } else if price >= 1000.0 {

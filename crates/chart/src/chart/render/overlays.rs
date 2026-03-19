@@ -132,10 +132,10 @@ pub fn draw_legend(
 
     // OHLC values (if enabled)
     if legend.show_ohlc {
-        parts.push(format!("O: {:.2}", data.bar.open));
-        parts.push(format!("H: {:.2}", data.bar.high));
-        parts.push(format!("L: {:.2}", data.bar.low));
-        parts.push(format!("C: {:.2}", data.bar.close));
+        parts.push(format!("O: {}", TooltipLines::fmt_price(data.bar.open)));
+        parts.push(format!("H: {}", TooltipLines::fmt_price(data.bar.high)));
+        parts.push(format!("L: {}", TooltipLines::fmt_price(data.bar.low)));
+        parts.push(format!("C: {}", TooltipLines::fmt_price(data.bar.close)));
     }
 
     // Change (if enabled)
@@ -170,12 +170,34 @@ impl TooltipLines {
     pub fn from_bar(bar: &Bar) -> Self {
         Self {
             lines: vec![
-                format!("O: {:.2}", bar.open),
-                format!("H: {:.2}", bar.high),
-                format!("L: {:.2}", bar.low),
-                format!("C: {:.2}", bar.close),
+                format!("O: {}", Self::fmt_price(bar.open)),
+                format!("H: {}", Self::fmt_price(bar.high)),
+                format!("L: {}", Self::fmt_price(bar.low)),
+                format!("C: {}", Self::fmt_price(bar.close)),
                 format!("V: {:.0}", bar.volume),
             ],
+        }
+    }
+
+    /// Format price with appropriate precision for tooltip display
+    fn fmt_price(price: f64) -> String {
+        if price == 0.0 {
+            "0".to_string()
+        } else if price.abs() < 1e-8 {
+            // Scientific notation for extremely small prices
+            let exp = price.abs().log10().floor() as i32;
+            let mantissa = price / 10f64.powi(exp);
+            format!("{:.2}e{}", mantissa, exp)
+        } else if price.abs() < 0.01 {
+            format!("{:.8}", price)
+        } else if price.abs() < 1.0 {
+            format!("{:.6}", price)
+        } else if price.abs() < 100.0 {
+            format!("{:.4}", price)
+        } else if price.abs() < 10000.0 {
+            format!("{:.2}", price)
+        } else {
+            format!("{:.2}", price)
         }
     }
 }
