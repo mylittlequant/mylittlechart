@@ -313,6 +313,9 @@ pub struct SyncGroupSnapshot {
     /// Undo/redo command history for this sync group.
     #[serde(default)]
     pub command_history: Option<CommandHistory>,
+    /// Invisible auto-created group (no color tag in UI).
+    #[serde(default)]
+    pub auto_created: bool,
 }
 
 impl SyncGroupSnapshot {
@@ -336,6 +339,7 @@ impl SyncGroupSnapshot {
             members,
             primitives,
             command_history: Some(group.command_history.clone()),
+            auto_created: group.auto_created,
         }
     }
 }

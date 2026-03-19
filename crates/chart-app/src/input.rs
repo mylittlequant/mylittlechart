@@ -3753,6 +3753,7 @@ impl ChartApp {
                                                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                                                         window.drawing_manager.set_data_at(idx, &new_data);
                                                     }
+                                                    self.sync_drawing_back_to_group();
                                                 }
                                             }
                                         }
@@ -4894,6 +4895,7 @@ impl ChartApp {
                                 }
                             }
                         }
+                        self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] prim_settings text_content committed: {}", text);
                     } else if field == "stroke_width_value" || field == "stroke_width" {
                         if let Ok(width) = text.trim().parse::<f64>() {
@@ -4906,6 +4908,7 @@ impl ChartApp {
                                 }
                             }
                         }
+                        self.sync_drawing_back_to_group();
                     } else if field == "text_font_size" {
                         if let Ok(font_size) = text.trim().parse::<f64>() {
                             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
@@ -5893,6 +5896,7 @@ impl ChartApp {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                         w.drawing_manager.set_data_at(*index, new_data);
                     }
+                    self.sync_drawing_back_to_group();
                 }
             }
             Command::ReorderPrimitive { old_index, new_index } => {
@@ -6627,6 +6631,8 @@ impl ChartApp {
                         window.drawing_manager.remove(idx);
                     }
                 }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
                 eprintln!("[Sidebar] Drawing deleted: {}", id);
             }
             return;
@@ -9281,6 +9287,7 @@ impl ChartApp {
                     }
                 }
             }
+            self.sync_drawing_back_to_group();
             eprintln!("[ChartApp] prim_settings text_content auto-committed: {}", text);
         } else if field == "stroke_width_value" || field == "stroke_width" {
             if let Ok(width) = text.trim().parse::<f64>() {
@@ -9293,6 +9300,7 @@ impl ChartApp {
                     }
                 }
             }
+            self.sync_drawing_back_to_group();
         } else if field == "text_font_size" {
             if let Ok(font_size) = text.trim().parse::<f64>() {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
@@ -9504,6 +9512,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     window.drawing_manager.set_data_at(idx, &data);
                 }
+                self.sync_drawing_back_to_group();
                 eprintln!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
             }
             self.snapshot_primitive_settings_to_user_manager(idx);
@@ -9536,6 +9545,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings line_style set to: {}", style_name);
                 }
             }
@@ -9612,6 +9622,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_bold = {}", new_bold);
                 }
             }
@@ -9629,6 +9640,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_italic = {}", new_italic);
                 }
             }
@@ -9654,6 +9666,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings text_pos: {}", item_id);
                 }
             }
@@ -9685,6 +9698,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] prim_settings tf_{}_toggle toggled", tf_idx);
                 }
             }
@@ -10197,6 +10211,7 @@ impl ChartApp {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
                 }
+                self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
                 self.snapshot_primitive_settings_to_user_manager(idx);
                 eprintln!("[ChartApp] prim_settings template applied: {}", tmpl.name);
@@ -10244,6 +10259,7 @@ impl ChartApp {
                     window.drawing_manager.set_data_at(idx, &data_copy);
                 }
             }
+            self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             self.snapshot_primitive_settings_to_user_manager(idx);
             eprintln!("[ChartApp] prim_settings template reset to defaults");
@@ -11770,6 +11786,7 @@ impl ChartApp {
                 window.drawing_manager.set_data_at(idx, &data);
             }
         }
+        self.sync_drawing_back_to_group();
         eprintln!("[ChartApp] applied primitive color: {} = {}", field, color);
         self.autosave_snapshot();
         if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
@@ -12736,9 +12753,11 @@ impl ChartApp {
                     window.drawing_manager.delete_selected();
                     eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
+                self.sync_drawing_back_to_group();
                 if let Some(pid) = prim_id {
                     self.alert_manager.remove_alerts_for_drawing(pid);
                 }
+                self.autosave_snapshot();
             }
 
             // ── Lock toggle ──────────────────────────────────────────────────
@@ -12747,6 +12766,7 @@ impl ChartApp {
                     window.drawing_manager.toggle_selected_lock();
                     eprintln!("[ChartApp] inline: toggled lock on selected primitive");
                 }
+                self.sync_drawing_back_to_group();
             }
 
             // ── Line style cycle ─────────────────────────────────────────────
@@ -12767,6 +12787,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.drawing_manager.set_data_at(idx, &data);
                     }
+                    self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
                 }
             }
@@ -12777,6 +12798,7 @@ impl ChartApp {
                     window.drawing_manager.increase_selected_width();
                     eprintln!("[ChartApp] inline: increased line width");
                 }
+                self.sync_drawing_back_to_group();
             }
 
             // ── Name label — absorb, no action ──────────────────────────────
@@ -12867,6 +12889,7 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.drawing_manager.set_data_at(idx, &data);
                         }
+                        self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line style to {}", style_str);
                     }
                 }
@@ -12886,6 +12909,7 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.drawing_manager.set_data_at(idx, &data);
                         }
+                        self.sync_drawing_back_to_group();
                         eprintln!("[ChartApp] inline: set line width to {}", new_width);
                     }
                 }
@@ -13675,6 +13699,7 @@ impl ChartApp {
                     }
                     // Save after both grouped and standalone paths — intercept may have moved
                     // the primitive to TagManager, so snapshot must be taken after transfer.
+                    self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if self.panel_app.panel_grid.active_window()
                     .map(|w| w.drawing_manager.is_drawing())
@@ -13803,6 +13828,7 @@ impl ChartApp {
                     }
                     // Save after both grouped and standalone paths — intercept may have moved
                     // the primitive to TagManager, so snapshot must be taken after transfer.
+                    self.sidebar_data_dirty = true;
                     self.autosave_snapshot();
                 } else if self.panel_app.panel_grid.active_window()
                     .map(|w| w.drawing_manager.is_drawing())
@@ -14141,6 +14167,8 @@ impl ChartApp {
                                 eprintln!("[ChartApp] Deleted primitive #{}", idx);
                             }
                             self.alert_manager.remove_alerts_for_drawing(prim_id);
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
                         } else {
                             // No undo snapshot — still get the ID for alert cleanup before removing.
                             let prim_id = self.panel_app.panel_grid
@@ -14154,6 +14182,8 @@ impl ChartApp {
                             if let Some(pid) = prim_id {
                                 self.alert_manager.remove_alerts_for_drawing(pid);
                             }
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
                         }
                     }
                     "clone" => {
@@ -14195,6 +14225,8 @@ impl ChartApp {
                                 });
                                 eprintln!("[ChartApp] Recorded CreatePrimitive (clone) at index {}", new_idx);
                             }
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
                             eprintln!("[ChartApp] Cloned primitive #{} -> #{}", idx, new_idx);
                         } else {
                             eprintln!("[ChartApp] Clone primitive #{} returned None", idx);
@@ -15190,6 +15222,30 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.sync_groups.len());
 
+                    // Step 5b: If no sync groups exist but windows do, auto-create
+                    // a default group so primitives always use the grouped path.
+                    if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
+                        let color = self.panel_app.tag_manager.next_unused_color();
+                        let (symbol, timeframe) = self.panel_app.panel_grid.iter_windows().next()
+                            .map(|(_, w)| (w.symbol.clone(), w.timeframe.clone()))
+                            .unwrap_or_else(|| (
+                                "BTCUSDT".to_string(),
+                                zengeld_chart::state::Timeframe::h1(),
+                            ));
+                        let group_id = self.panel_app.tag_manager.create_group_auto(color, symbol, timeframe);
+                        let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
+                            self.panel_app.panel_grid.iter_windows()
+                                .map(|(leaf_id, w)| (leaf_id, w.id))
+                                .collect();
+                        for &(leaf_id, chart_id) in &leaf_chart_ids {
+                            let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                                window.group_id = Some(group_id);
+                            }
+                        }
+                        eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
+                    }
+
                     // ----------------------------------------------------------------
                     // Step 6: Restore indicators
                     // ----------------------------------------------------------------
@@ -15264,10 +15320,11 @@ impl ChartApp {
 
                     // Re-populate leaf_color_tags from restored sync groups so the
                     // color tab indicators appear correctly after load.
+                    // Skip auto_created (invisible) groups — they have no UI tag.
                     for group in self.panel_app.tag_manager.groups() {
+                        if group.auto_created { continue; }
                         let color = group.color;
                         for &chart_id in &group.members {
-                            // Find the leaf that owns this chart_id and tag it.
                             let leaf_opt = self.panel_app.panel_grid.iter_windows()
                                 .find(|(_, w)| w.id == chart_id)
                                 .map(|(lid, _)| lid);
@@ -15562,6 +15619,28 @@ impl ChartApp {
         self.panel_app.indicator_overlay_states.clear();
         self.panel_app.leaf_color_tags.clear();
         self.alert_manager.clear();
+        self.sidebar_data_dirty = true;
+
+        // Auto-create a default sync group for the single window so primitives
+        // always go through the grouped path (standalone path is broken).
+        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+            if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
+                let color = self.panel_app.tag_manager.next_unused_color();
+                let (symbol, timeframe) = self.panel_app.panel_grid
+                    .window_for_leaf(active_leaf)
+                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
+                    .unwrap_or_else(|| (
+                        "BTCUSDT".to_string(),
+                        zengeld_chart::state::Timeframe::h1(),
+                    ));
+                let group_id = self.panel_app.tag_manager.create_group_auto(color, symbol, timeframe);
+                let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
+                    window.group_id = Some(group_id);
+                }
+                eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
+            }
+        }
 
         // Create the new preset with the user-supplied name.
         let (secs, nanos) = unix_timestamp_parts();
@@ -15728,6 +15807,7 @@ impl ChartApp {
                     window.drawing_manager.set_data_at(idx, &data);
                 }
             }
+            self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             return;
         }
@@ -15799,6 +15879,7 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 window.drawing_manager.set_data_at(idx, &new_data);
             }
+            self.sync_drawing_back_to_group();
 
             // Keep any active text-editing field in sync with the new range value.
             let edit_field = match handle {
@@ -16064,7 +16145,7 @@ impl ChartApp {
                 } else {
                     window.drawing_manager.purge_synced_primitives();
                 }
-                window.group_id = None;
+                window.group_id = None; // temporary, set properly below
                 window.pre_tag_indicator_ids.clear();
                 window.stashed_primitives.clear();
                 // Restore the window-local command history stashed at join time.
@@ -16102,7 +16183,33 @@ impl ChartApp {
             }
         }
 
-        // 4. Recalculate sub-panes so indicator panels stay in sync.
+        // 4. Create a new auto_created group for the desynced window.
+        // Every window must always be in a group — standalone path is dead.
+        if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+            let (symbol, timeframe) = self.panel_app.panel_grid
+                .window_for_leaf(leaf_id)
+                .map(|w| (w.symbol.clone(), w.timeframe.clone()))
+                .unwrap_or_else(|| ("BTCUSDT".to_string(), zengeld_chart::state::Timeframe::h1()));
+            let new_color = self.panel_app.tag_manager.next_unused_color();
+            let new_group_id = self.panel_app.tag_manager.create_group_auto(new_color, symbol, timeframe);
+            let _ = self.panel_app.tag_manager.connect(chart_id, new_group_id);
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                window.group_id = Some(new_group_id);
+            }
+            // Move restored primitives from drawing_manager into the new group.
+            let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                self.panel_app.panel_grid.window_for_leaf(leaf_id)
+                    .map(|w| w.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
+                    .unwrap_or_default();
+            if !dm_prims.is_empty() {
+                if let Some(g) = self.panel_app.tag_manager.group_mut(new_group_id) {
+                    g.primitives = dm_prims;
+                }
+            }
+            eprintln!("[TagManager] Desync: created new auto group {:?} for desynced window", new_group_id);
+        }
+
+        // 5. Recalculate sub-panes so indicator panels stay in sync.
         self.sync_sub_panes_from_manager();
 
         eprintln!("[ChartApp] Desynced leaf {:?} from color tag group", leaf_id);
@@ -16846,6 +16953,28 @@ impl ChartApp {
             }
             false
         }
+    }
+
+    /// Write the active window's drawing_manager primitives back to the group.
+    /// Call this after ANY mutation (delete, color change, style change, etc.)
+    /// on drawing_manager for a grouped window. The per-frame forward sync
+    /// (group → drawing_manager) will then distribute the change to all members.
+    fn sync_drawing_back_to_group(&mut self) {
+        let (group_id, chart_id) = match self.panel_app.panel_grid.active_window() {
+            Some(w) => match (w.group_id, self.panel_app.panel_grid.active_chart_id()) {
+                (Some(gid), Some(cid)) => (gid, cid),
+                _ => return,
+            },
+            None => return,
+        };
+        let new_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+            self.panel_app.panel_grid.windows().get(&chart_id)
+                .map(|w| w.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
+                .unwrap_or_default();
+        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+            group.primitives = new_prims;
+        }
+        self.sidebar_data_dirty = true;
     }
 
     /// After split joins an existing group, create indicator instances on the

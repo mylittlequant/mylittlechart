@@ -410,6 +410,10 @@ pub struct ChartApp {
     /// per-window `sidebar_dirty_scene` flag for scene caching.
     pub sidebar_data_dirty: bool,
 
+    /// Tracks the last active leaf so we can detect leaf switches and
+    /// mark sidebar_data_dirty automatically.
+    last_active_leaf: Option<zengeld_chart::LeafId>,
+
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
     /// - chart_us:   time spent in the chart render block (split or single)
@@ -718,6 +722,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             connector_registry: None,
             sidebar_data_dirty: true,
+            last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             launch_banner_visible: false,
             launch_banner_text: String::new(),
@@ -975,6 +980,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             connector_registry: None,
             sidebar_data_dirty: true,
+            last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             launch_banner_visible: false,
             launch_banner_text: String::new(),
@@ -1129,6 +1135,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             connector_registry: None,
             sidebar_data_dirty: true,
+            last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
             launch_banner_visible: false,
             launch_banner_text: String::new(),
@@ -2521,55 +2528,46 @@ impl ChartApp {
                 self.alert_manager.items().to_vec();
         }
 
+        // Auto-dirty sidebar when active leaf changes (for object tree refresh).
+        let current_leaf = self.panel_app.panel_grid.docking().active_leaf();
+        if current_leaf != self.last_active_leaf {
+            self.last_active_leaf = current_leaf;
+            self.sidebar_data_dirty = true;
+        }
+
         // Populate sidebar data from chart state (guarded by dirty flag).
         if self.sidebar_state.is_right_open() && self.sidebar_data_dirty {
-            // --- ObjectTree: drawing primitives ---
+            // --- ObjectTree: drawing primitives (from TagManager group) ---
             self.sidebar_state.object_tree_items.clear();
 
-            if let Some(window) = self.panel_app.panel_grid.active_window() {
-                for primitive in window.drawing_manager.primitives() {
-                    let data = primitive.data();
-                    let category = match primitive.kind() {
-                        zengeld_chart::PrimitiveKind::Line
-                        | zengeld_chart::PrimitiveKind::Channel => {
-                            zengeld_chart::ObjectCategory::Drawing
-                        }
-                        zengeld_chart::PrimitiveKind::Shape => {
-                            zengeld_chart::ObjectCategory::Drawing
-                        }
-                        zengeld_chart::PrimitiveKind::Fibonacci
-                        | zengeld_chart::PrimitiveKind::Gann => {
-                            zengeld_chart::ObjectCategory::Drawing
-                        }
-                        zengeld_chart::PrimitiveKind::Pattern => {
-                            zengeld_chart::ObjectCategory::Drawing
-                        }
-                        zengeld_chart::PrimitiveKind::Annotation => {
-                            zengeld_chart::ObjectCategory::Text
-                        }
-                        zengeld_chart::PrimitiveKind::Measurement => {
-                            zengeld_chart::ObjectCategory::Measurement
-                        }
-                        zengeld_chart::PrimitiveKind::Trading => {
-                            zengeld_chart::ObjectCategory::Position
-                        }
-                        zengeld_chart::PrimitiveKind::Signal => {
-                            zengeld_chart::ObjectCategory::Signal
-                        }
-                    };
-                    let display = primitive.display_name().to_string();
-                    let name = if display.is_empty() { &data.type_id } else { primitive.display_name() };
-                    let item = sidebar_content::types::ObjectTreeItem::new(
-                        data.id,
-                        name,
-                        category,
-                        &data.type_id,
-                    )
-                    .with_visible(data.visible)
-                    .with_locked(data.locked)
-                    .with_color(Some(data.color.stroke.clone()));
-                    self.sidebar_state.object_tree_items.push(item);
-                }
+            // All windows are grouped — read primitives from the sync group.
+            let group_prims: Vec<_> = self.panel_app.panel_grid.active_window()
+                .and_then(|w| w.group_id)
+                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .map(|g| g.primitives.iter().map(|p| {
+                    let data = p.data();
+                    let kind = p.kind();
+                    let display = p.display_name().to_string();
+                    (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                }).collect())
+                .unwrap_or_default();
+
+            for (id, display, type_id, kind, visible, locked, stroke) in &group_prims {
+                let category = match kind {
+                    zengeld_chart::PrimitiveKind::Annotation => zengeld_chart::ObjectCategory::Text,
+                    zengeld_chart::PrimitiveKind::Measurement => zengeld_chart::ObjectCategory::Measurement,
+                    zengeld_chart::PrimitiveKind::Trading => zengeld_chart::ObjectCategory::Position,
+                    zengeld_chart::PrimitiveKind::Signal => zengeld_chart::ObjectCategory::Signal,
+                    _ => zengeld_chart::ObjectCategory::Drawing,
+                };
+                let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
+                let item = sidebar_content::types::ObjectTreeItem::new(
+                    *id, name, category, type_id,
+                )
+                .with_visible(*visible)
+                .with_locked(*locked)
+                .with_color(Some(stroke.clone()));
+                self.sidebar_state.object_tree_items.push(item);
             }
 
             // --- ObjectTree: indicator instances ---

@@ -102,6 +102,10 @@ pub struct SyncGroup {
     /// symbol, timeframe, chart type) are stored on the individual window's
     /// `command_history` instead.
     pub command_history: CommandHistory,
+
+    /// Invisible default group — auto-created so every window has a group.
+    /// No color tag shown in UI. Set to false when user manually tags.
+    pub auto_created: bool,
 }
 
 impl Clone for SyncGroup {
@@ -116,6 +120,7 @@ impl Clone for SyncGroup {
             sync_flags: self.sync_flags.clone(),
             members: self.members.clone(),
             command_history: CommandHistory::new(250),
+            auto_created: self.auto_created,
         }
     }
 }
@@ -205,6 +210,31 @@ impl TagManager {
             sync_flags: SyncFlags::default(),
             members: std::collections::HashSet::new(),
             command_history: CommandHistory::new(250),
+            auto_created: false,
+        };
+        self.groups.insert(id, group);
+        id
+    }
+
+    /// Create an invisible default group (no color tag in UI).
+    pub fn create_group_auto(
+        &mut self,
+        color: [f32; 4],
+        symbol: String,
+        timeframe: Timeframe,
+    ) -> SyncGroupId {
+        let id = SyncGroupId::generate();
+        let group = SyncGroup {
+            id,
+            color,
+            primitives: Vec::new(),
+            indicator_configs: Vec::new(),
+            symbol,
+            timeframe,
+            sync_flags: SyncFlags::default(),
+            members: std::collections::HashSet::new(),
+            command_history: CommandHistory::new(250),
+            auto_created: true,
         };
         self.groups.insert(id, group);
         id
@@ -548,6 +578,7 @@ impl TagManager {
             sync_flags: snap.sync_flags.clone(),
             members,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
+            auto_created: snap.auto_created,
         }
     }
 }
