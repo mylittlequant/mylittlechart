@@ -163,6 +163,16 @@ pub struct ChartWindowSnapshot {
     /// to an empty `Vec` and fall back to the data-provider path.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bars: Vec<crate::Bar>,
+    /// Stashed primitives: the window's own drawing primitives saved when
+    /// the window joined an existing sync group (color tag). Restored on desync.
+    /// Empty for windows that were not in a tag or that seeded a new tag.
+    #[serde(default)]
+    pub stashed_primitives: Vec<PrimitiveSnapshot>,
+    /// Indicator instance IDs that existed on this window BEFORE it joined a
+    /// color tag. On desync, only indicators NOT in this set are removed.
+    /// Empty for windows that were not in a tag.
+    #[serde(default)]
+    pub pre_tag_indicator_ids: Vec<u64>,
 }
 
 impl ChartWindowSnapshot {
@@ -207,6 +217,12 @@ impl ChartWindowSnapshot {
             compare_overlay: window.compare_overlay.clone(),
             symbol_drawings_snapshots: window.symbol_drawings.clone(),
             bars: window.bars.clone(),
+            stashed_primitives: window
+                .stashed_primitives
+                .iter()
+                .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
+                .collect(),
+            pre_tag_indicator_ids: window.pre_tag_indicator_ids.clone(),
         }
     }
 }

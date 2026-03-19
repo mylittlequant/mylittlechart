@@ -11692,6 +11692,8 @@ impl ChartApp {
             if let Some(leaf_id) = self.panel_app.sync_color_grid.target_leaf {
                 if self.panel_app.leaf_color_tags.contains_key(&leaf_id) {
                     self.perform_desync(leaf_id);
+                    // Bug E fix: persist the untag operation immediately.
+                    self.autosave_snapshot();
                 }
             }
             self.panel_app.sync_color_grid.close();
@@ -11733,6 +11735,11 @@ impl ChartApp {
                             // Desync from old group (purge cloned primitives/indicators).
                             if old_color.is_some() {
                                 self.perform_desync(leaf_id);
+                            } else {
+                                // Bug D fix: window was in an invisible auto group — clean it up
+                                // before joining a color tag, so the old auto group doesn't
+                                // retain this chart_id as a stale member.
+                                self.disconnect_from_current_group(leaf_id);
                             }
                             // Assign new color.
                             self.panel_app.leaf_color_tags.insert(leaf_id, new_color);
@@ -15015,6 +15022,21 @@ impl ChartApp {
                                         window.stashed_command_history = Some(stashed.clone());
                                     }
 
+                                    // Restore stashed primitives (pre-tag drawings)
+                                    window.stashed_primitives.clear();
+                                    if !snap.stashed_primitives.is_empty() {
+                                        if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                            for prim_snap in &snap.stashed_primitives {
+                                                if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                    window.stashed_primitives.push(prim);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Restore pre-tag indicator IDs
+                                    window.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
+
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
@@ -15171,6 +15193,21 @@ impl ChartApp {
                                 if let Some(stashed) = &snap.stashed_command_history {
                                     window.stashed_command_history = Some(stashed.clone());
                                 }
+
+                                // Restore stashed primitives (pre-tag drawings)
+                                window.stashed_primitives.clear();
+                                if !snap.stashed_primitives.is_empty() {
+                                    if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                                        for prim_snap in &snap.stashed_primitives {
+                                            if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                                                window.stashed_primitives.push(prim);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Restore pre-tag indicator IDs
+                                window.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
 
                                 // Restore per-symbol drawing cache
                                 window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
@@ -16447,6 +16484,13 @@ impl ChartApp {
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
                 let _ = self.panel_app.tag_manager.disconnect(old_cid);
                 eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
+                // Bug C fix: remove the old group if it became empty and was auto-created.
+                if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
+                    if g.auto_created && g.members.is_empty() {
+                        self.panel_app.tag_manager.remove_group(old_gid);
+                        eprintln!("[TagManager] Removed empty auto group {:?} after split", old_gid);
+                    }
+                }
             }
 
             let group_id = if let Some(existing_group) = pre_split_group_id {
@@ -17038,16 +17082,49 @@ impl ChartApp {
         }
     }
 
+    /// Disconnect the window identified by `leaf_id` from its current group, and
+    /// remove that group if it is now empty and was auto-created.
+    ///
+    /// This is a low-level helper used before joining a new color tag or before
+    /// creating a new auto group. It does NOT purge cloned primitives/indicators —
+    /// for a full desync use `perform_desync` instead.
+    fn disconnect_from_current_group(&mut self, leaf_id: zengeld_chart::LeafId) {
+        let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+            Some(id) => id,
+            None => return,
+        };
+        let old_gid = match self.panel_app.panel_grid.window_for_leaf(leaf_id)
+            .and_then(|w| w.group_id)
+        {
+            Some(gid) => gid,
+            None => return,
+        };
+        let _ = self.panel_app.tag_manager.disconnect(chart_id);
+        // Remove the old group if it is now empty and was auto-created.
+        if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
+            if g.auto_created && g.members.is_empty() {
+                self.panel_app.tag_manager.remove_group(old_gid);
+                eprintln!("[TagManager] Removed empty auto group {:?}", old_gid);
+            }
+        }
+    }
+
     /// Write the active window's drawing_manager primitives back to the group.
     /// Call this after ANY mutation (delete, color change, style change, etc.)
     /// on drawing_manager for a grouped window. The per-frame forward sync
     /// (group → drawing_manager) will then distribute the change to all members.
-    fn sync_drawing_back_to_group(&mut self) {
-        let (group_id, chart_id) = match self.panel_app.panel_grid.active_window() {
-            Some(w) => match (w.group_id, self.panel_app.panel_grid.active_chart_id()) {
-                (Some(gid), Some(cid)) => (gid, cid),
-                _ => return,
-            },
+    /// Sync the drawing_manager primitives from the window identified by
+    /// `leaf_id` back into its sync group.  Callers that mutate a specific
+    /// non-active window should use this variant so the correct window is read.
+    fn sync_drawing_back_to_group_for(&mut self, leaf_id: zengeld_chart::LeafId) {
+        let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+            Some(cid) => cid,
+            None => return,
+        };
+        let group_id = match self.panel_app.panel_grid.windows().get(&chart_id)
+            .and_then(|w| w.group_id)
+        {
+            Some(gid) => gid,
             None => return,
         };
         let new_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
@@ -17058,6 +17135,17 @@ impl ChartApp {
             group.primitives = new_prims;
         }
         self.sidebar_data_dirty = true;
+    }
+
+    /// Convenience wrapper: syncs the active window's drawing_manager back to
+    /// its group.  All existing call sites that mutate the active window use
+    /// this; callers that mutate a non-active window should use
+    /// `sync_drawing_back_to_group_for` with an explicit leaf_id instead.
+    fn sync_drawing_back_to_group(&mut self) {
+        // Resolve the active leaf via the docking manager, then delegate.
+        if let Some(leaf_id) = self.panel_app.panel_grid.docking().active_leaf() {
+            self.sync_drawing_back_to_group_for(leaf_id);
+        }
     }
 
     /// After split joins an existing group, create indicator instances on the
