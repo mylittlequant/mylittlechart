@@ -584,21 +584,6 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             grid_columns: None,
         },
 
-        // Legend submenu
-        DropdownItemDef::Submenu {
-            id: "legend_submenu".to_string(),
-            label: "Legend".to_string(),
-            icon: Some(ToolbarIconId::new("Eye")),
-            items: vec![
-                DropdownItemDef::action("legend_toggle", "Toggle Legend").with_icon(ToolbarIconId::new("Eye")),
-                DropdownItemDef::Separator,
-                DropdownItemDef::action("legend_ohlc", "Show OHLC"),
-                DropdownItemDef::action("legend_change", "Show Change"),
-                DropdownItemDef::action("legend_percent", "Show Percent"),
-            ],
-            grid_columns: None,
-        },
-
         // Tooltip submenu
         DropdownItemDef::Submenu {
             id: "tooltip_submenu".to_string(),
