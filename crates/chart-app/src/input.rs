@@ -1421,8 +1421,38 @@ impl ChartApp {
             return;
         }
 
+        // Split panel: route drag to the correct leaf FIRST, before any drawing
+        // tool check, so the click lands on the correct leaf.
+        // Skip when over UI (dropdown/toolbar) to avoid activating wrong leaf.
+        if self.panel_app.panel_grid.is_split() && !self.ui_drag_active {
+            use zengeld_chart::state::ChartInputTarget;
+            let target = self.panel_app.panel_grid.resolve_input(
+                x, y, self.content_rect.x, self.content_rect.y,
+            );
+            match target {
+                ChartInputTarget::Separator { idx, orientation } => {
+                    self.split_separator_drag = Some(crate::SplitSeparatorDragState {
+                        separator_idx: idx,
+                        orientation,
+                        start_x: x,
+                        start_y: y,
+                    });
+                    return;
+                }
+                ChartInputTarget::Chart { leaf_id }
+                | ChartInputTarget::PriceScale { leaf_id }
+                | ChartInputTarget::TimeScale { leaf_id }
+                | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
+                    self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                    // Fall through to chart engine drag handling.
+                }
+                ChartInputTarget::None => return,
+            }
+        }
+
         // Click-based drawing tool on canvas: mouse-press = click immediately.
         // on_click from runner (mouse-release) is ignored via guard in on_click().
+        // AFTER split routing so handle_canvas_click operates on the correct leaf.
         let _has_ct = self.has_click_drawing_tool();
         if !self.ui_drag_active && _has_ct {
             self.handle_canvas_click(x, y);
@@ -1452,33 +1482,6 @@ impl ChartApp {
                     window.drawing_manager.start_freehand(bar, price);
                 }
                 return;
-            }
-        }
-
-        // Split panel: route drag to the correct leaf or start separator drag.
-        if self.panel_app.panel_grid.is_split() {
-            use zengeld_chart::state::ChartInputTarget;
-            let target = self.panel_app.panel_grid.resolve_input(
-                x, y, self.content_rect.x, self.content_rect.y,
-            );
-            match target {
-                ChartInputTarget::Separator { idx, orientation } => {
-                    self.split_separator_drag = Some(crate::SplitSeparatorDragState {
-                        separator_idx: idx,
-                        orientation,
-                        start_x: x,
-                        start_y: y,
-                    });
-                    return;
-                }
-                ChartInputTarget::Chart { leaf_id }
-                | ChartInputTarget::PriceScale { leaf_id }
-                | ChartInputTarget::TimeScale { leaf_id }
-                | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
-                    self.panel_app.panel_grid.set_active_leaf(leaf_id);
-                    // Fall through to chart engine drag handling.
-                }
-                ChartInputTarget::None => return,
             }
         }
 
@@ -3439,6 +3442,31 @@ impl ChartApp {
                     .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
                     .unwrap_or((0.0, 0.0, false, None));
                 self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+            }
+        }
+
+        // Hover-to-activate: when a drawing tool is globally active and the
+        // panel is split, switch active_leaf to whichever leaf the mouse is
+        // hovering over. This avoids wasting a click on window activation when
+        // the user moves the cursor to a different split pane while drawing.
+        if self.panel_app.toolbar_state.active_tool_id.is_some()
+            && self.panel_app.panel_grid.is_split()
+        {
+            use zengeld_chart::state::ChartInputTarget;
+            let target = self.panel_app.panel_grid.resolve_input(
+                x, y, self.content_rect.x, self.content_rect.y,
+            );
+            match target {
+                ChartInputTarget::Chart { leaf_id }
+                | ChartInputTarget::PriceScale { leaf_id }
+                | ChartInputTarget::TimeScale { leaf_id }
+                | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
+                    let current_active = self.panel_app.panel_grid.docking().active_leaf();
+                    if current_active != Some(leaf_id) {
+                        self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                    }
+                }
+                _ => {}
             }
         }
     }
