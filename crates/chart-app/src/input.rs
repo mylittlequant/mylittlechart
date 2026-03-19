@@ -15264,14 +15264,14 @@ impl ChartApp {
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
                     if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
-                        let color = self.panel_app.tag_manager.next_unused_color();
+                        // Auto groups get transparent color — never occupy palette slots
                         let (symbol, timeframe) = self.panel_app.panel_grid.iter_windows().next()
                             .map(|(_, w)| (w.symbol.clone(), w.timeframe.clone()))
                             .unwrap_or_else(|| (
                                 "BTCUSDT".to_string(),
                                 zengeld_chart::state::Timeframe::h1(),
                             ));
-                        let group_id = self.panel_app.tag_manager.create_group_auto(color, symbol, timeframe);
+                        let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                         let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> =
                             self.panel_app.panel_grid.iter_windows()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
@@ -15710,7 +15710,7 @@ impl ChartApp {
         // always go through the grouped path (standalone path is broken).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
-                let color = self.panel_app.tag_manager.next_unused_color();
+                // Auto groups get transparent color — never occupy palette slots
                 let (symbol, timeframe) = self.panel_app.panel_grid
                     .window_for_leaf(active_leaf)
                     .map(|w| (w.symbol.clone(), w.timeframe.clone()))
@@ -15718,7 +15718,7 @@ impl ChartApp {
                         "BTCUSDT".to_string(),
                         zengeld_chart::state::Timeframe::h1(),
                     ));
-                let group_id = self.panel_app.tag_manager.create_group_auto(color, symbol, timeframe);
+                let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
                 let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
                     window.group_id = Some(group_id);
@@ -16281,8 +16281,8 @@ impl ChartApp {
                 .window_for_leaf(leaf_id)
                 .map(|w| (w.symbol.clone(), w.timeframe.clone()))
                 .unwrap_or_else(|| ("BTCUSDT".to_string(), zengeld_chart::state::Timeframe::h1()));
-            let new_color = self.panel_app.tag_manager.next_unused_color();
-            let new_group_id = self.panel_app.tag_manager.create_group_auto(new_color, symbol, timeframe);
+            // Auto groups get transparent color — never occupy palette slots
+            let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
             let _ = self.panel_app.tag_manager.connect(chart_id, new_group_id);
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.group_id = Some(new_group_id);

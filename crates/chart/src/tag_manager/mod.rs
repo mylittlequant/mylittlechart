@@ -496,7 +496,8 @@ impl TagManager {
         self.groups
             .values()
             .find(|g| {
-                (g.color[0] - color[0]).abs() < 0.01
+                !g.auto_created
+                    && (g.color[0] - color[0]).abs() < 0.01
                     && (g.color[1] - color[1]).abs() < 0.01
                     && (g.color[2] - color[2]).abs() < 0.01
             })
@@ -509,7 +510,11 @@ impl TagManager {
     /// Falls back to the first preset color if all are taken.
     pub fn next_unused_color(&self) -> [f32; 4] {
         use crate::ui::sync_color_grid::PRESET_COLORS;
-        let used_colors: Vec<[f32; 4]> = self.groups.values().map(|g| g.color).collect();
+        // Only visible (non-auto) groups occupy palette colors
+        let used_colors: Vec<[f32; 4]> = self.groups.values()
+            .filter(|g| !g.auto_created)
+            .map(|g| g.color)
+            .collect();
         for &preset in PRESET_COLORS.iter() {
             let is_used = used_colors.iter().any(|uc| {
                 (uc[0] - preset[0]).abs() < 0.01
