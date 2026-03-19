@@ -113,6 +113,22 @@ impl UIStyle {
         Self::all().iter().position(|s| s == self).unwrap_or(0)
     }
 
+    /// Get style from name string.
+    ///
+    /// Returns `None` for unknown names (caller should log and ignore).
+    /// Variants not yet implemented (frosted_glass_3d, liquid_*) fall back to
+    /// their closest supported equivalent so toolbar events never silently fail.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "solid"                                   => Some(Self::Solid),
+            "glass"                                   => Some(Self::Glass),
+            "frosted_glass_flat" | "frosted_glass_3d" => Some(Self::FrostedGlassFlat),
+            // Liquid Glass variants not yet implemented — map to FrostedGlassFlat
+            "liquid_glass_flat" | "liquid_glass_3d"  => Some(Self::FrostedGlassFlat),
+            _ => None,
+        }
+    }
+
     /// Get default style params for this style
     pub fn default_params(&self) -> StyleParams {
         match self {

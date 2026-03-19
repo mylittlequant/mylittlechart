@@ -656,10 +656,7 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             items: vec![
                 DropdownItemDef::action("style_solid", "Solid"),
                 DropdownItemDef::action("style_glass", "Glass"),
-                DropdownItemDef::action("style_frosted_glass_flat", "Frosted Glass (Flat)"),
-                DropdownItemDef::action("style_frosted_glass_3d", "Frosted Glass (3D)"),
-                DropdownItemDef::action("style_liquid_glass_flat", "Liquid Glass (Flat)"),
-                DropdownItemDef::action("style_liquid_glass_3d", "Liquid Glass (3D)"),
+                DropdownItemDef::action("style_frosted_glass_flat", "Frosted Glass"),
             ],
             grid_columns: None,
         },

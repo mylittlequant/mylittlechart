@@ -15414,6 +15414,22 @@ impl ChartApp {
                 eprintln!("[ChartApp] opened preset name input (new-chart), default='{}'", default_name);
             }
 
+            ChartOutEvent::SetTheme(name) => {
+                self.panel_app.theme_manager.set_preset(name);
+                // Signal the App-level coordinator to propagate this change to all windows.
+                self.theme_changed = Some(name.to_string());
+                eprintln!("[ChartApp] SetTheme: preset={}", name);
+            }
+
+            ChartOutEvent::SetStyle(name) => {
+                if let Some(style) = UIStyle::from_name(name) {
+                    self.panel_app.theme_manager.current_mut().set_style(style);
+                    eprintln!("[ChartApp] SetStyle: style={:?} (from name={})", style, name);
+                } else {
+                    eprintln!("[ChartApp] SetStyle: unknown style name '{}'", name);
+                }
+            }
+
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);
             }
