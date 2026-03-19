@@ -14601,17 +14601,33 @@ impl ChartApp {
 
             // Quick-settings toggles from the settings gear dropdown.
             ChartOutEvent::ToggleGrid => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_grid();
-                    eprintln!("[ChartApp] grid toggled");
+                // Read new value from active, then broadcast to all windows
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_grid();
+                    let v = w.grid_options.vert_lines.visible;
+                    let h = w.grid_options.horz_lines.visible;
+                    Some((v, h))
+                } else { None };
+                if let Some((v, h)) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.grid_options.vert_lines.visible = v;
+                        w.grid_options.horz_lines.visible = h;
+                    }
                 }
+                eprintln!("[ChartApp] grid toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleCrosshair => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_crosshair();
-                    eprintln!("[ChartApp] crosshair toggled");
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_crosshair();
+                    Some(w.crosshair.enabled)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.crosshair.enabled = val;
+                    }
                 }
+                eprintln!("[ChartApp] crosshair toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegend => {
@@ -14622,10 +14638,18 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleWatermark => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_watermark();
-                    eprintln!("[ChartApp] watermark toggled");
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_watermark();
+                    w.watermark.as_ref().map(|wm| wm.visible)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        if let Some(ref mut wm) = w.watermark {
+                            wm.visible = val;
+                        }
+                    }
                 }
+                eprintln!("[ChartApp] watermark toggled (all windows)");
                 state_mutated = true;
             }
 
@@ -14731,17 +14755,29 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridVertical => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_grid_vertical();
-                    eprintln!("[ChartApp] grid vertical toggled -> {}", window.grid_options.vert_lines.visible);
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_grid_vertical();
+                    Some(w.grid_options.vert_lines.visible)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.grid_options.vert_lines.visible = val;
+                    }
                 }
+                eprintln!("[ChartApp] grid vertical toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridHorizontal => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_grid_horizontal();
-                    eprintln!("[ChartApp] grid horizontal toggled -> {}", window.grid_options.horz_lines.visible);
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_grid_horizontal();
+                    Some(w.grid_options.horz_lines.visible)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.grid_options.horz_lines.visible = val;
+                    }
                 }
+                eprintln!("[ChartApp] grid horizontal toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendOHLC => {
@@ -14766,24 +14802,36 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltip => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_tooltip();
-                    eprintln!("[ChartApp] tooltip toggled -> {}", window.tooltip.visible);
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_tooltip();
+                    Some(w.tooltip.visible)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.tooltip.visible = val;
+                    }
                 }
+                eprintln!("[ChartApp] tooltip toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltipFollow => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.toggle_tooltip_follow();
-                    eprintln!("[ChartApp] tooltip follow toggled -> {}", window.tooltip.follow_cursor);
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.toggle_tooltip_follow();
+                    Some(w.tooltip.follow_cursor)
+                } else { None };
+                if let Some(val) = new_val {
+                    for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.tooltip.follow_cursor = val;
+                    }
                 }
+                eprintln!("[ChartApp] tooltip follow toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkText(text) => {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.set_watermark_text(text);
-                    eprintln!("[ChartApp] watermark text set to {}", text);
+                for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    w.set_watermark_text(text);
                 }
+                eprintln!("[ChartApp] watermark text set to {} (all windows)", text);
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkPosition(pos) => {
@@ -14796,10 +14844,10 @@ impl ChartApp {
                     "top_right"    => (HorzAlign::Right,  VertAlign::Top),
                     _              => (HorzAlign::Left,   VertAlign::Bottom),
                 };
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.set_watermark_position(horz, vert);
-                    eprintln!("[ChartApp] watermark position set to {}", pos);
+                for w in self.panel_app.panel_grid.windows_mut().values_mut() {
+                    w.set_watermark_position(horz, vert);
                 }
+                eprintln!("[ChartApp] watermark position set to {} (all windows)", pos);
                 state_mutated = true;
             }
             // === Presets (in-memory HashMap) ===

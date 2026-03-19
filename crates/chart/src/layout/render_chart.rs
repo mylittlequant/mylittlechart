@@ -1505,7 +1505,8 @@ pub fn render_sub_pane_primitives(
     if state.viewport.bar_count == 0 {
         return;
     }
-    if pane_max - pane_min < 1.0 {
+    let pane_range = pane_max - pane_min;
+    if pane_range <= 0.0 || !pane_range.is_finite() {
         return;
     }
 
@@ -1702,7 +1703,7 @@ pub fn render_main_chart_primitives(
         return;
     }
     let price_range = state.price_scale.price_max - state.price_scale.price_min;
-    if price_range < 1.0 {
+    if price_range <= 0.0 || !price_range.is_finite() {
         return;
     }
 

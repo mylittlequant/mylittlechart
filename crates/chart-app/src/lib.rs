@@ -1791,9 +1791,10 @@ impl ChartApp {
                             if is_backfill {
                                 window.update_bars(bars.clone());
                             } else {
-                                window.set_bars(bars.clone());
-                                // Apply the user's preferred scale mode on initial load.
+                                // Apply scale mode BEFORE set_bars so calc_auto_scale()
+                                // runs with the correct mode (not stale Manual from previous symbol).
                                 window.price_scale.scale_mode = self.default_scale_mode;
+                                window.set_bars(bars.clone());
                             }
                             // Recalculate bar-index caches for all drawings so primitives
                             // render at correct positions now that real bars are available.

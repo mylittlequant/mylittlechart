@@ -176,8 +176,12 @@ pub fn price_precision(step: f64) -> usize {
         6
     } else if step >= 0.0000001 {
         7
-    } else {
+    } else if step >= 0.00000001 {
         8
+    } else {
+        // Sub-1e-8 prices: use scientific notation (handled by format_price)
+        // Return a sentinel value to signal sci notation
+        99
     }
 }
 
@@ -187,17 +191,29 @@ pub fn price_precision(step: f64) -> usize {
 /// Otherwise falls back to automatic precision derived from step size.
 pub fn format_price_with_precision(price: f64, step: f64, user_precision: Option<usize>) -> String {
     let precision = user_precision.unwrap_or_else(|| price_precision(step));
-    match precision {
-        0 => format!("{:.0}", price),
-        1 => format!("{:.1}", price),
-        2 => format!("{:.2}", price),
-        3 => format!("{:.3}", price),
-        4 => format!("{:.4}", price),
-        5 => format!("{:.5}", price),
-        6 => format!("{:.6}", price),
-        7 => format!("{:.7}", price),
-        8 => format!("{:.8}", price),
-        _ => format!("{:.8}", price),
+    if precision >= 99 {
+        // Scientific notation for extremely small prices
+        // Determine significant digits from the step
+        if step > 0.0 {
+            let exp = step.log10().floor() as i32;
+            let mantissa = price / 10f64.powi(exp);
+            format!("{:.2}e{}", mantissa, exp)
+        } else {
+            format!("{:.2e}", price)
+        }
+    } else {
+        match precision {
+            0 => format!("{:.0}", price),
+            1 => format!("{:.1}", price),
+            2 => format!("{:.2}", price),
+            3 => format!("{:.3}", price),
+            4 => format!("{:.4}", price),
+            5 => format!("{:.5}", price),
+            6 => format!("{:.6}", price),
+            7 => format!("{:.7}", price),
+            8 => format!("{:.8}", price),
+            _ => format!("{:.8}", price),
+        }
     }
 }
 
