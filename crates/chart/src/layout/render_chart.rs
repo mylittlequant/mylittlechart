@@ -1701,6 +1701,17 @@ pub fn render_main_chart_primitives(
     state: &ChartRenderState,
     dm: &DrawingManager,
 ) {
+    // Debug: log once when primitives exist but might be skipped
+    let prim_count = dm.primitives().len();
+    if prim_count > 0 {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[RENDER_PRIMS] {} primitives, visible={}, bar_count={}, price_range=[{:.12e}..{:.12e}]",
+                prim_count, dm.is_visible(), state.viewport.bar_count,
+                state.price_scale.price_min, state.price_scale.price_max);
+        }
+    }
+
     if !dm.is_visible() {
         return;
     }

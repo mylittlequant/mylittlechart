@@ -13605,7 +13605,7 @@ impl ChartApp {
                 }
 
                 // Dispatch click and record undo if a primitive was just completed.
-                eprintln!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.2}", x, y, bar, price);
+                eprintln!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
                 let primitive_created = self.panel_app.panel_grid.active_window_mut()
                     .map(|w| w.drawing_manager.on_click(bar, price))
                     .unwrap_or(false);
@@ -13617,7 +13617,9 @@ impl ChartApp {
                         let bars = window.bars.clone();
                         window.drawing_manager.update_all_timestamps_from_bars(&bars);
                     }
-                    eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.2}", bar, price);
+                    let prim_count = self.panel_app.panel_grid.active_window()
+                        .map(|w| w.drawing_manager.primitives().len()).unwrap_or(0);
+                    eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     // For grouped windows: move the completed primitive to TagManager so
                     // all group members see it via the per-frame render-cache sync.
                     // For standalone windows: keep it in drawing_manager as before.
