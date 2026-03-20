@@ -176,7 +176,7 @@ impl Default for DropdownConfig {
             padding: 4.0,
             item_padding_x: 12.0,
             radius: 4.0,
-            icon_size: 16.0,
+            icon_size: 20.0,
             font_size: 13.0,
             shadow_blur: 24.0,
             grid_columns: None,
