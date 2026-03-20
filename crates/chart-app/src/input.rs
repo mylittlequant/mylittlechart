@@ -6462,6 +6462,7 @@ impl ChartApp {
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
+                            window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(&symbol);
                         }
@@ -13029,6 +13030,7 @@ impl ChartApp {
                     window.update_title();
                     window.bars.clear();
                     window.viewport.bar_count = 0;
+                    window.pending_symbol_load = true;
                     window.drawing_manager.clear_all_primitives();
                     window.restore_drawings_for_symbol(sym_part);
                 }
@@ -13392,6 +13394,7 @@ impl ChartApp {
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
+                            window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
                             window.restore_drawings_for_symbol(symbol_part);
                         }
@@ -16822,6 +16825,7 @@ impl ChartApp {
                 window.bars.clear();
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
+                window.pending_symbol_load = true;
                 window.drawing_manager.clear_all_primitives();
                 window.restore_drawings_for_symbol(&symbol_owned);
                 window.update_title();

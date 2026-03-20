@@ -298,6 +298,12 @@ pub struct ChartWindow {
     /// `set_bars()` resets the viewport, so the desired position must be
     /// re-applied after bars arrive. Cleared in the `BarsLoaded` handler.
     pub pending_viewport_restore: Option<ViewportSnapshot>,
+
+    /// Set to `true` when a symbol switch is initiated (bars cleared, new request sent).
+    /// Forces the `BarsLoaded` handler to take the initial-load path (set_bars + reposition
+    /// to end) even if a stray `TradeUpdate` inserted a synthetic bar before bars arrived.
+    /// Cleared after `set_bars()` runs in the `BarsLoaded` handler.
+    pub pending_symbol_load: bool,
 }
 
 impl ChartWindow {
@@ -385,6 +391,7 @@ impl ChartWindow {
             stashed_command_history: None,
             symbol_drawings: HashMap::new(),
             pending_viewport_restore: None,
+            pending_symbol_load: false,
         }
     }
 
@@ -575,6 +582,8 @@ impl ChartWindow {
             symbol_drawings: HashMap::new(),
             // Split child has no pending viewport restore.
             pending_viewport_restore: None,
+            // Split child has no pending symbol load.
+            pending_symbol_load: false,
         }
     }
 

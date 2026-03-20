@@ -756,8 +756,11 @@ impl IndicatorManager {
     }
 
     /// Get all instances for a symbol.
-    /// When `current_render_window_id` is set, only returns instances belonging
-    /// to that window (render-time scoping for split-window mode).
+    /// When `current_render_window_id` is set, only returns instances that
+    /// belong strictly to that window — instances with `window_id = None` are
+    /// excluded so they do not bleed across tabs in split-window mode.
+    /// When `current_render_window_id` is `None` (single-window / legacy mode)
+    /// all instances for the symbol are returned for backwards compatibility.
     pub fn get_instances_for_symbol(&self, symbol: &str) -> Vec<&IndicatorInstance> {
         self.by_symbol
             .get(symbol)
@@ -765,8 +768,9 @@ impl IndicatorManager {
                 ids.iter()
                     .filter_map(|id| self.instances.get(id))
                     .filter(|inst| match self.current_render_window_id.get() {
-                        // window_id == None means "unscoped" — belongs to any window
-                        Some(wid) => inst.window_id.is_none() || inst.window_id == Some(wid),
+                        // Strict match: only show instances that belong to this window.
+                        Some(wid) => inst.window_id == Some(wid),
+                        // No render window set — show all (single-window / legacy).
                         None => true,
                     })
                     .collect()
@@ -775,14 +779,15 @@ impl IndicatorManager {
     }
 
     /// Get indicator instances for a symbol scoped to a specific window.
-    /// Returns instances where window_id matches OR window_id is None (unscoped).
+    /// Only returns instances whose `window_id` exactly matches `window_id`.
+    /// Instances with `window_id = None` are NOT included to prevent cross-tab leakage.
     pub fn get_instances_for_symbol_in_window(&self, symbol: &str, window_id: u64) -> Vec<&IndicatorInstance> {
         self.by_symbol
             .get(symbol)
             .map(|ids| {
                 ids.iter()
                     .filter_map(|id| self.instances.get(id))
-                    .filter(|inst| inst.window_id.is_none() || inst.window_id == Some(window_id))
+                    .filter(|inst| inst.window_id == Some(window_id))
                     .collect()
             })
             .unwrap_or_default()

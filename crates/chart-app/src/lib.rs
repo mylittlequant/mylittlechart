@@ -1792,7 +1792,13 @@ impl ChartApp {
                             eprintln!("[ChartApp]   -> window matched: sym={} exch={} tf={}", window.symbol, window.exchange, window.timeframe.name);
                             // Use update_bars for backfill (preserves viewport),
                             // set_bars for initial load (resets viewport to end).
-                            let is_backfill = !window.bars.is_empty();
+                            // pending_symbol_load forces the initial-load path even if a
+                            // stray TradeUpdate inserted a synthetic bar before bars arrived.
+                            let is_backfill = if window.pending_symbol_load {
+                                false // force initial-load path, ignore any stray bars
+                            } else {
+                                !window.bars.is_empty()
+                            };
                             if is_backfill {
                                 window.update_bars(bars.clone());
                             } else {
@@ -1800,6 +1806,7 @@ impl ChartApp {
                                 // runs with the correct mode (not stale Manual from previous symbol).
                                 window.price_scale.scale_mode = self.default_scale_mode;
                                 window.set_bars(bars.clone());
+                                window.pending_symbol_load = false;
                             }
                             // Recalculate bar-index caches for all drawings so primitives
                             // render at correct positions now that real bars are available.
@@ -1855,6 +1862,12 @@ impl ChartApp {
 
                     // Update the last bar of every window matching this symbol.
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        if window.pending_symbol_load {
+                            // Skip trade updates while waiting for initial bars —
+                            // otherwise a stray bar inserted here would cause BarsLoaded
+                            // to treat the load as a backfill and skip viewport repositioning.
+                            continue;
+                        }
                         if window.symbol == symbol {
                             // Period in seconds derived from minutes field of Timeframe.
                             let period_secs = (window.timeframe.minutes as i64) * 60;
@@ -2361,12 +2374,12 @@ impl ChartApp {
                         continue;
                     }
 
-                    // Check that indicator belongs to this symbol.
-                    if !indicator_manager
-                        .get_instances_for_symbol(symbol)
-                        .iter()
-                        .any(|i| i.id == *indicator_id)
-                    {
+                    // Check that indicator belongs to this symbol and window.
+                    let symbol_instances = match window_id {
+                        Some(wid) => indicator_manager.get_instances_for_symbol_in_window(symbol, wid),
+                        None => indicator_manager.get_instances_for_symbol(symbol),
+                    };
+                    if !symbol_instances.iter().any(|i| i.id == *indicator_id) {
                         continue;
                     }
 
@@ -3094,7 +3107,11 @@ impl ChartApp {
             let (symbol, has_compare) = self.panel_app.panel_grid.active_window()
                 .map(|w| (w.symbol.clone(), !w.compare_overlay.series.is_empty()))
                 .unwrap_or_default();
-            let has_indicators = !self.indicator_manager.get_instances_for_symbol(&symbol).is_empty();
+            let has_indicators = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+                !self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0).is_empty()
+            } else {
+                !self.indicator_manager.get_instances_for_symbol(&symbol).is_empty()
+            };
             self.panel_app.indicator_overlay_state.visible = has_indicators || has_compare;
         }
     }
@@ -3315,12 +3332,21 @@ impl ChartApp {
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
                 {
-                    let sub_pane_ids: Vec<u64> = self.indicator_manager
-                        .get_instances_for_symbol(&window.symbol)
-                        .into_iter()
-                        .filter(|i| i.visible && i.pane > 0)
-                        .map(|i| i.id)
-                        .collect();
+                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                        self.indicator_manager
+                            .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
+                            .into_iter()
+                            .filter(|i| i.visible && i.pane > 0)
+                            .map(|i| i.id)
+                            .collect()
+                    } else {
+                        self.indicator_manager
+                            .get_instances_for_symbol(&window.symbol)
+                            .into_iter()
+                            .filter(|i| i.visible && i.pane > 0)
+                            .map(|i| i.id)
+                            .collect()
+                    };
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &leaf_rect,
                         &sub_pane_ids,
@@ -3714,12 +3740,21 @@ impl ChartApp {
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
-                    let sub_pane_ids: Vec<u64> = self.indicator_manager
-                        .get_instances_for_symbol(&window.symbol)
-                        .into_iter()
-                        .filter(|i| i.visible && i.pane > 0)
-                        .map(|i| i.id)
-                        .collect();
+                    let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+                        self.indicator_manager
+                            .get_instances_for_symbol_in_window(&window.symbol, chart_id.0)
+                            .into_iter()
+                            .filter(|i| i.visible && i.pane > 0)
+                            .map(|i| i.id)
+                            .collect()
+                    } else {
+                        self.indicator_manager
+                            .get_instances_for_symbol(&window.symbol)
+                            .into_iter()
+                            .filter(|i| i.visible && i.pane > 0)
+                            .map(|i| i.id)
+                            .collect()
+                    };
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &chart_render_rect,
                         &sub_pane_ids,
@@ -3874,7 +3909,11 @@ impl ChartApp {
                         })
                         .unwrap_or_default();
 
-                let instances = self.indicator_manager.get_instances_for_symbol(&symbol);
+                let instances = if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
+                    self.indicator_manager.get_instances_for_symbol_in_window(&symbol, chart_id.0)
+                } else {
+                    self.indicator_manager.get_instances_for_symbol(&symbol)
+                };
                 let mut indicators: Vec<IndicatorOverlayInfo> = instances
                     .iter()
                     .map(|inst| {
