@@ -15615,26 +15615,51 @@ impl ChartApp {
 
             ChartOutEvent::InternalToggleSyncSymbol => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_symbol = !group.sync_flags.sync_symbol;
+                        newly_enabled = group.sync_flags.sync_symbol;
                         eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, group.sync_flags.sync_symbol);
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncSymbol: no active group");
+                }
+                // When sync is turned ON, immediately propagate active leaf's symbol to peers
+                if newly_enabled {
+                    if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let symbol = self.panel_app.panel_grid.active_window()
+                            .map(|w| w.symbol.clone())
+                            .unwrap_or_default();
+                        if !symbol.is_empty() {
+                            self.propagate_symbol_to_sync_group(leaf, &symbol);
+                        }
+                    }
                 }
                 state_mutated = true;
             }
 
             ChartOutEvent::InternalToggleSyncTimeframe => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_timeframe = !group.sync_flags.sync_timeframe;
+                        newly_enabled = group.sync_flags.sync_timeframe;
                         eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, group.sync_flags.sync_timeframe);
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncTimeframe: no active group");
+                }
+                // When sync is turned ON, immediately propagate active leaf's TF to peers
+                if newly_enabled {
+                    if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let tf = self.panel_app.panel_grid.active_window()
+                            .map(|w| w.timeframe.clone());
+                        if let Some(tf) = tf {
+                            self.propagate_timeframe_to_sync_group(leaf, tf);
+                        }
+                    }
                 }
                 state_mutated = true;
             }
