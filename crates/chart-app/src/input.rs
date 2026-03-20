@@ -6452,6 +6452,7 @@ impl ChartApp {
                         let timeframe = self.panel_app.panel_grid.active_window()
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
+                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             let old_sym = window.symbol.clone();
                             window.snapshot_drawings_for_symbol(&old_sym);
@@ -6471,6 +6472,10 @@ impl ChartApp {
                         } else {
                             self.bridge.ensure_connector(resolved_exchange);
                             self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                        }
+                        // Propagate the new symbol to all other windows in the same sync group.
+                        if let Some(leaf) = active_leaf {
+                            self.propagate_symbol_to_sync_group(leaf, &symbol);
                         }
                         self.autosave_snapshot();
                     }
@@ -16780,10 +16785,59 @@ impl ChartApp {
             .map(|(&lid, _)| lid)
             .collect();
         let symbol_owned = symbol.to_string();
-        for leaf_id in sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                let _ = window.change_symbol(&symbol_owned);
+
+        // Collect (exchange_string, old_symbol, timeframe) for each peer BEFORE mutating
+        // windows so we can call bridge.request_bars() after the window mutations.
+        let mut peer_requests: Vec<(String, String, zengeld_chart::state::Timeframe)> = Vec::new();
+        for leaf_id in &sync_leaves {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
+                peer_requests.push((
+                    window.exchange.clone(),
+                    window.symbol.clone(),
+                    window.timeframe.clone(),
+                ));
             }
+        }
+
+        // Apply the symbol change to each peer window directly, bypassing
+        // change_symbol() which uses NullDataProvider and always fails.
+        for (leaf_id, (_, old_symbol, _)) in sync_leaves.iter().zip(peer_requests.iter()) {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+                window.snapshot_drawings_for_symbol(old_symbol);
+                window.symbol = symbol_owned.clone();
+                window.bars.clear();
+                window.viewport.bar_count = 0;
+                window.drawing_manager.clear_all_primitives();
+                window.restore_drawings_for_symbol(&symbol_owned);
+                window.update_title();
+            }
+        }
+
+        // Request fresh bars for each peer via the bridge.
+        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        for (exchange_str, _, timeframe) in peer_requests {
+            if symbol_owned.is_empty() {
+                continue;
+            }
+            let resolved_exchange = self.exchange_symbols
+                .keys()
+                .find(|eid| eid.as_str() == exchange_str)
+                .copied()
+                .unwrap_or(self.active_exchange);
+            let eid_str = resolved_exchange.as_str();
+            if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                eprintln!(
+                    "[ChartApp] Exchange {} is disabled, skipping request_bars (symbol propagation)",
+                    eid_str
+                );
+                continue;
+            }
+            self.bridge.ensure_connector(resolved_exchange);
+            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, None, Some(bar_count));
+            eprintln!(
+                "[TagManager] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
+                symbol_owned, eid_str, timeframe
+            );
         }
 
         // Also update the TagManager group's canonical symbol so the group
@@ -16820,10 +16874,52 @@ impl ChartApp {
             .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
             .map(|(&lid, _)| lid)
             .collect();
-        for leaf_id in sync_leaves {
-            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                let _ = window.change_timeframe(tf.clone());
+
+        // Collect (exchange_string, symbol) for each peer BEFORE mutating windows,
+        // so we can call bridge.request_bars() after setting the new timeframe.
+        let mut peer_requests: Vec<(String, String)> = Vec::new();
+        for leaf_id in &sync_leaves {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
+                peer_requests.push((window.exchange.clone(), window.symbol.clone()));
             }
+        }
+
+        // Set timeframe and clear stale bars on each peer window directly,
+        // bypassing change_timeframe() which uses NullDataProvider and fails.
+        for leaf_id in &sync_leaves {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+                window.timeframe = tf.clone();
+                window.bars.clear();
+                window.viewport.bar_count = 0;
+                window.update_title();
+            }
+        }
+
+        // Request fresh bars for each peer via the bridge.
+        let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+        for (exchange_str, symbol) in peer_requests {
+            if symbol.is_empty() {
+                continue;
+            }
+            let resolved_exchange = self.exchange_symbols
+                .keys()
+                .find(|eid| eid.as_str() == exchange_str)
+                .copied()
+                .unwrap_or(self.active_exchange);
+            let eid_str = resolved_exchange.as_str();
+            if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                eprintln!(
+                    "[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe propagation)",
+                    eid_str
+                );
+                continue;
+            }
+            self.bridge.ensure_connector(resolved_exchange);
+            self.bridge.request_bars(resolved_exchange, &symbol, &tf, None, Some(bar_count));
+            eprintln!(
+                "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
+                symbol, eid_str, tf
+            );
         }
 
         // Also update the TagManager group's canonical timeframe so the group
