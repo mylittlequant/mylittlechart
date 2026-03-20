@@ -1785,13 +1785,11 @@ impl ChartApp {
 
                     let mut any_matched = false;
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-                        let matched = window.symbol == symbol && window.exchange == exchange_id.as_str();
+                        let tf_matches = window.timeframe.name == tf_name;
+                        let matched = window.symbol == symbol && window.exchange == exchange_id.as_str() && tf_matches;
                         if matched {
                             any_matched = true;
-                            eprintln!("[ChartApp]   -> window matched: sym={} exch={}", window.symbol, window.exchange);
-                            if let Some(ref tf) = loaded_tf {
-                                window.timeframe = tf.clone();
-                            }
+                            eprintln!("[ChartApp]   -> window matched: sym={} exch={} tf={}", window.symbol, window.exchange, window.timeframe.name);
                             // Use update_bars for backfill (preserves viewport),
                             // set_bars for initial load (resets viewport to end).
                             let is_backfill = !window.bars.is_empty();
