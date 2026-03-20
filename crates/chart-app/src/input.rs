@@ -3232,6 +3232,13 @@ impl ChartApp {
                     // Determine which leaves are in the same sync group as the
                     // hovered leaf so they receive crosshair sync instead of hiding.
                     let source_color = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
+                    // Check whether the source leaf's sync group has crosshair sync enabled.
+                    let crosshair_sync_enabled = self.panel_app.panel_grid
+                        .chart_id_for_leaf(leaf_id)
+                        .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                        .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                        .map(|g| g.sync_flags.sync_crosshair)
+                        .unwrap_or(true);
                     let all_ids: Vec<zengeld_chart::LeafId> = self.panel_app
                         .panel_grid
                         .panel_rects()
@@ -3244,13 +3251,13 @@ impl ChartApp {
                             .and_then(|sc| self.panel_app.leaf_color_tags.get(&other_id).copied()
                                 .map(|c| sync_colors_match(sc, c)))
                             .unwrap_or(false);
-                        if in_sync_group {
+                        if in_sync_group && crosshair_sync_enabled {
                             // Sync group peer — mirror crosshair bar position.
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
                                 window.set_crosshair_from_bar(bar_f64, crosshair_price, crosshair_visible, crosshair_pane_index);
                             }
                         } else {
-                            // Not in sync group — hide crosshair.
+                            // Not in sync group or crosshair sync disabled — hide crosshair.
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
                                 window.crosshair.visible = false;
                             }
@@ -16732,6 +16739,13 @@ impl ChartApp {
     /// `source_leaf` is the leaf that already had its symbol changed.
     /// All other leaves sharing the same color tag get the same symbol applied.
     fn propagate_symbol_to_sync_group(&mut self, source_leaf: zengeld_chart::LeafId, symbol: &str) {
+        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_symbol)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
             None => return,
@@ -16766,6 +16780,13 @@ impl ChartApp {
         source_leaf: zengeld_chart::LeafId,
         tf: zengeld_chart::state::Timeframe,
     ) {
+        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_timeframe)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
             None => return,
@@ -16880,6 +16901,13 @@ impl ChartApp {
         visible: bool,
         pane_index: Option<usize>,
     ) {
+        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_crosshair)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
             None => return,

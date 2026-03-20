@@ -1446,7 +1446,7 @@ impl ChartToolbarState {
                             } else {
                                 IconId::new("Expand")
                             };
-                            *active = is_expanded;
+                            *active = false;
                         }
                     }
                 }
