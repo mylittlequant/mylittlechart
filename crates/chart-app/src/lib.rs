@@ -3001,18 +3001,30 @@ impl ChartApp {
                 }
             }
 
-            // Sync group primitives into split windows.
+            // Sync group primitives into split windows, filtered to each
+            // window's current symbol so stale drawings don't bleed through
+            // after a symbol switch.
             let group_prim_sync: Vec<(zengeld_chart::ChartId, Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>)> = {
                 let mut syncs = Vec::new();
                 for &(leaf_id, _) in &leaf_rects {
                     if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                        let window_symbol = self.panel_app.panel_grid
+                            .window_for_leaf(leaf_id)
+                            .map(|w| w.symbol.clone())
+                            .unwrap_or_default();
                         if let Some(group_id) = self.panel_app.panel_grid
                             .window_for_leaf(leaf_id)
                             .and_then(|w| w.group_id)
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
                                 let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                                    group.primitives.iter().map(|p| p.clone_box()).collect();
+                                    group.primitives.iter()
+                                        .filter(|p| {
+                                            let sym = &p.data().symbol;
+                                            sym.is_empty() || sym == &window_symbol
+                                        })
+                                        .map(|p| p.clone_box())
+                                        .collect();
                                 syncs.push((chart_id, cloned));
                             }
                         }
@@ -3052,10 +3064,24 @@ impl ChartApp {
                 let chart_id_opt = self.panel_app.panel_grid.active_chart_id();
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
+                        // Capture the window's current symbol so we can filter
+                        // primitives — stale drawings from the previous symbol
+                        // must not be re-injected by the forward sync.
+                        let window_symbol = self.panel_app.panel_grid
+                            .windows()
+                            .get(&chart_id)
+                            .map(|w| w.symbol.clone())
+                            .unwrap_or_default();
                         let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                             self.panel_app.tag_manager
                                 .group(group_id)
-                                .map(|g| g.primitives.iter().map(|p| p.clone_box()).collect())
+                                .map(|g| g.primitives.iter()
+                                    .filter(|p| {
+                                        let sym = &p.data().symbol;
+                                        sym.is_empty() || sym == &window_symbol
+                                    })
+                                    .map(|p| p.clone_box())
+                                    .collect())
                                 .unwrap_or_default();
                         if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
                             window.drawing_manager.sync_from_group_primitives(&cloned);
