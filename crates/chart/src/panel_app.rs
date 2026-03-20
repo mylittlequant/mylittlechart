@@ -1056,7 +1056,7 @@ impl ChartToolbarState {
             "layout_menu" => {
                 eprintln!("[ChartToolbar] layout action: {}", item_id);
                 // Sync toggle items: keep the dropdown open so the user can see the toggle state change
-                if item_id == "sync_symbol" || item_id == "sync_timeframe" || item_id == "sync_crosshair" {
+                if item_id == "sync_symbol" || item_id == "sync_timeframe" || item_id == "sync_crosshair" || item_id == "sync_viewport" {
                     self.open_dropdown_id = Some("layout_menu".to_string());
                 }
                 match item_id {
@@ -1076,6 +1076,7 @@ impl ChartToolbarState {
                     "sync_symbol"         => vec![ChartOutEvent::InternalToggleSyncSymbol],
                     "sync_timeframe"      => vec![ChartOutEvent::InternalToggleSyncTimeframe],
                     "sync_crosshair"      => vec![ChartOutEvent::InternalToggleSyncCrosshair],
+                    "sync_viewport"       => vec![ChartOutEvent::InternalToggleSyncViewport],
                     _ => vec![ChartOutEvent::Consumed],
                 }
             }
@@ -1805,6 +1806,7 @@ impl ChartToolbarState {
                             "sync_symbol"    => *toggle = Some(flags.sync_symbol),
                             "sync_timeframe" => *toggle = Some(flags.sync_timeframe),
                             "sync_crosshair" => *toggle = Some(flags.sync_crosshair),
+                            "sync_viewport"  => *toggle = Some(flags.sync_viewport),
                             _ => {}
                         }
                     }

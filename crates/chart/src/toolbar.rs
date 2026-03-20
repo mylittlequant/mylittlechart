@@ -151,6 +151,7 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_symbol", "Sync Symbol").with_icon(ToolbarIconId::new("Search")),
                 DropdownItemDef::action("sync_timeframe", "Sync Timeframe").with_icon(ToolbarIconId::new("Clock")),
                 DropdownItemDef::action("sync_crosshair", "Sync Crosshair").with_icon(ToolbarIconId::new("Crosshair")),
+                DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Move")),
             ]).with_icon(ToolbarIconId::new("LayoutSingle")),
         ]),
         // 8. Presets (dropdown — between layout and screenshot)
@@ -283,6 +284,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_symbol", "Sync Symbol").with_icon(ToolbarIconId::new("Search")),
                 DropdownItemDef::action("sync_timeframe", "Sync Timeframe").with_icon(ToolbarIconId::new("Clock")),
                 DropdownItemDef::action("sync_crosshair", "Sync Crosshair").with_icon(ToolbarIconId::new("Crosshair")),
+                DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Move")),
             ]).with_icon(ToolbarIconId::new("LayoutSingle")),
         ]),
         // 9. Presets (dropdown — between layout and screenshot)

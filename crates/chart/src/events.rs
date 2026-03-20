@@ -74,6 +74,8 @@ pub enum ChartOutEvent {
     InternalToggleSyncTimeframe,
     /// Toggle crosshair synchronisation across panels.
     InternalToggleSyncCrosshair,
+    /// Toggle viewport synchronisation across panels.
+    InternalToggleSyncViewport,
 
     // === Timeframe ===
     /// Request a timeframe change (e.g., from toolbar dropdown selection).

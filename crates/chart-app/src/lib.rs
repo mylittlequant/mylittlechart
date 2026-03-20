@@ -5472,6 +5472,13 @@ impl ChartApp {
         view_start: f64,
         bar_spacing: f64,
     ) {
+        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_viewport)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
             None => return,
