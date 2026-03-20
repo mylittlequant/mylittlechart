@@ -15645,18 +15645,6 @@ impl ChartApp {
                 state_mutated = true;
             }
 
-            ChartOutEvent::InternalToggleSyncViewport => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
-                if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
-                        group.sync_flags.sync_viewport = !group.sync_flags.sync_viewport;
-                        eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, group.sync_flags.sync_viewport);
-                    }
-                } else {
-                    eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
-                }
-                state_mutated = true;
-            }
 
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);

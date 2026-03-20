@@ -144,7 +144,6 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("layout_1big_3small", "1+3").with_icon(ToolbarIconId::new("Layout1Big3Small")),
                 DropdownItemDef::Separator,
                 // Panel management
-                DropdownItemDef::action("toggle_expand", "Expand").with_icon(ToolbarIconId::new("Expand")),
                 DropdownItemDef::action("panel_close", "Close Panel"),
                 DropdownItemDef::action("panel_reset_sizes", "Reset Sizes").with_icon(ToolbarIconId::new("ZoomReset")),
                 DropdownItemDef::Separator,
@@ -152,7 +151,6 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_symbol", "Sync Symbol").with_icon(ToolbarIconId::new("Search")),
                 DropdownItemDef::action("sync_timeframe", "Sync Timeframe").with_icon(ToolbarIconId::new("Clock")),
                 DropdownItemDef::action("sync_crosshair", "Sync Crosshair").with_icon(ToolbarIconId::new("Crosshair")),
-                DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Clock")),
             ]).with_icon(ToolbarIconId::new("LayoutSingle")),
         ]),
         // 8. Presets (dropdown — between layout and screenshot)
@@ -278,7 +276,6 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("layout_1big_3small", "1+3").with_icon(ToolbarIconId::new("Layout1Big3Small")),
                 DropdownItemDef::Separator,
                 // Panel management
-                DropdownItemDef::action("toggle_expand", "Expand").with_icon(ToolbarIconId::new("Expand")),
                 DropdownItemDef::action("panel_close", "Close Panel"),
                 DropdownItemDef::action("panel_reset_sizes", "Reset Sizes").with_icon(ToolbarIconId::new("ZoomReset")),
                 DropdownItemDef::Separator,
@@ -286,7 +283,6 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_symbol", "Sync Symbol").with_icon(ToolbarIconId::new("Search")),
                 DropdownItemDef::action("sync_timeframe", "Sync Timeframe").with_icon(ToolbarIconId::new("Clock")),
                 DropdownItemDef::action("sync_crosshair", "Sync Crosshair").with_icon(ToolbarIconId::new("Crosshair")),
-                DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Clock")),
             ]).with_icon(ToolbarIconId::new("LayoutSingle")),
         ]),
         // 9. Presets (dropdown — between layout and screenshot)
