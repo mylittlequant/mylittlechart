@@ -240,6 +240,9 @@ pub enum Icon {
     Expand,
     Collapse,
 
+    // === Move (viewport sync) ===
+    Move,
+
     // === Object Tree / Sidebar ===
     ObjectTree,
 
@@ -889,6 +892,15 @@ pub const ICON_EXPAND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBo
   <path d="M24 24v-8"/>
 </svg>"##;
 
+pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 9l-3 3 3 3"/>
+  <path d="M9 5l3-3 3 3"/>
+  <path d="M15 19l-3 3-3-3"/>
+  <path d="M19 9l3 3-3 3"/>
+  <line x1="2" y1="12" x2="22" y2="12"/>
+  <line x1="12" y1="2" x2="12" y2="22"/>
+</svg>"##;
+
 // =============================================================================
 // Position Icons
 // =============================================================================
@@ -1500,6 +1512,7 @@ impl Icon {
             Icon::Layout1Big3Small => ICON_LAYOUT_1BIG_3SMALL,
             Icon::Expand => ICON_EXPAND,
             Icon::Collapse => ICON_COLLAPSE,
+            Icon::Move => ICON_MOVE,
             Icon::ObjectTree => ICON_OBJECT_TREE,
             Icon::ZoomIn => ICON_ZOOM_IN,
             Icon::ZoomOut => ICON_ZOOM_OUT,
@@ -1630,6 +1643,7 @@ impl Icon {
             "layout_1big_3small" | "layout1big3small" => Some(Icon::Layout1Big3Small),
             "expand" => Some(Icon::Expand),
             "collapse" => Some(Icon::Collapse),
+            "move" => Some(Icon::Move),
             "object_tree" | "objecttree" | "tree_pine" | "treepine" => Some(Icon::ObjectTree),
             "zoom_in" | "zoomin" => Some(Icon::ZoomIn),
             "zoom_out" | "zoomout" => Some(Icon::ZoomOut),
@@ -1960,6 +1974,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "bookmark" => Some(ICON_BOOKMARK),
         "expand" => Some(ICON_EXPAND),
         "collapse" => Some(ICON_COLLAPSE),
+        "move" => Some(ICON_MOVE),
 
         // Navigation/UI
         "plus" => Some(ICON_PLUS),

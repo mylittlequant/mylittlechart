@@ -2297,7 +2297,7 @@ fn find_submenu_in_def(def: &PanelToolbarDef, submenu_id: &str) -> Option<(Vec<D
 /// Used as the icon renderer callback for both the main dropdown and submenu grids.
 fn chart_icon_renderer(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, color: &str) {
     if let Some(svg) = crate::ui::icons::icon_svg(icon_id.name()) {
-        draw_svg_icon(ctx, svg, rect.x, rect.y, rect.width, rect.height, color);
+        draw_svg_icon(ctx, svg, rect.x.floor(), rect.y.floor(), rect.width, rect.height, color);
     }
 }
 

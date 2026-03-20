@@ -480,8 +480,8 @@ fn render_icon(
     color: &str,
 ) {
     if let Some(svg) = icon_svg(icon_name) {
-        let ix = item_rect.center_x() - icon_size / 2.0;
-        let iy = item_rect.center_y() - icon_size / 2.0;
+        let ix = (item_rect.center_x() - icon_size / 2.0).floor();
+        let iy = (item_rect.center_y() - icon_size / 2.0).floor();
         draw_svg_icon(ctx, svg, ix, iy, icon_size, icon_size, color);
     }
 }
