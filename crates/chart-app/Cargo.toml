@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 zengeld-chart = { path = "../chart" }
 zengeld-terminal-indicators = { path = "../indicators" }
-uzor = "1.0.13"
+uzor = "1.0.14"
 sidebar-content = { path = "../sidebar-content" }
 alerts = { path = "../alerts" }
 alert-delivery = { path = "../alert-delivery" }

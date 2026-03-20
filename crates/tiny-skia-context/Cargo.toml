@@ -4,6 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-uzor = "1.0.13"
-uzor-backend-tiny-skia = "1.0.13"
+uzor = "1.0.14"
+uzor-backend-tiny-skia = "1.0.14"
 zengeld-chart = { path = "../chart" }

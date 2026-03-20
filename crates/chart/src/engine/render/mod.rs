@@ -57,11 +57,14 @@ pub use uzor::render::{
 
 // Re-export chart-specific helpers
 pub use context::{
-    draw_svg_icon,
-    draw_svg_multicolor,
     render_primitive_text, render_primitive_text_rotated,
     render_text_with_background, measure_primitive_text,
 };
+
+// Re-export SVG rendering from uzor so that `crate::engine::render::draw_svg_icon`
+// and `crate::engine::render::draw_svg_multicolor` continue to resolve correctly
+// for all modal/panel code that imports from this path.
+pub use uzor::render::{draw_svg_icon, draw_svg_multicolor};
 
 // Re-export input state and frame result
 pub use input_state::{

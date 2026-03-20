@@ -15,7 +15,7 @@ alert-delivery = { path = "../alert-delivery" }
 live-data = { path = "../live-data" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
-uzor = "1.0.13"
+uzor = "1.0.14"
 vello = "0.7"
 winit = "0.30"
 pollster = "0.4"
@@ -28,10 +28,10 @@ zengeld-server = { path = "../zengeld-server" }
 zengeld-terminal-indicators = { path = "../indicators" }
 sysinfo = "0.34"
 instanced-context = { path = "../instanced-context" }
-uzor-backend-wgpu-instanced = "1.0.13"
+uzor-backend-wgpu-instanced = "1.0.14"
 vello-cpu-context = { path = "../vello-cpu-context" }
 vello-hybrid-context = { path = "../vello-hybrid-context" }
-uzor-backend-vello-hybrid = "1.0.13"
+uzor-backend-vello-hybrid = "1.0.14"
 vello_hybrid = { version = "0.0.6", features = ["wgpu"] }
 tiny-skia-context = { path = "../tiny-skia-context" }
 zengeld-updater = { path = "../updater", optional = true }
