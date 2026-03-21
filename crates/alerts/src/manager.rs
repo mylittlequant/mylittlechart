@@ -328,9 +328,15 @@ impl AlertManager {
                 None => continue,
             };
 
-            let routing_key = alert.routing_key();
+            // Use the tick's symbol:exchange as the lookup key — not the alert's
+            // routing_key, which may be empty for legacy alerts without symbol.
+            let tick_key = if exchange.is_empty() {
+                symbol.to_string()
+            } else {
+                format!("{}:{}", exchange, symbol)
+            };
             let prev_level = alert.prev_dynamic_price;
-            let prev_price = self.last_prices.get(&routing_key).copied().unwrap_or(0.0);
+            let prev_price = self.last_prices.get(&tick_key).copied().unwrap_or(0.0);
 
             let triggered = match alert.condition {
                 AlertCondition::CrossingUp => {
