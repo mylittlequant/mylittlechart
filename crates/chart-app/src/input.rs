@@ -6644,14 +6644,27 @@ impl ChartApp {
             eprintln!("[Sidebar] Alert settings modal opened (new, price={:.2})", price);
             return;
         }
-        // Pattern: "alert_{id}" (row click — open edit modal, numeric id only)
+        // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
         if let Some(id) = widget_id.strip_prefix("alert_").and_then(|s| s.parse::<u64>().ok()) {
-            if let Some(alert) = self.alert_manager.get(id) {
-                self.panel_app.alert_settings_state.open_edit(alert);
-                self.panel_app.alert_settings_state.pin_initial_position(
-                    self.content_rect.width, self.content_rect.height,
-                );
-                eprintln!("[Sidebar] Alert edit opened: id={}", id);
+            // Clone alert data we need before taking any mutable borrows.
+            let alert_nav = self.alert_manager.get(id).map(|a| (a.window_id_hint, id));
+            if let Some((window_id_hint, alert_id)) = alert_nav {
+                // Navigate to the window that created this alert, if known.
+                if let Some(wid) = window_id_hint {
+                    let chart_id = zengeld_chart::ChartId(wid);
+                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                        self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                        eprintln!("[Sidebar] Alert {}: navigated to window {} (leaf {:?})", alert_id, wid, leaf_id);
+                    }
+                }
+                // Open the edit modal.
+                if let Some(alert) = self.alert_manager.get(alert_id) {
+                    self.panel_app.alert_settings_state.open_edit(alert);
+                    self.panel_app.alert_settings_state.pin_initial_position(
+                        self.content_rect.width, self.content_rect.height,
+                    );
+                    eprintln!("[Sidebar] Alert edit opened: id={}", alert_id);
+                }
             }
             return;
         }

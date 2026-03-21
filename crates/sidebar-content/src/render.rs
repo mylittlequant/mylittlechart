@@ -1439,16 +1439,14 @@ fn render_alert_items(
     let mut price_alerts: Vec<&alerts::AlertItem> = Vec::new();
     let mut drawing_alerts: Vec<&alerts::AlertItem> = Vec::new();
     let mut indicator_alerts: Vec<&alerts::AlertItem> = Vec::new();
-    let mut crossing_alerts: Vec<&alerts::AlertItem> = Vec::new();
-    let mut signal_alerts: Vec<&alerts::AlertItem> = Vec::new();
 
     for item in &state.alert_items {
         match &item.source {
             AlertSource::Price { .. }        => price_alerts.push(item),
             AlertSource::Drawing { .. }      => drawing_alerts.push(item),
-            AlertSource::Indicator { .. }    => indicator_alerts.push(item),
-            AlertSource::CrossingPair { .. } => crossing_alerts.push(item),
-            AlertSource::Signal { .. }       => signal_alerts.push(item),
+            AlertSource::Indicator { .. }
+            | AlertSource::CrossingPair { .. }
+            | AlertSource::Signal { .. }     => indicator_alerts.push(item),
         }
     }
 
@@ -1457,11 +1455,9 @@ fn render_alert_items(
         ("price",     "Price Alerts",     &price_alerts),
         ("drawing",   "Drawing Alerts",   &drawing_alerts),
         ("indicator", "Indicator Alerts", &indicator_alerts),
-        ("crossing",  "Crossing Alerts",  &crossing_alerts),
-        ("signal",    "Signal Alerts",    &signal_alerts),
     ];
 
-    let item_height   = 42.0;
+    let item_height   = 54.0;
     let section_h     = 24.0;
     let item_padding  = 8.0;
     let icon_size     = 14.0;
@@ -1563,6 +1559,16 @@ fn render_alert_items(
             ctx.set_font("10px sans-serif");
             ctx.set_fill_color(&theme.item_text_muted);
             ctx.fill_text(&condition_text, rect.x + item_padding + 12.0, current_y + 23.0);
+
+            // --- Line 3: symbol:exchange ---
+            let sym = item.symbol();
+            let symbol_exchange_text = if item.exchange.is_empty() {
+                sym.to_string()
+            } else {
+                format!("{}:{}", sym, item.exchange)
+            };
+            ctx.set_font("9px sans-serif");
+            ctx.fill_text(&symbol_exchange_text, rect.x + item_padding + 12.0, current_y + 37.0);
 
             // --- Status dot (before delete button) ---
             let dot_color = match item.status {

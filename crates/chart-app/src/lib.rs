@@ -2157,6 +2157,8 @@ impl ChartApp {
                 // The renderer will attach PNG bytes to all pending_delivery_events
                 // before they are drained and dispatched.
                 self.pending_alert_screenshot = true;
+                // Sidebar alert list needs to reflect the new Triggered status.
+                self.sidebar_data_dirty = true;
             }
         }
 

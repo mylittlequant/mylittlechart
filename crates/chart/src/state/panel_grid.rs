@@ -200,6 +200,13 @@ impl ChartPanelGrid {
         self.leaf_to_chart.get(&leaf_id).copied()
     }
 
+    /// Resolve a `ChartId` to the `LeafId` that hosts it, if any.
+    pub fn leaf_for_chart_id(&self, chart_id: ChartId) -> Option<LeafId> {
+        self.leaf_to_chart
+            .iter()
+            .find_map(|(&leaf, &cid)| if cid == chart_id { Some(leaf) } else { None })
+    }
+
     /// Immutable reference to the underlying `DockingManager`.
     pub fn docking(&self) -> &DockingManager<ChartSubPanel> {
         &self.docking
