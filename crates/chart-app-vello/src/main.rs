@@ -7020,6 +7020,12 @@ impl ApplicationHandler for App<'_> {
                         let last_chart_y = last_y - chrome::CHROME_HEIGHT;
                         pw.chart.on_drag_move(x, chart_y, dx, dy);
                         let _ = last_chart_y; // suppress unused warning
+                        // Sidebar separator drag: mark sidebar + toolbar dirty so
+                        // the cached scenes rebuild every frame during resize.
+                        if pw.chart.is_sidebar_separator_dragging() {
+                            pw.sidebar_dirty_scene = true;
+                            pw.toolbar_dirty = true;
+                        }
                     }
                     pw.last_drag_pos = Some((x, y));
                 } else {

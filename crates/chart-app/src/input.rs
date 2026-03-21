@@ -3510,6 +3510,11 @@ impl ChartApp {
         }
     }
 
+    /// Check if the sidebar separator is being dragged.
+    pub fn is_sidebar_separator_dragging(&self) -> bool {
+        self.sidebar_separator_drag_active
+    }
+
     /// Check if the crosshair magnet snap is currently active.
     /// Used by the window layer to hide the system cursor during magnet-lock.
     pub fn is_magnet_snapped(&self) -> bool {
