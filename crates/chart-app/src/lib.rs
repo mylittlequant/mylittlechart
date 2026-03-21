@@ -1828,14 +1828,25 @@ impl ChartApp {
                         }
                     }
 
-                    let maybe_bars: Option<Vec<zengeld_chart::Bar>> = self
+                    // Recalculate indicators only for windows that match this
+                    // BarsLoaded event (symbol + exchange + timeframe).  Using
+                    // calculate_for_window instead of calculate_all_for_symbol
+                    // prevents leaking bars from one TF into another window's
+                    // indicators.
+                    let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
                         .panel_grid
-                        .active_window()
-                        .filter(|w| w.symbol == symbol && w.exchange == exchange_id.as_str())
-                        .map(|w| w.bars.clone());
-                    if let Some(b) = maybe_bars {
-                        self.indicator_manager.calculate_all_for_symbol(&symbol, &b);
+                        .windows()
+                        .iter()
+                        .filter(|(_, w)| {
+                            w.symbol == symbol
+                                && w.exchange == exchange_id.as_str()
+                                && w.timeframe.name == tf_name
+                        })
+                        .map(|(cid, w)| (cid.0, w.bars.clone()))
+                        .collect();
+                    for (wid, bars_for_window) in &matched_ids {
+                        self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
                     }
 
                     // Only autosave and subscribe trades if at least one window matched.
