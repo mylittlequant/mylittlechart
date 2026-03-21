@@ -304,6 +304,12 @@ pub struct ChartWindow {
     /// to end) even if a stray `TradeUpdate` inserted a synthetic bar before bars arrived.
     /// Cleared after `set_bars()` runs in the `BarsLoaded` handler.
     pub pending_symbol_load: bool,
+
+    /// Set to `true` when `set_bars()` is called before `chart_width` is valid (still 0.0).
+    /// In that case `calc_auto_scale()` / `visible_bars()` would operate on an empty range
+    /// and produce wrong Y-axis bounds. `prepare_frame()` checks this flag after
+    /// `sync_viewport_from_layout()` has set the real dimensions and re-runs the scale.
+    pub needs_auto_scale_after_bars: bool,
 }
 
 impl ChartWindow {
@@ -392,6 +398,7 @@ impl ChartWindow {
             symbol_drawings: HashMap::new(),
             pending_viewport_restore: None,
             pending_symbol_load: false,
+            needs_auto_scale_after_bars: false,
         }
     }
 
@@ -584,6 +591,8 @@ impl ChartWindow {
             pending_viewport_restore: None,
             // Split child has no pending symbol load.
             pending_symbol_load: false,
+            // Split child has no deferred auto-scale pending.
+            needs_auto_scale_after_bars: false,
         }
     }
 
@@ -734,6 +743,11 @@ impl ChartWindow {
             self.viewport.view_start = 0.0;
         }
         self.calc_auto_scale();
+        // If chart_width is not yet valid (layout hasn't computed), defer
+        // auto-scale to prepare_frame where dimensions are known.
+        if self.viewport.chart_width <= 0.0 {
+            self.needs_auto_scale_after_bars = true;
+        }
     }
 
     /// Replace bars without resetting viewport position or scale mode.

@@ -1815,6 +1815,9 @@ impl ChartApp {
                             // populated (catches any created without sync, e.g. via undo
                             // restore or deserialization without timestamp migration).
                             window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
+                            eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={} pending_vp_restore={}",
+                                window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing,
+                                window.pending_viewport_restore.is_some());
                             // Apply deferred viewport from preset restore (if any).
                             // This overrides the default scale mode with the preset's
                             // saved value.
@@ -2590,6 +2593,26 @@ impl ChartApp {
         // frame and apply an incorrect bar_shift to view_start.
         if !self.panel_app.panel_grid.is_split() {
             self.sync_viewport_from_layout();
+        }
+
+        // Deferred auto-scale: set_bars() couldn't compute price range because
+        // chart_width was 0. Now that layout is synced, recalculate.
+        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            if window.needs_auto_scale_after_bars && window.viewport.chart_width > 0.0 {
+                window.needs_auto_scale_after_bars = false;
+                // Re-snap view_start because visible_bars() was also wrong when chart_width was 0.
+                let count = window.bars.len();
+                let visible = window.viewport.visible_bars();
+                let right_margin: usize = if visible <= 10 { 1 }
+                    else if visible <= 20 { 2 }
+                    else if visible <= 50 { 3 }
+                    else if visible <= 100 { 4 }
+                    else { 5 };
+                if count + right_margin > visible {
+                    window.viewport.view_start = (count + right_margin - visible) as f64;
+                }
+                window.calc_auto_scale();
+            }
         }
 
         // Keep the alert-settings modal's alerts list always in sync.
