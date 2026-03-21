@@ -2059,38 +2059,73 @@ impl ChartApp {
             }
         }
 
-        // ── Alert checker: detect price crossings for the active symbol ────
+        // ── Alert checker: detect price crossings for every visible symbol ────
         // Skip entirely when no trade arrived this tick — nothing changed.
         if had_trade_update {
-            // Use the last bar's close price as the current price for alert checks.
-            let current_price = self.panel_app.panel_grid.active_window()
-                .and_then(|w| w.bars.last())
-                .map(|b| b.close)
-                .unwrap_or(0.0);
+            // Collect one entry per unique (symbol, exchange) pair across all windows.
+            // Multiple windows on the same pair share the same bar data, so one check
+            // per pair is sufficient.
+            let mut seen_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+            struct WindowAlertData {
+                symbol: String,
+                exchange: String,
+                current_price: f64,
+                current_bar: f64,
+                drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)>,
+            }
+            let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.windows()
+                .values()
+                .filter_map(|window| {
+                    let pair = (window.symbol.clone(), window.exchange.clone());
+                    if seen_pairs.contains(&pair) {
+                        return None;
+                    }
+                    seen_pairs.insert(pair);
+                    let current_price = window.bars.last().map(|b| b.close).unwrap_or(0.0);
+                    let current_bar = window.bars.len().saturating_sub(1) as f64;
+                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
+                        .drawing_manager
+                        .primitives()
+                        .iter()
+                        .map(|p| (p.data().id, p.points(), alerts::DrawingExtendMode::from_u8(p.extend_mode_raw())))
+                        .collect();
+                    Some(WindowAlertData {
+                        symbol: window.symbol.clone(),
+                        exchange: window.exchange.clone(),
+                        current_price,
+                        current_bar,
+                        drawing_points,
+                    })
+                })
+                .collect();
 
-            // Collect drawing points and current bar count from the active window.
-            let (current_bar, drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_window() {
-                let cb = window.bars.len().saturating_sub(1) as f64;
-                let pts: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
-                    .drawing_manager
-                    .primitives()
-                    .iter()
-                    .map(|p| (p.data().id, p.points(), alerts::DrawingExtendMode::from_u8(p.extend_mode_raw())))
-                    .collect();
-                (cb, pts)
-            } else {
-                (0.0, Vec::new())
-            };
             let indicator_values = Self::build_indicator_values_for_alerts(
                 &self.alert_manager,
                 &self.indicator_manager,
             );
-            let triggered_ids = self.alert_manager.check_crossings_dynamic(
-                current_price,
-                current_bar,
-                &drawing_points,
-                &indicator_values,
-            );
+
+            let mut all_triggered_ids: Vec<u64> = Vec::new();
+            for wd in &window_data {
+                let triggered = self.alert_manager.check_crossings_dynamic(
+                    wd.current_price,
+                    wd.current_bar,
+                    &wd.symbol,
+                    &wd.exchange,
+                    &wd.drawing_points,
+                    &indicator_values,
+                );
+                all_triggered_ids.extend(triggered);
+            }
+            // Deduplicate in case the same alert matched multiple windows.
+            all_triggered_ids.sort_unstable();
+            all_triggered_ids.dedup();
+            let triggered_ids = all_triggered_ids;
+
+            // Use the active window's price for delivery event messages.
+            let current_price = self.panel_app.panel_grid.active_window()
+                .and_then(|w| w.bars.last())
+                .map(|b| b.close)
+                .unwrap_or(0.0);
 
             // Build delivery events for triggered alerts.
             if !triggered_ids.is_empty() {
@@ -2248,6 +2283,7 @@ impl ChartApp {
         alert_manager: &alerts::AlertManager,
         window_id: Option<u64>,
         symbol: &str,
+        exchange: &str,
     ) -> Vec<(String, f64, f64, f64)> {
         use zengeld_chart::indicator_source::IndicatorSource;
 
@@ -2273,6 +2309,9 @@ impl ChartApp {
 
         for alert in alert_manager.items() {
             if alert.status != alerts::AlertStatus::Active {
+                continue;
+            }
+            if !alert.matches_window(symbol, exchange) {
                 continue;
             }
 
@@ -3295,6 +3334,7 @@ impl ChartApp {
                     .iter()
                     .filter(|a| a.status == alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, alerts::AlertSource::Price { .. }))
+                    .filter(|a| a.matches_window(&window.symbol, &window.exchange))
                     .filter_map(|alert| {
                         let price = alerts::AlertManager::resolve_price_static(
                             alert,
@@ -3380,6 +3420,7 @@ impl ChartApp {
                         &self.alert_manager,
                         window_id,
                         &window.symbol,
+                        &window.exchange,
                     );
                     for (widget_id, bx, by, bsize) in bells {
                         use uzor::input::Sense;
@@ -3673,23 +3714,31 @@ impl ChartApp {
                 &self.alert_manager,
                 &self.indicator_manager,
             );
-            let single_alert_render_data: Vec<AlertRenderData> = self.alert_manager.items()
-                .iter()
-                .filter(|a| a.status == alerts::AlertStatus::Active)
-                .filter(|a| matches!(a.source, alerts::AlertSource::Price { .. }))
-                .filter_map(|alert| {
-                    let price = alerts::AlertManager::resolve_price_static(
-                        alert,
-                        single_alert_current_bar,
-                        &single_alert_drawing_points,
-                        &single_alert_indicator_values,
-                    )?;
-                    Some(AlertRenderData {
-                        price,
-                        status: AlertRenderStatus::Active,
+            let single_alert_render_data: Vec<AlertRenderData> = {
+                // single_window_info = (symbol, timeframe, exchange) captured above.
+                let (single_sym, _, single_exch) = single_window_info
+                    .as_ref()
+                    .map(|(s, tf, e)| (s.as_str(), tf.as_str(), e.as_str()))
+                    .unwrap_or(("", "", ""));
+                self.alert_manager.items()
+                    .iter()
+                    .filter(|a| a.status == alerts::AlertStatus::Active)
+                    .filter(|a| matches!(a.source, alerts::AlertSource::Price { .. }))
+                    .filter(|a| a.matches_window(single_sym, single_exch))
+                    .filter_map(|alert| {
+                        let price = alerts::AlertManager::resolve_price_static(
+                            alert,
+                            single_alert_current_bar,
+                            &single_alert_drawing_points,
+                            &single_alert_indicator_values,
+                        )?;
+                        Some(AlertRenderData {
+                            price,
+                            status: AlertRenderStatus::Active,
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            };
 
             let window_opt = self.panel_app.panel_grid.active_window();
             let corner_zones_single = if let Some(window) = window_opt {
@@ -3789,6 +3838,7 @@ impl ChartApp {
                         &self.alert_manager,
                         window_id,
                         &window.symbol,
+                        &window.exchange,
                     );
                     // Register bell click zones.
                     for (widget_id, bx, by, bsize) in bells {

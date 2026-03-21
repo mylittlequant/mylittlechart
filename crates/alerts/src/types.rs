@@ -375,6 +375,22 @@ pub struct AlertItem {
     /// Not persisted — recalculated on tick.
     #[serde(skip)]
     pub prev_dynamic_price: f64,
+
+    /// Sync group that owns this alert. `None` only in pre-migration presets.
+    /// Populated at alert-create time from the active window's `group_id`.
+    #[serde(default)]
+    pub group_id: Option<u64>,
+
+    /// Exchange this alert is bound to (e.g. `"Binance"`).
+    /// Populated at create time from the active window's `exchange`.
+    #[serde(default)]
+    pub exchange: String,
+
+    /// Window that created this alert. Used as a display hint only —
+    /// alerts are NOT exclusive to one window, they show on all windows
+    /// in the same group that match `exchange:symbol`.
+    #[serde(default)]
+    pub window_id_hint: Option<u64>,
 }
 
 impl AlertItem {
@@ -406,6 +422,9 @@ impl AlertItem {
             symbol: String::new(),
             last_triggered: None,
             prev_dynamic_price: 0.0,
+            group_id: None,
+            exchange: String::new(),
+            window_id_hint: None,
         }
     }
 
@@ -478,5 +497,25 @@ impl AlertItem {
     /// Returns `true` when this alert has `AlertStatus::Triggered`.
     pub fn is_triggered(&self) -> bool {
         self.status == AlertStatus::Triggered
+    }
+
+    /// Returns `"exchange:symbol"` routing key for per-symbol crossing detection.
+    /// Falls back to just `symbol()` when exchange is empty (old presets).
+    pub fn routing_key(&self) -> String {
+        let sym = self.symbol();
+        if self.exchange.is_empty() {
+            sym.to_string()
+        } else {
+            format!("{}:{}", self.exchange, sym)
+        }
+    }
+
+    /// Returns true when this alert should be shown on a window with
+    /// the given `symbol` and `exchange`. Exchange match is skipped for
+    /// old presets that have no exchange stored (empty string).
+    pub fn matches_window(&self, symbol: &str, exchange: &str) -> bool {
+        let sym_match = self.symbol() == symbol;
+        let exch_match = self.exchange.is_empty() || self.exchange == exchange;
+        sym_match && exch_match
     }
 }

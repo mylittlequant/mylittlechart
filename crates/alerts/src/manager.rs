@@ -2,6 +2,8 @@
 //!
 //! Provides CRUD operations, snapshot/restore for presets, and crossing detection.
 
+use std::collections::HashMap;
+
 use crate::types::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode};
 
 /// Central alert manager. Owns all alert items and the ID counter.
@@ -12,8 +14,10 @@ use crate::types::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTri
 pub struct AlertManager {
     items: Vec<AlertItem>,
     next_id: u64,
-    /// Price of the active symbol as of the previous tick — for crossing detection.
-    last_price: f64,
+    /// Per-symbol previous price for crossing detection.
+    /// Key: `"exchange:symbol"` (or just `"symbol"` for old alerts without exchange).
+    /// Not serialized — rebuilt from live ticks.
+    last_prices: HashMap<String, f64>,
 }
 
 impl Default for AlertManager {
@@ -27,7 +31,7 @@ impl AlertManager {
         Self {
             items: Vec::new(),
             next_id: 1,
-            last_price: 0.0,
+            last_prices: HashMap::new(),
         }
     }
 
@@ -169,7 +173,7 @@ impl AlertManager {
     pub fn clear(&mut self) {
         self.items.clear();
         self.next_id = 1;
-        self.last_price = 0.0;
+        self.last_prices.clear();
     }
 
     /// Remove all alerts attached to a specific drawing primitive.
@@ -194,61 +198,6 @@ impl AlertManager {
                 _ => true,
             }
         });
-    }
-
-    // =========================================================================
-    // Crossing detection (called every tick)
-    // =========================================================================
-
-    /// Check all active Price alerts against the current price.
-    /// Returns list of alert IDs that triggered this tick.
-    ///
-    /// TODO(Phase 4): expand to support non-Price sources (Drawing, Indicator, CrossingPair).
-    pub fn check_crossings(&mut self, price: f64) -> Vec<u64> {
-        let prev = self.last_price;
-        self.last_price = price;
-
-        // Skip first tick (no previous price to compare against).
-        if prev == 0.0 {
-            return Vec::new();
-        }
-
-        let mut triggered_ids = Vec::new();
-
-        for alert in &mut self.items {
-            if alert.status != AlertStatus::Active {
-                continue;
-            }
-            let triggered = match alert.condition {
-                AlertCondition::CrossingUp => prev < alert.price && price >= alert.price,
-                AlertCondition::CrossingDown => prev > alert.price && price <= alert.price,
-                AlertCondition::Crossing => {
-                    (prev < alert.price && price >= alert.price)
-                        || (prev > alert.price && price <= alert.price)
-                }
-                AlertCondition::GreaterThan => price > alert.price,
-                AlertCondition::LessThan => price < alert.price,
-                _ => false,
-            };
-            if triggered {
-                alert.trigger_count += 1;
-                alert.last_triggered = Some("just now".to_string());
-                triggered_ids.push(alert.id);
-
-                // Apply trigger mode: deactivate on OneShot, or when TimesN exhausted.
-                match alert.trigger_mode {
-                    AlertTriggerMode::OneShot => {
-                        alert.status = AlertStatus::Triggered;
-                    }
-                    AlertTriggerMode::TimesN(n) if alert.trigger_count >= n => {
-                        alert.status = AlertStatus::Triggered;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        triggered_ids
     }
 
     // =========================================================================
@@ -337,11 +286,14 @@ impl AlertManager {
 
     /// Check all active alerts using dynamic price resolution.
     ///
-    /// For `Price` alerts this behaves identically to `check_crossings`.
+    /// For `Price` alerts this behaves identically to the old `check_crossings`.
     /// For `Drawing` and `Indicator` alerts the level is resolved dynamically
     /// from the provided external data so the alert line tracks the object shape.
     /// Drawing alerts respect `DrawingExtendMode` — they will not fire outside
     /// the allowed extent of the primitive.
+    ///
+    /// Only alerts that `matches_window(symbol, exchange)` are processed —
+    /// alerts bound to a different symbol or exchange are skipped entirely.
     ///
     /// The `drawing_points` tuple is `(primitive_id, points, extend_mode)`.
     ///
@@ -350,6 +302,8 @@ impl AlertManager {
         &mut self,
         current_price: f64,
         current_bar: f64,
+        symbol: &str,
+        exchange: &str,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
@@ -357,6 +311,10 @@ impl AlertManager {
 
         for alert in &mut self.items {
             if alert.status != AlertStatus::Active {
+                continue;
+            }
+
+            if !alert.matches_window(symbol, exchange) {
                 continue;
             }
 
@@ -370,8 +328,9 @@ impl AlertManager {
                 None => continue,
             };
 
+            let routing_key = alert.routing_key();
             let prev_level = alert.prev_dynamic_price;
-            let prev_price = self.last_price;
+            let prev_price = self.last_prices.get(&routing_key).copied().unwrap_or(0.0);
 
             let triggered = match alert.condition {
                 AlertCondition::CrossingUp => {
@@ -417,7 +376,12 @@ impl AlertManager {
             }
         }
 
-        self.last_price = current_price;
+        let routing_key = if exchange.is_empty() {
+            symbol.to_string()
+        } else {
+            format!("{}:{}", exchange, symbol)
+        };
+        self.last_prices.insert(routing_key, current_price);
         triggered_ids
     }
 
@@ -434,6 +398,6 @@ impl AlertManager {
     pub fn restore(&mut self, alerts: Vec<AlertItem>) {
         self.next_id = alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1;
         self.items = alerts;
-        self.last_price = 0.0;
+        self.last_prices.clear();
     }
 }
