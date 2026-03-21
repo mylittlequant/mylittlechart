@@ -10510,6 +10510,7 @@ impl ChartApp {
                         // is correctly filtered to its symbol:exchange context.
                         if let Some(window) = self.panel_app.panel_grid.active_window() {
                             alert.exchange = window.exchange.clone();
+                            alert.timeframe = window.timeframe.name.clone();
                             alert.window_id_hint = Some(window.id.0);
                             alert.group_id = window.group_id.map(|g| g.0);
                         }

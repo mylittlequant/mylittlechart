@@ -391,6 +391,11 @@ pub struct AlertItem {
     /// in the same group that match `exchange:symbol`.
     #[serde(default)]
     pub window_id_hint: Option<u64>,
+
+    /// Timeframe of the window when this alert was created (e.g. `"1H"`, `"4H"`).
+    /// Indicator alerts need this for display — price alerts are TF-agnostic.
+    #[serde(default)]
+    pub timeframe: String,
 }
 
 impl AlertItem {
@@ -425,6 +430,7 @@ impl AlertItem {
             group_id: None,
             exchange: String::new(),
             window_id_hint: None,
+            timeframe: String::new(),
         }
     }
 
