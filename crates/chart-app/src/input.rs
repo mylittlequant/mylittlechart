@@ -238,10 +238,15 @@ impl ChartApp {
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
+                    // Use corrected viewport dimensions from the layout so that
+                    // hit-test coordinate mapping matches the render path exactly.
+                    let mut corrected_vp = window.viewport.clone();
+                    corrected_vp.chart_width = chart_rect.width;
+                    corrected_vp.chart_height = chart_rect.height;
                     window.drawing_manager.hit_test(
                         local_x,
                         local_y,
-                        &window.viewport,
+                        &corrected_vp,
                         &window.price_scale,
                     )
                 } else {
@@ -1529,9 +1534,14 @@ impl ChartApp {
 
             if in_main {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
+                    // Use corrected viewport dimensions from the layout so that
+                    // hit-test coordinate mapping matches the render path exactly.
+                    let mut corrected_vp = window.viewport.clone();
+                    corrected_vp.chart_width = chart_rect.width;
+                    corrected_vp.chart_height = chart_rect.height;
                     // Control points have higher priority than primitive body.
                     if let Some(cp_type) = window.drawing_manager.hit_test_control_point(
-                        local_x, local_y, &window.viewport, &window.price_scale,
+                        local_x, local_y, &corrected_vp, &window.price_scale,
                     ) {
                         if let Some(selected_idx) = window.drawing_manager.selected() {
                             let prim_id = window.drawing_manager.primitives()
@@ -1548,7 +1558,7 @@ impl ChartApp {
                             }
                         }
                     } else if let Some(prim_idx) = window.drawing_manager.hit_test(
-                        local_x, local_y, &window.viewport, &window.price_scale,
+                        local_x, local_y, &corrected_vp, &window.price_scale,
                     ) {
                         let prim_id = window.drawing_manager.primitives()
                             .get(prim_idx)
@@ -13949,8 +13959,13 @@ impl ChartApp {
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
+                    // Use corrected viewport dimensions from the layout so that
+                    // hit-test coordinate mapping matches the render path exactly.
+                    let mut corrected_vp = window.viewport.clone();
+                    corrected_vp.chart_width = chart_rect.width;
+                    corrected_vp.chart_height = chart_rect.height;
                     if let Some(prim_idx) = window.drawing_manager.hit_test(
-                        local_x, local_y, &window.viewport, &window.price_scale,
+                        local_x, local_y, &corrected_vp, &window.price_scale,
                     ) {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;

@@ -3043,27 +3043,34 @@ impl ChartApp {
                 .map(|(&leaf_id, &sub_rect)| (leaf_id, sub_rect))
                 .collect();
 
-            // Sync viewport.chart_width for all split windows.
-            let no_toolbar_sync = zengeld_chart::ToolbarConfig::minimal();
-            for &(leaf_id, sub_rect) in &leaf_rects {
-                let leaf_layout_rect = LayoutRect {
-                    x: content_rect_pf.x + sub_rect.x as f64,
-                    y: content_rect_pf.y + sub_rect.y as f64,
-                    width: sub_rect.width as f64,
-                    height: sub_rect.height as f64,
-                };
-                let leaf_panel_layout = ChartPanelLayout::compute(&leaf_layout_rect, &no_toolbar_sync);
-                let leaf_content = leaf_panel_layout.content_rect;
+            // Sync viewport.chart_width/chart_height for all split windows.
+            // Pre-compute target dimensions using immutable borrows (build_extended_layout_for_leaf
+            // needs &self), then apply with mutable borrows in a second pass.
+            let leaf_dims: Vec<(zengeld_chart::LeafId, f64, f64)> = leaf_rects.iter()
+                .filter_map(|&(leaf_id, sub_rect)| {
+                    let leaf_layout_rect = LayoutRect {
+                        x: content_rect_pf.x + sub_rect.x as f64,
+                        y: content_rect_pf.y + sub_rect.y as f64,
+                        width: sub_rect.width as f64,
+                        height: sub_rect.height as f64,
+                    };
+                    // build_extended_layout_for_leaf accounts for sub-panes so that
+                    // chart_height reflects only the main chart area, matching the
+                    // render path and eliminating the hit-test Y offset.
+                    let extended = self.build_extended_layout_for_leaf(leaf_id, &leaf_layout_rect)?;
+                    Some((leaf_id, extended.main_chart.chart.width, extended.main_chart.chart.height))
+                })
+                .collect();
+
+            for (leaf_id, new_chart_w, new_chart_h) in leaf_dims {
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                    let ps_w = window.scale_settings.price_scale_width;
-                    let new_w = (leaf_content.width - ps_w).max(0.0);
                     let old_w = window.viewport.chart_width;
-                    if (old_w - new_w).abs() > 0.5 && window.viewport.bar_spacing > 0.0 && old_w > 0.0 {
-                        let bar_shift = (old_w - new_w) / window.viewport.bar_spacing;
+                    if (old_w - new_chart_w).abs() > 0.5 && window.viewport.bar_spacing > 0.0 && old_w > 0.0 {
+                        let bar_shift = (old_w - new_chart_w) / window.viewport.bar_spacing;
                         window.viewport.view_start += bar_shift;
                     }
-                    window.viewport.chart_width = new_w;
-                    window.viewport.chart_height = leaf_content.height;
+                    window.viewport.chart_width = new_chart_w;
+                    window.viewport.chart_height = new_chart_h;
                 }
             }
 
