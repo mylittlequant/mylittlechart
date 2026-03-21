@@ -219,6 +219,16 @@ impl Default for FrameTheme {
 
 /// Draw series based on chart_type
 pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_type: &str) {
+    // Clip all chart types to chart_rect so lines/area/baseline don't
+    // bleed onto the price scale, chrome toolbar, or neighboring windows.
+    let chart = &state.chart_rect;
+    ctx.save();
+    if !state.disable_clip {
+        ctx.begin_path();
+        ctx.rect(chart.x, chart.y, chart.width, chart.height);
+        ctx.clip();
+    }
+
     match chart_type {
         "candles" => draw_candles(ctx, state),
         "bars" => draw_bars(ctx, state),
@@ -234,6 +244,8 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "columns" => draw_columns(ctx, state),
         _ => draw_candles(ctx, state), // Default fallback
     }
+
+    ctx.restore();
 }
 
 // =============================================================================
