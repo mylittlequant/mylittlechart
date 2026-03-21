@@ -10513,6 +10513,11 @@ impl ChartApp {
                             alert.timeframe = window.timeframe.name.clone();
                             alert.window_id_hint = Some(window.id.0);
                             alert.group_id = window.group_id.map(|g| g.0);
+                            // Drawing/Indicator alerts need symbol stamped explicitly —
+                            // Price alerts carry it inside AlertSource::Price { symbol }.
+                            if !matches!(alert.source, alerts::AlertSource::Price { .. }) {
+                                alert.set_symbol(window.symbol.clone());
+                            }
                         }
                     }
                     id

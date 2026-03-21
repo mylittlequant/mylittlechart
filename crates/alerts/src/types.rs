@@ -490,6 +490,12 @@ impl AlertItem {
         }
     }
 
+    /// Set the symbol for non-Price alerts (Drawing, Indicator, Signal).
+    /// Price alerts carry the symbol inside `AlertSource::Price { symbol }`.
+    pub fn set_symbol(&mut self, symbol: String) {
+        self.symbol = symbol;
+    }
+
     /// Human-readable description of what this alert monitors.
     pub fn source_display(&self) -> String {
         self.source.display_name()
@@ -517,10 +523,11 @@ impl AlertItem {
     }
 
     /// Returns true when this alert should be shown on a window with
-    /// the given `symbol` and `exchange`. Exchange match is skipped for
-    /// old presets that have no exchange stored (empty string).
+    /// the given `symbol` and `exchange`. Empty fields (legacy presets
+    /// without symbol/exchange) are treated as "match any".
     pub fn matches_window(&self, symbol: &str, exchange: &str) -> bool {
-        let sym_match = self.symbol() == symbol;
+        let self_sym = self.symbol();
+        let sym_match = self_sym.is_empty() || self_sym == symbol;
         let exch_match = self.exchange.is_empty() || self.exchange == exchange;
         sym_match && exch_match
     }
