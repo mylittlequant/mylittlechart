@@ -2168,7 +2168,21 @@ impl ChartApp {
                 // The renderer will attach PNG bytes to all pending_delivery_events
                 // before they are drained and dispatched.
                 self.pending_alert_screenshot = true;
-                // Sidebar alert list needs to reflect the new Triggered status.
+
+                // Remove OneShot alerts that just fired — they served their
+                // purpose and must not linger in Triggered status blocking
+                // the sidebar or preventing re-creation.
+                for id in &triggered_ids {
+                    let should_remove = self.alert_manager.get(*id)
+                        .map(|a| a.trigger_mode == alerts::AlertTriggerMode::OneShot
+                            && a.status == alerts::AlertStatus::Triggered)
+                        .unwrap_or(false);
+                    if should_remove {
+                        self.alert_manager.remove(*id);
+                    }
+                }
+
+                // Sidebar alert list needs to reflect changes.
                 self.sidebar_data_dirty = true;
             }
         }
