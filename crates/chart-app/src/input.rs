@@ -15329,6 +15329,12 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.sync_groups.len());
 
+                    // Bump SyncGroupId counter past any restored group IDs so
+                    // future create_group / create_group_auto calls never collide.
+                    for sg_snap in &preset.sync_groups {
+                        zengeld_chart::tag_manager::SyncGroupId::bump_past(sg_snap.id);
+                    }
+
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
                     if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {

@@ -24,6 +24,13 @@ impl SyncGroupId {
     pub fn generate() -> Self {
         SyncGroupId(NEXT_SYNC_GROUP_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
     }
+
+    /// Advance the counter past `raw` so future `generate()` calls never
+    /// collide with restored preset IDs.
+    pub fn bump_past(raw: u64) {
+        let next = raw + 1;
+        NEXT_SYNC_GROUP_ID.fetch_max(next, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 // =============================================================================
