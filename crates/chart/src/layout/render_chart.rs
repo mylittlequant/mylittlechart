@@ -615,6 +615,16 @@ pub fn draw_overlay_indicators(
 ) {
     use crate::indicator_source::{IndicatorOutputRenderType, HistogramStyle};
 
+    // Clip overlay indicators to chart_rect so they don't bleed onto
+    // the price scale, neighboring windows, or the chrome toolbar.
+    let chart = &state.chart_rect;
+    ctx.save();
+    if !state.disable_clip {
+        ctx.begin_path();
+        ctx.rect(chart.x, chart.y, chart.width, chart.height);
+        ctx.clip();
+    }
+
     let instances = indicator_source.get_render_instances_for_symbol(symbol);
 
     for instance in &instances {
@@ -719,6 +729,8 @@ pub fn draw_overlay_indicators(
             );
         }
     }
+
+    ctx.restore();
 }
 
 /// Draw selection markers (small circles) on an indicator line
