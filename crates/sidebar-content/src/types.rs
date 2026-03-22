@@ -36,6 +36,12 @@ pub struct ObjectTreeItem {
     /// Set by `chart-app` after cross-referencing `alert_manager.items()`.
     /// Used by the renderer to highlight the bell icon in accent colour.
     pub has_alert: bool,
+    /// Optional section label used to group items under a section header.
+    ///
+    /// Recognised values: `"Group"` (shared across synced windows) or
+    /// `"Window"` (local to the active window only).  `None` means no
+    /// section header is rendered above this item.
+    pub section: Option<String>,
 }
 
 impl ObjectTreeItem {
@@ -51,6 +57,7 @@ impl ObjectTreeItem {
             selected: false,
             color: None,
             has_alert: false,
+            section: None,
         }
     }
 
@@ -59,6 +66,7 @@ impl ObjectTreeItem {
     pub fn with_selected(mut self, v: bool) -> Self { self.selected = v; self }
     pub fn with_color(mut self, c: Option<String>) -> Self { self.color = c; self }
     pub fn with_has_alert(mut self, v: bool) -> Self { self.has_alert = v; self }
+    pub fn with_section(mut self, s: &str) -> Self { self.section = Some(s.to_string()); self }
 }
 
 // =============================================================================

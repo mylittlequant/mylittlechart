@@ -1645,149 +1645,203 @@ fn render_object_tree_items(
     let icon_size = 14.0;
     let mut current_y = content_y;
 
-    // Group items by ObjectCategory.
-    let mut categories: std::collections::HashMap<ObjectCategory, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (idx, item) in state.object_tree_items.iter().enumerate() {
-        categories.entry(item.category).or_default().push(idx);
-    }
+    // Determine which sections are present, in display order:
+    // "Group" first, then "Window", then items with no section.
+    // We preserve insertion order within each section so the caller controls ordering.
+    let section_order: &[Option<&str>] = &[
+        Some("Group"),
+        Some("Window"),
+        None,
+    ];
 
-    for category in ObjectCategory::all() {
-        let indices = match categories.get(category) {
-            Some(v) if !v.is_empty() => v,
-            _ => continue,
-        };
+    for section_key in section_order {
+        // Collect indices of items belonging to this section.
+        let section_indices: Vec<usize> = state.object_tree_items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.section.as_deref() == *section_key)
+            .map(|(idx, _)| idx)
+            .collect();
 
-        // Category header.
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&theme.item_text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(category.display_name(), rect.x + item_padding, current_y + 12.0);
-        current_y += 24.0;
-
-        for &idx in indices {
-            let item = &state.object_tree_items[idx];
-            // Use category-specific prefix so drawing id=1, indicator id=1, and
-            // compare index=1 get distinct widget IDs ("drw_1", "ind_1", "cmp_1").
-            let prefix = match item.category {
-                ObjectCategory::Indicator => "ind",
-                ObjectCategory::Compare => "cmp",
-                _ => "drw",
-            };
-            let item_id = format!("{}_{}", prefix, item.id);
-            let del_id = format!("{}_delete_{}", prefix, item.id);
-            let set_id = format!("{}_settings_{}", prefix, item.id);
-            let alert_id = format!("{}_alert_{}", prefix, item.id);
-            let vis_id = format!("{}_vis_{}", prefix, item.id);
-            let is_drawing = item.category != ObjectCategory::Indicator;
-
-            let item_rect = WidgetRect::new(
-                rect.x + 4.0,
-                current_y,
-                content_width - 8.0,
-                item_height,
-            );
-
-            // Icons layout (right → left): Delete, Settings, Alert, Eye, Lock (drawings only).
-            let icon_step = icon_size + 4.0;
-            let icon_y = current_y + (item_height - icon_size) / 2.0;
-            let del_x = rect.x + content_width - item_padding - icon_size;
-            let set_x = del_x - icon_step;
-            let alert_x = set_x - icon_step;
-            let vis_x = alert_x - icon_step;
-            let lock_x = vis_x - icon_step;
-
-            // Register row FIRST, then buttons (buttons win hit-test for clicks).
-            input_coordinator.register(item_id.as_str(), item_rect.clone(), uzor::input::Sense::CLICK);
-            let delete_rect = WidgetRect::new(del_x, icon_y, icon_size, icon_size);
-            input_coordinator.register(del_id.as_str(), delete_rect.clone(), uzor::input::Sense::CLICK);
-            let settings_rect = WidgetRect::new(set_x, icon_y, icon_size, icon_size);
-            input_coordinator.register(set_id.as_str(), settings_rect.clone(), uzor::input::Sense::CLICK);
-            let alert_rect = WidgetRect::new(alert_x, icon_y, icon_size, icon_size);
-            input_coordinator.register(alert_id.as_str(), alert_rect, uzor::input::Sense::CLICK);
-            let vis_rect = WidgetRect::new(vis_x, icon_y, icon_size, icon_size);
-            input_coordinator.register(vis_id.as_str(), vis_rect, uzor::input::Sense::CLICK);
-            // Lock button — drawings only.
-            let lock_id = if is_drawing { Some(format!("{}_lock_{}", prefix, item.id)) } else { None };
-            if let Some(ref lid) = lock_id {
-                let lock_rect = WidgetRect::new(lock_x, icon_y, icon_size, icon_size);
-                input_coordinator.register(lid.as_str(), lock_rect, uzor::input::Sense::CLICK);
-            }
-
-            // Row hover = row OR any of its buttons hovered.
-            let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&item_id))
-                || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id))
-                || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&set_id))
-                || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&alert_id))
-                || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&vis_id))
-                || lock_id.as_ref().map_or(false, |lid|
-                    input_coordinator.is_hovered(&uzor::types::WidgetId::new(lid)));
-            let del_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id));
-
-            // Selection / hover background.
-            if item.selected {
-                ctx.set_fill_color(&format!("{}40", theme.accent));
-                ctx.fill_rect(item_rect.x, item_rect.y, item_rect.width, item_rect.height);
-            } else if is_hovered {
-                ctx.set_fill_color(&theme.item_bg_hover);
-                ctx.fill_rect(item_rect.x, item_rect.y, item_rect.width, item_rect.height);
-            }
-
-            // Colour swatch (16 × 16, left side).
-            if let Some(ref color) = item.color {
-                ctx.set_fill_color(color);
-                ctx.fill_rect(rect.x + item_padding, current_y + 8.0, 16.0, 16.0);
-            }
-
-            // Name label.
-            let name_x = if item.color.is_some() {
-                rect.x + item_padding + 24.0
-            } else {
-                rect.x + item_padding
-            };
-
-            ctx.set_font("12px sans-serif");
-            let text_color = if item.visible { &theme.item_text } else { &theme.item_text_muted };
-            ctx.set_fill_color(text_color);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&item.name, name_x, current_y + item_height / 2.0);
-
-            result.item_rects.push((item_id, item_rect));
-
-            // Delete (X) — red only when hovering the delete button itself.
-            result.delete_button_rects.push((del_id, delete_rect));
-            let delete_color = if del_hovered { "#ff5252" } else { theme.item_text_muted.as_str() };
-            draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
-
-            // Settings gear.
-            result.settings_button_rects.push((set_id, settings_rect));
-            draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
-
-            // Alert bell — accent colour when an alert is bound, muted otherwise.
-            let alert_bell_color = if item.has_alert {
-                theme.accent.as_str()
-            } else {
-                theme.item_text_muted.as_str()
-            };
-            draw_svg_icon(ctx, Icon::Alert.svg(), alert_x, icon_y, icon_size, icon_size, alert_bell_color);
-
-            // Eye / EyeOff (visibility toggle).
-            let vis_icon = if item.visible { Icon::Eye } else { Icon::EyeOff };
-            draw_svg_icon(ctx, vis_icon.svg(), vis_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
-
-            // Lock icon — drawings only.
-            if is_drawing {
-                let lock_icon = if item.locked { Icon::Lock } else { Icon::Unlock };
-                let lock_color = if item.locked { &theme.item_text } else { theme.item_text_muted.as_str() };
-                draw_svg_icon(ctx, lock_icon.svg(), lock_x, icon_y, icon_size, icon_size, lock_color);
-            }
-
-            current_y += item_height;
+        if section_indices.is_empty() {
+            continue;
         }
 
-        current_y += 8.0; // gap between categories
+        // Draw section header only when a section label is present.
+        if let Some(label) = section_key {
+            // Thin divider line above the section header (skip for the very first one at top).
+            if current_y > content_y {
+                ctx.set_fill_color(&theme.item_text_muted);
+                // Draw as a thin rect (1px tall) spanning the full width.
+                ctx.fill_rect(rect.x + item_padding, current_y + 3.0, content_width - item_padding * 2.0, 1.0);
+                current_y += 8.0;
+            }
+
+            // Section header text — slightly larger than category headers, bold-ish.
+            ctx.set_font("bold 11px sans-serif");
+            ctx.set_fill_color(&theme.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let dot_x = rect.x + item_padding;
+            let text_x = dot_x + 10.0;
+            // Small filled circle as visual accent.
+            ctx.fill_text("\u{25CF}", dot_x, current_y + 10.0); // "●"
+            ctx.fill_text(label, text_x, current_y + 10.0);
+            current_y += 22.0;
+        }
+
+        // Within this section, group by ObjectCategory (same logic as before).
+        let mut categories: std::collections::HashMap<ObjectCategory, Vec<usize>> =
+            std::collections::HashMap::new();
+        for &idx in &section_indices {
+            let item = &state.object_tree_items[idx];
+            categories.entry(item.category).or_default().push(idx);
+        }
+
+        for category in ObjectCategory::all() {
+            let indices = match categories.get(category) {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+
+            // Category header — indented slightly when inside a section.
+            let cat_indent = if section_key.is_some() { item_padding + 8.0 } else { item_padding };
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&theme.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(category.display_name(), rect.x + cat_indent, current_y + 12.0);
+            current_y += 24.0;
+
+            for &idx in indices {
+                let item = &state.object_tree_items[idx];
+                // Use category-specific prefix so drawing id=1, indicator id=1, and
+                // compare index=1 get distinct widget IDs ("drw_1", "ind_1", "cmp_1").
+                // Group/Window items have different numeric IDs so no collision occurs.
+                let prefix = match item.category {
+                    ObjectCategory::Indicator => "ind",
+                    ObjectCategory::Compare => "cmp",
+                    _ => "drw",
+                };
+                let item_id = format!("{}_{}", prefix, item.id);
+                let del_id = format!("{}_delete_{}", prefix, item.id);
+                let set_id = format!("{}_settings_{}", prefix, item.id);
+                let alert_id = format!("{}_alert_{}", prefix, item.id);
+                let vis_id = format!("{}_vis_{}", prefix, item.id);
+                let is_drawing = item.category != ObjectCategory::Indicator
+                    && item.category != ObjectCategory::Compare;
+
+                let item_rect = WidgetRect::new(
+                    rect.x + 4.0,
+                    current_y,
+                    content_width - 8.0,
+                    item_height,
+                );
+
+                // Icons layout (right → left): Delete, Settings, Alert, Eye, Lock (drawings only).
+                let icon_step = icon_size + 4.0;
+                let icon_y = current_y + (item_height - icon_size) / 2.0;
+                let del_x = rect.x + content_width - item_padding - icon_size;
+                let set_x = del_x - icon_step;
+                let alert_x = set_x - icon_step;
+                let vis_x = alert_x - icon_step;
+                let lock_x = vis_x - icon_step;
+
+                // Register row FIRST, then buttons (buttons win hit-test for clicks).
+                input_coordinator.register(item_id.as_str(), item_rect.clone(), uzor::input::Sense::CLICK);
+                let delete_rect = WidgetRect::new(del_x, icon_y, icon_size, icon_size);
+                input_coordinator.register(del_id.as_str(), delete_rect.clone(), uzor::input::Sense::CLICK);
+                let settings_rect = WidgetRect::new(set_x, icon_y, icon_size, icon_size);
+                input_coordinator.register(set_id.as_str(), settings_rect.clone(), uzor::input::Sense::CLICK);
+                let alert_rect = WidgetRect::new(alert_x, icon_y, icon_size, icon_size);
+                input_coordinator.register(alert_id.as_str(), alert_rect, uzor::input::Sense::CLICK);
+                let vis_rect = WidgetRect::new(vis_x, icon_y, icon_size, icon_size);
+                input_coordinator.register(vis_id.as_str(), vis_rect, uzor::input::Sense::CLICK);
+                // Lock button — drawings only.
+                let lock_id = if is_drawing {
+                    Some(format!("{}_lock_{}", prefix, item.id))
+                } else {
+                    None
+                };
+                if let Some(ref lid) = lock_id {
+                    let lock_rect = WidgetRect::new(lock_x, icon_y, icon_size, icon_size);
+                    input_coordinator.register(lid.as_str(), lock_rect, uzor::input::Sense::CLICK);
+                }
+
+                // Row hover = row OR any of its buttons hovered.
+                let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&item_id))
+                    || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id))
+                    || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&set_id))
+                    || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&alert_id))
+                    || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&vis_id))
+                    || lock_id.as_ref().map_or(false, |lid|
+                        input_coordinator.is_hovered(&uzor::types::WidgetId::new(lid)));
+                let del_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id));
+
+                // Selection / hover background.
+                if item.selected {
+                    ctx.set_fill_color(&format!("{}40", theme.accent));
+                    ctx.fill_rect(item_rect.x, item_rect.y, item_rect.width, item_rect.height);
+                } else if is_hovered {
+                    ctx.set_fill_color(&theme.item_bg_hover);
+                    ctx.fill_rect(item_rect.x, item_rect.y, item_rect.width, item_rect.height);
+                }
+
+                // Colour swatch (16 × 16, left side).
+                if let Some(ref color) = item.color {
+                    ctx.set_fill_color(color);
+                    ctx.fill_rect(rect.x + item_padding, current_y + 8.0, 16.0, 16.0);
+                }
+
+                // Name label.
+                let name_x = if item.color.is_some() {
+                    rect.x + item_padding + 24.0
+                } else {
+                    rect.x + item_padding
+                };
+
+                ctx.set_font("12px sans-serif");
+                let text_color = if item.visible { &theme.item_text } else { &theme.item_text_muted };
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&item.name, name_x, current_y + item_height / 2.0);
+
+                result.item_rects.push((item_id, item_rect));
+
+                // Delete (X) — red only when hovering the delete button itself.
+                result.delete_button_rects.push((del_id, delete_rect));
+                let delete_color = if del_hovered { "#ff5252" } else { theme.item_text_muted.as_str() };
+                draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
+
+                // Settings gear.
+                result.settings_button_rects.push((set_id, settings_rect));
+                draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
+
+                // Alert bell — accent colour when an alert is bound, muted otherwise.
+                let alert_bell_color = if item.has_alert {
+                    theme.accent.as_str()
+                } else {
+                    theme.item_text_muted.as_str()
+                };
+                draw_svg_icon(ctx, Icon::Alert.svg(), alert_x, icon_y, icon_size, icon_size, alert_bell_color);
+
+                // Eye / EyeOff (visibility toggle).
+                let vis_icon = if item.visible { Icon::Eye } else { Icon::EyeOff };
+                draw_svg_icon(ctx, vis_icon.svg(), vis_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
+
+                // Lock icon — drawings only.
+                if is_drawing {
+                    let lock_icon = if item.locked { Icon::Lock } else { Icon::Unlock };
+                    let lock_color = if item.locked { &theme.item_text } else { theme.item_text_muted.as_str() };
+                    draw_svg_icon(ctx, lock_icon.svg(), lock_x, icon_y, icon_size, icon_size, lock_color);
+                }
+
+                current_y += item_height;
+            }
+
+            current_y += 8.0; // gap between categories
+        }
     }
 
     current_y - content_y

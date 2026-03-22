@@ -2639,26 +2639,88 @@ impl ChartApp {
 
         // Populate sidebar data from chart state (guarded by dirty flag).
         if self.sidebar_state.is_right_open() && self.sidebar_data_dirty {
-            // --- ObjectTree: drawing primitives ---
+            // --- ObjectTree: drawing primitives + indicators ---
             self.sidebar_state.object_tree_items.clear();
 
             let active_cid = self.panel_app.panel_grid.active_chart_id();
             let active_symbol: Option<String> = self.panel_app.panel_grid.active_window()
                 .map(|w| w.symbol.clone());
 
-            // Use group primitives only when in a tagged (non-auto_created) group
-            // with sync_drawings enabled; otherwise fall back to window-local primitives.
-            let use_group_primitives = active_cid
+            // Determine whether the active window is in a real (non-auto_created) tag group.
+            let tagged_group = active_cid
                 .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                 .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| !g.auto_created && g.sync_flags.sync_drawings)
-                .unwrap_or(false);
+                .filter(|g| !g.auto_created);
 
-            let group_prims: Vec<_> = if use_group_primitives {
-                self.panel_app.panel_grid.active_window()
-                    .and_then(|w| w.group_id)
-                    .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                    .map(|g| g.primitives.iter()
+            // Helper: convert a PrimitiveKind into an ObjectCategory.
+            let prim_category = |kind: zengeld_chart::PrimitiveKind| match kind {
+                zengeld_chart::PrimitiveKind::Annotation => zengeld_chart::ObjectCategory::Text,
+                zengeld_chart::PrimitiveKind::Measurement => zengeld_chart::ObjectCategory::Measurement,
+                zengeld_chart::PrimitiveKind::Trading => zengeld_chart::ObjectCategory::Position,
+                zengeld_chart::PrimitiveKind::Signal => zengeld_chart::ObjectCategory::Signal,
+                _ => zengeld_chart::ObjectCategory::Drawing,
+            };
+
+            if let Some(group) = tagged_group {
+                // ----------------------------------------------------------------
+                // TAGGED window: two sections — "Group" and (optionally) "Window"
+                // ----------------------------------------------------------------
+
+                // --- Section "Group": primitives from group.primitives ---
+                if group.sync_flags.sync_drawings {
+                    for p in group.primitives.iter().filter(|p| {
+                        active_symbol.as_deref()
+                            .map(|sym| p.data().symbol == sym)
+                            .unwrap_or(true)
+                    }) {
+                        let data = p.data();
+                        let kind = p.kind();
+                        let display = p.display_name().to_string();
+                        let name = if display.is_empty() { data.type_id.as_str() } else { display.as_str() };
+                        let item = sidebar_content::types::ObjectTreeItem::new(
+                            data.id, name, prim_category(kind), &data.type_id,
+                        )
+                        .with_visible(data.visible)
+                        .with_locked(data.locked)
+                        .with_color(Some(data.color.stroke.clone()))
+                        .with_section("Group");
+                        self.sidebar_state.object_tree_items.push(item);
+                    }
+                }
+
+                // --- Section "Group": indicators from group.indicator_configs ---
+                if group.sync_flags.sync_indicators {
+                    let active_window_id = active_cid.map(|cid| cid.0);
+                    for cfg in group.indicator_configs.iter().filter(|cfg| {
+                        active_symbol.as_deref()
+                            .map(|sym| cfg.symbol == sym)
+                            .unwrap_or(true)
+                    }) {
+                        // Resolve to the active window's own instance so that widget
+                        // actions (visibility, delete, settings) use the correct ID.
+                        let local = active_window_id.and_then(|wid| {
+                            self.indicator_manager.instances_iter()
+                                .find(|i| i.window_id == Some(wid) && i.type_id == cfg.type_id)
+                        });
+                        let (id, name, type_id, visible, locked) = match local {
+                            Some(inst) => (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked),
+                            None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
+                        };
+                        let item = sidebar_content::types::ObjectTreeItem::new(
+                            id, &name, zengeld_chart::ObjectCategory::Indicator, &type_id,
+                        )
+                        .with_visible(visible)
+                        .with_locked(locked)
+                        .with_section("Group");
+                        self.sidebar_state.object_tree_items.push(item);
+                    }
+                }
+
+                // --- Section "Window": window-local stashed primitives ---
+                // Collect stashed primitive data first so we don't hold an active_window borrow
+                // while also needing indicator_manager (which is not behind the same ref).
+                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_window()
+                    .map(|w| w.stashed_primitives.iter()
                         .filter(|p| {
                             active_symbol.as_deref()
                                 .map(|sym| p.data().symbol == sym)
@@ -2669,10 +2731,54 @@ impl ChartApp {
                             let kind = p.kind();
                             let display = p.display_name().to_string();
                             (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                        }).collect())
-                    .unwrap_or_default()
+                        })
+                        .collect())
+                    .unwrap_or_default();
+
+                // Collect window-local indicator IDs before releasing the window borrow.
+                let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_window()
+                    .map(|w| w.pre_tag_indicator_ids.clone())
+                    .unwrap_or_default();
+
+                let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();
+
+                if has_window_section {
+                    for (id, display, type_id, kind, visible, locked, stroke) in &stashed_prim_data {
+                        let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
+                        let item = sidebar_content::types::ObjectTreeItem::new(
+                            *id, name, prim_category(*kind), type_id,
+                        )
+                        .with_visible(*visible)
+                        .with_locked(*locked)
+                        .with_color(Some(stroke.clone()))
+                        .with_section("Window");
+                        self.sidebar_state.object_tree_items.push(item);
+                    }
+
+                    for &iid in &pre_tag_ids {
+                        if let Some(inst) = self.indicator_manager.instances_iter()
+                            .find(|i| i.id == iid)
+                        {
+                            let item = sidebar_content::types::ObjectTreeItem::new(
+                                inst.id,
+                                &inst.name,
+                                zengeld_chart::ObjectCategory::Indicator,
+                                &inst.type_id,
+                            )
+                            .with_visible(inst.visible)
+                            .with_locked(inst.locked)
+                            .with_section("Window");
+                            self.sidebar_state.object_tree_items.push(item);
+                        }
+                    }
+                }
             } else {
-                self.panel_app.panel_grid.active_window()
+                // ----------------------------------------------------------------
+                // UNTAGGED window (auto_created group): flat list, no section headers
+                // ----------------------------------------------------------------
+
+                // Primitives from window-local drawing_manager.
+                let local_prims: Vec<_> = self.panel_app.panel_grid.active_window()
                     .map(|w| w.drawing_manager.primitives().iter()
                         .filter(|p| {
                             active_symbol.as_deref()
@@ -2684,84 +2790,38 @@ impl ChartApp {
                             let kind = p.kind();
                             let display = p.display_name().to_string();
                             (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                        }).collect())
-                    .unwrap_or_default()
-            };
-
-            for (id, display, type_id, kind, visible, locked, stroke) in &group_prims {
-                let category = match kind {
-                    zengeld_chart::PrimitiveKind::Annotation => zengeld_chart::ObjectCategory::Text,
-                    zengeld_chart::PrimitiveKind::Measurement => zengeld_chart::ObjectCategory::Measurement,
-                    zengeld_chart::PrimitiveKind::Trading => zengeld_chart::ObjectCategory::Position,
-                    zengeld_chart::PrimitiveKind::Signal => zengeld_chart::ObjectCategory::Signal,
-                    _ => zengeld_chart::ObjectCategory::Drawing,
-                };
-                let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
-                let item = sidebar_content::types::ObjectTreeItem::new(
-                    *id, name, category, type_id,
-                )
-                .with_visible(*visible)
-                .with_locked(*locked)
-                .with_color(Some(stroke.clone()));
-                self.sidebar_state.object_tree_items.push(item);
-            }
-
-            // --- ObjectTree: indicator instances ---
-            // Use group indicator_configs only when in a tagged (non-auto_created) group
-            // with sync_indicators enabled; otherwise fall back to window-local instances.
-            let use_group_indicators = active_cid
-                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-                .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| !g.auto_created && g.sync_flags.sync_indicators)
-                .unwrap_or(false);
-
-            let indicator_rows: Vec<(u64, String, String, bool, bool)> = if use_group_indicators {
-                // For group indicators, look up the ACTIVE WINDOW's own instance for each
-                // config's type_id. This ensures that visibility toggles, delete, and settings
-                // all operate on the correct instance (not the source window's instance).
-                let active_window_id = active_cid.map(|cid| cid.0);
-                active_cid
-                    .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-                    .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                    .map(|g| g.indicator_configs.iter()
-                        .map(|cfg| {
-                            // Prefer the active window's local instance so that widget
-                            // actions (vis toggle, delete, settings) use the right ID.
-                            let local = active_window_id.and_then(|wid| {
-                                self.indicator_manager.instances_iter()
-                                    .find(|i| i.window_id == Some(wid) && i.type_id == cfg.type_id)
-                            });
-                            match local {
-                                Some(inst) => (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked),
-                                None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
-                            }
                         })
                         .collect())
-                    .unwrap_or_default()
-            } else {
-                let window_id = active_cid.map(|cid| cid.0);
-                match (window_id, active_symbol.as_ref()) {
-                    (Some(wid), Some(sym)) => {
-                        self.indicator_manager
-                            .get_instances_for_symbol_in_window(sym, wid)
-                            .into_iter()
-                            .map(|inst| (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked))
-                            .collect()
-                    }
-                    _ => Vec::new(),
-                }
-            };
+                    .unwrap_or_default();
 
-            for (id, name, type_id, visible, locked) in indicator_rows {
-                let item = sidebar_content::types::ObjectTreeItem::new(
-                    id,
-                    &name,
-                    zengeld_chart::ObjectCategory::Indicator,
-                    &type_id,
-                )
-                .with_visible(visible)
-                .with_locked(locked);
-                self.sidebar_state.object_tree_items.push(item);
+                for (id, display, type_id, kind, visible, locked, stroke) in &local_prims {
+                    let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
+                    let item = sidebar_content::types::ObjectTreeItem::new(
+                        *id, name, prim_category(*kind), type_id,
+                    )
+                    .with_visible(*visible)
+                    .with_locked(*locked)
+                    .with_color(Some(stroke.clone()));
+                    self.sidebar_state.object_tree_items.push(item);
+                }
+
+                // Indicators from indicator_manager for this window + symbol.
+                let window_id = active_cid.map(|cid| cid.0);
+                if let (Some(wid), Some(sym)) = (window_id, active_symbol.as_ref()) {
+                    for inst in self.indicator_manager
+                        .get_instances_for_symbol_in_window(sym, wid)
+                    {
+                        let item = sidebar_content::types::ObjectTreeItem::new(
+                            inst.id,
+                            &inst.name,
+                            zengeld_chart::ObjectCategory::Indicator,
+                            &inst.type_id,
+                        )
+                        .with_visible(inst.visible)
+                        .with_locked(inst.locked);
+                        self.sidebar_state.object_tree_items.push(item);
+                    }
+                }
             }
 
             // --- ObjectTree: compare overlay series ---
