@@ -15771,23 +15771,141 @@ impl ChartApp {
 
             ChartOutEvent::InternalToggleSyncDrawings => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let chart_id = self.panel_app.panel_grid.active_window().map(|w| w.id);
                 if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                    // Toggle the flag and capture the new value.
+                    let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
                         eprintln!("[TagManager] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
+                        group.sync_flags.sync_drawings
+                    } else {
+                        return;
+                    };
+
+                    if new_sync {
+                        // OFF → ON: stash window-local primitives (those not in group.primitives).
+                        // Collect the set of IDs that live in the group.
+                        let group_prim_ids: std::collections::HashSet<u64> = self
+                            .panel_app
+                            .tag_manager
+                            .group(gid)
+                            .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
+                            .unwrap_or_default();
+
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            // Drain all primitives from the manager, partition into local vs synced.
+                            let all: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                std::mem::take(window.drawing_manager.primitives_mut());
+                            let mut local: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
+                            let mut synced: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> = Vec::new();
+                            for prim in all {
+                                if group_prim_ids.contains(&prim.data().id) {
+                                    synced.push(prim);
+                                } else {
+                                    local.push(prim);
+                                }
+                            }
+                            let stash_count = local.len();
+                            window.stashed_primitives.extend(local);
+                            // Restore the synced ones back into the manager.
+                            window.drawing_manager.add_synced_primitives(synced);
+                            eprintln!(
+                                "[TagManager] sync_drawings ON: stashed {} window-local primitives",
+                                stash_count
+                            );
+                        }
+                    } else {
+                        // ON → OFF: restore stashed window-local primitives.
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            let restored: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                std::mem::take(&mut window.stashed_primitives);
+                            let count = restored.len();
+                            window.drawing_manager.add_synced_primitives(restored);
+                            eprintln!(
+                                "[TagManager] sync_drawings OFF: restored {} stashed primitives",
+                                count
+                            );
+                        }
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncDrawings: no active group");
                 }
+                let _ = chart_id; // chart_id reserved for future per-chart filtering
                 state_mutated = true;
             }
 
             ChartOutEvent::InternalToggleSyncIndicators => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
-                if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                let chart_id = self.panel_app.panel_grid.active_window().map(|w| w.id);
+                if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
+                    // Toggle the flag and capture the new value.
+                    let new_sync = if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
                         eprintln!("[TagManager] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
+                        group.sync_flags.sync_indicators
+                    } else {
+                        return;
+                    };
+
+                    let pre_tag_ids: Vec<u64> = self
+                        .panel_app
+                        .panel_grid
+                        .active_window()
+                        .map(|w| w.pre_tag_indicator_ids.clone())
+                        .unwrap_or_default();
+
+                    if new_sync {
+                        // OFF → ON: hide window-local indicators (in pre_tag_indicator_ids
+                        // but not yet in the group's indicator_configs).
+                        let group_indicator_ids: std::collections::HashSet<u64> = self
+                            .panel_app
+                            .tag_manager
+                            .group(gid)
+                            .map(|g| g.indicator_configs.iter().map(|c| c.id).collect())
+                            .unwrap_or_default();
+
+                        let to_hide: Vec<u64> = self
+                            .indicator_manager
+                            .instances_iter()
+                            .filter(|i| {
+                                i.window_id == Some(chart_id.0)
+                                    && pre_tag_ids.contains(&i.id)
+                                    && !group_indicator_ids.contains(&i.id)
+                            })
+                            .map(|i| i.id)
+                            .collect();
+
+                        for id in &to_hide {
+                            if let Some(inst) = self.indicator_manager.get_instance_mut(*id) {
+                                inst.visible = false;
+                            }
+                        }
+                        eprintln!(
+                            "[TagManager] sync_indicators ON: hid {} window-local indicators",
+                            to_hide.len()
+                        );
+                    } else {
+                        // ON → OFF: unhide window-local (pre_tag) indicators.
+                        let to_show: Vec<u64> = self
+                            .indicator_manager
+                            .instances_iter()
+                            .filter(|i| {
+                                i.window_id == Some(chart_id.0)
+                                    && pre_tag_ids.contains(&i.id)
+                                    && !i.visible
+                            })
+                            .map(|i| i.id)
+                            .collect();
+
+                        for id in &to_show {
+                            if let Some(inst) = self.indicator_manager.get_instance_mut(*id) {
+                                inst.visible = true;
+                            }
+                        }
+                        eprintln!(
+                            "[TagManager] sync_indicators OFF: unhid {} window-local indicators",
+                            to_show.len()
+                        );
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncIndicators: no active group");
@@ -17225,6 +17343,13 @@ impl ChartApp {
         &mut self,
         source_leaf: zengeld_chart::LeafId,
     ) {
+        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_drawings)
+            .unwrap_or(true);
+        if !should_sync { return; }
+
         // Determine the source window's color tag.
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
