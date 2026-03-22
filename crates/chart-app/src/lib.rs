@@ -2639,29 +2639,54 @@ impl ChartApp {
 
         // Populate sidebar data from chart state (guarded by dirty flag).
         if self.sidebar_state.is_right_open() && self.sidebar_data_dirty {
-            // --- ObjectTree: drawing primitives (from TagManager group) ---
+            // --- ObjectTree: drawing primitives ---
             self.sidebar_state.object_tree_items.clear();
 
-            // All windows are grouped — read primitives from the sync group,
-            // filtered to only those matching the active window's symbol.
+            let active_cid = self.panel_app.panel_grid.active_chart_id();
             let active_symbol: Option<String> = self.panel_app.panel_grid.active_window()
                 .map(|w| w.symbol.clone());
-            let group_prims: Vec<_> = self.panel_app.panel_grid.active_window()
-                .and_then(|w| w.group_id)
+
+            // Use group primitives only when in a tagged (non-auto_created) group
+            // with sync_drawings enabled; otherwise fall back to window-local primitives.
+            let use_group_primitives = active_cid
+                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                 .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| g.primitives.iter()
-                    .filter(|p| {
-                        active_symbol.as_deref()
-                            .map(|sym| p.data().symbol == sym)
-                            .unwrap_or(true)
-                    })
-                    .map(|p| {
-                        let data = p.data();
-                        let kind = p.kind();
-                        let display = p.display_name().to_string();
-                        (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                    }).collect())
-                .unwrap_or_default();
+                .map(|g| !g.auto_created && g.sync_flags.sync_drawings)
+                .unwrap_or(false);
+
+            let group_prims: Vec<_> = if use_group_primitives {
+                self.panel_app.panel_grid.active_window()
+                    .and_then(|w| w.group_id)
+                    .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                    .map(|g| g.primitives.iter()
+                        .filter(|p| {
+                            active_symbol.as_deref()
+                                .map(|sym| p.data().symbol == sym)
+                                .unwrap_or(true)
+                        })
+                        .map(|p| {
+                            let data = p.data();
+                            let kind = p.kind();
+                            let display = p.display_name().to_string();
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                        }).collect())
+                    .unwrap_or_default()
+            } else {
+                self.panel_app.panel_grid.active_window()
+                    .map(|w| w.drawing_manager.primitives().iter()
+                        .filter(|p| {
+                            active_symbol.as_deref()
+                                .map(|sym| p.data().symbol == sym)
+                                .unwrap_or(true)
+                        })
+                        .map(|p| {
+                            let data = p.data();
+                            let kind = p.kind();
+                            let display = p.display_name().to_string();
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                        }).collect())
+                    .unwrap_or_default()
+            };
 
             for (id, display, type_id, kind, visible, locked, stroke) in &group_prims {
                 let category = match kind {
@@ -2681,27 +2706,40 @@ impl ChartApp {
                 self.sidebar_state.object_tree_items.push(item);
             }
 
-            // --- ObjectTree: indicator instances (active window only) ---
-            let active_chart_id_for_inds = self.panel_app.panel_grid.active_chart_id().map(|cid| cid.0);
-            let active_symbol_for_inds: Option<String> = self.panel_app.panel_grid.active_window()
-                .map(|w| w.symbol.clone());
-            let indicator_rows: Vec<(u64, String, String, bool, bool)> = match (active_chart_id_for_inds, active_symbol_for_inds) {
-                (Some(window_id), Some(ref symbol)) => {
-                    self.indicator_manager
-                        .get_instances_for_symbol_in_window(symbol, window_id)
-                        .into_iter()
-                        .map(|inst| {
-                            (
-                                inst.id,
-                                inst.name.clone(),
-                                inst.type_id.clone(),
-                                inst.visible,
-                                inst.locked,
-                            )
+            // --- ObjectTree: indicator instances ---
+            // Use group indicator_configs only when in a tagged (non-auto_created) group
+            // with sync_indicators enabled; otherwise fall back to window-local instances.
+            let use_group_indicators = active_cid
+                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .map(|g| !g.auto_created && g.sync_flags.sync_indicators)
+                .unwrap_or(false);
+
+            let indicator_rows: Vec<(u64, String, String, bool, bool)> = if use_group_indicators {
+                active_cid
+                    .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                    .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                    .map(|g| g.indicator_configs.iter()
+                        .filter(|cfg| {
+                            active_symbol.as_deref()
+                                .map(|sym| cfg.symbol == sym)
+                                .unwrap_or(true)
                         })
-                        .collect()
+                        .map(|cfg| (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false))
+                        .collect())
+                    .unwrap_or_default()
+            } else {
+                let window_id = active_cid.map(|cid| cid.0);
+                match (window_id, active_symbol.as_ref()) {
+                    (Some(wid), Some(sym)) => {
+                        self.indicator_manager
+                            .get_instances_for_symbol_in_window(sym, wid)
+                            .into_iter()
+                            .map(|inst| (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked))
+                            .collect()
+                    }
+                    _ => Vec::new(),
                 }
-                _ => Vec::new(),
             };
 
             for (id, name, type_id, visible, locked) in indicator_rows {

@@ -145,6 +145,12 @@ pub fn draw_price_scale(
             let label_x = origin_x + 1.0;
             let label_y = origin_y + display_y - 10.0;
 
+            // Clip to price scale column so the label never overflows above/below the chart area
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+            ctx.clip();
+
             // Draw blur background (for FrostedGlass/LiquidGlass styles)
             ctx.draw_blur_background(label_x, label_y, width, height);
 
@@ -156,6 +162,8 @@ pub fn draw_price_scale(
             ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
             ctx.set_fill_color("#ffffff");
             ctx.fill_text(&label, text_x, origin_y + display_y);
+
+            ctx.restore();
         }
     }
 
@@ -170,6 +178,12 @@ pub fn draw_price_scale(
             let label_x = origin_x + 1.0;
             let label_y = origin_y + display_y - 10.0;
 
+            // Clip to price scale column so the label never overflows above/below the chart area
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+            ctx.clip();
+
             // Draw blur background (for FrostedGlass/LiquidGlass styles)
             ctx.draw_blur_background(label_x, label_y, width, height);
 
@@ -181,6 +195,8 @@ pub fn draw_price_scale(
             ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
             ctx.set_fill_color(&scale_theme.crosshair_label_text);
             ctx.fill_text(&label, text_x, origin_y + display_y);
+
+            ctx.restore();
         }
     }
 

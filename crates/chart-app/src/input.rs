@@ -6701,6 +6701,7 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
+                self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Drawing deleted: {}", id);
             }
             return;
@@ -6709,6 +6710,7 @@ impl ChartApp {
         if widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.strip_prefix("ind_delete_").and_then(|s| s.parse::<u64>().ok()) {
                 self.indicator_manager.remove_instance(id);
+                self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator deleted: {}", id);
             }
             return;
@@ -6742,6 +6744,7 @@ impl ChartApp {
                         window.drawing_manager.primitives_mut()[idx].data_mut().visible = !v;
                     }
                 }
+                self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Drawing visibility toggled: {}", id);
             }
             return;
@@ -6750,6 +6753,7 @@ impl ChartApp {
         if widget_id.starts_with("ind_vis_") {
             if let Some(id) = widget_id.strip_prefix("ind_vis_").and_then(|s| s.parse::<u64>().ok()) {
                 self.indicator_manager.toggle_visibility(id);
+                self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
             return;
@@ -6763,6 +6767,7 @@ impl ChartApp {
                         window.drawing_manager.primitives_mut()[idx].data_mut().locked = !l;
                     }
                 }
+                self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Drawing lock toggled: {}", id);
             }
             return;
@@ -12753,6 +12758,7 @@ impl ChartApp {
         self.alert_manager.remove_alerts_for_indicator(id);
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
+        self.sidebar_data_dirty = true;
         eprintln!("[ChartApp] indicator {} deleted", id);
     }
 
