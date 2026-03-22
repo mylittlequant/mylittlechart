@@ -6494,6 +6494,7 @@ impl ChartApp {
                         if let Some(leaf) = active_leaf {
                             self.propagate_symbol_to_sync_group(leaf, &symbol);
                         }
+                        self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
                 }
@@ -11407,6 +11408,7 @@ impl ChartApp {
                             if let Some(leaf_id) = self.panel_app.panel_color_picker_leaf {
                                 let rgba = hex_str_to_rgba(&final_color);
                                 self.panel_app.leaf_color_tags.insert(leaf_id, rgba);
+                                self.sidebar_data_dirty = true;
                             }
                             self.panel_app.close_panel_color_tag_picker();
                         }
@@ -11669,6 +11671,7 @@ impl ChartApp {
                             if let Some(leaf_id) = self.panel_app.panel_color_picker_leaf {
                                 let rgba = hex_str_to_rgba(&final_color);
                                 self.panel_app.leaf_color_tags.insert(leaf_id, rgba);
+                                self.sidebar_data_dirty = true;
                             }
                             self.panel_app.close_panel_color_tag_picker();
                         }
@@ -11829,6 +11832,7 @@ impl ChartApp {
                             );
                             // Sync with new group — clone primitives/indicators from peers.
                             self.sync_join_color_group(leaf_id, new_color);
+                            self.sidebar_data_dirty = true;
                             // Persist tag assignment immediately.
                             self.autosave_snapshot();
                         }
@@ -13467,6 +13471,7 @@ impl ChartApp {
                             .unwrap_or_default();
                         self.indicator_manager.calculate_all_for_symbol(&sym, &bars);
                         self.sync_sub_panes_from_manager();
+                        self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                         self.modal_state.close();
                     }
@@ -13991,6 +13996,13 @@ impl ChartApp {
                     ) {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
+                        // Deselect all other windows first so control points don't accumulate.
+                        let active_cid = self.panel_app.panel_grid.active_chart_id();
+                        for (cid, win) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+                            if Some(*cid) != active_cid {
+                                win.drawing_manager.deselect();
+                            }
+                        }
                         if let Some(win) = self.panel_app.panel_grid.active_window_mut() {
                             win.drawing_manager.set_current_pane(None);
                             win.drawing_manager.select_by_index(prim_idx);
@@ -14032,6 +14044,13 @@ impl ChartApp {
                     ) {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
+                        // Deselect all other windows first so control points don't accumulate.
+                        let active_cid = self.panel_app.panel_grid.active_chart_id();
+                        for (cid, win) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+                            if Some(*cid) != active_cid {
+                                win.drawing_manager.deselect();
+                            }
+                        }
                         if let Some(win) = self.panel_app.panel_grid.active_window_mut() {
                             win.drawing_manager.set_current_pane(Some(instance_id));
                             win.drawing_manager.select_by_index(prim_idx);
@@ -14075,8 +14094,8 @@ impl ChartApp {
                         self.selected_indicator_id = None;
                     } else {
                         self.selected_indicator_id = Some(instance_id);
-                        if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                            w.drawing_manager.deselect();
+                        for win in self.panel_app.panel_grid.windows_mut().values_mut() {
+                            win.drawing_manager.deselect();
                         }
                     }
                     eprintln!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
@@ -14102,11 +14121,9 @@ impl ChartApp {
                     });
                 if let Some(ind_id) = ind_hit {
                     self.selected_indicator_id = Some(ind_id);
-                    // Deselect any drawing primitive when an indicator is selected.
-                    if let Some(win) = self.panel_app.panel_grid.active_window_mut() {
-                        if win.drawing_manager.selected().is_some() {
-                            win.drawing_manager.deselect();
-                        }
+                    // Deselect any drawing primitive across ALL windows when an indicator is selected.
+                    for win in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        win.drawing_manager.deselect();
                     }
                     eprintln!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
@@ -14114,12 +14131,10 @@ impl ChartApp {
             }
         }
 
-        // No primitive or indicator hit — deselect everything.
+        // No primitive or indicator hit — deselect everything across ALL windows.
         self.selected_indicator_id = None;
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-            if window.drawing_manager.selected().is_some() {
-                window.drawing_manager.deselect();
-            }
+        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            window.drawing_manager.deselect();
         }
 
         let extended = self.build_extended_layout();
@@ -14681,6 +14696,7 @@ impl ChartApp {
                         if let Some(leaf) = active_leaf {
                             self.propagate_timeframe_to_sync_group(leaf, tf);
                         }
+                        self.sidebar_data_dirty = true;
                         state_mutated = true;
                     }
                 }

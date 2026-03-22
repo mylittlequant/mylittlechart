@@ -2681,20 +2681,28 @@ impl ChartApp {
                 self.sidebar_state.object_tree_items.push(item);
             }
 
-            // --- ObjectTree: indicator instances ---
-            let indicator_rows: Vec<(u64, String, String, bool, bool)> = self
-                .indicator_manager
-                .instances_iter()
-                .map(|inst| {
-                    (
-                        inst.id,
-                        inst.name.clone(),
-                        inst.type_id.clone(),
-                        inst.visible,
-                        inst.locked,
-                    )
-                })
-                .collect();
+            // --- ObjectTree: indicator instances (active window only) ---
+            let active_chart_id_for_inds = self.panel_app.panel_grid.active_chart_id().map(|cid| cid.0);
+            let active_symbol_for_inds: Option<String> = self.panel_app.panel_grid.active_window()
+                .map(|w| w.symbol.clone());
+            let indicator_rows: Vec<(u64, String, String, bool, bool)> = match (active_chart_id_for_inds, active_symbol_for_inds) {
+                (Some(window_id), Some(ref symbol)) => {
+                    self.indicator_manager
+                        .get_instances_for_symbol_in_window(symbol, window_id)
+                        .into_iter()
+                        .map(|inst| {
+                            (
+                                inst.id,
+                                inst.name.clone(),
+                                inst.type_id.clone(),
+                                inst.visible,
+                                inst.locked,
+                            )
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
 
             for (id, name, type_id, visible, locked) in indicator_rows {
                 let item = sidebar_content::types::ObjectTreeItem::new(
