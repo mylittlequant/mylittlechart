@@ -2595,23 +2595,25 @@ impl ChartApp {
             self.sync_viewport_from_layout();
         }
 
-        // Deferred auto-scale: set_bars() couldn't compute price range because
-        // chart_width was 0. Now that layout is synced, recalculate.
+        // Deferred viewport snap: set_bars() defers snap-to-end + auto-scale
+        // to here where layout dimensions are guaranteed valid.
         for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-            if window.needs_auto_scale_after_bars && window.viewport.chart_width > 0.0 {
+            if window.needs_auto_scale_after_bars && !window.bars.is_empty() {
                 window.needs_auto_scale_after_bars = false;
-                // Re-snap view_start because visible_bars() was also wrong when chart_width was 0.
+                // Focus-style snap: position last bar with right margin
                 let count = window.bars.len();
-                let visible = window.viewport.visible_bars();
-                let right_margin: usize = if visible <= 10 { 1 }
-                    else if visible <= 20 { 2 }
-                    else if visible <= 50 { 3 }
-                    else if visible <= 100 { 4 }
-                    else { 5 };
-                if count + right_margin > visible {
-                    window.viewport.view_start = (count + right_margin - visible) as f64;
-                }
+                let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+                let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
+                    else if (visible_f as usize) <= 20 { 2.0 }
+                    else if (visible_f as usize) <= 50 { 3.0 }
+                    else if (visible_f as usize) <= 100 { 4.0 }
+                    else { 5.0 };
+                window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                // Force auto-scale regardless of current scale_mode
+                let saved_mode = window.price_scale.scale_mode;
+                window.price_scale.scale_mode = ScaleMode::Auto;
                 window.calc_auto_scale();
+                window.price_scale.scale_mode = saved_mode;
             }
         }
 
