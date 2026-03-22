@@ -1682,10 +1682,7 @@ fn render_object_tree_items(
             ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            let dot_x = rect.x + item_padding;
-            let text_x = dot_x + 10.0;
-            // Small filled circle as visual accent.
-            ctx.fill_text("\u{25CF}", dot_x, current_y + 10.0); // "●"
+            let text_x = rect.x + item_padding;
             ctx.fill_text(label, text_x, current_y + 10.0);
             current_y += 22.0;
         }
