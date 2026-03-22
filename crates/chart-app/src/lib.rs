@@ -228,6 +228,10 @@ pub struct ChartApp {
     /// cleared in `on_drag_end`.
     pub(crate) sidebar_separator_drag_active: bool,
 
+    /// When true, split operations create the new window as an independent
+    /// auto-created group instead of inheriting the source window's tag.
+    pub split_without_group: bool,
+
     /// Left edge X of the right toolbar from the last render.
     ///
     /// Used during sidebar separator drag to compute the new sidebar width as
@@ -675,6 +679,7 @@ impl ChartApp {
             sidebar_state: sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
+            split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
             watchlist_modal: WatchlistModalState::new(),
@@ -930,6 +935,7 @@ impl ChartApp {
             sidebar_state: sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
+            split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
             watchlist_modal: WatchlistModalState::new(),
@@ -1091,6 +1097,7 @@ impl ChartApp {
             sidebar_state: sidebar_content::state::SidebarState::new(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
+            split_without_group: false,
             right_toolbar_left_x: 0.0,
             selected_indicator_id: None,
             watchlist_modal: WatchlistModalState::new(),
@@ -3115,15 +3122,17 @@ impl ChartApp {
                             .and_then(|w| w.group_id)
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
-                                let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                                    group.primitives.iter()
-                                        .filter(|p| {
-                                            let sym = &p.data().symbol;
-                                            sym.is_empty() || sym == &window_symbol
-                                        })
-                                        .map(|p| p.clone_box())
-                                        .collect();
-                                syncs.push((chart_id, cloned));
+                                if group.sync_flags.sync_drawings {
+                                    let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                        group.primitives.iter()
+                                            .filter(|p| {
+                                                let sym = &p.data().symbol;
+                                                sym.is_empty() || sym == &window_symbol
+                                            })
+                                            .map(|p| p.clone_box())
+                                            .collect();
+                                    syncs.push((chart_id, cloned));
+                                }
                             }
                         }
                     }
@@ -3162,27 +3171,34 @@ impl ChartApp {
                 let chart_id_opt = self.panel_app.panel_grid.active_chart_id();
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
-                        // Capture the window's current symbol so we can filter
-                        // primitives — stale drawings from the previous symbol
-                        // must not be re-injected by the forward sync.
-                        let window_symbol = self.panel_app.panel_grid
-                            .windows()
-                            .get(&chart_id)
-                            .map(|w| w.symbol.clone())
-                            .unwrap_or_default();
-                        let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
-                            self.panel_app.tag_manager
-                                .group(group_id)
-                                .map(|g| g.primitives.iter()
-                                    .filter(|p| {
-                                        let sym = &p.data().symbol;
-                                        sym.is_empty() || sym == &window_symbol
-                                    })
-                                    .map(|p| p.clone_box())
-                                    .collect())
+                        // Respect the sync_drawings flag — skip forward sync if disabled.
+                        let drawings_on = self.panel_app.tag_manager
+                            .group(group_id)
+                            .map(|g| g.sync_flags.sync_drawings)
+                            .unwrap_or(true);
+                        if drawings_on {
+                            // Capture the window's current symbol so we can filter
+                            // primitives — stale drawings from the previous symbol
+                            // must not be re-injected by the forward sync.
+                            let window_symbol = self.panel_app.panel_grid
+                                .windows()
+                                .get(&chart_id)
+                                .map(|w| w.symbol.clone())
                                 .unwrap_or_default();
-                        if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
-                            window.drawing_manager.sync_from_group_primitives(&cloned);
+                            let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
+                                self.panel_app.tag_manager
+                                    .group(group_id)
+                                    .map(|g| g.primitives.iter()
+                                        .filter(|p| {
+                                            let sym = &p.data().symbol;
+                                            sym.is_empty() || sym == &window_symbol
+                                        })
+                                        .map(|p| p.clone_box())
+                                        .collect())
+                                    .unwrap_or_default();
+                            if let Some(window) = self.panel_app.panel_grid.windows_mut().get_mut(&chart_id) {
+                                window.drawing_manager.sync_from_group_primitives(&cloned);
+                            }
                         }
                     }
                 }
@@ -4153,6 +4169,7 @@ impl ChartApp {
                 &panel_layout,
                 selected_config.as_ref(),
                 Some(clock_time.as_str()),
+                self.split_without_group,
                 Some(active_sym_str.as_str()),
                 Some(active_tf_str.as_str()),
                 sidebar_w,
@@ -4734,6 +4751,7 @@ impl ChartApp {
             &panel_layout,
             selected_config.as_ref(),
             Some(clock_time.as_str()),
+            self.split_without_group,
             Some(active_sym_str.as_str()),
             Some(active_tf_str.as_str()),
             sidebar_w,
@@ -5545,6 +5563,13 @@ impl ChartApp {
             Some(gid) => gid,
             None => return false,
         };
+
+        // Respect the sync_drawings flag — if disabled, do not write drag result back to group.
+        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+            if !group.sync_flags.sync_drawings {
+                return false;
+            }
+        }
 
         // Clone the updated primitive from the window's drawing_manager.
         let chart_id = match self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {

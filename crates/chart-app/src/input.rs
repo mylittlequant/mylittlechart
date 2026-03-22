@@ -13514,39 +13514,44 @@ impl ChartApp {
                                     if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
                                         inst.window_id = Some(chart_id.0);
                                     }
-                                    // If this window is in a sync group, also track the config there.
-                                    // Use new_id as the config id so deletion can match by instance id.
+                                    // If this window is in a sync group and indicators are synced,
+                                    // track the config in the group and push to peers.
                                     if let Some(group_id) = self.panel_app.panel_grid
                                         .window_for_leaf(active_leaf)
                                         .and_then(|w| w.group_id)
                                     {
-                                        let inst_pane = self.indicator_manager
-                                            .get_instance(new_id)
-                                            .map(|i| i.pane as u32)
-                                            .unwrap_or(0);
-                                        let inst_name = self.indicator_manager
-                                            .get_instance(new_id)
-                                            .map(|i| i.name.clone())
-                                            .unwrap_or_else(|| item_id.to_string());
-                                        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
-                                            group.indicator_configs.push(
-                                                zengeld_chart::tag_manager::IndicatorGroupConfig {
-                                                    id: new_id,
-                                                    type_id: item_id.to_string(),
-                                                    name: inst_name,
-                                                    params: std::collections::HashMap::new(),
-                                                    pane: inst_pane,
-                                                    visible: true,
-                                                    symbol: symbol.clone(),
-                                                },
-                                            );
-                                            eprintln!(
-                                                "[TagManager] Added indicator config id={} '{}' to group {:?}",
-                                                new_id, item_id, group_id
-                                            );
+                                        let sync_on = self.panel_app.tag_manager.group(group_id)
+                                            .map(|g| g.sync_flags.sync_indicators)
+                                            .unwrap_or(true);
+                                        if sync_on {
+                                            let inst_pane = self.indicator_manager
+                                                .get_instance(new_id)
+                                                .map(|i| i.pane as u32)
+                                                .unwrap_or(0);
+                                            let inst_name = self.indicator_manager
+                                                .get_instance(new_id)
+                                                .map(|i| i.name.clone())
+                                                .unwrap_or_else(|| item_id.to_string());
+                                            if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                                                group.indicator_configs.push(
+                                                    zengeld_chart::tag_manager::IndicatorGroupConfig {
+                                                        id: new_id,
+                                                        type_id: item_id.to_string(),
+                                                        name: inst_name,
+                                                        params: std::collections::HashMap::new(),
+                                                        pane: inst_pane,
+                                                        visible: true,
+                                                        symbol: symbol.clone(),
+                                                    },
+                                                );
+                                                eprintln!(
+                                                    "[TagManager] Added indicator config id={} '{}' to group {:?}",
+                                                    new_id, item_id, group_id
+                                                );
+                                            }
+                                            // Sync the new indicator to all peer windows in the group.
+                                            self.sync_group_indicator_to_peers(group_id, item_id, active_leaf);
                                         }
-                                        // Sync the new indicator to all peer windows in the group.
-                                        self.sync_group_indicator_to_peers(group_id, item_id, active_leaf);
                                     }
                                 }
                             }
@@ -15752,6 +15757,37 @@ impl ChartApp {
                 state_mutated = true;
             }
 
+            ChartOutEvent::InternalToggleSyncDrawings => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
+                        eprintln!("[TagManager] sync_drawings toggled to {}", group.sync_flags.sync_drawings);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncDrawings: no active group");
+                }
+                state_mutated = true;
+            }
+
+            ChartOutEvent::InternalToggleSyncIndicators => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
+                        eprintln!("[TagManager] sync_indicators toggled to {}", group.sync_flags.sync_indicators);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncIndicators: no active group");
+                }
+                state_mutated = true;
+            }
+
+            ChartOutEvent::InternalToggleSplitUntagged => {
+                self.split_without_group = !self.split_without_group;
+                eprintln!("[ChartApp] split_without_group toggled to {}", self.split_without_group);
+            }
+
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);
             }
@@ -16586,6 +16622,47 @@ impl ChartApp {
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
         self.propagate_crosshair_after_split(&new_leaves);
 
+        // When "Split Without Group" is enabled, each resulting leaf gets its own
+        // independent auto_created group instead of inheriting the source tag.
+        if self.split_without_group && !new_leaves.is_empty() {
+            // Disconnect old chart from its group before creating fresh ones.
+            if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
+                let _ = self.panel_app.tag_manager.disconnect(old_cid);
+                eprintln!("[TagManager] (SplitUntagged) Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
+                if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
+                    if g.auto_created && g.members.is_empty() {
+                        self.panel_app.tag_manager.remove_group(old_gid);
+                        eprintln!("[TagManager] (SplitUntagged) Removed empty auto group {:?}", old_gid);
+                    }
+                }
+            }
+            // Give each new leaf its own fresh auto_created group.
+            for &leaf_id in &new_leaves {
+                let (symbol, timeframe) = self.panel_app.panel_grid
+                    .window_for_leaf(leaf_id)
+                    .map(|w| (w.symbol.clone(), w.timeframe.clone()))
+                    .unwrap_or_else(|| (
+                        "BTCUSDT".to_string(),
+                        zengeld_chart::state::Timeframe::h1(),
+                    ));
+                let gid = self.panel_app.tag_manager.create_group_auto(
+                    [0.0, 0.0, 0.0, 0.0],
+                    symbol,
+                    timeframe,
+                );
+                if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
+                    let _ = self.panel_app.tag_manager.connect(chart_id, gid);
+                }
+                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                    window.group_id = Some(gid);
+                }
+                self.panel_app.leaf_color_tags.remove(&leaf_id);
+                eprintln!("[TagManager] (SplitUntagged) Created auto group {:?} for leaf {:?}", gid, leaf_id);
+            }
+            self.sync_sub_panes_from_manager();
+            return;
+        }
+
         // TagManager: if the source was already in a user-tagged group, connect new
         // leaves to THAT group.  If the source was in an auto_created group (every
         // window gets one automatically), we must NOT share it — each split window
@@ -17360,6 +17437,12 @@ impl ChartApp {
             Some(gid) => gid,
             None => return,
         };
+        // Respect the sync_drawings flag — if disabled, do not write back to group.
+        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+            if !group.sync_flags.sync_drawings {
+                return;
+            }
+        }
         let new_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
             self.panel_app.panel_grid.windows().get(&chart_id)
                 .map(|w| w.drawing_manager.primitives().iter().map(|p| p.clone_box()).collect())
@@ -17388,6 +17471,13 @@ impl ChartApp {
         group_id: zengeld_chart::tag_manager::SyncGroupId,
         new_leaf_chart_ids: &[(zengeld_chart::LeafId, zengeld_chart::ChartId)],
     ) {
+        // Respect the sync_indicators flag — if disabled, skip indicator sync.
+        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+            if !group.sync_flags.sync_indicators {
+                return;
+            }
+        }
+
         // Collect indicator configs from the group.
         let configs: Vec<(String, String)> = self.panel_app.tag_manager
             .group(group_id)
@@ -17450,6 +17540,13 @@ impl ChartApp {
         type_id: &str,
         source_leaf: zengeld_chart::LeafId,
     ) {
+        // Respect the sync_indicators flag — if disabled, skip peer sync.
+        if let Some(group) = self.panel_app.tag_manager.group(group_id) {
+            if !group.sync_flags.sync_indicators {
+                return;
+            }
+        }
+
         // Collect peer chart_ids and their symbols (excluding source).
         let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
         let peer_info: Vec<(zengeld_chart::ChartId, String)> = self.panel_app.tag_manager

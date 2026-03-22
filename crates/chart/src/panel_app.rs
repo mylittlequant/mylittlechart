@@ -1055,8 +1055,8 @@ impl ChartToolbarState {
             // === Layout menu — internal split / expand ===
             "layout_menu" => {
                 eprintln!("[ChartToolbar] layout action: {}", item_id);
-                // Sync toggle items: keep the dropdown open so the user can see the toggle state change
-                if item_id == "sync_symbol" || item_id == "sync_timeframe" || item_id == "sync_crosshair" || item_id == "sync_viewport" {
+                // Toggle items: keep the dropdown open so the user can see the toggle state change
+                if item_id == "sync_symbol" || item_id == "sync_timeframe" || item_id == "sync_crosshair" || item_id == "sync_viewport" || item_id == "sync_drawings" || item_id == "sync_indicators" || item_id == "split_untagged" {
                     self.open_dropdown_id = Some("layout_menu".to_string());
                 }
                 match item_id {
@@ -1073,10 +1073,13 @@ impl ChartToolbarState {
                     "layout_1big_3small"  => vec![ChartOutEvent::InternalSplit1Big3Small],
                     "panel_close"         => vec![ChartOutEvent::InternalClosePanel],
                     "panel_reset_sizes"   => vec![ChartOutEvent::InternalResetSizes],
+                    "split_untagged"      => vec![ChartOutEvent::InternalToggleSplitUntagged],
                     "sync_symbol"         => vec![ChartOutEvent::InternalToggleSyncSymbol],
                     "sync_timeframe"      => vec![ChartOutEvent::InternalToggleSyncTimeframe],
                     "sync_crosshair"      => vec![ChartOutEvent::InternalToggleSyncCrosshair],
                     "sync_viewport"       => vec![ChartOutEvent::InternalToggleSyncViewport],
+                    "sync_drawings"       => vec![ChartOutEvent::InternalToggleSyncDrawings],
+                    "sync_indicators"     => vec![ChartOutEvent::InternalToggleSyncIndicators],
                     _ => vec![ChartOutEvent::Consumed],
                 }
             }
@@ -1230,6 +1233,7 @@ impl ChartToolbarState {
         autosave_enabled: bool,
         sync_flags: Option<&crate::tag_manager::SyncFlags>,
         is_expanded: bool,
+        split_without_group: bool,
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
@@ -1659,7 +1663,7 @@ impl ChartToolbarState {
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = self.open_dropdown_id {
-            self.render_dropdown(ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded)
+            self.render_dropdown(ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group)
         } else {
             None
         };
@@ -1752,6 +1756,7 @@ impl ChartToolbarState {
         autosave_enabled: bool,
         sync_flags: Option<&crate::tag_manager::SyncFlags>,
         is_expanded: bool,
+        split_without_group: bool,
     ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1801,12 +1806,17 @@ impl ChartToolbarState {
             }
             if dropdown_id == "layout_menu" {
                 if let DropdownItem::Item { ref id, ref mut toggle, .. } = di {
+                    if id == "split_untagged" {
+                        *toggle = Some(split_without_group);
+                    }
                     if let Some(flags) = sync_flags {
                         match id.as_str() {
-                            "sync_symbol"    => *toggle = Some(flags.sync_symbol),
-                            "sync_timeframe" => *toggle = Some(flags.sync_timeframe),
-                            "sync_crosshair" => *toggle = Some(flags.sync_crosshair),
-                            "sync_viewport"  => *toggle = Some(flags.sync_viewport),
+                            "sync_symbol"     => *toggle = Some(flags.sync_symbol),
+                            "sync_timeframe"  => *toggle = Some(flags.sync_timeframe),
+                            "sync_crosshair"  => *toggle = Some(flags.sync_crosshair),
+                            "sync_viewport"   => *toggle = Some(flags.sync_viewport),
+                            "sync_drawings"   => *toggle = Some(flags.sync_drawings),
+                            "sync_indicators" => *toggle = Some(flags.sync_indicators),
                             _ => {}
                         }
                     }
@@ -2678,6 +2688,7 @@ impl ChartPanelApp {
         layout: &ChartPanelLayout,
         selected_primitive: Option<&SelectedPrimitiveConfig>,
         clock_time: Option<&str>,
+        split_without_group: bool,
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
@@ -2688,7 +2699,7 @@ impl ChartPanelApp {
         let active_gid = self.panel_grid.active_window().and_then(|w| w.group_id);
         let sync_flags = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| &g.sync_flags);
         let is_expanded = self.panel_grid.is_expanded();
-        self.toolbar_state.render_toolbars(ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, active_symbol, active_timeframe, sidebar_w)
+        self.toolbar_state.render_toolbars(ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, active_symbol, active_timeframe, sidebar_w)
     }
 
     /// Render all chart-owned modals in a single call.

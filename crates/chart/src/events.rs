@@ -67,6 +67,12 @@ pub enum ChartOutEvent {
     /// Reset panel sizes to equal proportions.
     InternalResetSizes,
 
+    // === Split mode toggle ===
+    /// Toggle "Split Without Group": when enabled, split operations create the
+    /// new window as an independent auto-created group instead of sharing the
+    /// source window's tag.
+    InternalToggleSplitUntagged,
+
     // === Sync options (cross-panel sync) ===
     /// Toggle symbol synchronisation across panels.
     InternalToggleSyncSymbol,
@@ -76,6 +82,10 @@ pub enum ChartOutEvent {
     InternalToggleSyncCrosshair,
     /// Toggle viewport synchronisation across panels.
     InternalToggleSyncViewport,
+    /// Toggle drawings synchronisation across panels.
+    InternalToggleSyncDrawings,
+    /// Toggle indicators synchronisation across panels.
+    InternalToggleSyncIndicators,
 
     // === Timeframe ===
     /// Request a timeframe change (e.g., from toolbar dropdown selection).
