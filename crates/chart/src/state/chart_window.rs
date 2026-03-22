@@ -646,7 +646,13 @@ impl ChartWindow {
         let time_height = self.scale_settings.effective_time_scale_height();
 
         let available_height = window_rect.height as f64 - time_height;
-        let main_chart_height = (available_height - sub_panes_height).max(200.0);
+        let min_main_chart = if sub_pane_count > 0 {
+            let reserved = (SEPARATOR_HEIGHT + 20.0) * sub_pane_count as f64;
+            (available_height - reserved).clamp(50.0, 200.0)
+        } else {
+            200.0_f64.min(available_height)
+        };
+        let main_chart_height = (available_height - sub_panes_height).max(min_main_chart);
 
         let chart_x = match self.scale_settings.price_scale_position {
             PriceScalePosition::Left => chart_panel.x + window_rect.x as f64 + price_width,

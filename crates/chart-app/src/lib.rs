@@ -2720,11 +2720,6 @@ impl ChartApp {
                     .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                     .and_then(|gid| self.panel_app.tag_manager.group(gid))
                     .map(|g| g.indicator_configs.iter()
-                        .filter(|cfg| {
-                            active_symbol.as_deref()
-                                .map(|sym| cfg.symbol == sym)
-                                .unwrap_or(true)
-                        })
                         .map(|cfg| (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false))
                         .collect())
                     .unwrap_or_default()

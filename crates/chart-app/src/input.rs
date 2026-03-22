@@ -2769,6 +2769,7 @@ impl ChartApp {
             // Save after both grouped and standalone paths — intercept may have moved the
             // primitive to TagManager, so the snapshot must be taken after that transfer.
             self.autosave_snapshot();
+            self.sidebar_data_dirty = true;
             return;
         }
 
@@ -6709,9 +6710,7 @@ impl ChartApp {
         // --- Indicator delete ---
         if widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.strip_prefix("ind_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                self.indicator_manager.remove_instance(id);
-                self.sidebar_data_dirty = true;
-                eprintln!("[Sidebar] Indicator deleted: {}", id);
+                self.delete_indicator_instance(id);
             }
             return;
         }
@@ -11903,6 +11902,7 @@ impl ChartApp {
             }
         }
         self.autosave_snapshot();
+        self.sidebar_data_dirty = true;
         self.snapshot_indicator_settings_to_user_manager();
     }
 
@@ -13300,6 +13300,7 @@ impl ChartApp {
         self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
+        self.sidebar_data_dirty = true;
         self.modal_state.close();
         eprintln!("[ChartApp] deployed indicator set '{}' ({} indicators, replaced {})", set.name, set.indicators.len(), existing_ids.len());
     }
@@ -13595,6 +13596,7 @@ impl ChartApp {
                             }
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
+                            self.sidebar_data_dirty = true;
                             eprintln!("[ChartApp] Created indicator instance: {} (id={})", item_id, new_id);
                         }
                         self.modal_state.close();
@@ -14382,6 +14384,7 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.drawing_manager.toggle_lock_primitive(idx);
                         }
+                        self.sidebar_data_dirty = true;
                     }
                     "toggle_visibility" => {
                         // Read current state BEFORE mutating.
@@ -14398,6 +14401,7 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             window.drawing_manager.toggle_visibility(idx);
                         }
+                        self.sidebar_data_dirty = true;
                     }
                     _ => {
                         eprintln!("[ChartApp] Unhandled primitive context action: {}", action);
@@ -14567,6 +14571,7 @@ impl ChartApp {
             }
             _ => {}
         }
+        self.sidebar_data_dirty = true;
     }
 
     /// Execute an undo step: pop from command history and apply the inverse command.
@@ -16609,6 +16614,7 @@ impl ChartApp {
 
         // 5. Recalculate sub-panes so indicator panels stay in sync.
         self.sync_sub_panes_from_manager();
+        self.sidebar_data_dirty = true;
 
         eprintln!("[ChartApp] Desynced leaf {:?} from color tag group", leaf_id);
     }
@@ -16750,6 +16756,7 @@ impl ChartApp {
             let leaf_chart_ids = vec![(joining_leaf, chart_id)];
             self.sync_group_indicators_to_new_members(group_id, &leaf_chart_ids);
             self.sync_sub_panes_from_manager();
+            self.sidebar_data_dirty = true;
             eprintln!("[TagManager] Join existing group: stashed own state, synced tag content");
             return;
         }

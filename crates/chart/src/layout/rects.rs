@@ -463,7 +463,13 @@ impl ExtendedFrameLayout {
 
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
-        let main_chart_height = (available_height - total_sub_panes_height).max(200.0);
+        let min_main_chart = if sub_pane_count > 0 {
+            let reserved = (separator_height + 20.0) * sub_pane_count as f64;
+            (available_height - reserved).clamp(50.0, 200.0)
+        } else {
+            200.0_f64.min(available_height)
+        };
+        let main_chart_height = (available_height - total_sub_panes_height).max(min_main_chart);
 
         // Recalculate actual sub-pane height if main chart was clamped
         let actual_available_for_subs = available_height - main_chart_height;
