@@ -12731,35 +12731,79 @@ impl ChartApp {
     }
 
     /// Remove an indicator instance and record the command in the active window history.
+    ///
+    /// When the deleted indicator belongs to a tagged sync group, ALL instances
+    /// of the same `type_id` across ALL group member windows are removed so that
+    /// peer windows do not keep stale renders alive.
     fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id_opt = self.indicator_manager.get_instance(id)
-            .map(|inst| inst.type_id.clone());
-        if let Some(type_id) = type_id_opt {
-            self.push_undo_command(zengeld_chart::Command::RemoveIndicator {
-                instance_id: id,
-                type_id: type_id.clone(),
-                params_json: String::new(),
-            });
-            eprintln!("[ChartApp] Recorded RemoveIndicator {} id={}", type_id, id);
-        }
-        // If the active window is in a sync group, remove the corresponding config.
-        // Config ids are set equal to instance ids (both for seeded and newly-added configs).
+        let type_id = match self.indicator_manager.get_instance(id) {
+            Some(inst) => inst.type_id.clone(),
+            None => return,
+        };
+
+        self.push_undo_command(zengeld_chart::Command::RemoveIndicator {
+            instance_id: id,
+            type_id: type_id.clone(),
+            params_json: String::new(),
+        });
+        eprintln!("[ChartApp] Recorded RemoveIndicator {} id={}", type_id, id);
+
+        // Collect group members for the active window (empty vec if no group).
+        let group_members: Vec<u64> = self.panel_app.panel_grid.docking()
+            .active_leaf()
+            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.members.iter().map(|cid| cid.0).collect())
+            .unwrap_or_default();
+
+        // Remove ALL indicator_configs with matching type_id from the group.
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
-                if let Ok(()) = self.panel_app.tag_manager.remove_indicator_config(chart_id, id) {
-                    eprintln!(
-                        "[TagManager] Removed indicator config id={} from group of chart {:?}",
-                        id, chart_id
-                    );
+                if let Some(group_id) = self.panel_app.tag_manager.group_for_window(chart_id) {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                        let before = group.indicator_configs.len();
+                        group.indicator_configs.retain(|c| c.type_id != type_id);
+                        eprintln!(
+                            "[TagManager] Removed {} indicator config(s) with type_id={} from group {:?}",
+                            before - group.indicator_configs.len(),
+                            type_id,
+                            group_id,
+                        );
+                    }
                 }
             }
         }
-        self.indicator_manager.remove_instance(id);
-        self.alert_manager.remove_alerts_for_indicator(id);
+
+        // Find ALL instances with matching type_id on any group member window.
+        let instances_to_remove: Vec<u64> = self.indicator_manager.instances_iter()
+            .filter(|inst| {
+                inst.type_id == type_id
+                    && inst.window_id.map(|wid| group_members.contains(&wid)).unwrap_or(false)
+            })
+            .map(|inst| inst.id)
+            .collect();
+
+        if instances_to_remove.is_empty() {
+            // No group members matched — fall back to removing just the original instance.
+            self.indicator_manager.remove_instance(id);
+            self.alert_manager.remove_alerts_for_indicator(id);
+        } else {
+            for inst_id in &instances_to_remove {
+                self.indicator_manager.remove_instance(*inst_id);
+                self.alert_manager.remove_alerts_for_indicator(*inst_id);
+            }
+        }
+
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
-        eprintln!("[ChartApp] indicator {} deleted", id);
+        eprintln!(
+            "[ChartApp] indicator {} deleted (type={}, removed {} instance(s))",
+            id,
+            type_id,
+            instances_to_remove.len().max(1),
+        );
     }
 
     /// Handle a click on an inline primitive toolbar action.

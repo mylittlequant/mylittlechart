@@ -2716,11 +2716,26 @@ impl ChartApp {
                 .unwrap_or(false);
 
             let indicator_rows: Vec<(u64, String, String, bool, bool)> = if use_group_indicators {
+                // For group indicators, look up the ACTIVE WINDOW's own instance for each
+                // config's type_id. This ensures that visibility toggles, delete, and settings
+                // all operate on the correct instance (not the source window's instance).
+                let active_window_id = active_cid.map(|cid| cid.0);
                 active_cid
                     .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                     .and_then(|gid| self.panel_app.tag_manager.group(gid))
                     .map(|g| g.indicator_configs.iter()
-                        .map(|cfg| (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false))
+                        .map(|cfg| {
+                            // Prefer the active window's local instance so that widget
+                            // actions (vis toggle, delete, settings) use the right ID.
+                            let local = active_window_id.and_then(|wid| {
+                                self.indicator_manager.instances_iter()
+                                    .find(|i| i.window_id == Some(wid) && i.type_id == cfg.type_id)
+                            });
+                            match local {
+                                Some(inst) => (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked),
+                                None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
+                            }
+                        })
                         .collect())
                     .unwrap_or_default()
             } else {
