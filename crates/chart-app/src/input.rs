@@ -13551,6 +13551,18 @@ impl ChartApp {
                                             }
                                             // Sync the new indicator to all peer windows in the group.
                                             self.sync_group_indicator_to_peers(group_id, item_id, active_leaf);
+                                        } else {
+                                            // sync_indicators is OFF — this indicator belongs to this
+                                            // window only. Record it in pre_tag_indicator_ids so that
+                                            // if the window is later desynced (untagged), the desync
+                                            // logic does NOT treat it as a group indicator and delete it.
+                                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
+                                                window.pre_tag_indicator_ids.push(new_id);
+                                                eprintln!(
+                                                    "[TagManager] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
+                                                    new_id, active_leaf
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -16622,22 +16634,36 @@ impl ChartApp {
         let new_leaves = self.panel_app.panel_grid.split_active(kind);
         self.propagate_crosshair_after_split(&new_leaves);
 
-        // When "Split Without Group" is enabled, each resulting leaf gets its own
-        // independent auto_created group instead of inheriting the source tag.
+        // When "Split Without Group" is enabled, the mother window (new_leaves[0])
+        // keeps its existing group/tag state.  Only the new sibling leaves
+        // (new_leaves[1..]) get fresh independent auto_created groups.
         if self.split_without_group && !new_leaves.is_empty() {
-            // Disconnect old chart from its group before creating fresh ones.
-            if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
-                let _ = self.panel_app.tag_manager.disconnect(old_cid);
-                eprintln!("[TagManager] (SplitUntagged) Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
-                if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
-                    if g.auto_created && g.members.is_empty() {
-                        self.panel_app.tag_manager.remove_group(old_gid);
-                        eprintln!("[TagManager] (SplitUntagged) Removed empty auto group {:?}", old_gid);
+            // Reconnect the mother (new_leaves[0]) to its pre-split group.
+            // split_active may have reassigned the chart ID, so we re-establish
+            // the TagManager link rather than assuming old_cid is still valid.
+            if let Some(mother_leaf) = new_leaves.first().copied() {
+                if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
+                    if let Some(new_cid) = self.panel_app.panel_grid.chart_id_for_leaf(mother_leaf) {
+                        if new_cid != old_cid {
+                            // The chart got a new ID after the split — connect the new one.
+                            let _ = self.panel_app.tag_manager.connect(new_cid, old_gid);
+                            eprintln!("[TagManager] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
+                        }
+                        // else: same chart_id survived the split, TagManager link is intact.
                     }
+                    if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(mother_leaf) {
+                        window.group_id = Some(old_gid);
+                    }
+                    // Restore the mother's color tag that was snapshotted before the split.
+                    if let Some(color) = pre_split_color {
+                        self.panel_app.leaf_color_tags.insert(mother_leaf, color);
+                    }
+                    eprintln!("[TagManager] (SplitUntagged) Mother leaf {:?} keeps group {:?}", mother_leaf, old_gid);
                 }
             }
-            // Give each new leaf its own fresh auto_created group.
-            for &leaf_id in &new_leaves {
+
+            // Give each NEW (non-mother) leaf its own fresh auto_created group.
+            for &leaf_id in new_leaves.iter().skip(1) {
                 let (symbol, timeframe) = self.panel_app.panel_grid
                     .window_for_leaf(leaf_id)
                     .map(|w| (w.symbol.clone(), w.timeframe.clone()))
@@ -16657,7 +16683,7 @@ impl ChartApp {
                     window.group_id = Some(gid);
                 }
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
-                eprintln!("[TagManager] (SplitUntagged) Created auto group {:?} for leaf {:?}", gid, leaf_id);
+                eprintln!("[TagManager] (SplitUntagged) Created auto group {:?} for new leaf {:?}", gid, leaf_id);
             }
             self.sync_sub_panes_from_manager();
             return;
@@ -17350,6 +17376,17 @@ impl ChartApp {
             }
             _ => return false,
         };
+
+        // If sync_drawings is OFF for this group, leave the primitive in the
+        // drawing_manager for this window only — forward sync is blocked anyway,
+        // so moving it to the group would cause it to disappear visually.
+        let sync_drawings_on = self.panel_app.tag_manager
+            .group(group_id)
+            .map(|g| g.sync_flags.sync_drawings)
+            .unwrap_or(true);
+        if !sync_drawings_on {
+            return false;
+        }
 
         // Pop the last primitive from the window's drawing_manager.
         let prim = {
