@@ -536,7 +536,7 @@ fn render_general_tab(
     );
     cy += btn_h + 8.0;
 
-    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let total_content_h = cy - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
@@ -1304,7 +1304,7 @@ fn render_sync_tab(
     }
 
     cy += 8.0;
-    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let total_content_h = cy - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
@@ -1470,7 +1470,7 @@ fn render_performance_tab(
 
     cy = desc_y + 15.0;
 
-    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let total_content_h = cy - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
@@ -1582,7 +1582,7 @@ fn render_server_tab(
         result,
     );
 
-    let total_content_h = bottom - container.content_y() + container.scroll_offset();
+    let total_content_h = bottom - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
