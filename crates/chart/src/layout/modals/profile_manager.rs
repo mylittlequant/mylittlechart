@@ -380,7 +380,7 @@ fn render_page_profile_list(
 
     // Clamp scroll offset against the actual max.
     let max_scroll = (total_content_h - scroll_viewport_h).max(0.0);
-    let scroll_offset = state.profile_list_scroll_offset.min(max_scroll);
+    let scroll_offset = state.profile_list_scroll.offset.min(max_scroll);
 
     // Store viewport rect and total content height in result for the scroll handler.
     result.profile_list_viewport_rect = WidgetRect::new(
@@ -680,6 +680,12 @@ fn render_page_profile_list(
         let thumb_y = scroll_viewport_y + scroll_ratio * (scroll_viewport_h - thumb_h);
         ctx.set_fill_color("rgba(255,255,255,0.18)");
         ctx.fill_rounded_rect(track_x, thumb_y, scrollbar_w, thumb_h, 2.0);
+
+        // Store rects for input handling (drag support)
+        let track_rect = WidgetRect::new(track_x, scroll_viewport_y, scrollbar_w, scroll_viewport_h);
+        let handle_rect = WidgetRect::new(track_x, thumb_y, scrollbar_w, thumb_h);
+        result.profile_list_handle_rect = Some(handle_rect);
+        result.profile_list_track_rect = Some(track_rect);
     }
 
     // ── "Create New Profile" button — pinned at bottom, outside the clip ──────

@@ -405,6 +405,10 @@ pub struct UserSettingsResult {
     pub profile_list_viewport_rect: WidgetRect,
     /// Total content height of the profile list (profiles + cloud section).
     pub profile_list_total_content_h: f64,
+    /// Scrollbar handle rect for profile list (for drag detection).
+    pub profile_list_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect for profile list (for drag calculation).
+    pub profile_list_track_rect: Option<WidgetRect>,
     /// Per-field character X positions for click-to-cursor in profile manager inputs.
     /// Each entry is (field_key, char_x_positions) where field_key matches the
     /// widget IDs used in dispatch_panel_click (e.g. "e2e_passphrase_input").

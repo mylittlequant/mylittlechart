@@ -1180,6 +1180,19 @@ impl ChartApp {
                     }
                 }
             }
+            // Profile list scrollbar drag start
+            if self.panel_app.user_settings_state.show_profile_manager {
+                if let Some(ref us) = result.user_settings {
+                    if let Some(ref handle_rect) = us.profile_list_handle_rect {
+                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                        if hit {
+                            self.panel_app.user_settings_state.profile_list_scroll.start_drag(y);
+                            return;
+                        }
+                    }
+                }
+            }
             // Indicator settings scrollbar / slider drag start
             if self.panel_app.indicator_settings_state.is_open() {
                 if let Some(ref is) = result.indicator_settings {
@@ -2180,6 +2193,22 @@ impl ChartApp {
             }
         }
 
+        // Profile list scrollbar drag move
+        if self.panel_app.user_settings_state.profile_list_scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref us) = result.user_settings {
+                    if let Some(ref track_rect) = us.profile_list_track_rect {
+                        let content_h = us.profile_list_total_content_h;
+                        let viewport_h = us.profile_list_viewport_rect.height;
+                        self.panel_app.user_settings_state.profile_list_scroll.handle_drag(
+                            y, track_rect.height, content_h, viewport_h,
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
         // === Slider drag move — update floating value only, no permanent state write ===
         if self.panel_app.primitive_settings_state.is_slider_dragging() {
             self.panel_app.primitive_settings_state.update_slider_drag_float(x);
@@ -2715,6 +2744,11 @@ impl ChartApp {
             if ended {
                 return;
             }
+        }
+        // Profile list scrollbar drag end
+        if self.panel_app.user_settings_state.profile_list_scroll.is_dragging {
+            self.panel_app.user_settings_state.profile_list_scroll.end_drag();
+            return;
         }
 
         // === Slider drag end — apply final floating value once ===
@@ -4244,10 +4278,8 @@ impl ChartApp {
                         if us.profile_list_viewport_rect.contains(x, y) {
                             let viewport_h = us.profile_list_viewport_rect.height;
                             let total_h = us.profile_list_total_content_h;
-                            let max_scroll = (total_h - viewport_h).max(0.0);
-                            let current = self.panel_app.user_settings_state.profile_list_scroll_offset;
-                            self.panel_app.user_settings_state.profile_list_scroll_offset =
-                                (current - dy * 40.0).clamp(0.0, max_scroll);
+                            self.panel_app.user_settings_state.profile_list_scroll
+                                .handle_wheel(scroll_step, total_h, viewport_h);
                         }
                     }
                 }

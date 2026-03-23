@@ -3480,8 +3480,8 @@ pub struct UserSettingsState {
     pub set_passphrase_error: String,
 
     // ── Profile list scroll ───────────────────────────────────────────────────
-    /// Vertical scroll offset (pixels) for the profile list in the ProfileList page.
-    pub profile_list_scroll_offset: f64,
+    /// Scroll state for the profile list in the ProfileList page.
+    pub profile_list_scroll: ScrollState,
 
     // ── Profile manager text selection drag ───────────────────────────────────
     /// Which profile manager input field is currently being drag-selected.
@@ -3629,7 +3629,7 @@ impl Default for UserSettingsState {
             },
             confirm_passphrase_focused: false,
             set_passphrase_error: String::new(),
-            profile_list_scroll_offset: 0.0,
+            profile_list_scroll: ScrollState::new(),
             profile_mgr_text_select_dragging: None,
             recovery_key_display_editing: TextEditingState {
                 field_id: "recovery_key_display".to_string(),
