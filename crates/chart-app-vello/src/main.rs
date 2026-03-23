@@ -791,10 +791,12 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
 
         // Render chrome strip
         {
+            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
             let mut chrome_ctx =
                 VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
-            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64);
+            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active);
         }
 
         // Toolbar dirty-cache
@@ -892,7 +894,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                     None,
                 );
                 chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
-                chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64);
+                {
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                }
 
                 // Render chart + toolbar + sidebar + modals at y_offset=CHROME_HEIGHT.
                 let mut chart_ctx = instanced_context::InstancedChartRenderContext::new(
@@ -952,7 +958,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 cpu_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0 (no offset).
                 chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state);
-                chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64);
+                {
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                }
                 // Render chart + toolbar + sidebar + modals offset by CHROME_HEIGHT.
                 cpu_ctx.save();
                 cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
@@ -990,7 +1000,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 skia_ctx.fill_rect(0.0, 0.0, width as f64, height as f64);
                 // Render chrome at y=0.
                 chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state);
-                chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64);
+                {
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                }
                 skia_ctx.save();
                 skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut skia_ctx, frame_time, false);
@@ -1018,7 +1032,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 hybrid_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0.
                 chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state);
-                chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64);
+                {
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
+                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                }
                 hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut hybrid_ctx, frame_time, false);
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
@@ -6892,7 +6910,8 @@ impl ApplicationHandler for App<'_> {
                 pw.chrome_state.hovered = if skeleton_active {
                     match hit {
                         chrome::ChromeHit::NewTabButton
-                        | chrome::ChromeHit::SettingsButton
+                        | chrome::ChromeHit::MenuButton
+                        | chrome::ChromeHit::MascotButton
                         | chrome::ChromeHit::NewWindowButton
                         | chrome::ChromeHit::Tab(_)
                         | chrome::ChromeHit::TabClose(_) => chrome::ChromeHit::None,
@@ -6927,10 +6946,12 @@ impl ApplicationHandler for App<'_> {
                     | chrome::ChromeHit::MinimizeButton
                     | chrome::ChromeHit::MaximizeButton
                     | chrome::ChromeHit::CloseButton
+                    | chrome::ChromeHit::CloseWindowButton
+                    | chrome::ChromeHit::MascotButton
+                    | chrome::ChromeHit::MenuButton
                     | chrome::ChromeHit::Tab(_)
                     | chrome::ChromeHit::TabClose(_)
                     | chrome::ChromeHit::NewTabButton
-                    | chrome::ChromeHit::SettingsButton
                     | chrome::ChromeHit::NewWindowButton => {
                         pw.window.set_cursor_visible(true);
                         pw.window.set_cursor(CursorIcon::Default);
@@ -7160,12 +7181,20 @@ impl ApplicationHandler for App<'_> {
                             }
                             return;
                         }
-                        chrome::ChromeHit::SettingsButton => {
+                        chrome::ChromeHit::MenuButton => {
                             let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
                                 || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
                             if !skeleton_active {
                                 pw.chart.open_user_settings();
                             }
+                            return;
+                        }
+                        chrome::ChromeHit::CloseWindowButton => {
+                            pw.close_window_requested = true;
+                            return;
+                        }
+                        chrome::ChromeHit::MascotButton => {
+                            eprintln!("[Chrome] Mascot clicked — future modal");
                             return;
                         }
                         chrome::ChromeHit::NewWindowButton => {

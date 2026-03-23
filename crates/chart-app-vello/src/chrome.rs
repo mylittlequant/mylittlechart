@@ -4,15 +4,18 @@
 //! - Tab buttons (one per preset) starting at the left margin.
 //! - A "+" new-tab button after the last tab.
 //! - A draggable caption area in the middle.
-//! - A settings (gear) button just left of the minimize button.
+//! - A new-window, mascot, and menu button left of the window controls.
 //! - Three window control buttons (minimize, maximize, close) on the right edge.
+//! - A close-window button between the window controls and the mascot/menu group.
 //!
 //! Window control icons (minimize, maximize, close) are drawn as filled
 //! rectangles / stroked lines for pixel-perfect crispness at any DPI.
-//! Tab close icons and the settings gear use SVG icons from the chart icon set.
+//! Tab close icons and the action buttons use SVG icons from the chart icon set.
 
-use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext, TextAlign, TextBaseline};
 use zengeld_chart::ui::icons::icon_svg;
+
+const MINI_MASCOT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot.svg");
 
 // ── Public constants ──────────────────────────────────────────────────────────
 
@@ -60,23 +63,29 @@ const CONTEXT_MENU_WIDTH: f64 = 160.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f64 = 28.0;
 const CONTEXT_MENU_PADDING: f64 = 4.0;
 const CONTEXT_MENU_ITEMS: &[(&str, bool)] = &[
-    ("Close Window", false),  // (label, is_danger)
+    ("Close Window", false),   // (label, is_danger)
     ("Delete Window", true),
 ];
 
 /// Width of the resize border zone in logical pixels.
 const BORDER_WIDTH: f64 = 4.0;
 
-/// Width of each window control button in logical pixels.
+/// Width of each window control button (minimize/maximize/close_app) in logical pixels.
 const BUTTON_WIDTH: f64 = 46.0;
 
-/// Height of each window control button in logical pixels (equals CHROME_HEIGHT).
+/// Height of each button in logical pixels (equals CHROME_HEIGHT).
 const BUTTON_HEIGHT: f64 = CHROME_HEIGHT;
 
 // ── Tab layout constants ──────────────────────────────────────────────────────
 
-/// Width of the settings button (gear icon) in logical pixels.
-const SETTINGS_BUTTON_WIDTH: f64 = 36.0;
+/// Width of the close-window button in logical pixels.
+const CLOSE_WINDOW_BUTTON_WIDTH: f64 = 36.0;
+
+/// Width of the mascot button in logical pixels.
+const MASCOT_BUTTON_WIDTH: f64 = 36.0;
+
+/// Width of the menu button (gear icon) in logical pixels.
+const MENU_BUTTON_WIDTH: f64 = 36.0;
 
 /// Width of the new-window button in logical pixels.
 const NEW_WINDOW_BUTTON_WIDTH: f64 = 36.0;
@@ -119,10 +128,12 @@ pub enum ChromeHit {
     MinimizeButton,
     MaximizeButton,
     CloseButton,
+    CloseWindowButton,
+    MascotButton,
+    MenuButton,
     Tab(usize),
     TabClose(usize),
     NewTabButton,
-    SettingsButton,
     NewWindowButton,
     ResizeTop,
     ResizeBottom,
@@ -203,6 +214,35 @@ pub fn update_tab_widths(ctx: &mut dyn RenderContext, state: &mut ChromeState) {
     }
 }
 
+// ── Button position helpers ───────────────────────────────────────────────────
+
+/// Compute all right-side button left-edge positions given the window width.
+///
+/// Layout right-to-left:
+/// `close_app | maximize | minimize | divider | close_window | divider | mascot | menu | new_window | ...tabs`
+struct ButtonPositions {
+    close_x: f64,
+    maximize_x: f64,
+    minimize_x: f64,
+    close_window_left: f64,
+    mascot_left: f64,
+    menu_left: f64,
+    new_window_left: f64,
+}
+
+impl ButtonPositions {
+    fn compute(width: f64) -> Self {
+        let close_x         = width - BUTTON_WIDTH;
+        let maximize_x      = width - BUTTON_WIDTH * 2.0;
+        let minimize_x      = width - BUTTON_WIDTH * 3.0;
+        let close_window_left = minimize_x - CLOSE_WINDOW_BUTTON_WIDTH;
+        let mascot_left       = close_window_left - MASCOT_BUTTON_WIDTH;
+        let menu_left         = mascot_left - MENU_BUTTON_WIDTH;
+        let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
+        Self { close_x, maximize_x, minimize_x, close_window_left, mascot_left, menu_left, new_window_left }
+    }
+}
+
 // ── hit_test ──────────────────────────────────────────────────────────────────
 
 pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) -> ChromeHit {
@@ -221,17 +261,15 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
     if in_right  { return ChromeHit::ResizeRight; }
 
     if y < CHROME_HEIGHT {
-        let close_x    = width - BUTTON_WIDTH;
-        let maximize_x = width - BUTTON_WIDTH * 2.0;
-        let minimize_x = width - BUTTON_WIDTH * 3.0;
-        let settings_left    = minimize_x - SETTINGS_BUTTON_WIDTH;
-        let new_window_left  = settings_left - NEW_WINDOW_BUTTON_WIDTH;
+        let bp = ButtonPositions::compute(width);
 
-        if x >= close_x    { return ChromeHit::CloseButton; }
-        if x >= maximize_x { return ChromeHit::MaximizeButton; }
-        if x >= minimize_x { return ChromeHit::MinimizeButton; }
-        if x >= settings_left && x < minimize_x { return ChromeHit::SettingsButton; }
-        if x >= new_window_left && x < settings_left { return ChromeHit::NewWindowButton; }
+        if x >= bp.close_x          { return ChromeHit::CloseButton; }
+        if x >= bp.maximize_x        { return ChromeHit::MaximizeButton; }
+        if x >= bp.minimize_x        { return ChromeHit::MinimizeButton; }
+        if x >= bp.close_window_left && x < bp.minimize_x        { return ChromeHit::CloseWindowButton; }
+        if x >= bp.mascot_left       && x < bp.close_window_left { return ChromeHit::MascotButton; }
+        if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
+        if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
 
         // Tabs
         let mut cursor = TAB_LEFT_MARGIN;
@@ -261,43 +299,50 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
 
 // ── render ────────────────────────────────────────────────────────────────────
 
-pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
+/// Render the chrome strip.
+///
+/// When `skeleton_mode` is `true` (profile manager or welcome wizard is open),
+/// only the window-control buttons (close_window, minimize, maximize, close_app)
+/// and the background are rendered — tabs, +, new_window, mascot and menu are hidden.
+pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skeleton_mode: bool) {
     let c = &state.colors;
+    let bp = ButtonPositions::compute(width);
 
     // ── Background ──────────────────────────────────────────────────────────
     ctx.set_fill_color(&c.background);
     ctx.fill_rect(0.0, 0.0, width, CHROME_HEIGHT);
 
-    // ── Button positions ────────────────────────────────────────────────────
-    let close_x         = width - BUTTON_WIDTH;
-    let maximize_x      = width - BUTTON_WIDTH * 2.0;
-    let minimize_x      = width - BUTTON_WIDTH * 3.0;
-    let settings_left   = minimize_x - SETTINGS_BUTTON_WIDTH;
-    let new_window_left = settings_left - NEW_WINDOW_BUTTON_WIDTH;
-
-    // ── Hover backgrounds (window controls & settings) ──────────────────────
+    // ── Hover backgrounds ───────────────────────────────────────────────────
     match state.hovered {
         ChromeHit::MinimizeButton => {
             ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(minimize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+            ctx.fill_rect(bp.minimize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
         ChromeHit::MaximizeButton => {
             ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(maximize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+            ctx.fill_rect(bp.maximize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
         ChromeHit::CloseButton => {
             ctx.set_fill_color(&c.close_hover);
-            ctx.fill_rect(close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
+            ctx.fill_rect(bp.close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::SettingsButton => {
+        ChromeHit::CloseWindowButton => {
             ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(settings_left, 0.0, SETTINGS_BUTTON_WIDTH, BUTTON_HEIGHT);
+            ctx.fill_rect(bp.close_window_left, 0.0, CLOSE_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::NewWindowButton => {
+        ChromeHit::MascotButton if !skeleton_mode => {
             ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
+            ctx.fill_rect(bp.mascot_left, 0.0, MASCOT_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::NewTabButton => {
+        ChromeHit::MenuButton if !skeleton_mode => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::NewWindowButton if !skeleton_mode => {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(bp.new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
+        }
+        ChromeHit::NewTabButton if !skeleton_mode => {
             let new_tab_x = tab_strip_end_x(state);
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rect(new_tab_x, 0.0, NEW_TAB_BUTTON_WIDTH, BUTTON_HEIGHT);
@@ -305,11 +350,8 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         _ => {}
     }
 
-    // ── Tabs ────────────────────────────────────────────────────────────────
-    // All tabs share the SAME background as chrome (no active/inactive bg difference).
-    // Active tab: accent-colored line at bottom.
-    // Hovered tab: button_hover-colored line at bottom.
-    {
+    // ── Tabs (hidden in skeleton mode) ──────────────────────────────────────
+    if !skeleton_mode {
         let mut cursor = TAB_LEFT_MARGIN;
         for (i, tab) in state.tabs.iter().enumerate() {
             let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
@@ -330,11 +372,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
             // Tab name text
             {
                 let text_x = tab_left + TAB_PADDING_H;
-                let text_color = if tab.active {
-                    &c.icon_hover
-                } else {
-                    &c.icon_normal
-                };
+                let text_color = if tab.active { &c.icon_hover } else { &c.icon_normal };
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(text_color);
                 ctx.set_text_align(TextAlign::Left);
@@ -361,10 +399,9 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
             cursor = tab_right + TAB_GAP;
         }
 
-        // "+" new tab button with dividers on both sides
+        // "+" new tab button with divider on the left
         let new_tab_x = cursor;
 
-        // Left divider (75% height vertical line)
         let div_h = CHROME_HEIGHT * 0.6;
         let div_y = (CHROME_HEIGHT - div_h) / 2.0;
         ctx.set_fill_color(&c.separator);
@@ -375,7 +412,6 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         } else {
             &c.icon_normal
         };
-        // Draw + as stroked lines (same technique as close × icon — crisp)
         let plus_cx = (new_tab_x + NEW_TAB_BUTTON_WIDTH / 2.0).floor() + 0.5;
         let plus_cy = (CHROME_HEIGHT / 2.0).floor() + 0.5;
         let arm = 5.0;
@@ -390,50 +426,79 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         ctx.line_to(plus_cx, plus_cy + arm);
         ctx.stroke();
 
-    }
+        // ── New-window icon (SVG, 18×18) ────────────────────────────────────
+        {
+            let icon_color = if state.hovered == ChromeHit::NewWindowButton {
+                &c.icon_hover
+            } else {
+                &c.icon_normal
+            };
+            let icon_x = bp.new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
+            let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+            if let Some(svg) = icon_svg("new_window") {
+                draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
+            }
+        }
 
-    // ── New-window icon (SVG, 18×18) ────────────────────────────────────────
-    {
-        let icon_color = if state.hovered == ChromeHit::NewWindowButton {
-            &c.icon_hover
-        } else {
-            &c.icon_normal
-        };
-        let icon_x = new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
-        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
-        if let Some(svg) = icon_svg("new_window") {
-            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
+        // ── Menu icon (gear, SVG 18×18) ─────────────────────────────────────
+        {
+            let icon_color = if state.hovered == ChromeHit::MenuButton {
+                &c.icon_hover
+            } else {
+                &c.icon_normal
+            };
+            let icon_x = bp.menu_left + (MENU_BUTTON_WIDTH - 18.0) / 2.0;
+            let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
+            if let Some(svg) = icon_svg("settings") {
+                draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
+            }
+        }
+
+        // ── Mascot icon (SVG, 24×24, full color) ─────────────────────────────
+        {
+            let icon_x = bp.mascot_left + (MASCOT_BUTTON_WIDTH - 24.0) / 2.0;
+            let icon_y = (CHROME_HEIGHT - 24.0) / 2.0;
+            draw_svg_multicolor(ctx, MINI_MASCOT_SVG, icon_x, icon_y, 24.0, 24.0);
         }
     }
 
-    // ── Divider between new-window and settings (75% height) ────────────────
+    // ── Divider between mascot and close_window ─────────────────────────────
+    // Rendered even in skeleton mode so the control group boundary is clear.
     {
         let div_h = CHROME_HEIGHT * 0.6;
         let div_y = (CHROME_HEIGHT - div_h) / 2.0;
         ctx.set_fill_color(&c.separator);
-        ctx.fill_rect(settings_left, div_y, 1.0, div_h);
+        ctx.fill_rect(bp.close_window_left, div_y, 1.0, div_h);
     }
 
-    // ── Settings gear icon (SVG, 18×18 for better visibility) ───────────────
+    // ── Close-window icon × (smaller than close_app: arm 3.5px, stroke 1.0) ─
     {
-        let gear_color = if state.hovered == ChromeHit::SettingsButton {
+        let icon_color = if state.hovered == ChromeHit::CloseWindowButton {
             &c.icon_hover
         } else {
             &c.icon_normal
         };
-        let icon_x = settings_left + (SETTINGS_BUTTON_WIDTH - 18.0) / 2.0;
-        let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
-        if let Some(svg) = icon_svg("settings") {
-            draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, gear_color);
-        }
+        let cx = bp.close_window_left + CLOSE_WINDOW_BUTTON_WIDTH / 2.0;
+        let cy = CHROME_HEIGHT / 2.0;
+        let s = 3.5;
+        ctx.set_stroke_color(icon_color);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(cx - s, cy - s);
+        ctx.line_to(cx + s, cy + s);
+        ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(cx - s, cy + s);
+        ctx.line_to(cx + s, cy - s);
+        ctx.stroke();
     }
 
-    // ── Divider right of settings (75% height) ─────────────────────────────
+    // ── Divider between close_window and minimize ───────────────────────────
     {
         let div_h = CHROME_HEIGHT * 0.6;
         let div_y = (CHROME_HEIGHT - div_h) / 2.0;
         ctx.set_fill_color(&c.separator);
-        ctx.fill_rect(minimize_x, div_y, 1.0, div_h);
+        ctx.fill_rect(bp.minimize_x, div_y, 1.0, div_h);
     }
 
     // ── Minimize icon ─ (filled rect, pixel-perfect) ────────────────────────
@@ -443,7 +508,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         } else {
             &c.icon_normal
         };
-        let cx = minimize_x + BUTTON_WIDTH / 2.0;
+        let cx = bp.minimize_x + BUTTON_WIDTH / 2.0;
         let cy = CHROME_HEIGHT / 2.0;
         ctx.set_fill_color(icon_color);
         ctx.fill_rect(cx - 5.0, cy, 10.0, 1.0);
@@ -456,7 +521,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         } else {
             &c.icon_normal
         };
-        let cx = maximize_x + BUTTON_WIDTH / 2.0;
+        let cx = bp.maximize_x + BUTTON_WIDTH / 2.0;
         let cy = CHROME_HEIGHT / 2.0;
         let half = 5.0;
 
@@ -479,7 +544,7 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
         } else {
             &c.icon_normal
         };
-        let cx = close_x + BUTTON_WIDTH / 2.0;
+        let cx = bp.close_x + BUTTON_WIDTH / 2.0;
         let cy = CHROME_HEIGHT / 2.0;
         let s = 5.0;
         ctx.set_stroke_color(icon_color);
