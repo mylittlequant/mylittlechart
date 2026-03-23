@@ -268,9 +268,12 @@ impl ScrollableContainer {
     pub fn end(self, ctx: &mut dyn RenderContext, content_height: f64, theme: &WidgetTheme) -> ScrollableResult {
         ctx.restore();
 
+        // Effective height: clamp to content so scrollbar/track never exceeds content area
+        let effective_h = self.viewport.height.min(content_height);
+
         let mut result = ScrollableResult {
             content_height,
-            viewport_height: self.viewport.height,
+            viewport_height: effective_h,
             has_scrollbar: false,
             handle_rect: None,
             track_rect: None,
@@ -287,7 +290,7 @@ impl ScrollableContainer {
             self.viewport.x + self.viewport.width - self.config.scrollbar_width,
             self.viewport.y + self.config.scrollbar_padding,
             self.config.scrollbar_width,
-            self.viewport.height - self.config.scrollbar_padding * 2.0,
+            effective_h - self.config.scrollbar_padding * 2.0,
         );
 
         let state = if self.is_dragging {
