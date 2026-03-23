@@ -365,12 +365,22 @@ pub fn render_tooltip(
     screen_width: f64,
     screen_height: f64,
 ) {
-    let active = match state.tooltip.get_active() {
+    render_tooltip_state(ctx, &state.tooltip, screen_width, screen_height);
+}
+
+/// Render a tooltip from any `TooltipState` (chrome, toolbar, etc.).
+pub fn render_tooltip_state(
+    ctx: &mut dyn RenderContext,
+    tooltip: &TooltipState,
+    screen_width: f64,
+    screen_height: f64,
+) {
+    let active = match tooltip.get_active() {
         Some(t) => t,
         None => return,
     };
 
-    let opacity = state.tooltip.get_opacity();
+    let opacity = tooltip.get_opacity();
     if opacity <= 0.0 {
         return;
     }

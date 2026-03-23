@@ -242,6 +242,8 @@ struct PerWindowState {
     visible_set: bool,
     /// Reference instant used to compute monotonic milliseconds for chrome tooltip timing.
     chrome_tooltip_start: std::time::Instant,
+    /// Tooltip state for toolbar button hover tooltips (left/top/right/bottom strips).
+    toolbar_tooltip: uzor::TooltipState,
 }
 
 /// A pending request to open a new window.
@@ -870,10 +872,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
             render_toasts(&mut toast_ctx, active_toasts, width as f64, height as f64);
         }
 
-        // Render chrome tooltip (top-most layer)
+        // Render tooltips (top-most layer): chrome + toolbar
         {
             let mut tooltip_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
+            chrome::render_tooltip_state(&mut tooltip_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
         }
     } else {
         // ── Non-VelloGpu: full backend switch ─────────────────────────────────
@@ -962,6 +965,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                         None,
                     );
                     chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
+                    chrome::render_tooltip_state(&mut tooltip_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&tooltip_ctx.inner().draw_commands);
                 }
 
@@ -1002,8 +1006,9 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut cpu_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render chrome tooltip (top-most layer).
+                // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
+                chrome::render_tooltip_state(&mut cpu_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
                 // Rasterize to pixel buffer.
                 let pixel_count = (width as usize) * (height as usize) * 4;
                 let mut pixels = vec![0u8; pixel_count];
@@ -1045,8 +1050,9 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut skia_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render chrome tooltip (top-most layer).
+                // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
+                chrome::render_tooltip_state(&mut skia_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
                 let pixels = skia_ctx.inner().pixels();
                 pw.cpu_chart_dims = (width, height);
                 pw.cpu_chart_pixels = pixels.to_vec();
@@ -1078,8 +1084,9 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut hybrid_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render chrome tooltip (top-most layer).
+                // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
+                chrome::render_tooltip_state(&mut hybrid_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
                 let mut inner = uzor_backend_vello_hybrid::VelloHybridRenderContext::new(1.0);
@@ -2537,6 +2544,7 @@ impl App<'_> {
             gpu_hybrid_ctx: None,
             visible_set: false,
             chrome_tooltip_start: std::time::Instant::now(),
+            toolbar_tooltip: uzor::TooltipState::with_delay(700.0),
         };
 
         self.windows.insert(win_id, pw);
@@ -6575,6 +6583,20 @@ impl ApplicationHandler for App<'_> {
             if pw.chart.drain_pending_screenshot() {
                 pw.screenshot_pending = true;
             }
+
+            // Tooltip tick — fires when cursor is stationary (no CursorMoved events)
+            {
+                let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                let chrome_was = pw.chrome_state.tooltip.is_visible();
+                chrome::update_tooltip(&mut pw.chrome_state, pw.last_mouse_pos.0, pw.last_mouse_pos.1, time_ms);
+                let toolbar_was = pw.toolbar_tooltip.is_visible();
+                pw.toolbar_tooltip.update(pw.toolbar_tooltip.hovered_widget().cloned(), time_ms);
+                if (!chrome_was && pw.chrome_state.tooltip.is_visible())
+                    || (!toolbar_was && pw.toolbar_tooltip.is_visible())
+                {
+                    pw.window.request_redraw();
+                }
+            }
         }
 
         // ── Agent API: update snapshots at most once per second ──────────────
@@ -7019,6 +7041,8 @@ impl ApplicationHandler for App<'_> {
                     | chrome::ChromeHit::NewWindowButton => {
                         pw.window.set_cursor_visible(true);
                         pw.window.set_cursor(CursorIcon::Default);
+                        // Cursor is on chrome — clear toolbar tooltip
+                        pw.toolbar_tooltip.clear();
                         // Do not forward to chart
                         return;
                     }
@@ -7118,6 +7142,22 @@ impl ApplicationHandler for App<'_> {
                     pw.last_drag_pos = Some((x, y));
                 } else {
                     pw.chart.on_mouse_move(x, chart_y);
+
+                    // Update toolbar tooltip based on hovered toolbar button
+                    let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                    let hovered_id = pw.chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
+                        .or(pw.chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
+                        .or(pw.chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
+                        .or(pw.chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
+                    if let Some(btn_id) = hovered_id {
+                        let wid = uzor::WidgetId::new(format!("toolbar:{}", btn_id));
+                        pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                        if let Some(text) = zengeld_chart::toolbar::find_toolbar_tooltip(btn_id) {
+                            pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
+                        }
+                    } else {
+                        pw.toolbar_tooltip.update(None, time_ms);
+                    }
                 }
 
                 if pw.chart.is_magnet_snapped() {
@@ -7138,6 +7178,8 @@ impl ApplicationHandler for App<'_> {
                 // Hover state clears when cursor leaves — toolbar and sidebar must redraw.
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
+                pw.chrome_state.tooltip.clear();
+                pw.toolbar_tooltip.clear();
                 pw.chart.on_mouse_leave();
             }
 
