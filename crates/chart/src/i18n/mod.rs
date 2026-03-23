@@ -20,6 +20,7 @@ pub use keys::{
     WaveDegreeKey,
     StyleKey,
     LabelPositionKey,
+    ToolbarTooltipKey,
 };
 
 // Chart-specific convenience functions (use uzor's Language)
@@ -33,6 +34,12 @@ pub fn t(key: TextKey) -> &'static str {
 /// Translate a tooltip key using current global language
 #[inline]
 pub fn t_tooltip(key: TooltipKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a toolbar tooltip key using current global language
+#[inline]
+pub fn t_toolbar(key: ToolbarTooltipKey) -> &'static str {
     key.get(current_language())
 }
 

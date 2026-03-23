@@ -7,7 +7,7 @@ use uzor::panel_api::{
     PanelToolbarDef, ToolbarSectionDef, ToolbarItemDef, DropdownItemDef,
     ToolbarIconId, SectionAlign,
 };
-use uzor::{TooltipKey, t_tooltip};
+use crate::i18n::{ToolbarTooltipKey as TK, t_toolbar};
 
 // Re-export orientation type for callers
 pub use uzor::panel_api::ToolbarOrientation;
@@ -38,17 +38,17 @@ pub fn right_toolbar() -> PanelToolbarDef {
     PanelToolbarDef::vertical(vec![
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("watchlist", ToolbarIconId::new("List"))
-                .with_tooltip(t_tooltip(TooltipKey::Watchlist)),
+                .with_tooltip(t_toolbar(TK::Watchlist)),
             ToolbarItemDef::icon_button("alerts", ToolbarIconId::new("Bell"))
-                .with_tooltip(t_tooltip(TooltipKey::Alerts)),
+                .with_tooltip(t_toolbar(TK::Alerts)),
             ToolbarItemDef::icon_button("object_tree", ToolbarIconId::new("TreePine"))
-                .with_tooltip(t_tooltip(TooltipKey::ObjectTree)),
+                .with_tooltip(t_toolbar(TK::ObjectTree)),
             ToolbarItemDef::icon_button("signals", ToolbarIconId::new("Zap"))
-                .with_tooltip(t_tooltip(TooltipKey::Signals)),
+                .with_tooltip(t_toolbar(TK::Signals)),
             ToolbarItemDef::icon_button("connectors", ToolbarIconId::new("CircuitBoard"))
-                .with_tooltip(t_tooltip(TooltipKey::Connectors)),
+                .with_tooltip(t_toolbar(TK::Connectors)),
             ToolbarItemDef::icon_button("performance", ToolbarIconId::new("Activity"))
-                .with_tooltip(t_tooltip(TooltipKey::Performance)),
+                .with_tooltip(t_toolbar(TK::Performance)),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }
@@ -73,9 +73,9 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 .with_icon(ToolbarIconId::new("Search"))
                 .with_text("BTCUSD")
                 .with_min_width(150.0)
-                .with_tooltip(t_tooltip(TooltipKey::SymbolSelector)),
+                .with_tooltip(t_toolbar(TK::SymbolSelector)),
             ToolbarItemDef::icon_button("compare", ToolbarIconId::new("Plus"))
-                .with_tooltip(t_tooltip(TooltipKey::Compare)),
+                .with_tooltip(t_toolbar(TK::Compare)),
         ]),
         // 2. Timeframe selector
         ToolbarSectionDef::new(vec![
@@ -96,7 +96,7 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
             ]).with_icon(ToolbarIconId::new("Clock"))
               .with_text("1H")
               .with_min_width(56.0)
-              .with_tooltip(t_tooltip(TooltipKey::TimeframeSelector)),
+              .with_tooltip(t_toolbar(TK::TimeframeSelector)),
         ]).with_separator(),
         // 3. Chart type selector
         ToolbarSectionDef::new(vec![
@@ -116,25 +116,25 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("histogram", "Histogram").with_icon(ToolbarIconId::new("Histogram")),
                 DropdownItemDef::action("columns", "Columns").with_icon(ToolbarIconId::new("Columns")),
             ]).with_icon(ToolbarIconId::new("Candlestick"))
-              .with_tooltip(t_tooltip(TooltipKey::ChartType)),
+              .with_tooltip(t_toolbar(TK::ChartType)),
         ]).with_separator(),
         // 4. Indicators
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("indicators", ToolbarIconId::new("Indicators"))
-                .with_tooltip(t_tooltip(TooltipKey::Indicators)),
+                .with_tooltip(t_toolbar(TK::Indicators)),
         ]),
         // 5. Settings (dropdown — matches terminal settings_menu content)
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("settings_menu", settings_menu_items())
                 .with_icon(ToolbarIconId::new("Settings"))
-                .with_tooltip(t_tooltip(TooltipKey::Settings)),
+                .with_tooltip(t_toolbar(TK::Settings)),
         ]).with_separator(),
         // 6. Undo/Redo
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("undo", ToolbarIconId::new("Undo"))
-                .with_tooltip(t_tooltip(TooltipKey::Undo)),
+                .with_tooltip(t_toolbar(TK::Undo)),
             ToolbarItemDef::icon_button("redo", ToolbarIconId::new("Redo"))
-                .with_tooltip(t_tooltip(TooltipKey::Redo)),
+                .with_tooltip(t_toolbar(TK::Redo)),
         ]).with_separator(),
         // 7. Layout
         ToolbarSectionDef::new(vec![
@@ -172,19 +172,19 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_drawings", "Sync Drawings"),
                 DropdownItemDef::action("sync_indicators", "Sync Indicators"),
             ]).with_icon(ToolbarIconId::new("LayoutSingle"))
-              .with_tooltip(t_tooltip(TooltipKey::Layout)),
+              .with_tooltip(t_toolbar(TK::Layout)),
         ]),
         // 8. Presets (dropdown — between layout and screenshot)
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("presets_menu", vec![
                 // Dynamic preset items built in find_dropdown_items()
             ]).with_icon(ToolbarIconId::new("Bookmark"))
-              .with_tooltip(t_tooltip(TooltipKey::Presets)),
+              .with_tooltip(t_toolbar(TK::Presets)),
         ]),
         // 9. Screenshot
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("screenshot", ToolbarIconId::new("Camera"))
-                .with_tooltip(t_tooltip(TooltipKey::Screenshot)),
+                .with_tooltip(t_toolbar(TK::Screenshot)),
         ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
@@ -198,7 +198,7 @@ pub fn bottom_toolbar() -> PanelToolbarDef {
         {
             let mut s = ToolbarSectionDef::new(vec![
                 ToolbarItemDef::icon_button("expand", ToolbarIconId::new("Expand"))
-                    .with_tooltip(t_tooltip(TooltipKey::Expand)),
+                    .with_tooltip(t_toolbar(TK::Expand)),
                 ToolbarItemDef::button("clock").with_text("00:00:00"),
             ]);
             s.align = SectionAlign::End;
@@ -215,7 +215,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
             ToolbarItemDef::button("main_menu")
                 .with_icon(ToolbarIconId::new("Menu"))
                 .with_min_width(41.0)
-                .with_tooltip(t_tooltip(TooltipKey::MainMenu)),
+                .with_tooltip(t_toolbar(TK::MainMenu)),
         ]).with_separator(),
         // 2. Symbol selector + Compare
         ToolbarSectionDef::new(vec![
@@ -223,9 +223,9 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 .with_icon(ToolbarIconId::new("Search"))
                 .with_text("BTCUSD")
                 .with_min_width(150.0)
-                .with_tooltip(t_tooltip(TooltipKey::SymbolSelector)),
+                .with_tooltip(t_toolbar(TK::SymbolSelector)),
             ToolbarItemDef::icon_button("compare", ToolbarIconId::new("Plus"))
-                .with_tooltip(t_tooltip(TooltipKey::Compare)),
+                .with_tooltip(t_toolbar(TK::Compare)),
         ]),
         // 3. Timeframe selector
         ToolbarSectionDef::new(vec![
@@ -246,7 +246,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
             ]).with_icon(ToolbarIconId::new("Clock"))
               .with_text("1H")
               .with_min_width(56.0)
-              .with_tooltip(t_tooltip(TooltipKey::TimeframeSelector)),
+              .with_tooltip(t_toolbar(TK::TimeframeSelector)),
         ]).with_separator(),
         // 4. Chart type selector (dropdown with chart type items)
         ToolbarSectionDef::new(vec![
@@ -266,25 +266,25 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("histogram", "Histogram").with_icon(ToolbarIconId::new("Histogram")),
                 DropdownItemDef::action("columns", "Columns").with_icon(ToolbarIconId::new("Columns")),
             ]).with_icon(ToolbarIconId::new("Candlestick"))
-              .with_tooltip(t_tooltip(TooltipKey::ChartType)),
+              .with_tooltip(t_toolbar(TK::ChartType)),
         ]).with_separator(),
         // 5. Indicators
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("indicators", ToolbarIconId::new("Indicators"))
-                .with_tooltip(t_tooltip(TooltipKey::Indicators)),
+                .with_tooltip(t_toolbar(TK::Indicators)),
         ]),
         // 6. Settings (dropdown — matches terminal settings_menu content)
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("settings_menu", settings_menu_items())
                 .with_icon(ToolbarIconId::new("Settings"))
-                .with_tooltip(t_tooltip(TooltipKey::Settings)),
+                .with_tooltip(t_toolbar(TK::Settings)),
         ]).with_separator(),
         // 7. Undo/Redo
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("undo", ToolbarIconId::new("Undo"))
-                .with_tooltip(t_tooltip(TooltipKey::Undo)),
+                .with_tooltip(t_toolbar(TK::Undo)),
             ToolbarItemDef::icon_button("redo", ToolbarIconId::new("Redo"))
-                .with_tooltip(t_tooltip(TooltipKey::Redo)),
+                .with_tooltip(t_toolbar(TK::Redo)),
         ]).with_separator(),
         // 8. Layout
         ToolbarSectionDef::new(vec![
@@ -322,19 +322,19 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_drawings", "Sync Drawings"),
                 DropdownItemDef::action("sync_indicators", "Sync Indicators"),
             ]).with_icon(ToolbarIconId::new("LayoutSingle"))
-              .with_tooltip(t_tooltip(TooltipKey::Layout)),
+              .with_tooltip(t_toolbar(TK::Layout)),
         ]),
         // 9. Presets (dropdown — between layout and screenshot)
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("presets_menu", vec![
                 // Dynamic preset items built in find_dropdown_items()
             ]).with_icon(ToolbarIconId::new("Bookmark"))
-              .with_tooltip(t_tooltip(TooltipKey::Presets)),
+              .with_tooltip(t_toolbar(TK::Presets)),
         ]),
         // 10. Screenshot
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("screenshot", ToolbarIconId::new("Camera"))
-                .with_tooltip(t_tooltip(TooltipKey::Screenshot)),
+                .with_tooltip(t_toolbar(TK::Screenshot)),
         ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
@@ -347,7 +347,7 @@ fn cursor_section() -> ToolbarSectionDef {
             DropdownItemDef::action("crosshair", "Crosshair").with_icon(ToolbarIconId::new("Crosshair")),
             DropdownItemDef::action("hand", "Pan").with_icon(ToolbarIconId::new("Hand")),
         ]).with_icon(ToolbarIconId::new("Crosshair"))
-          .with_tooltip(t_tooltip(TooltipKey::Crosshair)),
+          .with_tooltip(t_toolbar(TK::Crosshair)),
     ])
 }
 
@@ -380,7 +380,7 @@ fn line_section() -> ToolbarSectionDef {
             DropdownItemDef::action("modified_schiff", "Modified Schiff").with_icon(ToolbarIconId::new("ModifiedSchiff")),
             DropdownItemDef::action("inside_pitchfork", "Inside Pitchfork").with_icon(ToolbarIconId::new("InsidePitchfork")),
         ]).with_icon(ToolbarIconId::new("TrendLine"))
-          .with_tooltip(t_tooltip(TooltipKey::LineTool)),
+          .with_tooltip(t_toolbar(TK::LineTool)),
     ])
 }
 
@@ -408,7 +408,7 @@ fn fib_section() -> ToolbarSectionDef {
             DropdownItemDef::action("gann_square", "Gann Square").with_icon(ToolbarIconId::new("GannSquare")),
             DropdownItemDef::action("gann_fan", "Gann Fan").with_icon(ToolbarIconId::new("GannFan")),
         ]).with_icon(ToolbarIconId::new("FibRetracement"))
-          .with_tooltip(t_tooltip(TooltipKey::FibTool)),
+          .with_tooltip(t_toolbar(TK::FibTool)),
     ])
 }
 
@@ -438,7 +438,7 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("time_cycles", "Time Cycles").with_icon(ToolbarIconId::new("TimeCycles")),
             DropdownItemDef::action("sine_wave", "Sine Wave").with_icon(ToolbarIconId::new("SineWave")),
         ]).with_icon(ToolbarIconId::new("XabcdPattern"))
-          .with_tooltip(t_tooltip(TooltipKey::PatternTool)),
+          .with_tooltip(t_toolbar(TK::PatternTool)),
     ])
 }
 
@@ -466,7 +466,7 @@ fn brush_section() -> ToolbarSectionDef {
             DropdownItemDef::Separator,
             DropdownItemDef::action("arrow_line", "Arrow Line").with_icon(ToolbarIconId::new("Arrow")),
         ]).with_icon(ToolbarIconId::new("Brush"))
-          .with_tooltip(t_tooltip(TooltipKey::BrushTool)),
+          .with_tooltip(t_toolbar(TK::BrushTool)),
     ])
 }
 
@@ -487,7 +487,7 @@ fn annotation_section() -> ToolbarSectionDef {
             DropdownItemDef::action("triangle_up", "Triangle Up").with_icon(ToolbarIconId::new("ArrowUp")),
             DropdownItemDef::action("triangle_down", "Triangle Down").with_icon(ToolbarIconId::new("ArrowDown")),
         ]).with_icon(ToolbarIconId::new("Text"))
-          .with_tooltip(t_tooltip(TooltipKey::AnnotationTool)),
+          .with_tooltip(t_toolbar(TK::AnnotationTool)),
     ])
 }
 
@@ -504,7 +504,7 @@ fn icon_section() -> ToolbarSectionDef {
             DropdownItemDef::Separator,
             DropdownItemDef::action("image", "Image").with_icon(ToolbarIconId::new("Image")),
         ]).with_icon(ToolbarIconId::new("Emoji"))
-          .with_tooltip(t_tooltip(TooltipKey::IconTool)),
+          .with_tooltip(t_toolbar(TK::IconTool)),
     ])
 }
 

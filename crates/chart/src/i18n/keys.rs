@@ -538,6 +538,178 @@ impl LabelPositionKey {
     }
 }
 
+// =============================================================================
+// Toolbar Tooltip Keys (app-specific — NOT in uzor core)
+// =============================================================================
+
+/// Toolbar button tooltip keys — chart application specific.
+///
+/// Window chrome tooltips (CloseWindow, Minimize, etc.) live in `uzor::i18n::TooltipKey`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolbarTooltipKey {
+    // Drawing tools (left toolbar)
+    Crosshair,
+    TrendLine,
+    HorizontalLine,
+    VerticalLine,
+    FibRetracement,
+    Rectangle,
+    DrawingTools,
+    LineTool,
+    FibTool,
+    PatternTool,
+    BrushTool,
+    AnnotationTool,
+    IconTool,
+    ProjectionTool,
+    Lock,
+    Eye,
+    DeleteTool,
+
+    // Actions (top toolbar)
+    Undo,
+    Redo,
+    MagnetMode,
+    StayInDrawingMode,
+    Snapshot,
+    Bookmark,
+    MeasureTool,
+    Indicators,
+    Settings,
+    Compare,
+    SymbolSelector,
+    TimeframeSelector,
+    ChartType,
+    Layout,
+    Presets,
+    Screenshot,
+    Expand,
+    MainMenu,
+
+    // Right toolbar (sidebar panels)
+    Watchlist,
+    Alerts,
+    ObjectTree,
+    Templates,
+    Signals,
+    Connectors,
+    Performance,
+
+    // General
+    Search,
+    FullScreen,
+    SplitView,
+}
+
+impl ToolbarTooltipKey {
+    pub fn get(self, lang: Language) -> &'static str {
+        match lang {
+            Language::En => self.en(),
+            Language::Ru => self.ru(),
+        }
+    }
+
+    fn en(self) -> &'static str {
+        match self {
+            Self::Crosshair => "Crosshair",
+            Self::TrendLine => "Trend Line",
+            Self::HorizontalLine => "Horizontal Line",
+            Self::VerticalLine => "Vertical Line",
+            Self::FibRetracement => "Fibonacci Retracement",
+            Self::Rectangle => "Rectangle",
+            Self::DrawingTools => "Drawing Tools",
+            Self::LineTool => "Line Tools",
+            Self::FibTool => "Fibonacci Tools",
+            Self::PatternTool => "Pattern Tools",
+            Self::BrushTool => "Brush & Shapes",
+            Self::AnnotationTool => "Annotations",
+            Self::IconTool => "Icons & Images",
+            Self::ProjectionTool => "Positions & Projections",
+            Self::Lock => "Lock Drawings",
+            Self::Eye => "Show/Hide Drawings",
+            Self::DeleteTool => "Delete Tools",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::MagnetMode => "Magnet Mode",
+            Self::StayInDrawingMode => "Stay in Drawing Mode",
+            Self::Snapshot => "Take Snapshot",
+            Self::Bookmark => "Bookmark",
+            Self::MeasureTool => "Measure",
+            Self::Indicators => "Indicators",
+            Self::Settings => "Settings",
+            Self::Compare => "Compare Symbol",
+            Self::SymbolSelector => "Symbol Selector",
+            Self::TimeframeSelector => "Timeframe",
+            Self::ChartType => "Chart Type",
+            Self::Layout => "Layout",
+            Self::Presets => "Presets",
+            Self::Screenshot => "Screenshot",
+            Self::Expand => "Expand Chart",
+            Self::MainMenu => "Main Menu",
+            Self::Watchlist => "Watchlist",
+            Self::Alerts => "Alerts",
+            Self::ObjectTree => "Object Tree",
+            Self::Templates => "Templates",
+            Self::Signals => "Signals",
+            Self::Connectors => "Connectors",
+            Self::Performance => "Performance",
+            Self::Search => "Search",
+            Self::FullScreen => "Full Screen",
+            Self::SplitView => "Split View",
+        }
+    }
+
+    fn ru(self) -> &'static str {
+        match self {
+            Self::Crosshair => "Перекрестие",
+            Self::TrendLine => "Трендовая линия",
+            Self::HorizontalLine => "Горизонтальная линия",
+            Self::VerticalLine => "Вертикальная линия",
+            Self::FibRetracement => "Уровни Фибоначчи",
+            Self::Rectangle => "Прямоугольник",
+            Self::DrawingTools => "Инструменты рисования",
+            Self::LineTool => "Инструменты линий",
+            Self::FibTool => "Инструменты Фибоначчи",
+            Self::PatternTool => "Инструменты паттернов",
+            Self::BrushTool => "Кисть и фигуры",
+            Self::AnnotationTool => "Аннотации",
+            Self::IconTool => "Иконки и изображения",
+            Self::ProjectionTool => "Позиции и проекции",
+            Self::Lock => "Заблокировать рисунки",
+            Self::Eye => "Показать/скрыть рисунки",
+            Self::DeleteTool => "Инструменты удаления",
+            Self::Undo => "Отменить",
+            Self::Redo => "Повторить",
+            Self::MagnetMode => "Режим магнита",
+            Self::StayInDrawingMode => "Оставаться в режиме рисования",
+            Self::Snapshot => "Сделать снимок",
+            Self::Bookmark => "Закладка",
+            Self::MeasureTool => "Измерить",
+            Self::Indicators => "Индикаторы",
+            Self::Settings => "Настройки",
+            Self::Compare => "Сравнить символ",
+            Self::SymbolSelector => "Выбор символа",
+            Self::TimeframeSelector => "Таймфрейм",
+            Self::ChartType => "Тип графика",
+            Self::Layout => "Макет",
+            Self::Presets => "Пресеты",
+            Self::Screenshot => "Снимок экрана",
+            Self::Expand => "Развернуть график",
+            Self::MainMenu => "Главное меню",
+            Self::Watchlist => "Список наблюдения",
+            Self::Alerts => "Оповещения",
+            Self::ObjectTree => "Дерево объектов",
+            Self::Templates => "Шаблоны",
+            Self::Signals => "Сигналы",
+            Self::Connectors => "Коннекторы",
+            Self::Performance => "Производительность",
+            Self::Search => "Поиск",
+            Self::FullScreen => "Полный экран",
+            Self::SplitView => "Разделить вид",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
