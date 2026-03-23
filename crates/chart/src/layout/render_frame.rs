@@ -409,6 +409,10 @@ pub struct UserSettingsResult {
     /// Each entry is (field_key, char_x_positions) where field_key matches the
     /// widget IDs used in dispatch_panel_click (e.g. "e2e_passphrase_input").
     pub input_char_positions: Vec<(String, Vec<f64>)>,
+    /// Viewport rect of the active tab's scrollable area (for wheel routing).
+    pub scroll_viewport_rect: Option<WidgetRect>,
+    /// Total content height of the active tab's scrollable area.
+    pub scroll_content_height: f64,
 }
 
 // =============================================================================

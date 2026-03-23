@@ -173,9 +173,10 @@ pub fn render_user_settings_modal(
     // =========================================================================
     // Content area
     // =========================================================================
-    let content_x = modal_x + sidebar_w;
+    let sidebar_gap = 6.0;
+    let content_x = modal_x + sidebar_w + sidebar_gap;
     let content_y = modal_y + header_h;
-    let content_w = modal_w - sidebar_w;
+    let content_w = modal_w - sidebar_w - sidebar_gap;
 
     // Content background
     ctx.set_fill_color(&frame_theme.toolbar_bg);
@@ -589,7 +590,9 @@ fn render_general_tab(
     cy += btn_h + 8.0;
 
     let total_content_h = cy - container.content_y() + container.scroll_offset();
-    let _scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
 }
 
 // =============================================================================
@@ -1452,7 +1455,9 @@ fn render_sync_tab(
 
     cy += 8.0;
     let total_content_h = cy - container.content_y() + container.scroll_offset();
-    let _scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2054,7 +2059,9 @@ fn render_local_agent_keys_section(
         }
     }
 
-    let _scroll_result = container.end(ctx, total_keys_h, &widget_theme);
+    let scroll_result = container.end(ctx, total_keys_h, &widget_theme);
+    result.scroll_viewport_rect = Some(keys_viewport);
+    result.scroll_content_height = scroll_result.content_height;
 }
 
 // =============================================================================

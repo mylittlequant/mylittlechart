@@ -4124,6 +4124,42 @@ impl ChartApp {
                 return;
             }
 
+            // User settings modal — scroll the active tab content.
+            if self.panel_app.user_settings_state.is_open
+                && !self.panel_app.user_settings_state.show_profile_manager
+            {
+                if let Some(ref us) = self.frame_result
+                    .as_ref()
+                    .and_then(|r| r.user_settings.as_ref())
+                    .cloned()
+                {
+                    if let Some(ref vp) = us.scroll_viewport_rect {
+                        if vp.contains(x, y) {
+                            use zengeld_chart::ui::modal_settings::UserSettingsTab;
+                            let viewport_h = vp.height;
+                            let content_h = us.scroll_content_height;
+                            match self.panel_app.user_settings_state.active_tab {
+                                UserSettingsTab::General => {
+                                    self.panel_app.user_settings_state.general_tab_scroll
+                                        .handle_wheel(scroll_step, content_h, viewport_h);
+                                }
+                                UserSettingsTab::Sync => {
+                                    self.panel_app.user_settings_state.sync_tab_scroll
+                                        .handle_wheel(scroll_step, content_h, viewport_h);
+                                }
+                                UserSettingsTab::Server => {
+                                    self.panel_app.user_settings_state.server_keys_scroll
+                                        .handle_wheel(scroll_step, content_h, viewport_h);
+                                }
+                                UserSettingsTab::Performance => {}
+                            }
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
             // Profile manager — scroll the profile list viewport.
             if self.panel_app.user_settings_state.show_profile_manager {
                 use zengeld_chart::ui::modal_settings::ProfileManagerPage;
