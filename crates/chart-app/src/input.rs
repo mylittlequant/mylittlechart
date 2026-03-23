@@ -1128,6 +1128,21 @@ impl ChartApp {
                             return;
                         }
                     }
+                    // Track click — click on empty scrollbar track to jump position
+                    if let Some(ref track_rect) = cs.scrollbar_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            self.panel_app.chart_settings_state.scroll.handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                cs.total_content_height,
+                                cs.viewport_height,
+                            );
+                            return;
+                        }
+                    }
                     for track in &cs.slider_tracks {
                         if let Some((_, item_rect)) = cs.content_items.iter().find(|(id, _)| id == &track.field_id) {
                             // Inflate hit area ±2px horizontally for easier handle grab.
@@ -1180,7 +1195,7 @@ impl ChartApp {
                     }
                 }
             }
-            // Profile list scrollbar drag start
+            // Profile list scrollbar drag start + track click
             if self.panel_app.user_settings_state.show_profile_manager {
                 if let Some(ref us) = result.user_settings {
                     if let Some(ref handle_rect) = us.profile_list_handle_rect {
@@ -1188,6 +1203,21 @@ impl ChartApp {
                             && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
                         if hit {
                             self.panel_app.user_settings_state.profile_list_scroll.start_drag(y);
+                            return;
+                        }
+                    }
+                    // Track click — click on empty scrollbar track to jump position
+                    if let Some(ref track_rect) = us.profile_list_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            self.panel_app.user_settings_state.profile_list_scroll.handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                us.profile_list_total_content_h,
+                                us.profile_list_viewport_rect.height,
+                            );
                             return;
                         }
                     }
@@ -1203,6 +1233,21 @@ impl ChartApp {
                         if hit {
                             self.panel_app.indicator_settings_state.scroll.start_drag(y);
                             eprintln!("[ChartApp] ind_settings scrollbar drag started");
+                            return;
+                        }
+                    }
+                    // Track click — click on empty scrollbar track to jump position
+                    if let Some(ref track_rect) = is.scrollbar_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            self.panel_app.indicator_settings_state.scroll.handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                is.total_content_height,
+                                is.viewport_height,
+                            );
                             return;
                         }
                     }
@@ -1458,6 +1503,21 @@ impl ChartApp {
                     if hit {
                         self.modal_state.scroll.start_drag(y);
                         eprintln!("[ChartApp] search_modal scrollbar drag started");
+                        return;
+                    }
+                }
+                // Track click — click on empty scrollbar track to jump position
+                if let Some(ref track_rect) = smr.scrollbar_track_rect {
+                    let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                        && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                    if hit {
+                        self.modal_state.scroll.handle_track_click(
+                            y,
+                            track_rect.y,
+                            track_rect.height,
+                            smr.total_content_height,
+                            smr.viewport_height,
+                        );
                         return;
                     }
                 }
