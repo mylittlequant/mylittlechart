@@ -14,8 +14,9 @@ use crate::ui::modal_settings::{
     AlertCondition, AlertListFilter, AlertSettingsState, AlertSettingsTab, AlertStatus,
     AlertTriggerMode,
 };
+use crate::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState as SbState};
 use crate::ui::toolbar_render::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme};
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use uzor::input::sense::Sense;
@@ -1190,16 +1191,39 @@ fn render_alerts_list_tab(
         })
         .collect();
 
+    // The list viewport starts after the filter row and fills the remaining content area.
+    // content_h is computed by compute_alerts_list_tab_height() which caps at 240px list area.
+    // We derive list_h from the same formula so it matches exactly.
+    let list_top = y;
+    let list_h = if filtered.is_empty() {
+        ROW_H
+    } else {
+        (filtered.len() as f64 * (ROW_H + ITEM_PADDING)).min(240.0)
+    };
+
+    result.list_viewport_rect = Some(WidgetRect::new(content_x, list_top, content_w, list_h));
+
     if filtered.is_empty() {
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No alerts", content_x + content_w / 2.0, y + ROW_H / 2.0);
+        ctx.fill_text("No alerts", content_x + content_w / 2.0, list_top + ROW_H / 2.0);
+        result.list_total_content_height = ROW_H;
     } else {
         let list_item_h = ROW_H;
         let action_btn_w = 24.0;
         let action_btn_gap = 4.0;
+        let scrollbar_w = 6.0;
+
+        let total_content_h = filtered.len() as f64 * (list_item_h + ITEM_PADDING);
+        result.list_total_content_height = total_content_h;
+
+        // Clip list content to viewport.
+        ctx.save();
+        ctx.clip_rect(content_x, list_top, content_w, list_h);
+
+        let mut item_y = list_top - state.list_scroll.offset;
 
         for alert in filtered.iter() {
             let row_id = format!("alert_set:list_item:{}", alert.id);
@@ -1209,13 +1233,13 @@ fn render_alerts_list_tab(
             let is_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
             if is_hovered {
                 ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                ctx.fill_rounded_rect(content_x, y, content_w, list_item_h, 3.0);
+                ctx.fill_rounded_rect(content_x, item_y, content_w, list_item_h, 3.0);
             }
 
             // Status dot
             let dot_r = 4.0;
             let dot_x = content_x + dot_r + 2.0;
-            let dot_y = y + list_item_h / 2.0;
+            let dot_y = item_y + list_item_h / 2.0;
             let dot_color = match alert.status {
                 AlertStatus::Active => "#4caf50",
                 AlertStatus::Triggered => "#ff9800",
@@ -1233,7 +1257,7 @@ fn render_alerts_list_tab(
             ctx.set_font("12px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&source_text, content_x + dot_r * 2.0 + 8.0, y + list_item_h / 2.0);
+            ctx.fill_text(&source_text, content_x + dot_r * 2.0 + 8.0, item_y + list_item_h / 2.0);
 
             // Condition + price (right-aligned before action buttons)
             let cond_text = format!("{} {:.2}", alert.condition.display_name(), alert.price);
@@ -1241,21 +1265,21 @@ fn render_alerts_list_tab(
             let cond_x = content_x + content_w - actions_total_w - 8.0;
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.set_text_align(TextAlign::Right);
-            ctx.fill_text(&cond_text, cond_x, y + list_item_h / 2.0);
+            ctx.fill_text(&cond_text, cond_x, item_y + list_item_h / 2.0);
 
             // Delete button
             let delete_x = content_x + content_w - actions_total_w;
             let delete_btn_hovered = state.hovered_item_id.as_deref() == Some(delete_id.as_str());
             if delete_btn_hovered {
                 ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                ctx.fill_rounded_rect(delete_x, y + 4.0, action_btn_w, list_item_h - 8.0, 3.0);
+                ctx.fill_rounded_rect(delete_x, item_y + 4.0, action_btn_w, list_item_h - 8.0, 3.0);
             }
             let icon_s = action_btn_w - 6.0;
             let ix = delete_x + (action_btn_w - icon_s) / 2.0;
-            let iy = y + (list_item_h - icon_s) / 2.0;
+            let iy = item_y + (list_item_h - icon_s) / 2.0;
             draw_svg_icon(ctx, Icon::Close.svg(), ix, iy, icon_s, icon_s, &toolbar_theme.item_text_muted);
 
-            let delete_r = WidgetRect::new(delete_x, y, action_btn_w, list_item_h);
+            let delete_r = WidgetRect::new(delete_x, item_y, action_btn_w, list_item_h);
             result.content_items.push((delete_id.clone(), delete_r));
             input_coordinator.register_on_layer(delete_id.as_str(), delete_r, Sense::CLICK, layer_id);
 
@@ -1264,21 +1288,21 @@ fn render_alerts_list_tab(
             let pause_btn_hovered = state.hovered_item_id.as_deref() == Some(pause_id.as_str());
             if pause_btn_hovered {
                 ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                ctx.fill_rounded_rect(pause_x, y + 4.0, action_btn_w, list_item_h - 8.0, 3.0);
+                ctx.fill_rounded_rect(pause_x, item_y + 4.0, action_btn_w, list_item_h - 8.0, 3.0);
             }
             let pause_label = if alert.status == AlertStatus::Paused { ">" } else { "||" };
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(pause_label, pause_x + action_btn_w / 2.0, y + list_item_h / 2.0);
+            ctx.fill_text(pause_label, pause_x + action_btn_w / 2.0, item_y + list_item_h / 2.0);
 
-            let pause_r = WidgetRect::new(pause_x, y, action_btn_w, list_item_h);
+            let pause_r = WidgetRect::new(pause_x, item_y, action_btn_w, list_item_h);
             result.content_items.push((pause_id.clone(), pause_r));
             input_coordinator.register_on_layer(pause_id.as_str(), pause_r, Sense::CLICK, layer_id);
 
             // Row hit zone for edit
-            let row_r = WidgetRect::new(content_x, y, content_w - actions_total_w - 8.0, list_item_h);
+            let row_r = WidgetRect::new(content_x, item_y, content_w - actions_total_w - 8.0, list_item_h);
             result.content_items.push((row_id.clone(), row_r));
             input_coordinator.register_on_layer(row_id.as_str(), row_r, Sense::CLICK, layer_id);
 
@@ -1286,11 +1310,29 @@ fn render_alerts_list_tab(
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
             ctx.begin_path();
-            ctx.move_to(content_x, y + list_item_h);
-            ctx.line_to(content_x + content_w, y + list_item_h);
+            ctx.move_to(content_x, item_y + list_item_h);
+            ctx.line_to(content_x + content_w, item_y + list_item_h);
             ctx.stroke();
 
-            y += list_item_h + ITEM_PADDING;
+            item_y += list_item_h + ITEM_PADDING;
+        }
+
+        ctx.restore();
+
+        // Draw scrollbar if content overflows viewport.
+        if total_content_h > list_h {
+            let sb_x = content_x + content_w - scrollbar_w - 2.0;
+            let sb_rect = WidgetRect::new(sb_x, list_top, scrollbar_w, list_h);
+            let sb_config = ScrollbarConfig::new(total_content_h, list_h, state.list_scroll.offset);
+            let sb_state = if state.list_scroll.is_dragging {
+                SbState::Dragging
+            } else {
+                SbState::Active
+            };
+            let widget_theme = WidgetTheme::default();
+            let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
+            result.scrollbar_handle_rect = Some(sb_result.handle_rect);
+            result.scrollbar_track_rect = Some(sb_result.track_rect);
         }
     }
 }

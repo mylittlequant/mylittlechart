@@ -382,6 +382,14 @@ pub struct AlertSettingsResult {
     pub content_rect: WidgetRect,
     /// Content item rects for hit testing: (item_id, rect).
     pub content_items: Vec<(String, WidgetRect)>,
+    /// Scrollbar handle rect for the AlertsList tab.
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect for the AlertsList tab.
+    pub scrollbar_track_rect: Option<WidgetRect>,
+    /// Viewport rect for the AlertsList tab list area.
+    pub list_viewport_rect: Option<WidgetRect>,
+    /// Total content height of the AlertsList tab.
+    pub list_total_content_height: f64,
 }
 
 // =============================================================================

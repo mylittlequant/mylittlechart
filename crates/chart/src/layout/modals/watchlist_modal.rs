@@ -18,6 +18,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
+use crate::ui::scroll_widget::{ScrollbarConfig, ScrollbarState, draw_scrollbar};
 
 // =============================================================================
 // Public data types for modal items
@@ -92,6 +93,10 @@ pub struct WatchlistModalResult {
     pub search_char_positions: Vec<f64>,
     /// Search input field rectangle (for drag-to-select hit testing).
     pub search_input_rect: WidgetRect,
+    /// Scrollbar handle rectangle (for drag detection).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rectangle (for track-click detection).
+    pub scrollbar_track_rect: Option<WidgetRect>,
 }
 
 // =============================================================================
@@ -573,7 +578,7 @@ fn render_overview_tab(
     ctx.save();
     ctx.clip_rect(modal_x, list_top, modal_w, list_h);
 
-    let scroll = state.scroll_offset;
+    let scroll = state.scroll.offset;
     let mut current_y = list_top - scroll;
 
     for entry in &filtered {
@@ -711,13 +716,13 @@ fn render_overview_tab(
     // -------------------------------------------------------------------------
     if let Some((drag_idx, _drag_y)) = state.drag_reorder {
         // Highlight the dragged row with a semi-transparent accent overlay.
-        let drag_row_y = list_top - state.scroll_offset + drag_idx as f64 * item_h;
+        let drag_row_y = list_top - state.scroll.offset + drag_idx as f64 * item_h;
         ctx.set_fill_color("#4a9eff33"); // accent blue ~20% opacity
         ctx.fill_rect(modal_x, drag_row_y, modal_w, item_h);
 
         // Drop indicator: a 2 px horizontal line at the drop position.
         if let Some(drop_idx) = state.drop_index {
-            let drop_line_y = list_top - state.scroll_offset + drop_idx as f64 * item_h;
+            let drop_line_y = list_top - state.scroll.offset + drop_idx as f64 * item_h;
             ctx.set_stroke_color("#4a9eff");
             ctx.set_stroke_width(2.0);
             ctx.begin_path();
@@ -728,6 +733,26 @@ fn render_overview_tab(
     }
 
     ctx.restore();
+
+    // -------------------------------------------------------------------------
+    // Scrollbar
+    // -------------------------------------------------------------------------
+    let scrollbar_w = 6.0;
+    let needs_scrollbar = total_h > list_h;
+    if needs_scrollbar {
+        let sb_x = modal_x + modal_w - scrollbar_w - 2.0;
+        let sb_rect = WidgetRect::new(sb_x, list_top, scrollbar_w, list_h);
+        let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.offset);
+        let sb_state = if state.scroll.is_dragging {
+            ScrollbarState::Dragging
+        } else {
+            ScrollbarState::Active
+        };
+        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+        let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
+        result.scrollbar_handle_rect = Some(sb_result.handle_rect);
+        result.scrollbar_track_rect = Some(sb_result.track_rect);
+    }
 
     // -------------------------------------------------------------------------
     // Register item hit zones with InputCoordinator

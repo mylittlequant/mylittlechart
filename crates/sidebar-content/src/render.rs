@@ -74,6 +74,13 @@ pub struct RightSidebarResult {
     /// full header row height.  Used by `chart-app` to start column-resize
     /// drags.
     pub watchlist_separator_rects: Vec<(usize, WidgetRect)>,
+
+    /// Per-group scrollbar geometry for drag and track-click support.
+    ///
+    /// Each entry is `(instance_id, handle_rect, track_rect, content_height, viewport_height)`.
+    /// Populated during signal group rendering when a scrollbar is drawn.
+    /// Used by `chart-app` to detect scrollbar handle drags and track clicks.
+    pub signal_group_scrollbar_rects: Vec<(u64, WidgetRect, WidgetRect, f64, f64)>,
 }
 
 // =============================================================================
@@ -1967,9 +1974,9 @@ fn render_indicator_signals(
 
             // Retrieve and clamp the current scroll offset for this group.
             let raw_offset = state
-                .signal_group_scroll_offsets
+                .signal_group_scroll
                 .get(&group.instance_id)
-                .copied()
+                .map(|s| s.offset)
                 .unwrap_or(0.0);
             let scroll_offset = raw_offset
                 .clamp(0.0, (total_content_height - viewport_height).max(0.0));
@@ -2075,8 +2082,8 @@ fn render_indicator_signals(
 
             // Draw a thin scrollbar on the right edge when there are more rows than visible.
             if group.signals.len() > max_visible {
-                let sb_width = 3.0;
-                let sb_x = rect.x + content_width - 8.0 - sb_width;
+                let sb_width = 6.0;
+                let sb_x = rect.x + content_width - sb_width;
                 let sb_track_h = viewport_height;
                 let handle_ratio = viewport_height / total_content_height;
                 let handle_h = (sb_track_h * handle_ratio).max(16.0);
@@ -2094,6 +2101,17 @@ fn render_indicator_signals(
                 // Handle.
                 ctx.set_fill_color(&format!("{}80", theme.separator));
                 ctx.fill_rect(sb_x, handle_y, sb_width, handle_h);
+
+                // Store scrollbar geometry for drag + track-click input routing.
+                let track_rect = WidgetRect::new(sb_x, current_y, sb_width, sb_track_h);
+                let handle_rect = WidgetRect::new(sb_x, handle_y, sb_width, handle_h);
+                result.signal_group_scrollbar_rects.push((
+                    group.instance_id,
+                    handle_rect,
+                    track_rect,
+                    total_content_height,
+                    viewport_height,
+                ));
             }
 
             current_y += viewport_height;

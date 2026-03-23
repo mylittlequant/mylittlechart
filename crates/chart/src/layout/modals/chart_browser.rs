@@ -41,6 +41,10 @@ pub struct ChartBrowserResult {
     pub list_viewport_rect: WidgetRect,
     /// Total height of all items (needed to clamp scroll offset).
     pub total_content_height: f64,
+    /// Scrollbar handle rect (for drag hit testing).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect (for track-click hit testing).
+    pub scrollbar_track_rect: Option<WidgetRect>,
 }
 
 // =============================================================================
@@ -260,7 +264,7 @@ pub fn render_chart_browser(
     ctx.save();
     ctx.clip_rect(modal_x, list_top, modal_w, list_h);
 
-    let scroll = state.scroll_offset;
+    let scroll = state.scroll.offset;
     let mut current_y = list_top - scroll;
 
     for preset in &sorted_presets {
@@ -388,6 +392,30 @@ pub fn render_chart_browser(
     }
 
     ctx.restore();
+
+    // ==========================================================================
+    // Scrollbar
+    // ==========================================================================
+
+    {
+        use crate::ui::scroll_widget::{ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar};
+
+        let scrollbar_w = 6.0;
+        let needs_scrollbar = total_h > list_h;
+        if needs_scrollbar {
+            let sb_x = modal_x + modal_w - scrollbar_w - 2.0;
+            let sb_rect = WidgetRect::new(sb_x, list_top, scrollbar_w, list_h);
+            let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.offset);
+            let sb_state = if state.scroll.is_dragging {
+                SbState::Dragging
+            } else {
+                SbState::Active
+            };
+            let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
+            result.scrollbar_handle_rect = Some(sb_result.handle_rect);
+            result.scrollbar_track_rect = Some(sb_result.track_rect);
+        }
+    }
 
     // ==========================================================================
     // Register item hit zones with InputCoordinator

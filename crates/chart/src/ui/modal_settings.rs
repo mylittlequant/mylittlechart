@@ -2117,8 +2117,8 @@ pub struct AlertSettingsState {
     pub all_alerts: Vec<AlertItem>,
     /// Filter for the AlertsList tab.
     pub list_filter: AlertListFilter,
-    /// Scroll offset for the AlertsList tab.
-    pub list_scroll_offset: f64,
+    /// Scroll state for the AlertsList tab.
+    pub list_scroll: ScrollState,
     /// Modal position on screen (None = centered).
     pub position: Option<(f64, f64)>,
     /// Whether the modal header is being dragged.
@@ -2172,7 +2172,7 @@ impl Default for AlertSettingsState {
             trigger_mode_dropdown_open: false,
             all_alerts: Vec::new(),
             list_filter: AlertListFilter::default(),
-            list_scroll_offset: 0.0,
+            list_scroll: ScrollState::default(),
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -2703,8 +2703,8 @@ pub struct ChartBrowserState {
     pub search_query: String,
     /// Text editing state for the search input.
     pub search_editing: TextEditingState,
-    /// Vertical scroll offset for the preset list (pixels).
-    pub scroll_offset: f64,
+    /// Scroll state for the preset list.
+    pub scroll: ScrollState,
     /// The preset ID currently under the mouse cursor (for hover icons).
     pub hovered_preset_id: Option<String>,
     /// Modal position (None = centered on screen).
@@ -2731,7 +2731,7 @@ impl Default for ChartBrowserState {
                 selection_start: None,
                 blink_time: 0,
             },
-            scroll_offset: 0.0,
+            scroll: ScrollState::default(),
             hovered_preset_id: None,
             position: None,
             is_dragging: false,
@@ -2751,7 +2751,7 @@ impl ChartBrowserState {
         self.search_editing.cursor = 0;
         self.search_editing.selection_start = None;
         self.search_editing.reset_blink(current_time_ms);
-        self.scroll_offset = 0.0;
+        self.scroll.reset();
         self.hovered_preset_id = None;
         self.position = None;
         self.is_dragging = false;
@@ -2886,7 +2886,7 @@ pub enum WatchlistModalTab {
 #[derive(Clone, Debug)]
 pub struct WatchlistModalState {
     pub is_open: bool,
-    pub scroll_offset: f64,
+    pub scroll: ScrollState,
     pub search_query: String,
     pub search_editing: TextEditingState,
     pub active_tab: WatchlistModalTab,
@@ -2914,7 +2914,7 @@ impl WatchlistModalState {
     pub fn new() -> Self {
         Self {
             is_open: false,
-            scroll_offset: 0.0,
+            scroll: ScrollState::default(),
             search_query: String::new(),
             search_editing: TextEditingState {
                 field_id: "watchlist_modal_search".to_string(),
@@ -2938,7 +2938,7 @@ impl WatchlistModalState {
 
     pub fn open(&mut self) {
         self.is_open = true;
-        self.scroll_offset = 0.0;
+        self.scroll.reset();
         self.search_query.clear();
         self.search_editing.text.clear();
         self.search_editing.cursor = 0;

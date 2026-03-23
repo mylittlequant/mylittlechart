@@ -136,11 +136,12 @@ pub struct SidebarState {
     pub sidebar_drag_last_y: f64,
     /// Collapsed signal groups (by instance_id).
     pub collapsed_signal_groups: HashSet<u64>,
-    /// Per-group scroll offsets for the Signals panel (instance_id → pixel offset).
+    /// Per-group scroll state for the Signals panel (instance_id → ScrollState).
     ///
     /// Keyed by `IndicatorSignalGroup::instance_id`.  The renderer uses these
     /// to clip and translate each group's signal list independently.
-    pub signal_group_scroll_offsets: HashMap<u64, f64>,
+    /// Also carries drag state for scrollbar handle dragging.
+    pub signal_group_scroll: HashMap<u64, ScrollState>,
     /// Currently hovered indicator signal group ID (for collapse toggle).
     pub hovered_signal_group_id: Option<u64>,
     /// Indicator signals data for the Signals panel.
@@ -382,7 +383,7 @@ impl Default for SidebarState {
             sidebar_drag_active: false,
             sidebar_drag_last_y: 0.0,
             collapsed_signal_groups: std::collections::HashSet::new(),
-            signal_group_scroll_offsets: HashMap::new(),
+            signal_group_scroll: HashMap::new(),
             hovered_signal_group_id: None,
             indicator_signals: IndicatorsTabData::default(),
             watchlist_manager: WatchlistManager::default(),

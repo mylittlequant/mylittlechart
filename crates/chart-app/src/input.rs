@@ -589,6 +589,77 @@ impl ChartApp {
             }
         }
 
+        // Signal group scrollbar drag start + track click
+        if self.sidebar_state.is_right_open() && !self.ui_drag_active {
+            if let Some(ref sidebar_result) = self.last_sidebar_result {
+                for &(instance_id, ref handle_rect, ref track_rect, content_h, viewport_h)
+                    in &sidebar_result.signal_group_scrollbar_rects
+                {
+                    // Handle drag start — 5px tolerance on each side for easy grab.
+                    let hit = x >= handle_rect.x - 5.0
+                        && x <= handle_rect.x + handle_rect.width + 5.0
+                        && y >= handle_rect.y
+                        && y <= handle_rect.y + handle_rect.height;
+                    if hit {
+                        self.sidebar_state
+                            .signal_group_scroll
+                            .entry(instance_id)
+                            .or_default()
+                            .start_drag(y);
+                        self.ui_drag_active = true;
+                        return;
+                    }
+                    // Track click — jump scroll to clicked position.
+                    let track_hit = x >= track_rect.x
+                        && x <= track_rect.x + track_rect.width
+                        && y >= track_rect.y
+                        && y <= track_rect.y + track_rect.height;
+                    if track_hit {
+                        self.sidebar_state
+                            .signal_group_scroll
+                            .entry(instance_id)
+                            .or_default()
+                            .handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                content_h,
+                                viewport_h,
+                            );
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Right sidebar scrollbar handle drag + track click
+        if self.sidebar_state.is_right_open() && !self.ui_drag_active {
+            if let Some(ref sidebar_result) = self.last_sidebar_result {
+                // Scrollbar handle drag start
+                if let Some(ref handle_rect) = sidebar_result.scrollbar_handle_rect {
+                    let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                        && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                    if hit {
+                        self.sidebar_state.current_right_scroll_mut().start_drag(y);
+                        return;
+                    }
+                }
+                // Scrollbar track click — jump to position
+                if let Some(ref track_rect) = sidebar_result.scrollbar_track_rect {
+                    let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                        && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                    if hit {
+                        let content_h = sidebar_result.content_height;
+                        let viewport_h = sidebar_result.content_rect.height;
+                        self.sidebar_state.current_right_scroll_mut().handle_track_click(
+                            y, track_rect.y, track_rect.height, content_h, viewport_h,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         // Check if drag starts inside the right sidebar content area — begin
         // drag-to-scroll.  This fires for any sidebar panel (Connectors,
         // Alerts, ObjectTree, Signals, Watchlist rows that didn't match above).
@@ -1493,6 +1564,39 @@ impl ChartApp {
             }
         }
 
+        // Alert settings scrollbar drag start + track click
+        if self.panel_app.alert_settings_state.is_open() {
+            if let Some(ref result) = &self.frame_result {
+                if let Some(ref asr) = result.alert_settings {
+                    if let Some(ref handle_rect) = asr.scrollbar_handle_rect {
+                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                        if hit {
+                            self.panel_app.alert_settings_state.list_scroll.start_drag(y);
+                            eprintln!("[ChartApp] alert_settings scrollbar drag started");
+                            return;
+                        }
+                    }
+                    if let Some(ref track_rect) = asr.scrollbar_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            if let Some(ref vp) = asr.list_viewport_rect {
+                                self.panel_app.alert_settings_state.list_scroll.handle_track_click(
+                                    y,
+                                    track_rect.y,
+                                    track_rect.height,
+                                    asr.list_total_content_height,
+                                    vp.height,
+                                );
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Search / compare / indicator-search modal scrollbar drag start
         if self.modal_state.is_open() {
             if let Some(ref smr) = self.search_modal_result {
@@ -1519,6 +1623,63 @@ impl ChartApp {
                             smr.viewport_height,
                         );
                         return;
+                    }
+                }
+            }
+        }
+
+        // Watchlist modal scrollbar drag start + track click
+        if self.watchlist_modal.is_open() {
+            if let Some(ref wmr) = self.last_watchlist_modal_result {
+                if let Some(ref handle_rect) = wmr.scrollbar_handle_rect {
+                    let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                        && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                    if hit {
+                        self.watchlist_modal.scroll.start_drag(y);
+                        return;
+                    }
+                }
+                if let Some(ref track_rect) = wmr.scrollbar_track_rect {
+                    let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                        && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                    if hit {
+                        self.watchlist_modal.scroll.handle_track_click(
+                            y, track_rect.y, track_rect.height,
+                            wmr.total_content_height,
+                            wmr.list_viewport_rect.height,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Chart browser scrollbar drag start + track click
+        if self.panel_app.chart_browser.is_open {
+            if let Some(ref frame_r) = self.frame_result {
+                if let Some(ref cbr) = frame_r.chart_browser {
+                    if let Some(ref handle_rect) = cbr.scrollbar_handle_rect {
+                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                        if hit {
+                            self.panel_app.chart_browser.scroll.start_drag(y);
+                            eprintln!("[ChartApp] chart_browser scrollbar drag started");
+                            return;
+                        }
+                    }
+                    if let Some(ref track_rect) = cbr.scrollbar_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            self.panel_app.chart_browser.scroll.handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                cbr.total_content_height,
+                                cbr.list_viewport_rect.height,
+                            );
+                            return;
+                        }
                     }
                 }
             }
@@ -1877,7 +2038,7 @@ impl ChartApp {
                 // Modal list layout constants (must match render_overview_tab).
                 let item_h = 28.0_f64;
                 let list_top = wl.list_viewport_rect.y;
-                let scroll = self.watchlist_modal.scroll_offset;
+                let scroll = self.watchlist_modal.scroll.offset;
                 let relative_y = y - list_top + scroll;
                 let row_count = wl.item_rects.len();
                 let drop = if relative_y < 0.0 {
@@ -1913,6 +2074,44 @@ impl ChartApp {
                 self.sidebar_state.watchlist_drop_index = Some(drop);
             }
             return;
+        }
+
+        // Signal group scrollbar drag move.
+        // Find which group is dragging first (avoids borrow conflict with self).
+        let dragging_group_id = self
+            .sidebar_state
+            .signal_group_scroll
+            .iter()
+            .find(|(_, s)| s.is_dragging)
+            .map(|(&id, _)| id);
+        if let Some(group_id) = dragging_group_id {
+            // Look up the track geometry from the last sidebar result.
+            let track_info = self.last_sidebar_result.as_ref().and_then(|sr| {
+                sr.signal_group_scrollbar_rects
+                    .iter()
+                    .find(|r| r.0 == group_id)
+                    .map(|r| (r.2.height, r.3, r.4)) // (track_height, content_h, viewport_h)
+            });
+            if let Some((track_h, content_h, viewport_h)) = track_info {
+                if let Some(scroll) = self.sidebar_state.signal_group_scroll.get_mut(&group_id) {
+                    scroll.handle_drag(y, track_h, content_h, viewport_h);
+                }
+                return;
+            }
+        }
+
+        // Sidebar scrollbar handle drag move
+        if self.sidebar_state.current_right_scroll_mut().is_dragging {
+            if let Some(ref sidebar_result) = self.last_sidebar_result {
+                if let Some(ref track_rect) = sidebar_result.scrollbar_track_rect {
+                    let content_h = sidebar_result.content_height;
+                    let viewport_h = sidebar_result.content_rect.height;
+                    self.sidebar_state.current_right_scroll_mut().handle_drag(
+                        y, track_rect.height, content_h, viewport_h,
+                    );
+                    return;
+                }
+            }
         }
 
         // Sidebar drag-to-scroll: translate vertical mouse delta into scroll offset.
@@ -2049,6 +2248,22 @@ impl ChartApp {
         }
         if self.panel_app.chart_browser.is_dragging {
             self.panel_app.chart_browser.update_drag(x, y);
+            return;
+        }
+        // Chart browser scrollbar drag move
+        if self.panel_app.chart_browser.scroll.is_dragging {
+            if let Some(ref frame_r) = self.frame_result {
+                if let Some(ref cbr) = frame_r.chart_browser {
+                    if let Some(ref track_rect) = cbr.scrollbar_track_rect {
+                        self.panel_app.chart_browser.scroll.handle_drag(
+                            y,
+                            track_rect.height,
+                            cbr.total_content_height,
+                            cbr.list_viewport_rect.height,
+                        );
+                    }
+                }
+            }
             return;
         }
         if self.watchlist_modal.search_text_select_dragging {
@@ -2224,6 +2439,24 @@ impl ChartApp {
             }
             return;
         }
+        // Alert settings scrollbar drag move
+        if self.panel_app.alert_settings_state.list_scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref asr) = result.alert_settings {
+                    if let Some(ref track_rect) = asr.scrollbar_track_rect {
+                        if let Some(ref vp) = asr.list_viewport_rect {
+                            self.panel_app.alert_settings_state.list_scroll.handle_drag(
+                                y,
+                                track_rect.height,
+                                asr.list_total_content_height,
+                                vp.height,
+                            );
+                        }
+                    }
+                }
+            }
+            return;
+        }
         // User settings scrollbar drag move
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
@@ -2317,6 +2550,21 @@ impl ChartApp {
                         track_rect.height,
                         smr.total_content_height,
                         smr.viewport_height,
+                    );
+                }
+            }
+            return;
+        }
+
+        // === Watchlist modal scrollbar drag move ===
+        if self.watchlist_modal.scroll.is_dragging {
+            if let Some(ref wmr) = self.last_watchlist_modal_result {
+                if let Some(ref track_rect) = wmr.scrollbar_track_rect {
+                    self.watchlist_modal.scroll.handle_drag(
+                        y,
+                        track_rect.height,
+                        wmr.total_content_height,
+                        wmr.list_viewport_rect.height,
                     );
                 }
             }
@@ -2519,6 +2767,19 @@ impl ChartApp {
             return;
         }
 
+        // End signal group scrollbar drag.
+        for (_, scroll) in self.sidebar_state.signal_group_scroll.iter_mut() {
+            if scroll.is_dragging {
+                scroll.end_drag();
+                break;
+            }
+        }
+
+        // End sidebar scrollbar handle drag.
+        if self.sidebar_state.current_right_scroll_mut().is_dragging {
+            self.sidebar_state.current_right_scroll_mut().end_drag();
+        }
+
         // End sidebar drag-to-scroll.
         if self.sidebar_state.sidebar_drag_active {
             self.sidebar_state.sidebar_drag_active = false;
@@ -2660,6 +2921,11 @@ impl ChartApp {
             eprintln!("[ChartApp] chart_browser search text select drag ended");
             return;
         }
+        if self.panel_app.chart_browser.scroll.is_dragging {
+            self.panel_app.chart_browser.scroll.end_drag();
+            eprintln!("[ChartApp] chart_browser scrollbar drag ended");
+            return;
+        }
         if self.panel_app.chart_browser.is_dragging {
             self.panel_app.chart_browser.end_drag();
             eprintln!("[ChartApp] chart_browser modal drag ended");
@@ -2792,6 +3058,11 @@ impl ChartApp {
             eprintln!("[ChartApp] ind_settings scrollbar drag ended");
             return;
         }
+        if self.panel_app.alert_settings_state.list_scroll.is_dragging {
+            self.panel_app.alert_settings_state.list_scroll.end_drag();
+            eprintln!("[ChartApp] alert_settings scrollbar drag ended");
+            return;
+        }
         // User settings scrollbar drag end
         {
             use crate::scroll_dispatch::try_end_scrollbar_drag;
@@ -2879,6 +3150,12 @@ impl ChartApp {
         if self.modal_state.scroll.is_dragging {
             self.modal_state.scroll.end_drag();
             eprintln!("[ChartApp] search_modal scrollbar drag ended");
+            return;
+        }
+
+        // === Watchlist modal scrollbar drag end ===
+        if self.watchlist_modal.scroll.is_dragging {
+            self.watchlist_modal.scroll.end_drag();
             return;
         }
 
@@ -4289,6 +4566,25 @@ impl ChartApp {
                 return;
             }
 
+            // Alert settings modal — scroll the AlertsList tab list area.
+            if self.panel_app.alert_settings_state.is_open() {
+                if let Some(ref result) = self.frame_result {
+                    if let Some(ref asr) = result.alert_settings {
+                        if let Some(ref vp) = asr.list_viewport_rect {
+                            if x >= vp.x && x <= vp.x + vp.width && y >= vp.y && y <= vp.y + vp.height {
+                                self.panel_app.alert_settings_state.list_scroll.handle_wheel(
+                                    scroll_step,
+                                    asr.list_total_content_height,
+                                    vp.height,
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
             // User settings modal — scroll the active tab content.
             if self.panel_app.user_settings_state.is_open
                 && !self.panel_app.user_settings_state.show_profile_manager
@@ -4350,9 +4646,11 @@ impl ChartApp {
             if self.watchlist_modal.is_open() {
                 if let Some(ref wl) = self.last_watchlist_modal_result {
                     if wl.list_viewport_rect.contains(x, y) {
-                        self.watchlist_modal.scroll_offset = (
-                            self.watchlist_modal.scroll_offset - dy * 30.0
-                        ).max(0.0).min((wl.total_content_height - wl.list_viewport_rect.height).max(0.0));
+                        self.watchlist_modal.scroll.handle_wheel(
+                            -dy,
+                            wl.total_content_height,
+                            wl.list_viewport_rect.height,
+                        );
                         return;
                     }
                 }
@@ -4365,9 +4663,11 @@ impl ChartApp {
                 if let Some(ref result) = self.frame_result {
                     if let Some(ref br) = result.chart_browser {
                         if br.list_viewport_rect.contains(x, y) {
-                            self.panel_app.chart_browser.scroll_offset = (
-                                self.panel_app.chart_browser.scroll_offset - dy * 30.0
-                            ).max(0.0).min((br.total_content_height - br.list_viewport_rect.height).max(0.0));
+                            self.panel_app.chart_browser.scroll.handle_wheel(
+                                dy,
+                                br.total_content_height,
+                                br.list_viewport_rect.height,
+                            );
                             return;
                         }
                     }
@@ -4410,14 +4710,16 @@ impl ChartApp {
                             let max_offset = (total_h - viewport_h).max(0.0);
                             let current_offset = self
                                 .sidebar_state
-                                .signal_group_scroll_offsets
+                                .signal_group_scroll
                                 .get(&iid)
-                                .copied()
+                                .map(|s| s.offset)
                                 .unwrap_or(0.0);
                             let new_offset = (current_offset - dy * 30.0).clamp(0.0, max_offset);
                             self.sidebar_state
-                                .signal_group_scroll_offsets
-                                .insert(iid, new_offset);
+                                .signal_group_scroll
+                                .entry(iid)
+                                .or_default()
+                                .offset = new_offset;
                             handled_by_group = true;
                             break;
                         }
@@ -4605,7 +4907,7 @@ impl ChartApp {
                     }
                     editing.reset_blink(0);
                     self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-                    self.panel_app.chart_browser.scroll_offset = 0.0;
+                    self.panel_app.chart_browser.scroll.reset();
                 }
                 c if !c.is_control() => {
                     let editing = &mut self.panel_app.chart_browser.search_editing;
@@ -4617,7 +4919,7 @@ impl ChartApp {
                     editing.cursor += 1;
                     editing.reset_blink(0);
                     self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-                    self.panel_app.chart_browser.scroll_offset = 0.0;
+                    self.panel_app.chart_browser.scroll.reset();
                 }
                 _ => {}
             }
@@ -4647,7 +4949,7 @@ impl ChartApp {
                         }
                         editing.reset_blink(0);
                         self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                        self.watchlist_modal.scroll_offset = 0.0;
+                        self.watchlist_modal.scroll.reset();
                     }
                     c if !c.is_control() => {
                         let editing = &mut self.watchlist_modal.search_editing;
@@ -4659,7 +4961,7 @@ impl ChartApp {
                         editing.cursor += 1;
                         editing.reset_blink(0);
                         self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                        self.watchlist_modal.scroll_offset = 0.0;
+                        self.watchlist_modal.scroll.reset();
                     }
                     _ => {}
                 }
@@ -5810,7 +6112,7 @@ impl ChartApp {
             apply_key(&mut self.panel_app.chart_browser.search_editing, key);
             // Keep search_query in sync with search_editing.text
             self.panel_app.chart_browser.search_query = self.panel_app.chart_browser.search_editing.text.clone();
-            self.panel_app.chart_browser.scroll_offset = 0.0;
+            self.panel_app.chart_browser.scroll.reset();
             return;
         }
 
@@ -5823,7 +6125,7 @@ impl ChartApp {
                 apply_key(&mut self.watchlist_modal.search_editing, key);
                 // Keep search_query in sync with search_editing.text
                 self.watchlist_modal.search_query = self.watchlist_modal.search_editing.text.clone();
-                self.watchlist_modal.scroll_offset = 0.0;
+                self.watchlist_modal.scroll.reset();
                 return;
             }
         }
