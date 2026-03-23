@@ -1153,19 +1153,30 @@ impl ChartApp {
             // User settings scrollbar drag start
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
-                    if let Some(ref handle_rect) = us.scrollbar_handle_rect {
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            use zengeld_chart::ui::modal_settings::UserSettingsTab;
-                            match self.panel_app.user_settings_state.active_tab {
-                                UserSettingsTab::General => self.panel_app.user_settings_state.general_tab_scroll.start_drag(y),
-                                UserSettingsTab::Sync => self.panel_app.user_settings_state.sync_tab_scroll.start_drag(y),
-                                UserSettingsTab::Server => self.panel_app.user_settings_state.server_keys_scroll.start_drag(y),
-                                UserSettingsTab::Performance => self.panel_app.user_settings_state.performance_tab_scroll.start_drag(y),
-                            }
-                            return;
-                        }
+                    use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
+                    use zengeld_chart::ui::modal_settings::UserSettingsTab;
+
+                    let info = ScrollableInfo {
+                        handle_rect: us.scrollbar_handle_rect,
+                        track_rect: us.scrollbar_track_rect,
+                        content_height: us.scroll_content_height,
+                        viewport_height: us.scroll_viewport_height,
+                        viewport_rect: us.scroll_viewport_rect,
+                    };
+
+                    let scroll_state = match self.panel_app.user_settings_state.active_tab {
+                        UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
+                        UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
+                    };
+
+                    if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
+                        return;
+                    }
+                    // Track click (jump to position)
+                    if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
+                        return;
                     }
                 }
             }
@@ -2142,36 +2153,30 @@ impl ChartApp {
         }
         // User settings scrollbar drag move
         {
+            use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
             use zengeld_chart::ui::modal_settings::UserSettingsTab;
-            let us_state = &self.panel_app.user_settings_state;
-            let dragging_scroll = match us_state.active_tab {
-                UserSettingsTab::General => us_state.general_tab_scroll.is_dragging,
-                UserSettingsTab::Sync => us_state.sync_tab_scroll.is_dragging,
-                UserSettingsTab::Server => us_state.server_keys_scroll.is_dragging,
-                UserSettingsTab::Performance => us_state.performance_tab_scroll.is_dragging,
-            };
-            if dragging_scroll {
-                if let Some(ref result) = self.frame_result {
-                    if let Some(ref us) = result.user_settings {
-                        if let Some(ref track_rect) = us.scrollbar_track_rect {
-                            match self.panel_app.user_settings_state.active_tab {
-                                UserSettingsTab::General => self.panel_app.user_settings_state.general_tab_scroll.handle_drag(
-                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
-                                ),
-                                UserSettingsTab::Sync => self.panel_app.user_settings_state.sync_tab_scroll.handle_drag(
-                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
-                                ),
-                                UserSettingsTab::Server => self.panel_app.user_settings_state.server_keys_scroll.handle_drag(
-                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
-                                ),
-                                UserSettingsTab::Performance => self.panel_app.user_settings_state.performance_tab_scroll.handle_drag(
-                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
-                                ),
-                            }
-                        }
+
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref us) = result.user_settings {
+                    let info = ScrollableInfo {
+                        handle_rect: us.scrollbar_handle_rect,
+                        track_rect: us.scrollbar_track_rect,
+                        content_height: us.scroll_content_height,
+                        viewport_height: us.scroll_viewport_height,
+                        viewport_rect: us.scroll_viewport_rect,
+                    };
+
+                    let scroll_state = match self.panel_app.user_settings_state.active_tab {
+                        UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
+                        UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
+                    };
+
+                    if try_handle_scrollbar_drag(y, &mut [(&info, scroll_state)]) {
+                        return;
                     }
                 }
-                return;
             }
         }
 
@@ -2700,16 +2705,14 @@ impl ChartApp {
         }
         // User settings scrollbar drag end
         {
-            let us_state = &self.panel_app.user_settings_state;
-            let dragging = us_state.general_tab_scroll.is_dragging
-                || us_state.sync_tab_scroll.is_dragging
-                || us_state.server_keys_scroll.is_dragging
-                || us_state.performance_tab_scroll.is_dragging;
-            if dragging {
-                self.panel_app.user_settings_state.general_tab_scroll.end_drag();
-                self.panel_app.user_settings_state.sync_tab_scroll.end_drag();
-                self.panel_app.user_settings_state.server_keys_scroll.end_drag();
-                self.panel_app.user_settings_state.performance_tab_scroll.end_drag();
+            use crate::scroll_dispatch::try_end_scrollbar_drag;
+            let ended = try_end_scrollbar_drag(&mut [
+                &mut self.panel_app.user_settings_state.general_tab_scroll,
+                &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                &mut self.panel_app.user_settings_state.server_keys_scroll,
+                &mut self.panel_app.user_settings_state.performance_tab_scroll,
+            ]);
+            if ended {
                 return;
             }
         }
@@ -4201,31 +4204,26 @@ impl ChartApp {
                     .and_then(|r| r.user_settings.as_ref())
                     .cloned()
                 {
-                    if let Some(ref vp) = us.scroll_viewport_rect {
-                        if vp.contains(x, y) {
-                            use zengeld_chart::ui::modal_settings::UserSettingsTab;
-                            let viewport_h = vp.height;
-                            let content_h = us.scroll_content_height;
-                            match self.panel_app.user_settings_state.active_tab {
-                                UserSettingsTab::General => {
-                                    self.panel_app.user_settings_state.general_tab_scroll
-                                        .handle_wheel(scroll_step, content_h, viewport_h);
-                                }
-                                UserSettingsTab::Sync => {
-                                    self.panel_app.user_settings_state.sync_tab_scroll
-                                        .handle_wheel(scroll_step, content_h, viewport_h);
-                                }
-                                UserSettingsTab::Server => {
-                                    self.panel_app.user_settings_state.server_keys_scroll
-                                        .handle_wheel(scroll_step, content_h, viewport_h);
-                                }
-                                UserSettingsTab::Performance => {
-                                    self.panel_app.user_settings_state.performance_tab_scroll
-                                        .handle_wheel(scroll_step, content_h, viewport_h);
-                                }
-                            }
-                            return;
-                        }
+                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
+                    use zengeld_chart::ui::modal_settings::UserSettingsTab;
+
+                    let info = ScrollableInfo {
+                        handle_rect: us.scrollbar_handle_rect,
+                        track_rect: us.scrollbar_track_rect,
+                        content_height: us.scroll_content_height,
+                        viewport_height: us.scroll_viewport_height,
+                        viewport_rect: us.scroll_viewport_rect,
+                    };
+
+                    let scroll_state = match self.panel_app.user_settings_state.active_tab {
+                        UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
+                        UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
+                    };
+
+                    if try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]) {
+                        return;
                     }
                 }
                 return;

@@ -15,6 +15,7 @@
 //! ```
 
 pub mod input;
+pub mod scroll_dispatch;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
