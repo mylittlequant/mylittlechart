@@ -322,6 +322,8 @@ fn tooltip_for_hit(hit: ChromeHit, is_maximized: bool) -> Option<&'static str> {
         }
         ChromeHit::NewWindowButton  => Some(TooltipKey::NewWindow.get(lang)),
         ChromeHit::MenuButton       => Some(TooltipKey::Menu.get(lang)),
+        ChromeHit::NewTabButton     => Some(TooltipKey::NewTab.get(lang)),
+        ChromeHit::TabClose(_)      => Some(TooltipKey::CloseTab.get(lang)),
         _ => None,
     }
 }
@@ -335,6 +337,8 @@ fn widget_id_for_hit(hit: ChromeHit) -> Option<&'static str> {
         ChromeHit::MaximizeButton    => Some("chrome_maximize"),
         ChromeHit::NewWindowButton   => Some("chrome_new_window"),
         ChromeHit::MenuButton        => Some("chrome_menu"),
+        ChromeHit::NewTabButton      => Some("chrome_new_tab"),
+        ChromeHit::TabClose(_)       => Some("chrome_close_tab"),
         _ => None,
     }
 }

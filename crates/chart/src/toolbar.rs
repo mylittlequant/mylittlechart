@@ -199,7 +199,8 @@ pub fn bottom_toolbar() -> PanelToolbarDef {
             let mut s = ToolbarSectionDef::new(vec![
                 ToolbarItemDef::icon_button("expand", ToolbarIconId::new("Expand"))
                     .with_tooltip(t_toolbar(TK::Expand)),
-                ToolbarItemDef::button("clock").with_text("00:00:00"),
+                ToolbarItemDef::button("clock").with_text("00:00:00")
+                    .with_tooltip(t_toolbar(TK::ServerTime)),
             ]);
             s.align = SectionAlign::End;
             s
@@ -584,7 +585,8 @@ fn projection_section() -> ToolbarSectionDef {
             DropdownItemDef::action("price_range", "Price Range").with_icon(ToolbarIconId::new("PriceRange")),
             DropdownItemDef::action("date_range", "Date Range").with_icon(ToolbarIconId::new("DateRange")),
             DropdownItemDef::action("price_date_range", "Price & Date Range").with_icon(ToolbarIconId::new("PriceDateRange")),
-        ]).with_icon(ToolbarIconId::new("LongPosition")),
+        ]).with_icon(ToolbarIconId::new("LongPosition"))
+          .with_tooltip(t_toolbar(TK::ProjectionTool)),
     ])
 }
 
@@ -696,19 +698,22 @@ fn magnet_section() -> ToolbarSectionDef {
     // Single-click: toggle magnet ON/OFF (like lock/eye buttons).
     // Double-click: opens dropdown with magnet mode selection (handled in panel_app).
     ToolbarSectionDef::new(vec![
-        ToolbarItemDef::icon_button("magnet", ToolbarIconId::new("Magnet")),
+        ToolbarItemDef::icon_button("magnet", ToolbarIconId::new("Magnet"))
+            .with_tooltip(t_toolbar(TK::MagnetMode)),
     ])
 }
 
 fn lock_section() -> ToolbarSectionDef {
     ToolbarSectionDef::new(vec![
-        ToolbarItemDef::icon_button("lock", ToolbarIconId::new("Unlock")),
+        ToolbarItemDef::icon_button("lock", ToolbarIconId::new("Unlock"))
+            .with_tooltip(t_toolbar(TK::Lock)),
     ])
 }
 
 fn visibility_section() -> ToolbarSectionDef {
     ToolbarSectionDef::new(vec![
-        ToolbarItemDef::icon_button("eye", ToolbarIconId::new("Eye")),
+        ToolbarItemDef::icon_button("eye", ToolbarIconId::new("Eye"))
+            .with_tooltip(t_toolbar(TK::Eye)),
     ])
 }
 
@@ -717,7 +722,8 @@ fn delete_section() -> ToolbarSectionDef {
         ToolbarItemDef::quick_select("delete_tools", vec![
             DropdownItemDef::action("delete_selected", "Delete Selected").with_icon(ToolbarIconId::new("Delete")),
             DropdownItemDef::action("delete_all", "Delete All").with_icon(ToolbarIconId::new("Delete")),
-        ]).with_icon(ToolbarIconId::new("Delete")),
+        ]).with_icon(ToolbarIconId::new("Delete"))
+          .with_tooltip(t_toolbar(TK::DeleteTool)),
     ])
 }
 

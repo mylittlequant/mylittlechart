@@ -599,6 +599,7 @@ pub enum ToolbarTooltipKey {
     Search,
     FullScreen,
     SplitView,
+    ServerTime,
 }
 
 impl ToolbarTooltipKey {
@@ -656,6 +657,7 @@ impl ToolbarTooltipKey {
             Self::Search => "Search",
             Self::FullScreen => "Full Screen",
             Self::SplitView => "Split View",
+            Self::ServerTime => "Server Time",
         }
     }
 
@@ -706,6 +708,7 @@ impl ToolbarTooltipKey {
             Self::Search => "Поиск",
             Self::FullScreen => "Полный экран",
             Self::SplitView => "Разделить вид",
+            Self::ServerTime => "Серверное время",
         }
     }
 }
