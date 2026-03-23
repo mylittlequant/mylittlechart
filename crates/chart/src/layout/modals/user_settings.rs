@@ -540,6 +540,9 @@ fn render_general_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
 
 }
 
@@ -1308,6 +1311,9 @@ fn render_sync_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
 
 }
 
@@ -1474,6 +1480,9 @@ fn render_performance_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1586,6 +1595,9 @@ fn render_server_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
 }
 
 /// Render the unified API KEYS section:

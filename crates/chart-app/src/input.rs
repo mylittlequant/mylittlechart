@@ -1150,6 +1150,25 @@ impl ChartApp {
                     }
                 }
             }
+            // User settings scrollbar drag start
+            if self.panel_app.user_settings_state.is_open {
+                if let Some(ref us) = result.user_settings {
+                    if let Some(ref handle_rect) = us.scrollbar_handle_rect {
+                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
+                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
+                        if hit {
+                            use zengeld_chart::ui::modal_settings::UserSettingsTab;
+                            match self.panel_app.user_settings_state.active_tab {
+                                UserSettingsTab::General => self.panel_app.user_settings_state.general_tab_scroll.start_drag(y),
+                                UserSettingsTab::Sync => self.panel_app.user_settings_state.sync_tab_scroll.start_drag(y),
+                                UserSettingsTab::Server => self.panel_app.user_settings_state.server_keys_scroll.start_drag(y),
+                                UserSettingsTab::Performance => self.panel_app.user_settings_state.performance_tab_scroll.start_drag(y),
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
             // Indicator settings scrollbar / slider drag start
             if self.panel_app.indicator_settings_state.is_open() {
                 if let Some(ref is) = result.indicator_settings {
@@ -2121,6 +2140,40 @@ impl ChartApp {
             }
             return;
         }
+        // User settings scrollbar drag move
+        {
+            use zengeld_chart::ui::modal_settings::UserSettingsTab;
+            let us_state = &self.panel_app.user_settings_state;
+            let dragging_scroll = match us_state.active_tab {
+                UserSettingsTab::General => us_state.general_tab_scroll.is_dragging,
+                UserSettingsTab::Sync => us_state.sync_tab_scroll.is_dragging,
+                UserSettingsTab::Server => us_state.server_keys_scroll.is_dragging,
+                UserSettingsTab::Performance => us_state.performance_tab_scroll.is_dragging,
+            };
+            if dragging_scroll {
+                if let Some(ref result) = self.frame_result {
+                    if let Some(ref us) = result.user_settings {
+                        if let Some(ref track_rect) = us.scrollbar_track_rect {
+                            match self.panel_app.user_settings_state.active_tab {
+                                UserSettingsTab::General => self.panel_app.user_settings_state.general_tab_scroll.handle_drag(
+                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
+                                ),
+                                UserSettingsTab::Sync => self.panel_app.user_settings_state.sync_tab_scroll.handle_drag(
+                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
+                                ),
+                                UserSettingsTab::Server => self.panel_app.user_settings_state.server_keys_scroll.handle_drag(
+                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
+                                ),
+                                UserSettingsTab::Performance => self.panel_app.user_settings_state.performance_tab_scroll.handle_drag(
+                                    y, track_rect.height, us.scroll_content_height, us.scroll_viewport_height,
+                                ),
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+        }
 
         // === Slider drag move — update floating value only, no permanent state write ===
         if self.panel_app.primitive_settings_state.is_slider_dragging() {
@@ -2644,6 +2697,21 @@ impl ChartApp {
             self.panel_app.indicator_settings_state.scroll.end_drag();
             eprintln!("[ChartApp] ind_settings scrollbar drag ended");
             return;
+        }
+        // User settings scrollbar drag end
+        {
+            let us_state = &self.panel_app.user_settings_state;
+            let dragging = us_state.general_tab_scroll.is_dragging
+                || us_state.sync_tab_scroll.is_dragging
+                || us_state.server_keys_scroll.is_dragging
+                || us_state.performance_tab_scroll.is_dragging;
+            if dragging {
+                self.panel_app.user_settings_state.general_tab_scroll.end_drag();
+                self.panel_app.user_settings_state.sync_tab_scroll.end_drag();
+                self.panel_app.user_settings_state.server_keys_scroll.end_drag();
+                self.panel_app.user_settings_state.performance_tab_scroll.end_drag();
+                return;
+            }
         }
 
         // === Slider drag end — apply final floating value once ===

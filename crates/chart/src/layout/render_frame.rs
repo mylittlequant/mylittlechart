@@ -413,6 +413,12 @@ pub struct UserSettingsResult {
     pub scroll_viewport_rect: Option<WidgetRect>,
     /// Total content height of the active tab's scrollable area.
     pub scroll_content_height: f64,
+    /// Scrollbar handle rect (for drag detection).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect (for drag calculations).
+    pub scrollbar_track_rect: Option<WidgetRect>,
+    /// Viewport height of the active tab's scrollable area.
+    pub scroll_viewport_height: f64,
 }
 
 // =============================================================================
