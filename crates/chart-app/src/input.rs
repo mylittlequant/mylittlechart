@@ -15816,26 +15816,55 @@ impl ChartApp {
 
             ChartOutEvent::InternalToggleSyncCrosshair => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_crosshair = !group.sync_flags.sync_crosshair;
+                        newly_enabled = group.sync_flags.sync_crosshair;
                         eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, group.sync_flags.sync_crosshair);
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncCrosshair: no active group");
+                }
+                // When sync is turned ON, immediately propagate active window's crosshair to peers
+                // so that peer price ranges are re-synced and the horizontal line becomes visible.
+                if newly_enabled {
+                    if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let (bar_f64, price, crosshair_visible, pane_index) = self.panel_app
+                            .panel_grid
+                            .active_window()
+                            .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
+                            .unwrap_or((0.0, 0.0, false, None));
+                        self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+                    }
                 }
                 state_mutated = true;
             }
 
             ChartOutEvent::InternalToggleSyncViewport => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let mut newly_enabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.sync_flags.sync_viewport = !group.sync_flags.sync_viewport;
+                        newly_enabled = group.sync_flags.sync_viewport;
                         eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, group.sync_flags.sync_viewport);
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
+                }
+                // When sync is turned ON, immediately propagate active window's viewport to peers
+                // so that peer price ranges are re-aligned before crosshair sync resumes.
+                if newly_enabled {
+                    if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let viewport_state = self.panel_app
+                            .panel_grid
+                            .active_window()
+                            .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                        if let Some((view_start, bar_spacing)) = viewport_state {
+                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing);
+                        }
+                    }
                 }
                 state_mutated = true;
             }
