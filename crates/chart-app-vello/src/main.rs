@@ -240,6 +240,8 @@ struct PerWindowState {
     /// `GpuDone` is received (confirming the frame was presented), the window
     /// is made visible.
     visible_set: bool,
+    /// Reference instant used to compute monotonic milliseconds for chrome tooltip timing.
+    chrome_tooltip_start: std::time::Instant,
 }
 
 /// A pending request to open a new window.
@@ -867,6 +869,12 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
             let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             render_toasts(&mut toast_ctx, active_toasts, width as f64, height as f64);
         }
+
+        // Render chrome tooltip (top-most layer)
+        {
+            let mut tooltip_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
+            chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
+        }
     } else {
         // ── Non-VelloGpu: full backend switch ─────────────────────────────────
         // Everything renders through the selected backend only.
@@ -943,6 +951,20 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&toast_ctx.inner().draw_commands);
                 }
 
+                // Render chrome tooltip (top-most layer).
+                {
+                    let mut tooltip_ctx = instanced_context::InstancedChartRenderContext::new(
+                        width as f32,
+                        height as f32,
+                        0.0,
+                        0.0,
+                        None,
+                        None,
+                    );
+                    chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
+                    chart_ctx.inner_mut().draw_commands.extend_from_slice(&tooltip_ctx.inner().draw_commands);
+                }
+
                 // Merge chrome instances into chart instances and store for GPU submission.
                 let chrome_inner = chrome_ctx.inner();
                 chart_ctx.inner_mut().draw_commands.extend_from_slice(&chrome_inner.draw_commands);
@@ -980,6 +1002,8 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut cpu_ctx, active_toasts, width as f64, height as f64);
                 }
+                // Render chrome tooltip (top-most layer).
+                chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
                 // Rasterize to pixel buffer.
                 let pixel_count = (width as usize) * (height as usize) * 4;
                 let mut pixels = vec![0u8; pixel_count];
@@ -1021,6 +1045,8 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut skia_ctx, active_toasts, width as f64, height as f64);
                 }
+                // Render chrome tooltip (top-most layer).
+                chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
                 let pixels = skia_ctx.inner().pixels();
                 pw.cpu_chart_dims = (width, height);
                 pw.cpu_chart_pixels = pixels.to_vec();
@@ -1052,6 +1078,8 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 if !active_toasts.is_empty() {
                     render_toasts(&mut hybrid_ctx, active_toasts, width as f64, height as f64);
                 }
+                // Render chrome tooltip (top-most layer).
+                chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
                 let mut inner = uzor_backend_vello_hybrid::VelloHybridRenderContext::new(1.0);
@@ -2072,6 +2100,16 @@ impl App<'_> {
         #[cfg(all(feature = "updater", not(feature = "standalone")))]
         let is_unofficial_build: bool = env!("BUILD_ATTESTATION").is_empty();
 
+        // Apply saved language preference from profile.
+        {
+            let lang = match profile.language.as_str() {
+                "ru" => zengeld_chart::Language::Ru,
+                _    => zengeld_chart::Language::En,
+            };
+            zengeld_chart::set_language(lang);
+            eprintln!("[App] startup language: {}", profile.language);
+        }
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -2321,6 +2359,9 @@ impl App<'_> {
         // Sync telemetry opt-out from the loaded profile.
         chart.panel_app.user_settings_state.telemetry_enabled =
             self.profile_manager.profile.telemetry_enabled;
+        // Sync language preference from the loaded profile.
+        chart.panel_app.user_settings_state.language =
+            self.profile_manager.profile.language.clone();
         // Sync cloud sync settings from the loaded profile.
         {
             let ss = &self.profile_manager.profile.sync_state;
@@ -2495,6 +2536,7 @@ impl App<'_> {
             hybrid_ctx: None,
             gpu_hybrid_ctx: None,
             visible_set: false,
+            chrome_tooltip_start: std::time::Instant::now(),
         };
 
         self.windows.insert(win_id, pw);
@@ -4428,6 +4470,22 @@ impl ApplicationHandler for App<'_> {
                     pw.chart.indicator_manager.recalc_mode = recalc_mode;
                 }
                 eprintln!("[App] recalc_mode changed to: {}", mode_str);
+            }
+        }
+
+        // ── Drain language changes → profile + all windows ───────────────
+        {
+            let new_lang: Option<String> = self.windows.values_mut()
+                .find_map(|pw| pw.chart.language_changed.take());
+            if let Some(ref lang_code) = new_lang {
+                // Propagate to all windows
+                for pw in self.windows.values_mut() {
+                    pw.chart.panel_app.user_settings_state.language = lang_code.clone();
+                }
+                // Save to active profile
+                self.profile.language = lang_code.clone();
+                self.profile_manager.profile.language = lang_code.clone();
+                eprintln!("[App] language changed to: {}", lang_code);
             }
         }
 
@@ -6921,6 +6979,12 @@ impl ApplicationHandler for App<'_> {
                     hit
                 };
 
+                // Update chrome tooltip based on the (possibly skeleton-filtered) hover.
+                {
+                    let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                    chrome::update_tooltip(&mut pw.chrome_state, x, y, time_ms);
+                }
+
                 match hit {
                     chrome::ChromeHit::ResizeTop | chrome::ChromeHit::ResizeBottom => {
                         pw.window.set_cursor_visible(true);
@@ -6958,7 +7022,10 @@ impl ApplicationHandler for App<'_> {
                         // Do not forward to chart
                         return;
                     }
-                    chrome::ChromeHit::None => {}
+                    chrome::ChromeHit::None => {
+                        // Cursor is below the chrome strip — clear tooltip.
+                        pw.chrome_state.tooltip.clear();
+                    }
                 }
 
                 // Only forward events in the chart area (below chrome strip).

@@ -13,6 +13,8 @@
 //! Tab close icons and the action buttons use SVG icons from the chart icon set.
 
 use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext, TextAlign, TextBaseline};
+use uzor::{TooltipState, WidgetId, calculate_tooltip_position};
+use uzor::i18n::{TooltipKey, current_language};
 use zengeld_chart::ui::icons::icon_svg;
 
 const MINI_MASCOT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot.svg");
@@ -185,6 +187,8 @@ pub struct ChromeState {
     pub tab_widths: Vec<f64>,
     /// Right-click context menu state.
     pub context_menu: ChromeContextMenu,
+    /// Tooltip state for chrome button hover tooltips.
+    pub tooltip: TooltipState,
 }
 
 impl ChromeState {
@@ -197,6 +201,7 @@ impl ChromeState {
             tabs:         Vec::new(),
             tab_widths:   Vec::new(),
             context_menu: ChromeContextMenu::new(),
+            tooltip:      TooltipState::new(),
         }
     }
 }
@@ -295,6 +300,113 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
     }
 
     ChromeHit::None
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+
+/// Map a `ChromeHit` to a static tooltip string using the current i18n language.
+///
+/// Returns `None` for hits that have no tooltip (caption, resize borders, tabs, etc.).
+fn tooltip_for_hit(hit: ChromeHit, is_maximized: bool) -> Option<&'static str> {
+    let lang = current_language();
+    match hit {
+        ChromeHit::CloseButton      => Some(TooltipKey::CloseApp.get(lang)),
+        ChromeHit::CloseWindowButton => Some(TooltipKey::CloseWindow.get(lang)),
+        ChromeHit::MinimizeButton   => Some(TooltipKey::Minimize.get(lang)),
+        ChromeHit::MaximizeButton   => {
+            if is_maximized {
+                Some(TooltipKey::Restore.get(lang))
+            } else {
+                Some(TooltipKey::Maximize.get(lang))
+            }
+        }
+        ChromeHit::NewWindowButton  => Some(TooltipKey::NewWindow.get(lang)),
+        ChromeHit::MenuButton       => Some(TooltipKey::Menu.get(lang)),
+        _ => None,
+    }
+}
+
+/// Return a stable widget-id string for tooltip-bearing chrome hits.
+fn widget_id_for_hit(hit: ChromeHit) -> Option<&'static str> {
+    match hit {
+        ChromeHit::CloseButton       => Some("chrome_close_app"),
+        ChromeHit::CloseWindowButton => Some("chrome_close_window"),
+        ChromeHit::MinimizeButton    => Some("chrome_minimize"),
+        ChromeHit::MaximizeButton    => Some("chrome_maximize"),
+        ChromeHit::NewWindowButton   => Some("chrome_new_window"),
+        ChromeHit::MenuButton        => Some("chrome_menu"),
+        _ => None,
+    }
+}
+
+/// Update chrome tooltip state. Call every frame when the cursor is in the chrome area.
+///
+/// `time_ms` is the elapsed time in milliseconds since some fixed reference point (e.g.
+/// app start). `cursor_x` / `cursor_y` are logical pixel coordinates relative to the window.
+pub fn update_tooltip(state: &mut ChromeState, cursor_x: f64, cursor_y: f64, time_ms: f64) {
+    let hit = state.hovered;
+
+    let widget_id = widget_id_for_hit(hit).map(WidgetId::new);
+    state.tooltip.update(widget_id.clone(), time_ms);
+
+    if let (Some(wid), Some(text)) = (widget_id, tooltip_for_hit(hit, state.is_maximized)) {
+        state.tooltip.request_tooltip(wid, text.to_string(), (cursor_x, cursor_y), time_ms);
+    }
+}
+
+/// Render the chrome tooltip if one is currently visible.
+///
+/// Must be called after [`render`]. The tooltip is drawn at the top of the compositing
+/// stack, above chrome buttons and context menus. `screen_width` and `screen_height`
+/// are the full window dimensions in logical pixels.
+pub fn render_tooltip(
+    ctx: &mut dyn RenderContext,
+    state: &ChromeState,
+    screen_width: f64,
+    screen_height: f64,
+) {
+    let active = match state.tooltip.get_active() {
+        Some(t) => t,
+        None => return,
+    };
+
+    let opacity = state.tooltip.get_opacity();
+    if opacity <= 0.0 {
+        return;
+    }
+
+    let text = &active.text;
+    ctx.set_font("12px sans-serif");
+    let text_width = ctx.measure_text(text);
+    let pad = 6.0;
+    let tw = text_width + pad * 2.0;
+    let th = 12.0 + pad * 2.0; // font_size + 2*padding
+
+    let (tx, ty) = calculate_tooltip_position(
+        active.position,
+        (tw, th),
+        (screen_width, screen_height),
+        (0.0, 20.0), // 0 horizontal offset, 20px below cursor
+    );
+
+    ctx.save();
+    ctx.set_global_alpha(opacity);
+
+    // Shadow
+    ctx.set_fill_color("#00000060");
+    ctx.fill_rounded_rect(tx + 1.0, ty + 1.0, tw, th, 4.0);
+
+    // Background
+    ctx.set_fill_color("#323232");
+    ctx.fill_rounded_rect(tx, ty, tw, th, 4.0);
+
+    // Text
+    ctx.set_fill_color("#ffffff");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(text, tx + pad, ty + th / 2.0);
+
+    ctx.restore();
 }
 
 // ── render ────────────────────────────────────────────────────────────────────

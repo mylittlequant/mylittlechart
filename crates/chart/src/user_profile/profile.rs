@@ -186,6 +186,11 @@ pub struct UserProfile {
     #[serde(default = "default_scale_mode")]
     pub scale_mode: String,
 
+    /// UI language preference (ISO 639-1 code: "en", "ru").
+    /// Applied at startup via `set_language()`.
+    #[serde(default = "default_language")]
+    pub language: String,
+
     // -------------------------------------------------------------------------
     // Agent API server
     // -------------------------------------------------------------------------
@@ -423,6 +428,7 @@ impl UserProfile {
             bar_count: default_bar_count(),
             recalc_mode: default_recalc_mode(),
             scale_mode: default_scale_mode(),
+            language: default_language(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
             legacy_single_agent_key: String::new(),
@@ -806,6 +812,10 @@ fn default_recalc_mode() -> String {
 
 fn default_scale_mode() -> String {
     "Auto".to_string()
+}
+
+fn default_language() -> String {
+    "en".to_string()
 }
 
 fn default_server_enabled() -> bool {

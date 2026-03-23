@@ -440,6 +440,61 @@ fn render_general_tab(
         cy += btn_h + 24.0;
     }
 
+    // ── Section: LANGUAGE ────────────────────────────────────────────────────
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("LANGUAGE", x, cy);
+    cy += 20.0;
+
+    {
+        let lang_options = [
+            RadioOption {
+                key: "en",
+                label: "English",
+                description: "",
+            },
+            RadioOption {
+                key: "ru",
+                label: "Русский",
+                description: "",
+            },
+        ];
+
+        let lang_selected = match state.language.as_str() {
+            "ru" => 1,
+            _    => 0,
+        };
+
+        let lang_radio_result = draw_radio_group(
+            ctx,
+            &lang_options,
+            lang_selected,
+            state.hovered_item_id.as_deref(),
+            x,
+            cy,
+            available_w,
+            scroll_widget_theme,
+        );
+
+        for (i, (rx, ry, rw, rh)) in lang_radio_result.option_rects.iter().enumerate() {
+            let hit_id = format!("user_settings:language:{}", lang_options[i].key);
+            result.content_items.push((
+                format!("language:{}", lang_options[i].key),
+                WidgetRect::new(*rx, *ry, *rw, *rh),
+            ));
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                uzor::types::Rect::new(*rx, *ry, *rw, *rh),
+                Sense::CLICK,
+                layer_id,
+            );
+        }
+
+        cy += lang_options.len() as f64 * (52.0 + 8.0) - 8.0 + 16.0;
+    }
+
     // ── Section: PRIVACY ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");

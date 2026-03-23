@@ -20,6 +20,7 @@ pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
 pub use sidebar_content::watchlist::{WatchlistManager, WatchlistSymbol};
 pub use zengeld_terminal_indicators::RecalcMode;
+pub use zengeld_chart::{Language, set_language};
 
 use std::cell::RefCell;
 
@@ -343,6 +344,11 @@ pub struct ChartApp {
     /// Drained by App in about_to_wait(); App then updates AppState.recalc_mode
     /// and syncs the new mode to all windows.
     pub recalc_mode_changed: Option<String>,
+
+    /// Set when the user selects a new language in the User Settings General tab.
+    /// Drained by App in about_to_wait(); App then applies set_language(), propagates
+    /// to all windows, and saves to the active profile.
+    pub language_changed: Option<String>,
 
     /// Signal: server enabled/disabled changed. Consumed by main.rs.
     pub server_enabled_changed: Option<bool>,
@@ -711,6 +717,7 @@ impl ChartApp {
             perf_actions: Vec::new(),
             theme_changed: None,
             recalc_mode_changed: None,
+            language_changed: None,
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
@@ -970,6 +977,7 @@ impl ChartApp {
             perf_actions: Vec::new(),
             theme_changed: None,
             recalc_mode_changed: None,
+            language_changed: None,
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
@@ -1126,6 +1134,7 @@ impl ChartApp {
             perf_actions: Vec::new(),
             theme_changed: None,
             recalc_mode_changed: None,
+            language_changed: None,
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
@@ -5936,6 +5945,7 @@ impl ChartApp {
             telemetry: existing.telemetry.clone(),
             bar_count: existing.bar_count,
             recalc_mode: existing.recalc_mode.clone(),
+            language: self.panel_app.user_settings_state.language.clone(),
             scale_mode: match self.default_scale_mode {
                 ScaleMode::Auto   => "Auto".to_string(),
                 ScaleMode::Focus  => "Focus".to_string(),

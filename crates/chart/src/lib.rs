@@ -444,9 +444,10 @@ pub use render::{
 // Internationalization (i18n)
 pub use i18n::{
     Language, current_language, set_language,
-    t, t_menu, t_config, t_wave, t_style, t_label_pos,
-    TextKey, MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey,
+    t, t_tooltip, t_menu, t_config, t_wave, t_style, t_label_pos,
+    TextKey, TooltipKey, MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey,
     MonthKey, month_names_short,
+    Translatable,
 };
 
 // User profile (aggregate persistent state — active selections, UI state)

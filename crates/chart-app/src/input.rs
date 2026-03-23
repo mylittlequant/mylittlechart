@@ -7716,6 +7716,18 @@ impl ChartApp {
                     self.indicator_manager.clear_pending();
                     eprintln!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
                 }
+                // Language radio option selected — hit id: "language:{code}"
+                rest if rest.starts_with("language:") => {
+                    let lang_code = &rest["language:".len()..];
+                    let lang = match lang_code {
+                        "ru" => crate::Language::Ru,
+                        _    => crate::Language::En,
+                    };
+                    crate::set_language(lang);
+                    self.panel_app.user_settings_state.language = lang_code.to_string();
+                    self.language_changed = Some(lang_code.to_string());
+                    eprintln!("[ChartApp] language set to: {}", lang_code);
+                }
                 "diagnostics_toggle" => {
                     self.diagnostics_enabled = !self.diagnostics_enabled;
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;

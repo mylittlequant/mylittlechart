@@ -3280,6 +3280,9 @@ pub struct UserSettingsState {
     pub active_dropdown: Option<String>,
     /// Current recalc mode label synced from indicator_manager (e.g. "Per Frame").
     pub recalc_mode_label: String,
+    /// Current UI language code (e.g. "en", "ru").
+    /// Synced from UserProfile.language before each render.
+    pub language: String,
     /// Whether the periodic RecalcMode diagnostic log is enabled.
     /// Synced from ChartApp.diagnostics_enabled before each render.
     pub diagnostics_enabled: bool,
@@ -3515,6 +3518,7 @@ impl Default for UserSettingsState {
             active_tab: UserSettingsTab::default(),
             active_dropdown: None,
             recalc_mode_label: "Per Frame".to_string(),
+            language: "en".to_string(),
             diagnostics_enabled: false,
             server_enabled: true,
             server_port: 17420,

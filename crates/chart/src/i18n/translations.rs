@@ -1,27 +1,7 @@
-//! Translation utilities
-//!
-//! This module provides additional translation utilities and documentation
-//! for extending the i18n system.
+//! Translation utilities — chart-specific Translatable implementations
 
-use super::{Language, TextKey, MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey};
-
-/// Trait for types that can be translated
-pub trait Translatable {
-    /// Get the translated display name for this value
-    fn display_name(&self, lang: Language) -> &'static str;
-
-    /// Get display name using current global language
-    fn display_name_current(&self) -> &'static str {
-        self.display_name(super::current_language())
-    }
-}
-
-// Implement Translatable for all key types
-impl Translatable for TextKey {
-    fn display_name(&self, lang: Language) -> &'static str {
-        self.get(lang)
-    }
-}
+use uzor::i18n::{Language, Translatable};
+use super::keys::{MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey};
 
 impl Translatable for MenuKey {
     fn display_name(&self, lang: Language) -> &'static str {
@@ -59,7 +39,7 @@ mod tests {
 
     #[test]
     fn test_translatable_trait() {
-        let key = TextKey::Delete;
+        let key = MenuKey::Delete;
         assert_eq!(key.display_name(Language::En), "Delete");
         assert_eq!(key.display_name(Language::Ru), "Удалить");
     }
