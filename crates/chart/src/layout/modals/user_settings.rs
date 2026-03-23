@@ -178,10 +178,6 @@ pub fn render_user_settings_modal(
     let content_y = modal_y + header_h;
     let content_w = modal_w - sidebar_w - sidebar_gap;
 
-    // Content background
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(content_x, content_y, content_w, content_h);
-
     // Tab title
     ctx.set_font("bold 14px sans-serif");
     ctx.set_fill_color(text_color);
