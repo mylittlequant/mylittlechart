@@ -245,7 +245,6 @@ pub fn render_user_settings_modal(
                 viewport_rect,
                 state,
                 text_color,
-                toolbar_theme,
                 &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
@@ -253,30 +252,37 @@ pub fn render_user_settings_modal(
             );
         }
         UserSettingsTab::Performance => {
-            render_performance_tab(
-                ctx,
+            let viewport_rect = WidgetRect::new(
                 content_x + padding,
                 settings_y,
                 content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_performance_tab(
+                ctx,
+                viewport_rect,
                 state,
-                text_color,
                 toolbar_theme,
-                frame_theme,
+                &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
                 &mut result,
             );
         }
         UserSettingsTab::Server => {
-            render_server_tab(
-                ctx,
+            let viewport_rect = WidgetRect::new(
                 content_x + padding,
                 settings_y,
                 content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_server_tab(
+                ctx,
+                viewport_rect,
                 state,
-                text_color,
                 toolbar_theme,
                 frame_theme,
+                &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
                 &mut result,
@@ -496,61 +502,6 @@ fn render_general_tab(
         cy += lang_options.len() as f64 * (52.0 + 8.0) - 8.0 + 16.0;
     }
 
-    // ── Section: PRIVACY ─────────────────────────────────────────────────────
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("PRIVACY", x, cy);
-    cy += 20.0;
-
-    // Telemetry toggle row
-    {
-        let toggle_w = 32.0;
-        let toggle_h = 18.0;
-        let toggle_x = x + available_w - toggle_w;
-        let toggle_y = cy + 1.0;
-        let is_on = state.telemetry_enabled;
-
-        // Track
-        let track_color = if is_on { &toolbar_theme.accent } else { &toolbar_theme.separator };
-        ctx.set_fill_color(track_color);
-        ctx.fill_rounded_rect(toggle_x, toggle_y, toggle_w, toggle_h, toggle_h / 2.0);
-
-        // Thumb
-        let thumb_r = toggle_h / 2.0 - 2.0;
-        let thumb_cx = if is_on {
-            toggle_x + toggle_w - thumb_r - 3.0
-        } else {
-            toggle_x + thumb_r + 3.0
-        };
-        ctx.set_fill_color("rgba(255,255,255,0.95)");
-        ctx.begin_path();
-        ctx.arc(thumb_cx, toggle_y + toggle_h / 2.0, thumb_r, 0.0, std::f64::consts::TAU);
-        ctx.fill();
-
-        // Label
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Send anonymous usage data", x, cy);
-        cy += 20.0;
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.45)");
-        ctx.fill_text("Heartbeat & metrics sent to chart.example (Connected mode only)", x, cy);
-        cy += 20.0;
-
-        let row_rect = uzor::types::Rect::new(x, toggle_y - 2.0, available_w, toggle_h + 4.0);
-        result.content_items.push(("telemetry_toggle".to_string(), uzor::types::Rect::new(toggle_x, toggle_y, toggle_w, toggle_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:telemetry_toggle",
-            row_rect,
-            Sense::CLICK,
-            layer_id,
-        );
-    }
-    cy += 8.0;
-
     // ── Version info (always shown at bottom) ─────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
@@ -593,6 +544,7 @@ fn render_general_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+
 }
 
 // =============================================================================
@@ -1108,102 +1060,6 @@ fn render_profile_section(
 }
 
 // =============================================================================
-// Helper: render a single toggle row (track + thumb + label)
-// Returns the toggle track rect for hit-testing.
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_toggle_row(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
-    label: &str,
-    is_on: bool,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-) -> uzor::types::Rect {
-    let toggle_w = 32.0;
-    let toggle_h = 18.0;
-    let toggle_x = x + available_w - toggle_w;
-    let toggle_y = y + 1.0;
-
-    let track_color = if is_on { &toolbar_theme.accent } else { &toolbar_theme.separator };
-    ctx.set_fill_color(track_color);
-    ctx.fill_rounded_rect(toggle_x, toggle_y, toggle_w, toggle_h, toggle_h / 2.0);
-
-    let thumb_r = toggle_h / 2.0 - 2.0;
-    let thumb_cx = if is_on {
-        toggle_x + toggle_w - thumb_r - 3.0
-    } else {
-        toggle_x + thumb_r + 3.0
-    };
-    ctx.set_fill_color("rgba(255,255,255,0.95)");
-    ctx.begin_path();
-    ctx.arc(thumb_cx, toggle_y + toggle_h / 2.0, thumb_r, 0.0, std::f64::consts::TAU);
-    ctx.fill();
-
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text(label, x, y);
-
-    uzor::types::Rect::new(x, toggle_y - 2.0, available_w, toggle_h + 4.0)
-}
-
-// =============================================================================
-// Helper: render a checkbox row
-// Returns the row rect for hit-testing.
-// =============================================================================
-
-fn render_checkbox_row(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    label: &str,
-    is_checked: bool,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-) -> uzor::types::Rect {
-    let cb_size = 14.0;
-    let cb_y = y + 1.0;
-
-    // Box
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.set_fill_color(if is_checked { &toolbar_theme.accent } else { "transparent" });
-    ctx.begin_path();
-    ctx.move_to(x, cb_y);
-    ctx.line_to(x + cb_size, cb_y);
-    ctx.line_to(x + cb_size, cb_y + cb_size);
-    ctx.line_to(x, cb_y + cb_size);
-    ctx.close_path();
-    ctx.fill();
-    ctx.stroke();
-
-    // Checkmark
-    if is_checked {
-        ctx.set_stroke_color("rgba(255,255,255,0.95)");
-        ctx.set_stroke_width(1.5);
-        ctx.begin_path();
-        ctx.move_to(x + 2.5, cb_y + cb_size / 2.0);
-        ctx.line_to(x + cb_size / 2.0 - 1.0, cb_y + cb_size - 3.0);
-        ctx.line_to(x + cb_size - 2.0, cb_y + 2.5);
-        ctx.stroke();
-    }
-
-    // Label
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text(label, x + cb_size + 8.0, y);
-
-    uzor::types::Rect::new(x, y, 200.0, 20.0)
-}
-
-// =============================================================================
 // Sync tab renderer
 // =============================================================================
 
@@ -1213,7 +1069,6 @@ fn render_sync_tab(
     viewport_rect: WidgetRect,
     state: &UserSettingsState,
     text_color: &str,
-    toolbar_theme: &ToolbarTheme,
     scroll_widget_theme: &WidgetTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
@@ -1229,7 +1084,6 @@ fn render_sync_tab(
     let available_w = container.content_width();
     let mut cy = container.content_y();
     let section_gap = 20.0;
-    let row_gap = 26.0;
 
     // ── Gate: Unofficial Build / Attestation Rejected ─────────────────────────
     let sync_tab_locked = state.is_unofficial_build || state.attestation_rejected;
@@ -1274,14 +1128,14 @@ fn render_sync_tab(
     // Determine current sync level from state fields
     // Level 3 (Cloud+ZT): sync enabled AND at least one vault item enabled
     // Level 2 (Cloud):    sync enabled AND no vault items
-    // Level 1 (Connected): OTA or telemetry enabled, no sync
+    // Level 1 (Connected): OTA enabled, no sync
     // Level 0 (Local):    nothing enabled
     #[derive(PartialEq, Clone, Copy)]
     enum SyncLevel { Local, Connected, Cloud }
 
     let current_level = if state.sync_enabled {
         SyncLevel::Cloud
-    } else if state.ota_enabled || state.telemetry_enabled {
+    } else if state.ota_enabled {
         SyncLevel::Connected
     } else {
         SyncLevel::Local
@@ -1298,7 +1152,7 @@ fn render_sync_tab(
     // Radio rows — (level, click_id, label, description)
     let radio_rows: &[(SyncLevel, &str, &str, &str)] = &[
         (SyncLevel::Local,     "local",     "Local",      "No network activity. Data stays on this device."),
-        (SyncLevel::Connected, "connected", "Connected",  "Auto-updates + telemetry."),
+        (SyncLevel::Connected, "connected", "Connected",  "Auto-updates + anonymous usage metrics."),
         (SyncLevel::Cloud,     "cloud",     "Cloud",      "Full sync: presets, vault, recovery key."),
     ];
 
@@ -1458,28 +1312,29 @@ fn render_sync_tab(
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scroll_content_height = scroll_result.content_height;
+
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_performance_tab(
     ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
+    viewport_rect: WidgetRect,
     state: &UserSettingsState,
-    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
-    _frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
-    // Section label
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("INDICATOR RECALCULATION", x, y);
+    let container = ScrollableContainer::new(
+        viewport_rect,
+        &state.performance_tab_scroll,
+        None,
+    );
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
 
     // Build WidgetTheme from toolbar colours
     let widget_theme = WidgetTheme {
@@ -1499,6 +1354,14 @@ fn render_performance_tab(
         warning:       "#ff9800".to_string(),
         danger:        "#ef5350".to_string(),
     };
+
+    // Section label
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("INDICATOR RECALCULATION", x, cy);
+    cy += 22.0;
 
     let options = [
         RadioOption {
@@ -1524,14 +1387,13 @@ fn render_performance_tab(
         _          => 0, // Per Frame default
     };
 
-    let radio_y = y + 22.0;
     let radio_result = draw_radio_group(
         ctx,
         &options,
         selected_index,
         state.hovered_item_id.as_deref(),
         x,
-        radio_y,
+        cy,
         available_w,
         &widget_theme,
     );
@@ -1551,19 +1413,19 @@ fn render_performance_tab(
         );
     }
 
-    // ── Diagnostics toggle ────────────────────────────────────────────────────
-    // Placed below the radio group: 3 options × (52 + 8) px − last gap = 172 px
-    let diag_section_y = radio_y + options.len() as f64 * (52.0 + 8.0) - 8.0 + 24.0;
+    // Advance cy past the radio group
+    cy += options.len() as f64 * (52.0 + 8.0) - 8.0 + 24.0;
 
+    // ── Diagnostics toggle ────────────────────────────────────────────────────
     // Section label
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("DIAGNOSTICS", x, diag_section_y);
+    ctx.fill_text("DIAGNOSTICS", x, cy);
 
     let row_h = 24.0;
-    let cb_y_offset = diag_section_y + 18.0;
+    let cb_y_offset = cy + 18.0;
 
     // Checkbox (16 × 16)
     let cb_size = 16.0;
@@ -1609,22 +1471,37 @@ fn render_performance_tab(
         Sense::CLICK,
         layer_id,
     );
+
+    cy = desc_y + 15.0;
+
+    let total_content_h = cy - container.content_y() + container.scroll_offset();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_server_tab(
     ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
+    viewport_rect: WidgetRect,
     state: &UserSettingsState,
-    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
+    let container = ScrollableContainer::new(
+        viewport_rect,
+        &state.server_keys_scroll,
+        None,
+    );
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
+
     let row_h = 24.0;
     let section_gap = 18.0;
 
@@ -1633,13 +1510,13 @@ fn render_server_tab(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("SERVER", x, y);
+    ctx.fill_text("SERVER", x, cy);
 
     // Enable toggle checkbox row
-    let cb_y_offset = y + section_gap;
+    cy += section_gap;
     let cb_size = 16.0;
     let cb_x = x;
-    let cb_y = cb_y_offset + (row_h - cb_size) / 2.0;
+    let cb_y = cy + (row_h - cb_size) / 2.0;
 
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
@@ -1657,23 +1534,23 @@ fn render_server_tab(
     ctx.fill_text(
         "Enable Agent API Server",
         cb_x + cb_size + 10.0,
-        cb_y_offset + row_h / 2.0,
+        cy + row_h / 2.0,
     );
 
-    let toggle_rect = WidgetRect::new(cb_x, cb_y_offset, available_w, row_h);
+    let toggle_rect = WidgetRect::new(cb_x, cy, available_w, row_h);
     result.content_items.push(("server_toggle".to_string(), toggle_rect));
     input_coordinator.register_on_layer(
         "user_settings:server_toggle",
-        uzor::types::Rect::new(cb_x, cb_y_offset, available_w, row_h),
+        uzor::types::Rect::new(cb_x, cy, available_w, row_h),
         Sense::CLICK,
         layer_id,
     );
+    cy += row_h + 8.0;
 
     // Status indicator row
-    let status_row_y = cb_y_offset + row_h + 8.0;
     let dot_r = 4.0;
     let dot_cx = x + dot_r;
-    let dot_cy = status_row_y + row_h / 2.0;
+    let dot_cy = cy + row_h / 2.0;
 
     let is_running = state.server_enabled && state.server_status == "running";
     let dot_color = if is_running { "#26a69a" } else { "#ef5350" };
@@ -1692,15 +1569,14 @@ fn render_server_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&status_text, dot_cx + dot_r + 6.0, dot_cy);
+    cy += row_h + 16.0;
 
     // ── Section: API KEYS ─────────────────────────────────────────────────────
     // This unified section replaces the old "API KEY" + "MANAGED KEYS" sections.
-    let local_agent_keys_y = status_row_y + row_h + 16.0;
-
-    render_local_agent_keys_section(
+    let bottom = render_local_agent_keys_section(
         ctx,
         x,
-        local_agent_keys_y,
+        cy,
         available_w,
         state,
         toolbar_theme,
@@ -1709,6 +1585,11 @@ fn render_server_tab(
         layer_id,
         result,
     );
+
+    let total_content_h = bottom - container.content_y() + container.scroll_offset();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
 }
 
 /// Render the unified API KEYS section:
@@ -1727,7 +1608,7 @@ fn render_local_agent_keys_section(
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
-) {
+) -> f64 {
     let row_h = 24.0;
     let section_gap = 18.0;
 
@@ -1929,68 +1810,30 @@ fn render_local_agent_keys_section(
     ctx.fill_text("Registered keys", x, cursor_y + 7.0);
     cursor_y += 20.0;
 
-    // ── Keys list (scrollable when more than 3 keys) ──────────────────────────
+    // ── Keys list ─────────────────────────────────────────────────────────────
+    // The outer tab ScrollableContainer handles clipping and scrolling.
     let item_h = 28.0;
     let num_keys = state.local_agent_keys_ui.len();
-    let total_keys_h = if num_keys == 0 {
-        row_h + 4.0 // "No keys" placeholder
-    } else {
-        num_keys as f64 * (item_h + 4.0)
-    };
-
-    // Viewport height: show up to 3 keys; scroll if more
-    let max_visible_keys = 3usize;
-    let viewport_h = (item_h + 4.0) * max_visible_keys.min(num_keys.max(1)) as f64;
-
-    let keys_viewport = uzor::types::Rect::new(x, cursor_y, available_w, viewport_h);
-
-    // Build WidgetTheme for the scrollbar
-    let widget_theme = WidgetTheme {
-        bg_normal:      toolbar_theme.item_bg_hover.clone(),
-        bg_hover:       toolbar_theme.item_bg_hover.clone(),
-        bg_pressed:     toolbar_theme.item_bg_active.clone(),
-        bg_disabled:    toolbar_theme.item_bg_hover.clone(),
-        text_normal:    toolbar_theme.item_text.clone(),
-        text_hover:     toolbar_theme.item_text_active.clone(),
-        text_disabled:  toolbar_theme.item_text_muted.clone(),
-        border_normal:  toolbar_theme.separator.clone(),
-        border_hover:   toolbar_theme.separator.clone(),
-        border_focused: toolbar_theme.accent.clone(),
-        accent:         toolbar_theme.accent.clone(),
-        accent_hover:   toolbar_theme.accent.clone(),
-        success:        "#26a69a".to_string(),
-        warning:        "#ff9800".to_string(),
-        danger:         "#ef5350".to_string(),
-    };
-
-    let container = ScrollableContainer::new(
-        keys_viewport,
-        &state.server_keys_scroll,
-        None,
-    );
-    container.begin(ctx);
-
-    let content_start_y = container.content_y();
-    let content_w = container.content_width();
 
     if state.local_agent_keys_ui.is_empty() {
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No keys yet.", x, content_start_y + row_h / 2.0);
+        ctx.fill_text("No keys yet.", x, cursor_y + row_h / 2.0);
+        cursor_y += row_h + 4.0;
     } else {
         for (idx, key_info) in state.local_agent_keys_ui.iter().enumerate() {
-            let item_y = content_start_y + idx as f64 * (item_h + 4.0);
+            let item_y = cursor_y + idx as f64 * (item_h + 4.0);
             let delete_btn_w = 24.0;
-            let delete_btn_x = x + content_w - delete_btn_w;
+            let delete_btn_x = x + available_w - delete_btn_w;
 
             // Row hover highlight
             let item_id = format!("server_key_row_{}", key_info.label);
             let is_hovered = state.hovered_item_id.as_deref() == Some(&item_id);
             if is_hovered {
                 ctx.set_fill_color(&frame_theme.toolbar_bg);
-                ctx.fill_rounded_rect(x, item_y, content_w, item_h, 2.0);
+                ctx.fill_rounded_rect(x, item_y, available_w, item_h, 2.0);
             }
 
             // Tier badge
@@ -2057,217 +1900,16 @@ fn render_local_agent_keys_section(
                 layer_id,
             );
         }
+        cursor_y += num_keys as f64 * (item_h + 4.0);
     }
 
-    let scroll_result = container.end(ctx, total_keys_h, &widget_theme);
-    result.scroll_viewport_rect = Some(keys_viewport);
-    result.scroll_content_height = scroll_result.content_height;
+    // Return the bottom of the last rendered element.
+    cursor_y
 }
 
 // =============================================================================
 // Mode-transition confirmation dialogs
 // =============================================================================
-
-/// Render the inline confirmation panel shown when the user clicks "Connected"
-/// from Standalone mode (sync_transition_pending = true).
-///
-/// Returns the new `cy` value after all rendered content.
-#[allow(clippy::too_many_arguments)]
-fn render_sync_connect_dialog(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
-    state: &UserSettingsState,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) -> f64 {
-    let mut cy = y;
-
-    // ── Gate: not logged in ───────────────────────────────────────────────────
-    if !state.is_logged_in {
-        let box_h = 80.0;
-        ctx.set_fill_color("rgba(244,205,99,0.06)");
-        ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, box_h, 6.0);
-        ctx.set_stroke_color("rgba(244,205,99,0.25)");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, box_h, 6.0);
-
-        ctx.set_font("600 12px sans-serif");
-        ctx.set_fill_color("rgba(244,205,99,0.9)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("CONNECT TO MYLITTLECHART.ORG?", x, cy);
-        cy += 22.0;
-
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.55)");
-        ctx.fill_text("Link your account first.", x, cy);
-        cy += 14.0;
-        ctx.fill_text("Go to the General tab and sign in with GitHub or Google.", x, cy);
-        cy += 20.0;
-
-        // Cancel button
-        let btn_h = 26.0;
-        ctx.set_fill_color("rgba(239,83,80,0.10)");
-        ctx.fill_rounded_rect(x, cy, available_w, btn_h, 4.0);
-        ctx.set_stroke_color("rgba(239,83,80,0.35)");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, available_w, btn_h, 4.0);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(239,83,80,0.8)");
-        ctx.set_text_align(uzor::render::TextAlign::Center);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-        ctx.fill_text("Cancel", x + available_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        result.content_items.push(("sync_cancel".to_string(), WidgetRect::new(x, cy, available_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:sync_cancel",
-            uzor::types::Rect::new(x, cy, available_w, btn_h),
-            Sense::CLICK,
-            layer_id,
-        );
-        cy += btn_h;
-
-        return cy;
-    }
-
-    // Dialog box background
-    ctx.set_fill_color("rgba(244,205,99,0.06)");
-    ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 220.0, 6.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 220.0, 6.0);
-
-    // Title
-    ctx.set_font("600 12px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.9)");
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("CONNECT TO MYLITTLECHART.ORG?", x, cy);
-    cy += 22.0;
-
-    // Body text
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
-    ctx.fill_text("Your local data stays on this machine.", x, cy);
-    cy += 16.0;
-    ctx.fill_text("Choose how to handle cloud synchronization:", x, cy);
-    cy += 20.0;
-
-    let btn_h = 28.0;
-    let btn_gap = 8.0;
-    let btn_w = available_w;
-
-    // ── Button: Upload Local Data ─────────────────────────────────────────────
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_stroke_color(&toolbar_theme.accent);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.accent);
-    ctx.set_text_align(uzor::render::TextAlign::Center);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Upload Local Data", x + btn_w / 2.0, cy + btn_h / 2.0);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    result.content_items.push(("sync_upload".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-    input_coordinator.register_on_layer(
-        "user_settings:sync_upload",
-        uzor::types::Rect::new(x, cy, btn_w, btn_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += btn_h + btn_gap;
-
-    // Sub-label for Upload
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("Push your presets and settings to the cloud.", x, cy);
-    cy += 16.0;
-
-    // ── Button: Download Cloud Data ───────────────────────────────────────────
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(uzor::render::TextAlign::Center);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Download Cloud Data", x + btn_w / 2.0, cy + btn_h / 2.0);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    result.content_items.push(("sync_download".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-    input_coordinator.register_on_layer(
-        "user_settings:sync_download",
-        uzor::types::Rect::new(x, cy, btn_w, btn_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += btn_h + btn_gap;
-
-    // Sub-label for Download
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("Replace local syncable data with your cloud version.", x, cy);
-    cy += 16.0;
-
-    // ── Button: Start Fresh ───────────────────────────────────────────────────
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(uzor::render::TextAlign::Center);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Start Fresh", x + btn_w / 2.0, cy + btn_h / 2.0);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    result.content_items.push(("sync_fresh".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-    input_coordinator.register_on_layer(
-        "user_settings:sync_fresh",
-        uzor::types::Rect::new(x, cy, btn_w, btn_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += btn_h + btn_gap;
-
-    // Sub-label for Fresh
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("Don't upload anything. Start with an empty cloud profile.", x, cy);
-    cy += 16.0;
-
-    // ── Button: Cancel ────────────────────────────────────────────────────────
-    ctx.set_fill_color("rgba(239,83,80,0.10)");
-    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_stroke_color("rgba(239,83,80,0.35)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(239,83,80,0.8)");
-    ctx.set_text_align(uzor::render::TextAlign::Center);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Cancel — Stay Offline", x + btn_w / 2.0, cy + btn_h / 2.0);
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    result.content_items.push(("sync_cancel".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-    input_coordinator.register_on_layer(
-        "user_settings:sync_cancel",
-        uzor::types::Rect::new(x, cy, btn_w, btn_h),
-        Sense::CLICK,
-        layer_id,
-    );
-    cy += btn_h;
-
-    cy
-}
 
 /// Render the inline confirmation panel shown when the user clicks "Standalone"
 /// from Connected mode (disconnect_pending = true).

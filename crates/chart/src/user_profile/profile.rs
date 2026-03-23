@@ -266,12 +266,6 @@ pub struct UserProfile {
     #[serde(default = "default_true")]
     pub ota_enabled: bool,
 
-    /// Whether to send anonymized usage metrics to chart.example.
-    ///
-    /// Persisted so the user's choice survives restarts.
-    #[serde(default)]
-    pub telemetry_enabled: bool,
-
     // -------------------------------------------------------------------------
     // Telemetry counters (accumulated since installation)
     // -------------------------------------------------------------------------
@@ -438,7 +432,6 @@ impl UserProfile {
             cloud_enabled: false,
             sync_level: String::new(),
             ota_enabled: true,
-            telemetry_enabled: false,
             telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),

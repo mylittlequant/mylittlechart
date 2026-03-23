@@ -2074,7 +2074,6 @@ impl App<'_> {
                 bridge.runtime().handle(),
                 source,
                 connected,
-                profile.telemetry_enabled,
                 profile.sync_state.enabled,
                 profile.sync_state.synced_items.clone(),
                 profile.sync_state.last_synced_checksums.clone(),
@@ -2363,9 +2362,6 @@ impl App<'_> {
         // seed used during startup loading).
         chart.panel_app.user_settings_state.client_mode_connected =
             self.profile.cloud_enabled;
-        // Sync telemetry opt-out from the loaded profile.
-        chart.panel_app.user_settings_state.telemetry_enabled =
-            self.profile_manager.profile.telemetry_enabled;
         // Sync language preference from the loaded profile.
         chart.panel_app.user_settings_state.language =
             self.profile_manager.profile.language.clone();
@@ -2650,19 +2646,16 @@ impl App<'_> {
             match level.as_str() {
                 "local" => {
                     p.ota_enabled = false;
-                    p.telemetry_enabled = false;
                     p.sync_state.enabled = false;
                     p.cloud_enabled = false;
                 }
                 "connected" => {
                     p.ota_enabled = true;
-                    p.telemetry_enabled = true;
                     p.sync_state.enabled = false;
                     p.cloud_enabled = false;
                 }
                 "cloud" => {
                     p.ota_enabled = true;
-                    p.telemetry_enabled = true;
                     p.sync_state.enabled = true;
                     p.sync_state.sync_presets = true;
                     p.sync_state.sync_templates = true;
@@ -2747,9 +2740,6 @@ impl App<'_> {
             // starts or stops OTA checks accordingly.
             let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(
                 self.profile_manager.profile.ota_enabled,
-            ));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(
-                self.profile_manager.profile.telemetry_enabled,
             ));
             let ss = &self.profile_manager.profile.sync_state;
             let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(ss.enabled));
@@ -2982,7 +2972,6 @@ impl App<'_> {
         // those changes would be lost on the next save_all() call.
         self.profile.sync_state = self.profile_manager.profile.sync_state.clone();
         self.profile.ota_enabled = self.profile_manager.profile.ota_enabled;
-        self.profile.telemetry_enabled = self.profile_manager.profile.telemetry_enabled;
         self.profile.cloud_enabled = self.profile_manager.profile.cloud_enabled;
 
         let mut profile = self.profile.clone();
@@ -5423,27 +5412,22 @@ impl ApplicationHandler for App<'_> {
                         let cloud = match level {
                             "local" => {
                                 p.ota_enabled = false;
-                                p.telemetry_enabled = false;
                                 p.sync_state.enabled = false;
                                 p.cloud_enabled = false;
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(false));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(false));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
                                 false
                             }
                             "connected" => {
                                 p.ota_enabled = true;
-                                p.telemetry_enabled = true;
                                 p.sync_state.enabled = false;
                                 p.cloud_enabled = false;
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
                                 false
                             }
                             "cloud" => {
                                 p.ota_enabled = true;
-                                p.telemetry_enabled = true;
                                 p.sync_state.enabled = true;
                                 p.sync_state.sync_presets = true;
                                 p.sync_state.sync_templates = true;
@@ -5454,7 +5438,6 @@ impl ApplicationHandler for App<'_> {
                                 p.sync_state.sync_recovery_key = true;
                                 p.cloud_enabled = true;
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetTelemetryEnabled(true));
                                 let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
                                 true
                             }
@@ -5774,12 +5757,10 @@ impl ApplicationHandler for App<'_> {
                     self.sync_profiles_to_windows();
                     // Push updated toggle states to all windows.
                     let ota = self.profile_manager.profile.ota_enabled;
-                    let telemetry = self.profile_manager.profile.telemetry_enabled;
                     let sync_en = self.profile_manager.profile.sync_state.enabled;
                     for pw in self.windows.values_mut() {
                         let us = &mut pw.chart.panel_app.user_settings_state;
                         us.ota_enabled = ota;
-                        us.telemetry_enabled = telemetry;
                         us.sync_enabled = sync_en;
                     }
                 }

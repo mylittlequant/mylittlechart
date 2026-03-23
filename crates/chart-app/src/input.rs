@@ -4151,7 +4151,10 @@ impl ChartApp {
                                     self.panel_app.user_settings_state.server_keys_scroll
                                         .handle_wheel(scroll_step, content_h, viewport_h);
                                 }
-                                UserSettingsTab::Performance => {}
+                                UserSettingsTab::Performance => {
+                                    self.panel_app.user_settings_state.performance_tab_scroll
+                                        .handle_wheel(scroll_step, content_h, viewport_h);
+                                }
                             }
                             return;
                         }
@@ -7773,7 +7776,6 @@ impl ChartApp {
                 "sync_level:local" => {
                     let s = &mut self.panel_app.user_settings_state;
                     s.ota_enabled = false;
-                    s.telemetry_enabled = false;
                     s.sync_enabled = false;
                     self.pending_updater_cmd = Some("set_sync_level:local".to_string());
                     eprintln!("[ChartApp] sync_level = local");
@@ -7781,7 +7783,6 @@ impl ChartApp {
                 "sync_level:connected" => {
                     let s = &mut self.panel_app.user_settings_state;
                     s.ota_enabled = true;
-                    s.telemetry_enabled = true;
                     s.sync_enabled = false;
                     self.pending_updater_cmd = Some("set_sync_level:connected".to_string());
                     eprintln!("[ChartApp] sync_level = connected");
@@ -7789,7 +7790,6 @@ impl ChartApp {
                 "sync_level:cloud" => {
                     let s = &mut self.panel_app.user_settings_state;
                     s.ota_enabled = true;
-                    s.telemetry_enabled = true;
                     s.sync_enabled = true;
                     s.sync_presets = true;
                     s.sync_templates = true;

@@ -3315,6 +3315,8 @@ pub struct UserSettingsState {
     pub general_tab_scroll: ScrollState,
     /// Scroll state for the Sync tab content.
     pub sync_tab_scroll: ScrollState,
+    /// Scroll state for the Performance tab content.
+    pub performance_tab_scroll: ScrollState,
 
     // ── Auth / Account ────────────────────────────────────────────────────────
     /// Whether the user is currently logged in to chart.example.
@@ -3330,10 +3332,6 @@ pub struct UserSettingsState {
     /// `true` = Connected to chart.example (OTA updates, cloud sync).
     /// `false` = Standalone / offline mode (no server communication).
     pub client_mode_connected: bool,
-
-    // ── Telemetry ─────────────────────────────────────────────────────────────
-    /// Whether to send anonymized usage metrics.  Mirrors `UserProfile.telemetry_enabled`.
-    pub telemetry_enabled: bool,
 
     // ── Mode transition confirmation ──────────────────────────────────────────
     /// `true` = showing the Standalone → Connected confirmation dialog.
@@ -3505,6 +3503,7 @@ pub struct UserSettingsState {
     /// new profile creation.  One of "local", "connected", "cloud".
     /// Defaults to "connected".  Consumed when the user clicks "Продолжить".
     pub new_profile_sync_level: String,
+
 }
 
 impl Default for UserSettingsState {
@@ -3532,12 +3531,12 @@ impl Default for UserSettingsState {
             server_keys_scroll: ScrollState::default(),
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
+            performance_tab_scroll: ScrollState::default(),
             is_logged_in: false,
             auth_display_name: String::new(),
             auth_provider: String::new(),
             auth_user_id: 0,
             client_mode_connected: false,
-            telemetry_enabled: false,
             sync_transition_pending: false,
             disconnect_pending: false,
             sync_enabled: false,

@@ -127,18 +127,13 @@ pub enum UpdaterCommand {
     Logout,
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
-    /// `false` = cloud disabled (stop all phone-home).
+    /// `false` = cloud disabled (stop all network activity).
     SetCloudEnabled(bool),
     /// Trigger an immediate cloud sync cycle (push local changes, pull remote).
     ///
     /// Ignored in standalone mode.  The updater broadcasts progress via the
     /// `sync_status_rx` watch channel on `UpdaterHandle`.
     ForceSync,
-    /// Enable or disable telemetry at runtime.
-    ///
-    /// When `false`, update checks still run but heartbeat/telemetry payloads
-    /// are not sent to the server.
-    SetTelemetryEnabled(bool),
     /// Enable or disable cloud sync at runtime.
     ///
     /// Mirrors `UserProfile.sync_state.enabled` so the updater loop does not

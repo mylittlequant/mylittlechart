@@ -5960,7 +5960,6 @@ impl ChartApp {
             local_agent_keys: existing.local_agent_keys.clone(),
             exchange_keys: existing.exchange_keys.clone(),
             connector_enabled: self.sidebar_state.connector_enabled.clone(),
-            telemetry_enabled: self.panel_app.user_settings_state.telemetry_enabled,
             notification_settings: existing.notification_settings.clone(),
             windows: existing.windows.clone(),
             sync_state: {
