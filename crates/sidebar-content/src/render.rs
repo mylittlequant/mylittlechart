@@ -1082,18 +1082,60 @@ fn render_watchlist_items(
 
         // --- Column data, each cell clipped to its separator region ---
 
-        // Symbol column (col 0) — always left-aligned.
+        // Symbol column (col 0) — always left-aligned, with account_type badge.
         {
             let (clip_l, clip_r) = col_clip(0);
             let clip_w = (clip_r - clip_l).max(0.0);
             if clip_w >= 1.0 {
                 let (align, tx) = col_text_x(0, clip_l, clip_r);
+                let row_mid_y = current_y + data_row_h / 2.0;
+
+                // Resolve badge label: always show — "S" for Spot (empty), or the actual label.
+                let badge_label = if item.account_type.is_empty() {
+                    "S"
+                } else {
+                    item.account_type.as_str()
+                };
+
+                // Badge colors: green for Spot, orange for everything else.
+                let (badge_bg, badge_fg) = if badge_label == "S" {
+                    ("#1a3a2a", "#26a69a") // dark-green bg, teal text
+                } else {
+                    ("#3a2a10", "#f59e0b") // dark-amber bg, amber text
+                };
+
+                // Measure badge dimensions.
+                ctx.set_font("bold 8px sans-serif");
+                let badge_text_w = ctx.measure_text(badge_label);
+                let badge_pad_h = 3.0;
+                let badge_pad_v = 2.0;
+                let badge_w = badge_text_w + badge_pad_h * 2.0;
+                let badge_h = 12.0;
+
+                // Badge is drawn at the left of the clip area; symbol text follows.
+                let badge_x = clip_l + 2.0;
+                let badge_y = row_mid_y - badge_h / 2.0;
+                let symbol_x = badge_x + badge_w + 4.0;
+                let symbol_clip_w = (clip_r - symbol_x).max(0.0);
+
+                // Draw badge background.
+                ctx.set_fill_color(badge_bg);
+                ctx.fill_rounded_rect(badge_x, badge_y, badge_w, badge_h, 2.0);
+
+                // Draw badge text.
+                ctx.set_fill_color(badge_fg);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(badge_label, badge_x + badge_pad_h, row_mid_y + badge_pad_v * 0.25);
+
+                // Draw symbol text after the badge.
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(align);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                let display_symbol = truncate_to_width(ctx, &item.symbol, clip_w);
-                ctx.fill_text(&display_symbol, tx, current_y + data_row_h / 2.0);
+                let display_symbol = truncate_to_width(ctx, &item.symbol, symbol_clip_w);
+                let _ = tx; // tx is unused now — symbol always left-aligns after badge
+                ctx.fill_text(&display_symbol, symbol_x, row_mid_y);
             }
         }
 

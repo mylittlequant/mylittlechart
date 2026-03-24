@@ -80,9 +80,9 @@ pub const LEAF_TAB_HEIGHT: f64 = 24.0;
 
 /// Render an overlay tab header at the top of a split leaf.
 ///
-/// Draws a compact `SYMBOL · TF` label with an optional color-tag square and
-/// (when hovered) a three-dot menu indicator.  The active leaf receives a
-/// slightly brighter background and a 2 px left accent bar.
+/// Draws a compact `SYMBOL · TF · EXCHANGE · ACCT` label with an optional
+/// color-tag square and (when hovered) a three-dot menu indicator.  The active
+/// leaf receives a slightly brighter background and a 2 px left accent bar.
 ///
 /// # Arguments
 /// * `ctx`           — Mutable render context.
@@ -90,6 +90,9 @@ pub const LEAF_TAB_HEIGHT: f64 = 24.0;
 /// * `max_width`     — Maximum width available for the tab.
 /// * `symbol`        — Symbol string, e.g. `"BTCUSDT"`.
 /// * `timeframe`     — Timeframe label, e.g. `"1H"`.
+/// * `exchange`      — Exchange name, e.g. `"Binance"`.  May be empty.
+/// * `account_type`  — Account type short label, e.g. `"S"` for Spot,
+///                     `"FC"` for Futures Cross.  Always shown.
 /// * `is_active`     — Whether this leaf is the active (focused) one.
 /// * `hovered_zone`  — Which interactive zone is currently hovered.
 /// * `color_tag`     — Optional RGBA color for the tag square.
@@ -105,6 +108,7 @@ pub fn render_leaf_tab(
     symbol: &str,
     timeframe: &str,
     exchange: &str,
+    account_type: &str,
     is_active: bool,
     hovered_zone: LeafTabHoverZone,
     color_tag: Option<[f32; 4]>,
@@ -136,9 +140,9 @@ pub fn render_leaf_tab(
     ctx.set_text_baseline(TextBaseline::Middle);
 
     let display_text = if exchange.is_empty() {
-        format!("{} · {}", symbol, timeframe)
+        format!("{} · {} · {}", symbol, timeframe, account_type)
     } else {
-        format!("{} · {} · {}", symbol, timeframe, exchange)
+        format!("{} · {} · {} · {}", symbol, timeframe, exchange, account_type)
     };
 
     // Available width for the text container.

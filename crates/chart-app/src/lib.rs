@@ -3658,6 +3658,7 @@ impl ChartApp {
                     &window.symbol,
                     &window.timeframe.name,
                     &window.exchange,
+                    "S",  // account_type — default Spot until ChartWindow carries it
                     is_active_leaf,
                     hover_zone,
                     color_tag,
@@ -4084,6 +4085,7 @@ impl ChartApp {
                     &symbol,
                     &timeframe,
                     &exchange,
+                    "S",  // account_type
                     true, // always active in single mode
                     hover_zone,
                     single_color_tag,
