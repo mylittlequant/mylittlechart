@@ -1,0 +1,675 @@
+//! WS multiplexing actor system.
+//!
+//! One actor per `(ExchangeId, WsStreamType)` pair.  All symbols for the same
+//! exchange+stream share a single WebSocket connection.  Reference-counted
+//! subscribe/unsubscribe with a 30-second grace period before the actual
+//! unsubscribe is sent, so fast symbol-switch patterns don't thrash the
+//! connection.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use futures_util::StreamExt;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::JoinHandle;
+
+use digdigdig3::{
+    AccountType, ExchangeId, StreamEvent, SubscriptionRequest, Symbol,
+    WebSocketConnector, WebSocketExt,
+};
+use digdigdig3::crypto::cex::binance::BinanceWebSocket;
+use digdigdig3::crypto::cex::bybit::BybitWebSocket;
+use digdigdig3::crypto::cex::okx::OkxWebSocket;
+use digdigdig3::crypto::cex::kucoin::KuCoinWebSocket;
+use digdigdig3::crypto::cex::kraken::KrakenWebSocket;
+use digdigdig3::crypto::cex::coinbase::CoinbaseWebSocket;
+use digdigdig3::crypto::cex::gateio::GateioWebSocket;
+use digdigdig3::crypto::cex::bitfinex::BitfinexWebSocket;
+use digdigdig3::crypto::cex::bitstamp::BitstampWebSocket;
+use digdigdig3::crypto::cex::mexc::MexcWebSocket;
+use digdigdig3::crypto::cex::htx::HtxWebSocket;
+use digdigdig3::crypto::cex::bitget::BitgetWebSocket;
+use digdigdig3::crypto::cex::bingx::BingxWebSocket;
+use digdigdig3::crypto::cex::phemex::PhemexWebSocket;
+use digdigdig3::crypto::cex::upbit::UpbitWebSocket;
+use digdigdig3::crypto::cex::deribit::DeribitWebSocket;
+use digdigdig3::crypto::cex::hyperliquid::HyperliquidWebSocket;
+use digdigdig3::crypto::dex::dydx::DydxWebSocket;
+use digdigdig3::crypto::dex::paradex::ParadexWebSocket;
+use digdigdig3::crypto::dex::gmx::GmxWebSocket;
+use digdigdig3::stocks::russia::moex::MoexWebSocket;
+use digdigdig3::crypto::cex::gemini::GeminiWebSocket;
+use digdigdig3::crypto::cex::crypto_com::CryptoComWebSocket;
+use digdigdig3::crypto::dex::lighter::LighterWebSocket;
+
+use crate::bridge::LiveUpdate;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Identifies a single multiplexed WS connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct WsKey {
+    pub exchange_id: ExchangeId,
+    pub stream_type: WsStreamType,
+}
+
+/// The type of data stream multiplexed over a WS connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum WsStreamType {
+    Trades,
+    Ticker,
+}
+
+/// Command sent to a running WS actor.
+pub(crate) enum WsCmd {
+    AddSymbol { symbol: String },
+    RemoveSymbol { symbol: String },
+    Shutdown,
+}
+
+pub(crate) struct WsActorHandle {
+    pub cmd_tx: mpsc::Sender<WsCmd>,
+    pub task: JoinHandle<()>,
+}
+
+/// Map of running WS actors, one per `WsKey`.
+pub(crate) struct WsActorMap {
+    pub actors: HashMap<WsKey, WsActorHandle>,
+}
+
+impl WsActorMap {
+    pub fn new() -> Self {
+        Self { actors: HashMap::new() }
+    }
+
+    /// Return the command sender for an existing live actor, or spawn a new one.
+    pub fn get_or_spawn(
+        &mut self,
+        key: WsKey,
+        tx: broadcast::Sender<LiveUpdate>,
+        ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+        rt: &tokio::runtime::Handle,
+    ) -> mpsc::Sender<WsCmd> {
+        if let Some(handle) = self.actors.get(&key) {
+            if !handle.task.is_finished() {
+                return handle.cmd_tx.clone();
+            }
+            self.actors.remove(&key);
+        }
+        let (cmd_tx, cmd_rx) = mpsc::channel::<WsCmd>(64);
+        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles));
+        self.actors.insert(key, WsActorHandle { cmd_tx: cmd_tx.clone(), task });
+        cmd_tx
+    }
+
+    /// Send a command to an actor if it exists.
+    pub fn send_cmd(&self, key: &WsKey, cmd: WsCmd) {
+        if let Some(handle) = self.actors.get(key) {
+            let _ = handle.cmd_tx.try_send(cmd);
+        }
+    }
+
+    /// Shutdown and remove an actor.
+    pub fn remove(&mut self, key: &WsKey) {
+        if let Some(handle) = self.actors.remove(key) {
+            let _ = handle.cmd_tx.try_send(WsCmd::Shutdown);
+        }
+    }
+
+    /// Count live actors for a given exchange.
+    pub fn active_count_for_exchange(&self, exchange_id: ExchangeId) -> usize {
+        self.actors
+            .iter()
+            .filter(|(k, h)| k.exchange_id == exchange_id && !h.task.is_finished())
+            .count()
+    }
+
+    /// Count all live actors across all exchanges.
+    pub fn total_active_count(&self) -> usize {
+        self.actors.values().filter(|h| !h.task.is_finished()).count()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTOR STATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct WsActorState {
+    exchange_id: ExchangeId,
+    stream_type: WsStreamType,
+    /// Reference counts per symbol — incremented on AddSymbol, decremented on RemoveSymbol.
+    refcounts: HashMap<String, u32>,
+    /// Symbols with count == 0 waiting for the 30-second grace period before
+    /// the actual unsubscribe is sent to the exchange.
+    deferred_unsub: HashMap<String, tokio::time::Instant>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTOR MAIN LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn run_ws_actor(
+    key: WsKey,
+    mut cmd_rx: mpsc::Receiver<WsCmd>,
+    tx: broadcast::Sender<LiveUpdate>,
+    ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+) {
+    let mut state = WsActorState {
+        exchange_id: key.exchange_id,
+        stream_type: key.stream_type,
+        refcounts: HashMap::new(),
+        deferred_unsub: HashMap::new(),
+    };
+    let mut retry_count: u32 = 0;
+
+    'outer: loop {
+        // Exponential backoff before reconnect attempts.
+        if retry_count > 0 {
+            let base_secs = std::cmp::min(1u64 << std::cmp::min(retry_count - 1, 5), 30);
+            let jitter_ms = (retry_count as u64 * 137) % 500;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                base_secs * 1000 + jitter_ms,
+            ))
+            .await;
+        }
+        retry_count += 1;
+
+        // Build a new WS connection.
+        let mut ws: Box<dyn WebSocketConnector> =
+            match build_ws(key.exchange_id, &ws_rtt_handles).await {
+                Ok(ws) => ws,
+                Err(e) => {
+                    eprintln!(
+                        "[WsActor] {:?}/{:?} connect failed: {}",
+                        key.exchange_id, key.stream_type, e
+                    );
+                    continue 'outer;
+                }
+            };
+
+        // Re-subscribe all symbols that were active before this reconnect.
+        for symbol in state.refcounts.keys().cloned().collect::<Vec<_>>() {
+            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+            if let Err(e) = ws.subscribe(req).await {
+                eprintln!("[WsActor] re-subscribe {} failed: {}", symbol, e);
+            }
+        }
+
+        let mut event_stream = ws.event_stream();
+
+        // Inner event loop — exits on stream error/close; 'outer then reconnects.
+        loop {
+            // Calculate how long until the next deferred-unsub deadline.
+            let next_defer = state.deferred_unsub.values().copied().min();
+            let timeout_dur = match next_defer {
+                Some(deadline) => {
+                    let now = tokio::time::Instant::now();
+                    if deadline <= now {
+                        std::time::Duration::ZERO
+                    } else {
+                        deadline - now
+                    }
+                }
+                None => std::time::Duration::from_secs(60),
+            };
+
+            tokio::select! {
+                biased;
+
+                cmd = cmd_rx.recv() => {
+                    match cmd {
+                        None | Some(WsCmd::Shutdown) => break 'outer,
+
+                        Some(WsCmd::AddSymbol { symbol }) => {
+                            // Cancel any pending deferred unsub for this symbol.
+                            let already_subbed = state.deferred_unsub.remove(&symbol).is_some();
+                            let count = state.refcounts.entry(symbol.clone()).or_insert(0);
+                            *count += 1;
+                            // Subscribe only if this is the first reference and was not
+                            // simply re-activated from the deferred-unsub queue.
+                            if *count == 1 && !already_subbed {
+                                let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+                                if let Err(e) = ws.subscribe(req).await {
+                                    eprintln!("[WsActor] subscribe {} failed: {}", symbol, e);
+                                }
+                            }
+                        }
+
+                        Some(WsCmd::RemoveSymbol { symbol }) => {
+                            if let Some(count) = state.refcounts.get_mut(&symbol) {
+                                if *count > 0 {
+                                    *count -= 1;
+                                }
+                                if *count == 0 {
+                                    let deadline = tokio::time::Instant::now()
+                                        + std::time::Duration::from_secs(30);
+                                    state.deferred_unsub.insert(symbol, deadline);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                _ = tokio::time::sleep(timeout_dur) => {
+                    // Process any deferred unsubscribes whose grace period has expired.
+                    let now = tokio::time::Instant::now();
+                    let expired: Vec<String> = state
+                        .deferred_unsub
+                        .iter()
+                        .filter(|(_, &d)| d <= now)
+                        .map(|(s, _)| s.clone())
+                        .collect();
+                    for symbol in expired {
+                        state.deferred_unsub.remove(&symbol);
+                        if state.refcounts.get(&symbol).copied().unwrap_or(0) == 0 {
+                            state.refcounts.remove(&symbol);
+                            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+                            let _ = ws.unsubscribe(req).await;
+                            eprintln!(
+                                "[WsActor] {:?} unsubscribed {} after 30s grace",
+                                key.exchange_id, symbol
+                            );
+                        }
+                    }
+                }
+
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    event_stream.next(),
+                ) => {
+                    match result {
+                        Ok(Some(Ok(event))) => {
+                            retry_count = 0; // Reset backoff on successful data.
+                            dispatch_event(&tx, &state, event);
+                        }
+                        Ok(Some(Err(e))) => {
+                            eprintln!(
+                                "[WsActor] {:?}/{:?} stream error: {}",
+                                key.exchange_id, key.stream_type, e
+                            );
+                            break; // Trigger reconnect.
+                        }
+                        Ok(None) => break,   // Stream ended normally; reconnect.
+                        Err(_) => {
+                            eprintln!(
+                                "[WsActor] {:?}/{:?} 60s silence, reconnecting",
+                                key.exchange_id, key.stream_type
+                            );
+                            break; // Trigger reconnect.
+                        }
+                    }
+                }
+            }
+        }
+
+        // After inner-loop exit, signal a backfill so the chart can fill any gap
+        // that opened while the connection was down.
+        let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id: key.exchange_id });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUILD WS — create + connect without subscribing to any symbol
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn build_ws(
+    exchange_id: ExchangeId,
+    ws_rtt_handles: &Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+) -> Result<Box<dyn WebSocketConnector>, String> {
+    macro_rules! standard {
+        ($ws_type:ty) => {{
+            let mut ws = <$ws_type>::new(None, false, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws) as Box<dyn WebSocketConnector>
+        }};
+    }
+
+    macro_rules! no_account_type {
+        ($ws_type:ty) => {{
+            let mut ws = <$ws_type>::new(None, false)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws) as Box<dyn WebSocketConnector>
+        }};
+    }
+
+    macro_rules! credentials_only {
+        ($ws_type:ty) => {{
+            let mut ws = <$ws_type>::new(None)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws) as Box<dyn WebSocketConnector>
+        }};
+    }
+
+    macro_rules! sync_new {
+        ($ws_type:ty) => {{
+            let mut ws = <$ws_type>::new(None, false, AccountType::Spot)
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws) as Box<dyn WebSocketConnector>
+        }};
+    }
+
+    let ws: Box<dyn WebSocketConnector> = match exchange_id {
+        // ── Standard: new(creds, testnet, account_type) async ──
+        ExchangeId::Binance  => standard!(BinanceWebSocket),
+        ExchangeId::Bybit    => standard!(BybitWebSocket),
+        ExchangeId::GateIO   => standard!(GateioWebSocket),
+        ExchangeId::Bitfinex => standard!(BitfinexWebSocket),
+        ExchangeId::BingX    => standard!(BingxWebSocket),
+        ExchangeId::Bitget   => standard!(BitgetWebSocket),
+        ExchangeId::Deribit  => standard!(DeribitWebSocket),
+        ExchangeId::KuCoin   => standard!(KuCoinWebSocket),
+
+        // ── OKX: new(creds, testnet) — no AccountType in constructor ──
+        ExchangeId::OKX => {
+            let mut ws = OkxWebSocket::new(None, false)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            if let Some(rtt) = <OkxWebSocket as WebSocketConnector>::ping_rtt_handle(&ws) {
+                if let Ok(mut h) = ws_rtt_handles.lock() {
+                    h.insert(exchange_id, rtt);
+                }
+            }
+            Box::new(ws)
+        }
+
+        // ── No AccountType in constructor ──
+        ExchangeId::Phemex  => no_account_type!(PhemexWebSocket),
+        ExchangeId::Paradex => no_account_type!(ParadexWebSocket),
+
+        // ── Credentials only (no testnet, no account_type) ──
+        ExchangeId::Coinbase => credentials_only!(CoinbaseWebSocket),
+        ExchangeId::MEXC     => credentials_only!(MexcWebSocket),
+
+        // ── Sync constructor ──
+        ExchangeId::HTX => sync_new!(HtxWebSocket),
+
+        // ── Kraken: new(creds, account_type) async ──
+        ExchangeId::Kraken => {
+            let mut ws = KrakenWebSocket::new(None, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── Bitstamp: new() takes no arguments ──
+        ExchangeId::Bitstamp => {
+            let mut ws = BitstampWebSocket::new()
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── HyperLiquid: sync new(testnet) ──
+        ExchangeId::HyperLiquid => {
+            let mut ws = HyperliquidWebSocket::new(false);
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── Upbit: new(creds, region) async ──
+        ExchangeId::Upbit => {
+            let mut ws = UpbitWebSocket::new(None, "sg")
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── dYdX: new(testnet, account_type) async ──
+        ExchangeId::Dydx => {
+            let mut ws = DydxWebSocket::new(false, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── GMX: new(creds) async ──
+        ExchangeId::Gmx => {
+            let mut ws = GmxWebSocket::new(None)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── MOEX: sync new_public() ──
+        ExchangeId::Moex => {
+            let mut ws = MoexWebSocket::new_public();
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws)
+        }
+
+        // ── Gemini: new_market_data(testnet) async ──
+        ExchangeId::Gemini => {
+            let mut ws = GeminiWebSocket::new_market_data(false)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            WebSocketConnector::connect(&mut ws, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
+                if let Ok(mut h) = ws_rtt_handles.lock() {
+                    h.insert(exchange_id, rtt);
+                }
+            }
+            Box::new(ws)
+        }
+
+        // ── Crypto.com: sync new(creds, testnet) ──
+        ExchangeId::CryptoCom => {
+            let mut ws = CryptoComWebSocket::new(None, false);
+            WebSocketConnector::connect(&mut ws, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
+                if let Ok(mut h) = ws_rtt_handles.lock() {
+                    h.insert(exchange_id, rtt);
+                }
+            }
+            Box::new(ws)
+        }
+
+        // ── Lighter: public(testnet) async ──
+        ExchangeId::Lighter => {
+            let mut ws = LighterWebSocket::public(false)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            WebSocketConnector::connect(&mut ws, AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            if let Some(rtt) = WebSocketConnector::ping_rtt_handle(&ws) {
+                if let Ok(mut h) = ws_rtt_handles.lock() {
+                    h.insert(exchange_id, rtt);
+                }
+            }
+            Box::new(ws)
+        }
+
+        other => {
+            return Err(format!(
+                "WebSocket not supported for {:?}",
+                other
+            ));
+        }
+    };
+
+    Ok(ws)
+}
+
+/// Helper: capture the ping RTT handle from any connector that exposes it.
+fn capture_rtt<C: WebSocketConnector>(
+    ws: &C,
+    exchange_id: ExchangeId,
+    ws_rtt_handles: &Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+) {
+    if let Some(rtt) = ws.ping_rtt_handle() {
+        if let Ok(mut h) = ws_rtt_handles.lock() {
+            h.insert(exchange_id, rtt);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUBSCRIPTION REQUEST BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub(crate) fn make_sub_request(
+    stream_type: WsStreamType,
+    exchange_id: ExchangeId,
+    symbol: &str,
+) -> SubscriptionRequest {
+    let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, symbol);
+    match stream_type {
+        WsStreamType::Trades => SubscriptionRequest::trade(sym),
+        WsStreamType::Ticker => SubscriptionRequest::ticker(sym),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EVENT DISPATCHER
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn dispatch_event(
+    tx: &broadcast::Sender<LiveUpdate>,
+    state: &WsActorState,
+    event: StreamEvent,
+) {
+    match event {
+        StreamEvent::Trade(trade) => {
+            let _ = tx.send(LiveUpdate::TradeUpdate {
+                exchange_id: state.exchange_id,
+                symbol: trade.symbol.clone(),
+                price: trade.price,
+                quantity: trade.quantity,
+                timestamp: trade.timestamp,
+            });
+        }
+        StreamEvent::Ticker(ticker) => {
+            let _ = tx.send(LiveUpdate::MiniTickerUpdate {
+                exchange_id: state.exchange_id,
+                symbol: ticker.symbol.clone(),
+                last_price: ticker.last_price,
+                price_change_percent: ticker.price_change_percent_24h,
+                high_price: ticker.high_24h,
+                low_price: ticker.low_24h,
+                volume: ticker.volume_24h,
+            });
+        }
+        StreamEvent::OrderbookSnapshot(ob) => {
+            // Some exchanges (e.g. Bitstamp) emit orderbook updates instead of
+            // ticker events on the ticker stream.  Synthesize a price from the
+            // mid-point of the best bid/ask.
+            if state.stream_type == WsStreamType::Ticker {
+                let bid = ob.bids.first().map(|(p, _)| *p).unwrap_or(0.0);
+                let ask = ob.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+                let mid = if bid > 0.0 && ask > 0.0 {
+                    (bid + ask) / 2.0
+                } else {
+                    bid.max(ask)
+                };
+                if mid > 0.0 {
+                    // We don't know the symbol from the event alone — skip.
+                    // The symbol is embedded in the subscription, but the
+                    // Bitstamp WS actor only handles one symbol anyway.
+                    // We emit one update per active symbol at mid price.
+                    for (sym, &count) in &state.refcounts {
+                        if count > 0 {
+                            let _ = tx.send(LiveUpdate::MiniTickerUpdate {
+                                exchange_id: state.exchange_id,
+                                symbol: sym.clone(),
+                                last_price: mid,
+                                price_change_percent: None,
+                                high_price: None,
+                                low_price: None,
+                                volume: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        StreamEvent::OrderbookDelta { bids, asks, .. } => {
+            if state.stream_type == WsStreamType::Ticker {
+                let best_bid = bids
+                    .iter()
+                    .map(|(p, _)| *p)
+                    .filter(|p| *p > 0.0)
+                    .fold(0.0f64, f64::max);
+                let best_ask = asks
+                    .iter()
+                    .map(|(p, _)| *p)
+                    .filter(|p| *p > 0.0)
+                    .fold(f64::MAX, f64::min);
+                let mid = if best_bid > 0.0 && best_ask < f64::MAX {
+                    (best_bid + best_ask) / 2.0
+                } else {
+                    best_bid.max(if best_ask < f64::MAX { best_ask } else { 0.0 })
+                };
+                if mid > 0.0 {
+                    for (sym, &count) in &state.refcounts {
+                        if count > 0 {
+                            let _ = tx.send(LiveUpdate::MiniTickerUpdate {
+                                exchange_id: state.exchange_id,
+                                symbol: sym.clone(),
+                                last_price: mid,
+                                price_change_percent: None,
+                                high_price: None,
+                                low_price: None,
+                                volume: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}

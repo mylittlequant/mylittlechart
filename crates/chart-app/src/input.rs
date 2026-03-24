@@ -15644,13 +15644,23 @@ impl ChartApp {
                     );
 
                     // ----------------------------------------------------------------
+                    // Collect current (exchange_id, symbol) pairs before switching.
+                    // Used after the preset is loaded to unsubscribe stale trade actors.
+                    // ----------------------------------------------------------------
+                    let old_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
+                        .panel_app
+                        .panel_grid
+                        .iter_windows()
+                        .filter_map(|(_, w)| {
+                            digdigdig3::ExchangeId::from_str(&w.exchange)
+                                .map(|eid| (eid, w.symbol.clone()))
+                        })
+                        .collect();
+
+                    // ----------------------------------------------------------------
                     // Step 1: Attempt full layout restore (new presets with layout).
                     // Falls back to in-place window patching for old presets without.
                     // ----------------------------------------------------------------
-                    // Capture data_provider from current active window (it's Arc-shared).
-                    let data_provider = self.panel_app.panel_grid.active_window()
-                        .map(|w| w.data_provider.clone())
-                        .unwrap_or_else(|| std::sync::Arc::new(zengeld_chart::NullDataProvider));
 
                     let layout_restored = if !preset.layout.is_null() {
                         match serde_json::from_value::<uzor::panels::serialize::LayoutSnapshot>(preset.layout.clone()) {
@@ -15669,8 +15679,16 @@ impl ChartApp {
                                         snap.timeframe.clone(),
                                     );
 
-                                    // Set the shared data_provider so bars can be loaded.
-                                    window.data_provider = data_provider.clone();
+                                    // Build a data_provider for this window's own exchange.
+                                    let snap_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
+                                        .unwrap_or(digdigdig3::ExchangeId::Binance);
+                                    window.data_provider = std::sync::Arc::new(
+                                        live_data::LiveDataProvider::new(
+                                            snap_exchange_id,
+                                            snap_exchange_id.as_str().to_string(),
+                                            std::sync::Arc::clone(&self.bridge),
+                                        ),
+                                    );
 
                                     // Apply all snapshot fields
                                     window.exchange = snap.exchange.clone();
@@ -15843,6 +15861,16 @@ impl ChartApp {
                             if let Some(window) = windows.get_mut(&chart_id) {
                                 window.symbol = snap.symbol.clone();
                                 window.exchange = snap.exchange.clone();
+                                // Rebuild data_provider for this window's (possibly new) exchange.
+                                let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
+                                    .unwrap_or(digdigdig3::ExchangeId::Binance);
+                                window.data_provider = std::sync::Arc::new(
+                                    live_data::LiveDataProvider::new(
+                                        patch_exchange_id,
+                                        patch_exchange_id.as_str().to_string(),
+                                        std::sync::Arc::clone(&self.bridge),
+                                    ),
+                                );
                                 window.timeframe = snap.timeframe.clone();
                                 window.viewport = snap.viewport.clone();
                                 window.price_scale = snap.price_scale.clone();
@@ -16063,6 +16091,30 @@ impl ChartApp {
                     eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
 
                     self.sidebar_data_dirty = true;
+
+                    // ----------------------------------------------------------------
+                    // Step 9: Unsubscribe trade actors for symbols that were in the
+                    // old preset but are absent from the new one.  Uses targeted
+                    // unsubscribe_trades() with a 30-second grace period so symbols
+                    // that appear in both old and new presets are not disrupted.
+                    // ----------------------------------------------------------------
+                    let new_subscriptions: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = self
+                        .panel_app
+                        .panel_grid
+                        .iter_windows()
+                        .filter_map(|(_, w)| {
+                            digdigdig3::ExchangeId::from_str(&w.exchange)
+                                .map(|eid| (eid, w.symbol.clone()))
+                        })
+                        .collect();
+
+                    for (eid, symbol) in &old_subscriptions {
+                        if !new_subscriptions.contains(&(*eid, symbol.clone())) {
+                            self.bridge.unsubscribe_trades(*eid, symbol);
+                            eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
+                        }
+                    }
+
                     eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
                 } else {
                     eprintln!("[ChartApp] preset '{}' not found in memory", id);

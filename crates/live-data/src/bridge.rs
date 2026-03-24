@@ -7,43 +7,18 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use futures_util::StreamExt;
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
 
 use digdigdig3::{
     ExchangeId, AccountType, Symbol, MarketData, SymbolInfo,
-    StreamEvent, WebSocketConnector, WebSocketExt,
 };
 use digdigdig3::connector_manager::{ConnectorFactory, ConnectorPool};
-use digdigdig3::crypto::cex::binance::BinanceWebSocket;
-use digdigdig3::crypto::cex::bybit::BybitWebSocket;
-use digdigdig3::crypto::cex::okx::OkxWebSocket;
-use digdigdig3::crypto::cex::kucoin::KuCoinWebSocket;
-use digdigdig3::crypto::cex::kraken::KrakenWebSocket;
-use digdigdig3::crypto::cex::coinbase::CoinbaseWebSocket;
-use digdigdig3::crypto::cex::gateio::GateioWebSocket;
-use digdigdig3::crypto::cex::bitfinex::BitfinexWebSocket;
-use digdigdig3::crypto::cex::bitstamp::{BitstampWebSocket, BitstampConnector};
-use digdigdig3::crypto::cex::mexc::MexcWebSocket;
-use digdigdig3::crypto::cex::htx::HtxWebSocket;
-use digdigdig3::crypto::cex::bitget::BitgetWebSocket;
-use digdigdig3::crypto::cex::bingx::BingxWebSocket;
-use digdigdig3::crypto::cex::phemex::PhemexWebSocket;
-use digdigdig3::crypto::cex::upbit::UpbitWebSocket;
-use digdigdig3::crypto::cex::deribit::DeribitWebSocket;
-use digdigdig3::crypto::cex::hyperliquid::HyperliquidWebSocket;
-use digdigdig3::crypto::dex::dydx::DydxWebSocket;
-use digdigdig3::crypto::dex::paradex::ParadexWebSocket;
-use digdigdig3::crypto::dex::gmx::GmxWebSocket;
-use digdigdig3::stocks::russia::moex::MoexWebSocket;
-use digdigdig3::crypto::cex::gemini::{GeminiWebSocket, GeminiConnector};
-use digdigdig3::crypto::cex::crypto_com::CryptoComWebSocket;
-use digdigdig3::crypto::dex::lighter::LighterWebSocket;
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;
 
 use crate::convert::{kline_to_bar, timeframe_to_interval};
+use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
 /// Updates sent from async tasks to the sync chart thread.
 #[derive(Debug, Clone)]
@@ -147,10 +122,11 @@ pub struct DataBridge {
     /// buffer from filling up when the app-level consumer falls behind, which
     /// would otherwise stall all other broadcast receivers.
     connector_ready_tx: mpsc::UnboundedSender<ExchangeId>,
-    /// Active WebSocket subscription tasks.
+    /// Multiplexed WebSocket actors — one per `(ExchangeId, WsStreamType)`.
     ///
-    /// Key: `"exchange_id:symbol"` (e.g. `"binance:BTCUSDT"`).
-    ws_tasks: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    /// All symbols for the same exchange+stream type share a single WS
+    /// connection, managed by a long-running actor task.
+    ws_actors: Mutex<WsActorMap>,
     /// Session-level bar cache.
     ///
     /// Key: `(exchange_id, symbol, timeframe_name)`. Stores bars from previous
@@ -210,7 +186,7 @@ impl DataBridge {
             pool,
             tx,
             connector_ready_tx,
-            ws_tasks: Mutex::new(HashMap::new()),
+            ws_actors: Mutex::new(WsActorMap::new()),
             bar_cache: Arc::new(Mutex::new(HashMap::new())),
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
@@ -640,96 +616,42 @@ impl DataBridge {
 
     /// Subscribe to live trade updates via WebSocket.
     ///
-    /// Spawns a long-running async task that connects to the exchange WebSocket,
-    /// subscribes to the trade stream, and sends `LiveUpdate::TradeUpdate` for
-    /// each incoming trade event.
-    ///
-    /// If a subscription already exists for `exchange_id:symbol`, the existing
-    /// task is aborted before a new one is started.
+    /// Routes the symbol to the shared per-exchange trade actor, which
+    /// multiplexes all symbols over a single WS connection.  If no actor
+    /// exists yet for this exchange it is spawned automatically.
     pub fn subscribe_trades(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = format!("{}:{}", exchange_id.as_str(), symbol);
-
-        // Abort any existing task for the same stream.
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            if let Some(handle) = tasks.remove(&key) {
-                handle.abort();
-            }
-        }
-
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades };
         let tx = self.tx.clone();
-        let symbol_str = symbol.to_string();
-        let ws_rtt_handles = self.ws_rtt_handles.clone();
-
-        let handle = self.runtime.spawn(async move {
-            let mut retry_count: u32 = 0;
-            loop {
-                if retry_count > 0 {
-                    // Exponential backoff capped at 30s, plus simple pseudo-jitter.
-                    let base_secs = std::cmp::min(1u64 << std::cmp::min(retry_count - 1, 5), 30);
-                    // Jitter: 0..500ms derived from retry_count to avoid thundering herd.
-                    let jitter_ms = (retry_count as u64 * 137) % 500;
-                    let delay = std::time::Duration::from_millis(base_secs * 1000 + jitter_ms);
-
-                    if retry_count <= 3 || retry_count % 5 == 0 {
-                        eprintln!("[WS] Reconnect attempt {} for trade stream {:?} {} after {:?}", retry_count, exchange_id, symbol_str, delay);
-                    }
-                    tokio::time::sleep(delay).await;
-                }
-                retry_count += 1;
-                run_generic_trade_ws(tx.clone(), exchange_id, symbol_str.clone(), ws_rtt_handles.clone()).await;
-                // Stream ended or connection failed — trigger backfill to fill any gap
-                // before reconnecting. ConnectorReady causes lib.rs to call request_bars().
-                let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });
-                // Loop and retry.
-            }
-        });
-
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            tasks.insert(key, handle);
+        let rtt = self.ws_rtt_handles.clone();
+        let rt = self.runtime.handle().clone();
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
 
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
     ///
-    /// Key format: `"miniticker:exchange_id:SYMBOL"`. If a subscription already
-    /// exists for this key, the existing task is aborted first.
+    /// Routes the symbol to the shared per-exchange ticker actor.
     pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = format!("miniticker:{}:{}", exchange_id.as_str(), symbol);
-
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            if let Some(handle) = tasks.remove(&key) {
-                handle.abort();
-            }
-        }
-
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker };
         let tx = self.tx.clone();
-        let original_symbol = symbol.to_string();
-        let symbol_lower = symbol.to_lowercase();
-        let ws_rtt_handles = self.ws_rtt_handles.clone();
+        let rtt = self.ws_rtt_handles.clone();
+        let rt = self.runtime.handle().clone();
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+        }
+    }
 
-        let handle = self.runtime.spawn(async move {
-            let mut retry_count: u32 = 0;
-            loop {
-                if retry_count > 0 {
-                    // Exponential backoff capped at 30s, plus simple pseudo-jitter.
-                    let base_secs = std::cmp::min(1u64 << std::cmp::min(retry_count - 1, 5), 30);
-                    // Jitter: 0..500ms derived from retry_count to avoid thundering herd.
-                    let jitter_ms = (retry_count as u64 * 137) % 500;
-                    let delay = std::time::Duration::from_millis(base_secs * 1000 + jitter_ms);
-
-                    if retry_count <= 3 || retry_count % 5 == 0 {
-                        eprintln!("[WS] Reconnect attempt {} for ticker stream {:?} {} after {:?}", retry_count, exchange_id, symbol_lower, delay);
-                    }
-                    tokio::time::sleep(delay).await;
-                }
-                retry_count += 1;
-                run_generic_ticker_ws(tx.clone(), exchange_id, symbol_lower.clone(), original_symbol.clone(), ws_rtt_handles.clone()).await;
-                // If we reach here the stream ended or connection failed — loop and retry.
-            }
-        });
-
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            tasks.insert(key, handle);
+    /// Remove one consumer interest in trade stream for this symbol.
+    ///
+    /// Sends a `RemoveSymbol` command to the trade actor; the actor applies a
+    /// 30-second grace period before actually unsubscribing from the exchange.
+    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades };
+        if let Ok(actors) = self.ws_actors.lock() {
+            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
     }
 
@@ -738,47 +660,42 @@ impl DataBridge {
     /// Call this when switching symbols to stop old trade streams.
     /// Mini ticker subscriptions (watchlist) are preserved.
     pub fn unsubscribe_all(&self) {
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            let keys_to_remove: Vec<String> = tasks.keys()
-                .filter(|k| !k.starts_with("miniticker:"))
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            let trade_keys: Vec<WsKey> = actors
+                .actors
+                .keys()
+                .filter(|k| k.stream_type == WsStreamType::Trades)
                 .cloned()
                 .collect();
-            for key in keys_to_remove {
-                if let Some(handle) = tasks.remove(&key) {
-                    handle.abort();
-                }
+            for key in trade_keys {
+                actors.remove(&key);
             }
         }
     }
 
-    /// Unsubscribe a single mini-ticker stream (when symbol removed from watchlist).
+    /// Unsubscribe a single mini-ticker symbol (when symbol removed from watchlist).
+    ///
+    /// Sends a `RemoveSymbol` command to the ticker actor; the actor applies a
+    /// 30-second grace period before actually unsubscribing from the exchange.
     pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = format!("miniticker:{}:{}", exchange_id.as_str(), symbol);
-        if let Ok(mut tasks) = self.ws_tasks.lock() {
-            if let Some(handle) = tasks.remove(&key) {
-                handle.abort();
-            }
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker };
+        if let Ok(actors) = self.ws_actors.lock() {
+            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
     }
 
-    /// Stop all WebSocket tasks for a specific exchange.
+    /// Stop all WebSocket actors for a specific exchange.
     pub fn unsubscribe_exchange(&self, exchange_id: ExchangeId) {
-        let prefix = exchange_id.as_str().to_string();
-        if let Ok(mut ws) = self.ws_tasks.lock() {
-            let keys_to_remove: Vec<String> = ws.keys()
-                .filter(|k| {
-                    // Match keys like "exchange:symbol" or "miniticker:exchange:symbol"
-                    let exchange_str = prefix.as_str();
-                    k.starts_with(&format!("{}:", exchange_str))
-                        || k.contains(&format!(":{}:", exchange_str))
-                })
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            let keys: Vec<WsKey> = actors
+                .actors
+                .keys()
+                .filter(|k| k.exchange_id == exchange_id)
                 .cloned()
                 .collect();
-            for key in keys_to_remove {
-                if let Some(handle) = ws.remove(&key) {
-                    handle.abort();
-                    eprintln!("[Bridge] Aborted WS task: {}", key);
-                }
+            for key in keys {
+                actors.remove(&key);
+                eprintln!("[Bridge] Stopped WS actor: {:?}/{:?}", key.exchange_id, key.stream_type);
             }
         }
     }
@@ -796,24 +713,20 @@ impl DataBridge {
         self.ensure_connector(exchange_id);
     }
 
-    /// Count active WebSocket tasks for a specific exchange.
-    ///
-    /// A task is considered active if it has been registered and its
-    /// `JoinHandle` has not yet finished.
+    /// Count active WebSocket actors for a specific exchange.
     pub fn ws_task_count(&self, exchange_id: ExchangeId) -> usize {
-        let prefix = exchange_id.as_str();
-        let ws = self.ws_tasks.lock().unwrap();
-        ws.iter()
-            .filter(|(key, handle)| key.contains(prefix) && !handle.is_finished())
-            .count()
+        self.ws_actors
+            .lock()
+            .map(|a| a.active_count_for_exchange(exchange_id))
+            .unwrap_or(0)
     }
 
-    /// Count total active WebSocket tasks across all exchanges.
+    /// Count total active WebSocket actors across all exchanges.
     pub fn ws_task_count_total(&self) -> usize {
-        let ws = self.ws_tasks.lock().unwrap();
-        ws.iter()
-            .filter(|(_, handle)| !handle.is_finished())
-            .count()
+        self.ws_actors
+            .lock()
+            .map(|a| a.total_active_count())
+            .unwrap_or(0)
     }
 
     /// Get summary metrics for all active connectors.
@@ -944,1201 +857,6 @@ impl DataBridge {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// WEBSOCKET MACRO
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Create a WebSocket, connect, subscribe, and return the event stream.
-///
-/// Used for WS types with `async fn new(Option<Credentials>, bool, AccountType)`.
-macro_rules! ws_standard {
-    ($ws_type:ty, $tx:expr, $exchange_id:expr, $symbol:expr, $subscribe_fn:ident, $ws_rtt_handles:expr) => {{
-        let mut ws = match <$ws_type>::new(None, false, AccountType::Spot).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                let _ = $tx.send(LiveUpdate::Error {
-                    exchange_id: $exchange_id,
-                    message: format!("WS create failed: {}", e),
-                });
-                return;
-            }
-        };
-        if let Err(e) = ws.connect(AccountType::Spot).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS connect failed: {}", e),
-            });
-            return;
-        }
-        if let Err(e) = ws.$subscribe_fn($symbol).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS subscribe failed: {}", e),
-            });
-            return;
-        }
-        // Capture RTT handle if the connector provides one.
-        if let Some(rtt_handle) = ws.ping_rtt_handle() {
-            if let Ok(mut handles) = $ws_rtt_handles.lock() {
-                handles.insert($exchange_id, rtt_handle);
-            }
-        }
-        ws.event_stream()
-    }};
-}
-
-/// Create a WS with `async fn new(Option<Credentials>, bool)` (no AccountType in ctor).
-macro_rules! ws_no_account_type {
-    ($ws_type:ty, $tx:expr, $exchange_id:expr, $symbol:expr, $subscribe_fn:ident, $ws_rtt_handles:expr) => {{
-        let mut ws = match <$ws_type>::new(None, false).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                let _ = $tx.send(LiveUpdate::Error {
-                    exchange_id: $exchange_id,
-                    message: format!("WS create failed: {}", e),
-                });
-                return;
-            }
-        };
-        if let Err(e) = ws.connect(AccountType::Spot).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS connect failed: {}", e),
-            });
-            return;
-        }
-        if let Err(e) = ws.$subscribe_fn($symbol).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS subscribe failed: {}", e),
-            });
-            return;
-        }
-        // Capture RTT handle if the connector provides one.
-        if let Some(rtt_handle) = ws.ping_rtt_handle() {
-            if let Ok(mut handles) = $ws_rtt_handles.lock() {
-                handles.insert($exchange_id, rtt_handle);
-            }
-        }
-        ws.event_stream()
-    }};
-}
-
-/// Create a WS with `async fn new(Option<Credentials>)` (no testnet, no AccountType).
-macro_rules! ws_credentials_only {
-    ($ws_type:ty, $tx:expr, $exchange_id:expr, $symbol:expr, $subscribe_fn:ident, $ws_rtt_handles:expr) => {{
-        let mut ws = match <$ws_type>::new(None).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                let _ = $tx.send(LiveUpdate::Error {
-                    exchange_id: $exchange_id,
-                    message: format!("WS create failed: {}", e),
-                });
-                return;
-            }
-        };
-        if let Err(e) = ws.connect(AccountType::Spot).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS connect failed: {}", e),
-            });
-            return;
-        }
-        if let Err(e) = ws.$subscribe_fn($symbol).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS subscribe failed: {}", e),
-            });
-            return;
-        }
-        // Capture RTT handle if the connector provides one.
-        if let Some(rtt_handle) = ws.ping_rtt_handle() {
-            if let Ok(mut handles) = $ws_rtt_handles.lock() {
-                handles.insert($exchange_id, rtt_handle);
-            }
-        }
-        ws.event_stream()
-    }};
-}
-
-/// Create a WS with sync `fn new(Option<Credentials>, bool, AccountType)`.
-macro_rules! ws_sync_new {
-    ($ws_type:ty, $tx:expr, $exchange_id:expr, $symbol:expr, $subscribe_fn:ident, $ws_rtt_handles:expr) => {{
-        let mut ws = match <$ws_type>::new(None, false, AccountType::Spot) {
-            Ok(ws) => ws,
-            Err(e) => {
-                let _ = $tx.send(LiveUpdate::Error {
-                    exchange_id: $exchange_id,
-                    message: format!("WS create failed: {}", e),
-                });
-                return;
-            }
-        };
-        if let Err(e) = ws.connect(AccountType::Spot).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS connect failed: {}", e),
-            });
-            return;
-        }
-        if let Err(e) = ws.$subscribe_fn($symbol).await {
-            let _ = $tx.send(LiveUpdate::Error {
-                exchange_id: $exchange_id,
-                message: format!("WS subscribe failed: {}", e),
-            });
-            return;
-        }
-        // Capture RTT handle if the connector provides one.
-        if let Some(rtt_handle) = ws.ping_rtt_handle() {
-            if let Ok(mut handles) = $ws_rtt_handles.lock() {
-                handles.insert($exchange_id, rtt_handle);
-            }
-        }
-        ws.event_stream()
-    }};
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GENERIC TRADE WEBSOCKET RUNNER
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Long-running async function that drives a trade WebSocket stream for any exchange.
-///
-/// Connects, subscribes, and forwards `StreamEvent::Trade` events as
-/// `LiveUpdate::TradeUpdate` until the stream ends or the task is cancelled.
-async fn run_generic_trade_ws(
-    tx: broadcast::Sender<LiveUpdate>,
-    exchange_id: ExchangeId,
-    symbol_str: String,
-    ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
-) {
-    let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
-
-    let mut stream = match exchange_id {
-        // ── CEX: standard constructors (credentials, testnet, account_type) ──
-        ExchangeId::Binance => {
-            ws_standard!(BinanceWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::Bybit => {
-            ws_standard!(BybitWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::GateIO => {
-            ws_standard!(GateioWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::Bitfinex => {
-            ws_standard!(BitfinexWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::BingX => {
-            ws_standard!(BingxWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::Bitget => {
-            ws_standard!(BitgetWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::Deribit => {
-            ws_standard!(DeribitWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::KuCoin => {
-            ws_standard!(KuCoinWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-
-        // ── CEX: (credentials, testnet) — no AccountType in constructor ──
-        ExchangeId::OKX => {
-            let mut ws = match OkxWebSocket::new(None, false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = <OkxWebSocket as WebSocketConnector>::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Phemex => {
-            ws_no_account_type!(PhemexWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::Paradex => {
-            ws_no_account_type!(ParadexWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-
-        // ── CEX: credentials only (no testnet, no account_type) ──
-        ExchangeId::Coinbase => {
-            ws_credentials_only!(CoinbaseWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-        ExchangeId::MEXC => {
-            ws_credentials_only!(MexcWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-
-        // ── CEX: sync constructors ──
-        ExchangeId::HTX => {
-            ws_sync_new!(HtxWebSocket, tx, exchange_id, sym, subscribe_trades, ws_rtt_handles)
-        }
-
-        // ── CEX: custom constructors ──
-        ExchangeId::Kraken => {
-            let mut ws = match KrakenWebSocket::new(None, AccountType::Spot).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Bitstamp => {
-            // BitstampWebSocket::new() takes no arguments
-            let mut ws = match BitstampWebSocket::new().await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::HyperLiquid => {
-            let mut ws = HyperliquidWebSocket::new(false);
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Upbit => {
-            // Upbit uses region string; default to Singapore
-            let mut ws = match UpbitWebSocket::new(None, "sg").await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Dydx => {
-            let mut ws = match DydxWebSocket::new(false, AccountType::Spot).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Gmx => {
-            let mut ws = match GmxWebSocket::new(None).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Moex => {
-            let mut ws = MoexWebSocket::new_public();
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_trades(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-
-        ExchangeId::Gemini => {
-            let mut ws = match GeminiWebSocket::new_market_data(false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_trades(&mut ws, sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-        ExchangeId::CryptoCom => {
-            let mut ws = CryptoComWebSocket::new(None, false);
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_trades(&mut ws, sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-        ExchangeId::Lighter => {
-            let mut ws = match LighterWebSocket::public(false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_trades(&mut ws, sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-
-        // Exchanges without WS support or with complex constructors
-        other => {
-            let _ = tx.send(LiveUpdate::Error {
-                exchange_id: other,
-                message: format!("WebSocket trade subscription not supported for {:?}", other),
-            });
-            return;
-        }
-    };
-
-    // Generic event loop — same for all exchanges
-    loop {
-        let result = match tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            stream.next(),
-        )
-        .await
-        {
-            Ok(Some(result)) => result,
-            Ok(None) => break, // stream ended normally
-            Err(_) => {
-                // No data for 60s — assume the connection is silently dead.
-                eprintln!("[WS trades] No data for 60s on {:?}, reconnecting", exchange_id);
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: "WS timeout — no data for 60s".to_string(),
-                });
-                break;
-            }
-        };
-        match result {
-            Ok(StreamEvent::Trade(trade)) => {
-                let _ = tx.send(LiveUpdate::TradeUpdate {
-                    exchange_id,
-                    symbol: symbol_str.clone(),
-                    price: trade.price,
-                    quantity: trade.quantity,
-                    timestamp: trade.timestamp,
-                });
-            }
-            Ok(_) => {}
-            Err(e) => {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS stream error: {}", e),
-                });
-                break;
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GENERIC TICKER WEBSOCKET RUNNER
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Long-running async function that drives a ticker WebSocket stream for any exchange.
-///
-/// Connects, subscribes to the ticker stream, and forwards `StreamEvent::Ticker`
-/// events as `LiveUpdate::MiniTickerUpdate` until the stream ends or the task is cancelled.
-async fn run_generic_ticker_ws(
-    tx: broadcast::Sender<LiveUpdate>,
-    exchange_id: ExchangeId,
-    symbol_lower: String,
-    original_symbol: String,
-    ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
-) {
-    let sym = parse_symbol_for_exchange(exchange_id, &symbol_lower);
-
-    let mut stream = match exchange_id {
-        // ── CEX: standard constructors (credentials, testnet, account_type) ──
-        ExchangeId::Binance => {
-            ws_standard!(BinanceWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::Bybit => {
-            ws_standard!(BybitWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::GateIO => {
-            ws_standard!(GateioWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::Bitfinex => {
-            ws_standard!(BitfinexWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::BingX => {
-            ws_standard!(BingxWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::Bitget => {
-            ws_standard!(BitgetWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::Deribit => {
-            ws_standard!(DeribitWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::KuCoin => {
-            ws_standard!(KuCoinWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-
-        // ── CEX: (credentials, testnet) — no AccountType in constructor ──
-        ExchangeId::OKX => {
-            let mut ws = match OkxWebSocket::new(None, false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = <OkxWebSocket as WebSocketConnector>::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Phemex => {
-            ws_no_account_type!(PhemexWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::Paradex => {
-            ws_no_account_type!(ParadexWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-
-        // ── CEX: credentials only ──
-        ExchangeId::Coinbase => {
-            ws_credentials_only!(CoinbaseWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-        ExchangeId::MEXC => {
-            ws_credentials_only!(MexcWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-
-        // ── CEX: sync constructors ──
-        ExchangeId::HTX => {
-            ws_sync_new!(HtxWebSocket, tx, exchange_id, sym, subscribe_ticker, ws_rtt_handles)
-        }
-
-        // ── CEX: custom constructors ──
-        ExchangeId::Kraken => {
-            let mut ws = match KrakenWebSocket::new(None, AccountType::Spot).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Bitstamp => {
-            let mut ws = match BitstampWebSocket::new().await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym.clone()).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Spawn a REST polling task for 24h stats (price_change%, high, low, volume).
-            // Bitstamp's WS live_trades channel only carries last_price; the 24h
-            // fields come from the ticker REST endpoint polled every 30 seconds.
-            {
-                let tx_rest = tx.clone();
-                let rest_sym = sym.clone();
-                let rest_original_symbol = original_symbol.clone();
-                tokio::spawn(async move {
-                    let connector = match BitstampConnector::public().await {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("[bitstamp rest_poll] connector create error: {}", e);
-                            return;
-                        }
-                    };
-                    loop {
-                        match connector.get_ticker(rest_sym.clone(), AccountType::Spot).await {
-                            Ok(ticker) => {
-                                let _ = tx_rest.send(LiveUpdate::MiniTickerUpdate {
-                                    exchange_id,
-                                    symbol: rest_original_symbol.clone(),
-                                    last_price: ticker.last_price,
-                                    price_change_percent: ticker.price_change_percent_24h,
-                                    high_price: ticker.high_24h,
-                                    low_price: ticker.low_24h,
-                                    volume: ticker.volume_24h,
-                                });
-                            }
-                            Err(e) => {
-                                eprintln!("[bitstamp rest_poll] get_ticker error: {}", e);
-                            }
-                        }
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                    }
-                });
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::HyperLiquid => {
-            let mut ws = HyperliquidWebSocket::new(false);
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Upbit => {
-            let mut ws = match UpbitWebSocket::new(None, "sg").await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Dydx => {
-            let mut ws = match DydxWebSocket::new(false, AccountType::Spot).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Gmx => {
-            let mut ws = match GmxWebSocket::new(None).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-        ExchangeId::Moex => {
-            let mut ws = MoexWebSocket::new_public();
-            if let Err(e) = ws.connect(AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = ws.subscribe_ticker(sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = ws.ping_rtt_handle() {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            ws.event_stream()
-        }
-
-        ExchangeId::Gemini => {
-            let mut ws = match GeminiWebSocket::new_market_data(false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_ticker(&mut ws, sym.clone()).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Spawn a REST polling task for 24h stats (last_price, price_change%, high, low, volume).
-            // Gemini's WS l2_updates channel only carries book deltas and rare trade events;
-            // the 24h ticker fields are only available via the REST ticker endpoint.
-            {
-                let tx_rest = tx.clone();
-                let rest_sym = sym.clone();
-                let rest_original_symbol = original_symbol.clone();
-                tokio::spawn(async move {
-                    let connector = match GeminiConnector::public(false).await {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("[gemini rest_poll] connector create error: {}", e);
-                            return;
-                        }
-                    };
-                    loop {
-                        match connector.get_ticker(rest_sym.clone(), AccountType::Spot).await {
-                            Ok(ticker) => {
-                                let _ = tx_rest.send(LiveUpdate::MiniTickerUpdate {
-                                    exchange_id,
-                                    symbol: rest_original_symbol.clone(),
-                                    last_price: ticker.last_price,
-                                    price_change_percent: ticker.price_change_percent_24h,
-                                    high_price: ticker.high_24h,
-                                    low_price: ticker.low_24h,
-                                    volume: ticker.volume_24h,
-                                });
-                            }
-                            Err(e) => {
-                                eprintln!("[gemini rest_poll] get_ticker error: {}", e);
-                            }
-                        }
-                        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-                    }
-                });
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-        ExchangeId::CryptoCom => {
-            let mut ws = CryptoComWebSocket::new(None, false);
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_ticker(&mut ws, sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-        ExchangeId::Lighter => {
-            let mut ws = match LighterWebSocket::public(false).await {
-                Ok(ws) => ws,
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("WS create failed: {}", e),
-                    });
-                    return;
-                }
-            };
-            if let Err(e) = WebSocketConnector::connect(&mut ws, AccountType::Spot).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS connect failed: {}", e),
-                });
-                return;
-            }
-            if let Err(e) = WebSocketExt::subscribe_ticker(&mut ws, sym).await {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("WS subscribe failed: {}", e),
-                });
-                return;
-            }
-            // Capture RTT handle if the connector provides one.
-            if let Some(rtt_handle) = WebSocketConnector::ping_rtt_handle(&ws) {
-                if let Ok(mut handles) = ws_rtt_handles.lock() {
-                    handles.insert(exchange_id, rtt_handle);
-                }
-            }
-            WebSocketConnector::event_stream(&ws)
-        }
-
-        // Exchanges without WS support or with complex constructors
-        other => {
-            let _ = tx.send(LiveUpdate::Error {
-                exchange_id: other,
-                message: format!("WebSocket ticker subscription not supported for {:?}", other),
-            });
-            return;
-        }
-    };
-
-    // Generic event loop — same for all exchanges
-    loop {
-        let result = match tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            stream.next(),
-        )
-        .await
-        {
-            Ok(Some(result)) => result,
-            Ok(None) => break, // stream ended normally
-            Err(_) => {
-                // No data for 60s — assume the connection is silently dead.
-                eprintln!("[WS ticker] No data for 60s on {:?}, reconnecting", exchange_id);
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: "WS timeout — no data for 60s".to_string(),
-                });
-                break;
-            }
-        };
-        match result {
-            Ok(StreamEvent::Ticker(ticker)) => {
-                let _ = tx.send(LiveUpdate::MiniTickerUpdate {
-                    exchange_id,
-                    symbol: original_symbol.clone(),
-                    last_price: ticker.last_price,
-                    // Pass None through directly: BBO-only events (e.g. KuCoin
-                    // `trade.ticker`) have None here and must not overwrite the
-                    // 24h stats that a prior snapshot event wrote into the cache.
-                    price_change_percent: ticker.price_change_percent_24h,
-                    high_price: ticker.high_24h,
-                    low_price: ticker.low_24h,
-                    volume: ticker.volume_24h,
-                });
-            }
-            Ok(StreamEvent::OrderbookSnapshot(ob)) => {
-                // Exchanges like Bitstamp emit orderbook updates instead of ticker.
-                // Use mid-price (avg of best bid and best ask) as synthetic last_price.
-                let bid = ob.bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-                let ask = ob.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
-                let mid = if bid > 0.0 && ask > 0.0 { (bid + ask) / 2.0 } else { bid.max(ask) };
-                if mid > 0.0 {
-                    let _ = tx.send(LiveUpdate::MiniTickerUpdate {
-                        exchange_id,
-                        symbol: original_symbol.clone(),
-                        last_price: mid,
-                        price_change_percent: None,
-                        high_price: None,
-                        low_price: None,
-                        volume: None,
-                    });
-                }
-            }
-            Ok(StreamEvent::OrderbookDelta { bids, asks, .. }) => {
-                // Gemini subscribe_ticker maps to the l2 channel which emits OrderbookDelta
-                // when there are only book changes (no trades). Use mid-price as synthetic price.
-                let best_bid = bids.iter().map(|(p, _)| *p).filter(|p| *p > 0.0).fold(0.0f64, f64::max);
-                let best_ask = asks.iter().map(|(p, _)| *p).filter(|p| *p > 0.0).fold(f64::MAX, f64::min);
-                let mid = if best_bid > 0.0 && best_ask < f64::MAX {
-                    (best_bid + best_ask) / 2.0
-                } else {
-                    best_bid.max(if best_ask < f64::MAX { best_ask } else { 0.0 })
-                };
-                if mid > 0.0 {
-                    let _ = tx.send(LiveUpdate::MiniTickerUpdate {
-                        exchange_id,
-                        symbol: original_symbol.clone(),
-                        last_price: mid,
-                        price_change_percent: None,
-                        high_price: None,
-                        low_price: None,
-                        volume: None,
-                    });
-                }
-            }
-            Ok(StreamEvent::Trade(trade)) => {
-                // Gemini l2_updates with executed trades: use trade price as last price.
-                let _ = tx.send(LiveUpdate::MiniTickerUpdate {
-                    exchange_id,
-                    symbol: original_symbol.clone(),
-                    last_price: trade.price,
-                    price_change_percent: None,
-                    high_price: None,
-                    low_price: None,
-                    volume: None,
-                });
-            }
-            Ok(_) => {}
-            Err(e) => {
-                let _ = tx.send(LiveUpdate::Error {
-                    exchange_id,
-                    message: format!("Ticker WS error: {}", e),
-                });
-                break;
-            }
-        }
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BAR CACHE MERGE
@@ -2187,7 +905,7 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
 /// the generic `parse_symbol()`. This avoids the lossy
 /// raw → Symbol{base,quote} → format_symbol round-trip that breaks
 /// exchanges with non-standard symbol conventions.
-fn parse_symbol_for_exchange(exchange_id: ExchangeId, s: &str) -> Symbol {
+pub(crate) fn parse_symbol_for_exchange(exchange_id: ExchangeId, s: &str) -> Symbol {
     let mut sym = match exchange_id {
         // Lighter uses USDC as quote currency (not USDT).
         // Raw symbols: "BTC", "ETH", "BTCUSDC", "BTC/USDC"

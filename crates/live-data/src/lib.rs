@@ -45,6 +45,7 @@
 mod bridge;
 mod provider;
 mod convert;
+mod ws_manager;
 
 pub use bridge::{DataBridge, LiveUpdate};
 pub use provider::LiveDataProvider;
