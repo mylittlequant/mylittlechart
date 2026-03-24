@@ -387,21 +387,6 @@ pub struct ChartApp {
     /// triggered when at least 1 second has elapsed since the last one.
     last_backfill_time: std::time::Instant,
 
-    /// Timer controlling the startup guard backfill cycle.
-    ///
-    /// After startup, bars loaded from disk cache may have 1-bar gaps that
-    /// the normal gap detector (threshold >= 2) will not catch. This timer
-    /// fires `trigger_backfill_after_lag()` every 30 s for the first 3
-    /// minutes after startup to close those small gaps.
-    guard_backfill_timer: std::time::Instant,
-
-    /// Number of guard backfill cycles remaining.
-    ///
-    /// Decremented on each firing. When it reaches zero the guard is silent
-    /// for the rest of the session, preventing false positives on real
-    /// exchange gaps.
-    guard_backfill_remaining: u8,
-
     /// Count of broadcast lag events since startup (for performance monitoring).
     pub lag_event_count: u64,
 
@@ -743,8 +728,6 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
-            guard_backfill_timer: std::time::Instant::now(),
-            guard_backfill_remaining: 6,
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1005,8 +988,6 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
-            guard_backfill_timer: std::time::Instant::now(),
-            guard_backfill_remaining: 6,
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1164,8 +1145,6 @@ impl ChartApp {
             pending_open_url: None,
             pending_updater_cmd: None,
             last_backfill_time: std::time::Instant::now(),
-            guard_backfill_timer: std::time::Instant::now(),
-            guard_backfill_remaining: 6,
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: std::time::Instant::now(),
@@ -1862,14 +1841,10 @@ impl ChartApp {
                             eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={} pending_vp_restore={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing,
                                 window.pending_viewport_restore.is_some());
-                            // Apply deferred viewport from preset restore (if any).
-                            // This overrides the default scale mode with the preset's
-                            // saved value.
+                            // Restore only the scale mode (A/M/F) from the preset.
+                            // Viewport position is never inherited — the chart always
+                            // starts at live data (Follow mode) after fresh bars arrive.
                             if let Some(vp) = window.pending_viewport_restore.take() {
-                                window.viewport.view_start = vp.view_start;
-                                window.viewport.bar_spacing = vp.bar_spacing;
-                                window.price_scale.price_min = vp.price_min;
-                                window.price_scale.price_max = vp.price_max;
                                 window.price_scale.scale_mode = vp.scale_mode;
                             }
                         }
@@ -2125,20 +2100,6 @@ impl ChartApp {
                     // No action needed in the main update loop.
                 }
             }
-        }
-
-        // ── Startup guard backfill: close 1-bar gaps from disk cache load ────
-        // The normal gap detector only fires on gaps >= 2 bars. Bars loaded
-        // from disk can have a single-bar gap at the tail that would never be
-        // patched without this guard. Fires every 30 s for the first 3 minutes
-        // after startup (6 cycles), then silences itself permanently. The
-        // bridge's dedup logic makes redundant calls free.
-        if self.guard_backfill_remaining > 0
-            && self.guard_backfill_timer.elapsed() >= std::time::Duration::from_secs(30)
-        {
-            self.guard_backfill_timer = std::time::Instant::now();
-            self.guard_backfill_remaining -= 1;
-            self.trigger_backfill_after_lag();
         }
 
         // ── Alert checker: detect price crossings for every visible symbol ────

@@ -247,25 +247,28 @@ impl DataBridge {
     /// Non-blocking — spawns an async task. On completion, sends either
     /// `BarsLoaded` or `Error` through the update channel.
     ///
-    /// **Session cache**: If bars for this `(symbol, timeframe)` were already
-    /// loaded during this session, the cached bars are sent *immediately* (before
-    /// any network request) via `BarsLoaded` so the chart renders without a blank
-    /// frame. A background incremental fetch then retrieves only the *newer* bars
-    /// (after the last cached timestamp), merges them into the cache, and sends a
-    /// second `BarsLoaded` with the complete up-to-date set. If no new bars
-    /// arrived, the second send is skipped entirely.
+    /// **3-level bar loading:**
     ///
-    /// When `total_bars` is `Some(n)` and the exchange supports pagination
-    /// (currently only Binance), multiple sequential requests are made to
-    /// fetch up to `n` bars. Otherwise, a single request is made with the
-    /// given `limit` (default 500).
+    /// Level 1 — instant render: if disk cache exists, it was already sent via
+    /// `seed_bar_cache` + an initial `BarsLoaded` before this call.
+    ///
+    /// Level 2 (Phase A) — quick fresh fetch: always fetches 300 bars from now
+    /// backward, merges with any session cache, sends `BarsLoaded`. Viewport
+    /// enters Follow mode.
+    ///
+    /// Level 3 (Phase B) — async heal: if disk cache existed before Phase A and
+    /// there was a gap between the disk tail and the fresh 300 bars, paginate
+    /// backward to fill 2× the gap, merge, send a second `BarsLoaded`.
+    ///
+    /// The `limit` and `total_bars` parameters are retained for API compatibility
+    /// but are no longer used — Phase A always fetches 300 bars.
     pub fn request_bars(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         timeframe: &Timeframe,
-        limit: Option<u16>,
-        total_bars: Option<usize>,
+        _limit: Option<u16>,
+        _total_bars: Option<usize>,
     ) {
         let pool = self.pool.clone();
         let tx = self.tx.clone();
@@ -275,7 +278,6 @@ impl DataBridge {
         let cache = self.bar_cache.clone();
         let active_fetches = self.active_fetches.clone();
 
-        // ── Cache lookup: serve instantly, then do an incremental refresh ──
         let cache_key = (exchange_id, symbol_str.clone(), tf_name.clone());
 
         // ── Deduplication guard: skip if a fetch for this key is already running ──
@@ -288,11 +290,12 @@ impl DataBridge {
             af.insert(cache_key.clone());
         }
 
-        let cached_bars = self.bar_cache.lock().ok()
+        // Snapshot the disk/session cache BEFORE Phase A so we can detect a gap.
+        let cached_bars: Option<Vec<Bar>> = self.bar_cache.lock().ok()
             .and_then(|c| c.get(&cache_key).cloned());
 
-        // If we have cached bars, send them immediately so the chart renders
-        // without waiting for the network round-trip.
+        // If cache exists, send it immediately (Level 1 — instant render while
+        // the network fetch is in flight).
         if let Some(ref bars) = cached_bars {
             eprintln!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
             let _ = tx.send(LiveUpdate::BarsLoaded {
@@ -303,14 +306,12 @@ impl DataBridge {
             });
         }
 
-        // Determine the last cached timestamp so the background task can do
-        // an incremental fetch instead of a full pagination run.
-        let last_cached_ts: Option<i64> = cached_bars
-            .as_ref()
+        // Capture disk cache boundaries for gap detection (Phase B).
+        let disk_last_ts: Option<i64> = cached_bars.as_ref()
             .and_then(|bars| bars.last())
             .map(|b| b.timestamp);
+        let had_disk_cache = cached_bars.is_some();
 
-        // ── Background fetch: incremental (if cached) or full pagination ──
         self.runtime.spawn(async move {
             // Helper macro to remove the in-flight key on every exit path.
             macro_rules! finish_fetch {
@@ -343,181 +344,182 @@ impl DataBridge {
 
             let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
 
-            // ── Decide: incremental fetch or full pagination ───────────────
-            let fresh_bars = if let Some(last_ts) = last_cached_ts {
-                // Incremental mode: fetch only bars newer than the last cached bar.
-                // Paginate forward from the last cached timestamp to handle gaps
-                // larger than one page (e.g. returning after a long absence).
-                let page_size: u16 = limit.unwrap_or(500).min(2000);
-                let mut all_new: Vec<Bar> = Vec::new();
-                let mut end_time_cursor: Option<i64> = None;
-                let mut pages: usize = 0;
-                eprintln!("[Bridge] incremental fetch: {:?} sym={} interval={} after_ts={} page_size={}", exchange_id, symbol_str, interval, last_ts, page_size);
+            // ── Phase A: Quick fresh fetch — always 300 bars from now ────────
+            eprintln!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
-                loop {
-                    let result = connector
-                        .get_klines(sym.clone(), &interval, Some(page_size), AccountType::Spot, end_time_cursor)
-                        .await;
+            let phase_a_result = connector
+                .get_klines(sym.clone(), &interval, Some(300), AccountType::Spot, None)
+                .await;
 
-                    match result {
-                        Ok(klines) => {
-                            if klines.is_empty() {
-                                break;
-                            }
-                            pages += 1;
-                            let batch: Vec<Bar> = klines
-                                .iter()
-                                .map(kline_to_bar)
-                                .filter(|b| b.timestamp > last_ts)
-                                .collect();
-                            let full_page = klines.len();
-                            // If the most recent page has no bars newer than our cache,
-                            // we're already up to date — no need to paginate backward.
-                            if batch.is_empty() && pages == 1 {
-                                break;
-                            }
-                            // Find the oldest timestamp in this page for backward pagination.
-                            // Kline.open_time is in milliseconds; last_ts is in seconds.
-                            if let Some(oldest_ts_ms) = klines.iter().map(|k| k.open_time).min() {
-                                let oldest_ts_secs = oldest_ts_ms / 1000;
-                                // If oldest bar in this page is already older than our cache,
-                                // we've covered the gap — stop paginating.
-                                if oldest_ts_secs <= last_ts {
-                                    all_new.extend(batch);
-                                    break;
-                                }
-                                end_time_cursor = Some(oldest_ts_ms - 1);
-                            } else {
-                                all_new.extend(batch);
-                                break;
-                            }
-                            all_new.extend(batch);
-                            // If we got less than a full page, no more data available
-                            if full_page < page_size as usize {
-                                break;
-                            }
-                            // Safety: don't paginate more than 20 pages for incremental
-                            if pages >= 20 {
-                                eprintln!("[Bridge] incremental fetch capped at {} pages", pages);
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("[Bridge] {:?} incremental fetch error: {}", exchange_id, e);
-                            if all_new.is_empty() {
-                                // Non-fatal: cached bars were already served; nothing more to do.
-                                finish_fetch!();
-                                return;
-                            }
-                            break;
-                        }
-                    }
+            let fresh_300: Vec<Bar> = match phase_a_result {
+                Ok(klines) => {
+                    let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                    eprintln!("[Bridge] Phase A: got {} bars", bars.len());
+                    bars
                 }
-                // Deduplicate by timestamp (in case of overlap between pages)
-                all_new.sort_by_key(|b| b.timestamp);
-                all_new.dedup_by_key(|b| b.timestamp);
-                eprintln!("[Bridge] incremental fetch: {:?} {} new bars over {} pages (ts > {})", exchange_id, all_new.len(), pages, last_ts);
-                all_new
-            } else {
-                // Full pagination mode: no cache exists — fetch as many bars as requested.
-                let desired_total = total_bars.unwrap_or(2000);
-                // Request large pages — each connector clamps to its own API max.
-                let page_size: u16 = limit.unwrap_or(2000).min(2000);
-                let mut all_bars: Vec<Bar> = Vec::with_capacity(desired_total);
-                let mut end_time_cursor: Option<i64> = None;
-                let mut pages: usize = 0;
-
-                eprintln!("[Bridge] full fetch: {:?} sym={} interval={} desired={} page_size={}", exchange_id, symbol_str, interval, desired_total, page_size);
-
-                'paginate: loop {
-                    let prev_count = all_bars.len();
-
-                    let result = connector
-                        .get_klines(sym.clone(), &interval, Some(page_size), AccountType::Spot, end_time_cursor)
-                        .await;
-
-                    match result {
-                        Ok(klines) => {
-                            if klines.is_empty() {
-                                break 'paginate;
-                            }
-
-                            let got = klines.len();
-                            let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
-
-                            // The oldest bar's timestamp drives the next cursor.
-                            // Convert to milliseconds (most exchanges expect ms).
-                            if let Some(oldest) = batch.first() {
-                                end_time_cursor = Some(oldest.timestamp * 1000 - 1);
-                            }
-
-                            // Prepend this (older) batch before what we already have.
-                            all_bars = merge_bars(batch, all_bars);
-                            pages += 1;
-
-                            eprintln!("[Bridge] {:?} page {} -> {} bars total (got {}) next_end_time={:?}", exchange_id, pages, all_bars.len(), got, end_time_cursor);
-
-                            // Stop when we have enough bars.
-                            if all_bars.len() >= desired_total {
-                                break 'paginate;
-                            }
-                            if all_bars.len() == prev_count {
-                                eprintln!("[Bridge] {:?} exchange doesn't support pagination (no new bars), stopping", exchange_id);
-                                break 'paginate;
-                            }
-                            if got < 10 {
-                                // Tiny batch = probably at the beginning of the asset's history.
-                                break 'paginate;
-                            }
-                        }
-                        Err(e) => {
-                            if all_bars.is_empty() {
-                                let _ = tx.send(LiveUpdate::Error {
-                                    exchange_id,
-                                    message: format!("get_klines failed: {}", e),
-                                });
-                                finish_fetch!();
-                                return;
-                            }
-                            eprintln!("[Bridge] {:?} pagination stopped at page {} due to error: {}", exchange_id, pages, e);
-                            break 'paginate;
-                        }
-                    }
-                }
-
-                eprintln!("[Bridge] {:?} full fetch done: {} bars over {} pages", exchange_id, all_bars.len(), pages);
-                all_bars
-            };
-
-            if let (Some(first), Some(last)) = (fresh_bars.first(), fresh_bars.last()) {
-                eprintln!("[Bridge] {:?} fresh range: {} -> {} ({} bars)", exchange_id, first.timestamp, last.timestamp, fresh_bars.len());
-            }
-
-            // Merge fresh bars into cached set (or use fresh directly if no cache).
-            let merged = if let Some(old) = cached_bars {
-                if fresh_bars.is_empty() {
-                    // Nothing new from the incremental fetch — cached data is already current.
-                    eprintln!("[Bridge] {:?} incremental fetch: no new bars, cache already up to date", exchange_id);
-                    // No need to re-send; cached bars were already pushed above.
+                Err(e) => {
+                    eprintln!("[Bridge] Phase A error: {:?} {}", exchange_id, e);
+                    let _ = tx.send(LiveUpdate::Error {
+                        exchange_id,
+                        message: format!("get_klines failed: {}", e),
+                    });
                     finish_fetch!();
                     return;
                 }
-                eprintln!("[Bridge] {:?} merging {} fresh + {} cached", exchange_id, fresh_bars.len(), old.len());
-                merge_bars(old, fresh_bars)
-            } else {
-                fresh_bars
             };
 
-            // Update cache.
-            if let Ok(mut c) = cache.lock() {
-                c.insert(cache_key.clone(), merged.clone());
+            let fresh_first_ts: Option<i64> = fresh_300.first().map(|b| b.timestamp);
+            let fresh_last_ts: Option<i64> = fresh_300.last().map(|b| b.timestamp);
+
+            if let (Some(ft), Some(lt)) = (fresh_first_ts, fresh_last_ts) {
+                eprintln!("[Bridge] Phase A fresh range: {} -> {} ({} bars)", ft, lt, fresh_300.len());
             }
 
+            // Merge fresh_300 into any existing session cache.
+            let merged_a = {
+                let current_cache = cache.lock().ok()
+                    .and_then(|c| c.get(&cache_key).cloned());
+                match current_cache {
+                    Some(old) => {
+                        eprintln!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
+                        merge_bars(old, fresh_300.clone())
+                    }
+                    None => fresh_300.clone(),
+                }
+            };
+
+            // Update cache with Phase A result.
+            if let Ok(mut c) = cache.lock() {
+                c.insert(cache_key.clone(), merged_a.clone());
+            }
+
+            // Send Phase A BarsLoaded (Level 2 — viewport goes to Follow mode).
+            let _ = tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                bars: merged_a.clone(),
+            });
+
+            // ── Phase B: Async heal — fill gap between disk cache and fresh bars ──
+            // Only runs when a disk cache existed before this call.
+            if !had_disk_cache {
+                eprintln!("[Bridge] Phase B: skipped (no disk cache)");
+                finish_fetch!();
+                return;
+            }
+
+            let disk_last = match disk_last_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
+                    return;
+                }
+            };
+            let fresh_first = match fresh_first_ts {
+                Some(ts) => ts,
+                None => {
+                    finish_fetch!();
+                    return;
+                }
+            };
+
+            let gap_seconds = fresh_first - disk_last;
+            if gap_seconds <= 0 {
+                eprintln!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
+                finish_fetch!();
+                return;
+            }
+
+            let interval_secs = interval_to_seconds(&interval);
+            let gap_bars = if interval_secs > 0 { gap_seconds / interval_secs } else { gap_seconds };
+            let heal_target = (gap_bars * 2).max(100) as usize;
+
+            eprintln!(
+                "[Bridge] Phase B: gap={}s = ~{} bars, heal_target={} bars (disk_last={} fresh_first={})",
+                gap_seconds, gap_bars, heal_target, disk_last, fresh_first
+            );
+
+            // Paginate backward from fresh_first to fill the gap toward disk_last.
+            // end_time cursor starts just before the earliest fresh bar (in ms).
+            let mut end_time_cursor: Option<i64> = Some(fresh_first * 1000 - 1);
+            let mut heal_bars: Vec<Bar> = Vec::with_capacity(heal_target);
+            let mut pages: usize = 0;
+
+            'heal: loop {
+                let result = connector
+                    .get_klines(sym.clone(), &interval, Some(500), AccountType::Spot, end_time_cursor)
+                    .await;
+
+                match result {
+                    Ok(klines) => {
+                        if klines.is_empty() {
+                            eprintln!("[Bridge] Phase B: empty page, stopping");
+                            break 'heal;
+                        }
+                        pages += 1;
+                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+
+                        // Move cursor to before the oldest bar in this page.
+                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
+                            end_time_cursor = Some(oldest_ms - 1);
+                        }
+
+                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
+                        heal_bars = merge_bars(batch, heal_bars);
+
+                        eprintln!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
+
+                        if heal_bars.len() >= heal_target {
+                            eprintln!("[Bridge] Phase B: reached heal_target={}", heal_target);
+                            break 'heal;
+                        }
+                        // Stop when we've reached into the disk cache range.
+                        if oldest_bar_ts <= disk_last {
+                            eprintln!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
+                            break 'heal;
+                        }
+                        if pages >= 20 {
+                            eprintln!("[Bridge] Phase B: capped at 20 pages");
+                            break 'heal;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Bridge] Phase B error at page {}: {}", pages, e);
+                        break 'heal;
+                    }
+                }
+            }
+
+            if heal_bars.is_empty() {
+                eprintln!("[Bridge] Phase B: no heal bars fetched, done");
+                finish_fetch!();
+                return;
+            }
+
+            eprintln!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
+
+            // Merge heal bars into current cache (which already has Phase A result).
+            let merged_b = {
+                let current = cache.lock().ok()
+                    .and_then(|c| c.get(&cache_key).cloned())
+                    .unwrap_or(merged_a);
+                merge_bars(heal_bars, current)
+            };
+
+            // Update cache with healed result.
+            if let Ok(mut c) = cache.lock() {
+                c.insert(cache_key.clone(), merged_b.clone());
+            }
+
+            eprintln!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
+
+            // Send Phase B BarsLoaded (Level 3 — fully healed dataset).
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
                 symbol: symbol_str,
                 timeframe: tf_name,
-                bars: merged,
+                bars: merged_b,
             });
 
             finish_fetch!();
@@ -534,7 +536,7 @@ impl DataBridge {
         symbol: &str,
         timeframe: &Timeframe,
         limit: Option<u16>,
-        total_bars: Option<usize>,
+        _total_bars: Option<usize>,
     ) -> Option<Vec<Bar>> {
         let connector = self.pool.get(&exchange_id)?;
         let sym = parse_symbol_for_exchange(exchange_id, symbol);
@@ -859,6 +861,33 @@ impl DataBridge {
     }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERVAL HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parse an interval string to seconds.
+///
+/// Handles standard exchange interval notation: "1s"→1, "1m"→60, "5m"→300,
+/// "15m"→900, "1h"→3600, "4h"→14400, "1d"→86400, "1w"→604800.
+/// Falls back to minutes when the unit is unrecognised.
+fn interval_to_seconds(interval: &str) -> i64 {
+    let s = interval.to_lowercase();
+    if s.is_empty() {
+        return 60;
+    }
+    let unit = s.chars().last().unwrap_or('m');
+    let num_part = &s[..s.len() - 1];
+    let num: i64 = num_part.parse().unwrap_or(1);
+    match unit {
+        's' => num,
+        'm' => num * 60,
+        'h' => num * 3_600,
+        'd' => num * 86_400,
+        'w' => num * 604_800,
+        _ => num * 60,
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BAR CACHE MERGE
