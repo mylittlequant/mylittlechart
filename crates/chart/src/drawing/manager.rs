@@ -788,16 +788,17 @@ impl DrawingManager {
     ///
     /// Called each frame for grouped windows so that the `DrawingManager` acts as
     /// a render cache, always reflecting the authoritative group state.
-    /// In-progress drawing state (`state`, `dragging`, `selected`) is preserved.
+    /// In-progress drag state (`dragging`) is preserved across the replace because
+    /// drag is an active operation. Selection is UI state and is always cleared.
     pub fn sync_from_group_primitives(&mut self, group_prims: &[Box<dyn Primitive>]) {
-        // Preserve selection/drag by primitive id across the full replace.
-        let selected_id = self.selected.and_then(|idx| self.primitives.get(idx).map(|p| p.data().id));
+        // Preserve drag by primitive id across the full replace.
+        // Selection is intentionally NOT preserved — it is UI state, not group data.
         let dragging_id = self.dragging.and_then(|idx| self.primitives.get(idx).map(|p| p.data().id));
 
         self.primitives = group_prims.iter().map(|p| p.clone_box()).collect();
+        self.selected = None;
 
-        // Restore selection/drag indices by matching primitive id.
-        self.selected = selected_id.and_then(|id| self.primitives.iter().position(|p| p.data().id == id));
+        // Restore drag index by matching primitive id.
         self.dragging = dragging_id.and_then(|id| self.primitives.iter().position(|p| p.data().id == id));
         if self.dragging.is_none() {
             self.drag_start = None;
