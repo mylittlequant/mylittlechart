@@ -15,6 +15,7 @@ members = [
     "crates/vello-hybrid-context",
     "crates/tiny-skia-context",
     "crates/updater",
+    "crates/bar-store",
 ]
 resolver = "2"
 
@@ -29,7 +30,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.163"
+version = "0.5.164"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 

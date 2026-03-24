@@ -7,6 +7,9 @@ edition.workspace = true
 # Chart types (Bar, Timeframe, DataProvider trait)
 zengeld-chart = { path = "../chart" }
 
+# Bar cache persistence
+bar-store = { path = "../bar-store" }
+
 # V5 connectors (async exchange API) — separate workspace, use path
 digdigdig3 = "0.1.5"
 

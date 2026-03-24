@@ -636,6 +636,11 @@ struct App<'s> {
     /// True when the user confirms they have saved the new recovery key after a
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
     pending_promote_after_recovery_key: bool,
+
+    /// Bar cache persistence handle — queues async writes to `{data_dir}/bars/`.
+    bar_store: bar_store::BarStoreHandle,
+    /// Wall-clock instant of the last periodic bar-cache save.
+    last_bar_cache_save: std::time::Instant,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -1816,6 +1821,31 @@ fn encode_png(pixels: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     Some(png_bytes)
 }
 
+/// Collect `(exchange, symbol, timeframe)` triples from all windows of all open tabs
+/// in the given profile.  Used at startup to pre-load the bar cache from disk.
+fn collect_bar_keys_from_presets(
+    profile: &zengeld_chart::UserProfile,
+    presets: &std::collections::HashMap<String, zengeld_chart::preset::preset::ChartPreset>,
+) -> Vec<(String, String, String)> {
+    let mut keys = std::collections::HashSet::new();
+    for ws in &profile.windows {
+        for tab_id in &ws.open_tabs {
+            if let Some(preset) = presets.get(tab_id) {
+                for win in &preset.windows {
+                    if !win.symbol.is_empty() && !win.exchange.is_empty() {
+                        keys.insert((
+                            win.exchange.to_lowercase(),
+                            win.symbol.clone(),
+                            win.timeframe.name.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    keys.into_iter().collect()
+}
+
 impl App<'_> {
     fn new(
         symbol: &str,
@@ -2116,6 +2146,28 @@ impl App<'_> {
             eprintln!("[App] startup language: {}", profile.language);
         }
 
+        // ── Bar cache persistence ─────────────────────────────────────────────
+        // Create the BarStoreHandle, load persisted bars, and seed the DataBridge
+        // cache so that the first symbol switch is instant without a network round-trip.
+        let bar_store = {
+            let bars_dir = zengeld_chart::app_data_dir().join("bars");
+            bar_store::BarStoreHandle::new(bars_dir, bridge.runtime())
+        };
+
+        // Collect bar keys from presets and load them from disk.
+        {
+            let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
+            let bar_key_refs: Vec<(&str, &str, &str)> = bar_keys
+                .iter()
+                .map(|(e, s, t)| (e.as_str(), s.as_str(), t.as_str()))
+                .collect();
+            let loaded = bar_store.load_many(&bar_key_refs);
+            if !loaded.is_empty() {
+                eprintln!("[App] pre-loaded {} bar cache entries from disk", loaded.len());
+                bridge.seed_bar_cache(loaded);
+            }
+        }
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -2183,6 +2235,8 @@ impl App<'_> {
             pending_switch_sync_level: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
+            bar_store,
+            last_bar_cache_save: std::time::Instant::now(),
         }
     }
 
@@ -3066,6 +3120,19 @@ impl App<'_> {
                 eprintln!("[App] failed to save preset {}: {}", preset.id, e);
             }
         }
+
+        // 10. Flush bar cache to disk.
+        let snapshot = self.bridge.dump_cache_snapshot();
+        eprintln!("[App] save_all: flushing {} bar cache entries to disk", snapshot.len());
+        for (exchange, symbol, timeframe, bars) in snapshot {
+            self.bar_store.write_async(
+                &exchange,
+                &symbol,
+                &timeframe,
+                std::sync::Arc::new(bars),
+            );
+        }
+        self.bar_store.flush_sync();
     }
 
     /// Drain app-level broadcast messages each frame.
@@ -3770,6 +3837,20 @@ impl ApplicationHandler for App<'_> {
         // Process app-level broadcast messages (ConnectorReady → request_symbols).
         self.tick_app_state();
         let _t1 = std::time::Instant::now();
+
+        // ── Periodic bar cache save (every 5 minutes) ─────────────────────────
+        if self.last_bar_cache_save.elapsed() >= std::time::Duration::from_secs(300) {
+            self.last_bar_cache_save = std::time::Instant::now();
+            let snapshot = self.bridge.dump_cache_snapshot();
+            for (exchange, symbol, timeframe, bars) in snapshot {
+                self.bar_store.write_async(
+                    &exchange,
+                    &symbol,
+                    &timeframe,
+                    std::sync::Arc::new(bars),
+                );
+            }
+        }
 
         // ── Accumulator for event-driven sync push ───────────────────────────
         // Collects blob categories that were flushed to disk this frame.  A

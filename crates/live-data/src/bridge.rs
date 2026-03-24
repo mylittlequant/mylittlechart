@@ -876,6 +876,68 @@ impl DataBridge {
             .unwrap_or_default()
     }
 
+    /// Snapshot the entire bar cache for disk persistence.
+    ///
+    /// Returns `(exchange_str, symbol, timeframe, bars)` tuples for all cached entries.
+    pub fn dump_cache_snapshot(&self) -> Vec<(String, String, String, Vec<bar_store::Bar>)> {
+        let Ok(cache) = self.bar_cache.lock() else {
+            return vec![];
+        };
+        cache
+            .iter()
+            .map(|((ex, sym, tf), bars)| {
+                let store_bars: Vec<bar_store::Bar> = bars
+                    .iter()
+                    .map(|b| bar_store::Bar {
+                        timestamp: b.timestamp,
+                        open: b.open,
+                        high: b.high,
+                        low: b.low,
+                        close: b.close,
+                        volume: b.volume,
+                    })
+                    .collect();
+                (ex.as_str().to_string(), sym.clone(), tf.clone(), store_bars)
+            })
+            .collect()
+    }
+
+    /// Pre-populate the bar cache from disk-loaded bars.
+    ///
+    /// Called at startup before the first `request_bars()` so that switching to a
+    /// previously-visited symbol is instant without a network round-trip.
+    /// Entries that already exist in the cache (e.g. from a very fast initial request)
+    /// are left untouched (`or_insert` semantics).
+    pub fn seed_bar_cache(
+        &self,
+        entries: Vec<(String, String, String, Vec<bar_store::Bar>)>,
+    ) {
+        let Ok(mut cache) = self.bar_cache.lock() else {
+            return;
+        };
+        for (exchange_str, symbol, timeframe, store_bars) in entries {
+            if store_bars.is_empty() {
+                continue;
+            }
+            let Some(exchange_id) = digdigdig3::ExchangeId::from_str(&exchange_str) else {
+                continue;
+            };
+            let bars: Vec<Bar> = store_bars
+                .iter()
+                .map(|b| Bar {
+                    timestamp: b.timestamp,
+                    open: b.open,
+                    high: b.high,
+                    low: b.low,
+                    close: b.close,
+                    volume: b.volume,
+                })
+                .collect();
+            let key = (exchange_id, symbol, timeframe);
+            cache.entry(key).or_insert(bars);
+        }
+    }
+
     /// Get a reference to the tokio runtime owned by this bridge.
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
