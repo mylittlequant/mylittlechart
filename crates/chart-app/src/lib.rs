@@ -1854,6 +1854,16 @@ impl ChartApp {
                         }
                     }
 
+                    // Populate data_provider cache so future LoadPreset calls
+                    // can serve bars synchronously via get_bars().
+                    if any_matched {
+                        if let Some(w) = self.panel_app.panel_grid.windows().values()
+                            .find(|w| w.symbol == symbol && w.exchange == exchange_id.as_str() && w.timeframe.name == tf_name)
+                        {
+                            w.data_provider.insert_bars(&symbol, &tf_name, bars.clone());
+                        }
+                    }
+
                     // Recalculate indicators only for windows that match this
                     // BarsLoaded event (symbol + exchange + timeframe).  Using
                     // calculate_for_window instead of calculate_all_for_symbol

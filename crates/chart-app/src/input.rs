@@ -15781,9 +15781,7 @@ impl ChartApp {
                                         // No pending restore needed — bars arrived synchronously.
                                     } else {
                                         // Bars will arrive asynchronously via BarsLoaded.
-                                        // Stash the desired viewport so it can be applied then
-                                        // (but only if the viewport wasn't stripped — a stripped
-                                        // viewport would just position at bar 0).
+                                        window.pending_symbol_load = true;
                                         if !viewport_is_stripped {
                                             window.pending_viewport_restore = Some(deferred_vp);
                                         }
@@ -15918,6 +15916,7 @@ impl ChartApp {
                                     window.drawing_manager.recalculate_all_bar_caches(&window.bars);
                                     window.viewport = snap.viewport.clone();
                                 } else {
+                                    window.pending_symbol_load = true;
                                     window.pending_viewport_restore = Some(deferred_vp);
                                 }
 

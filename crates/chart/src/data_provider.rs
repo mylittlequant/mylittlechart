@@ -30,6 +30,10 @@ pub trait DataProvider: Send + Sync {
     /// Returns `None` if the symbol/timeframe combination is not available.
     fn get_bars(&self, symbol: &str, timeframe: &Timeframe) -> Option<Vec<Bar>>;
 
+    /// Cache bars so future get_bars() calls return them instantly.
+    /// Default: no-op (providers without a cache ignore this).
+    fn insert_bars(&self, _symbol: &str, _timeframe: &str, _bars: Vec<Bar>) {}
+
     /// Check if a symbol is available in this provider.
     ///
     /// Default implementation tries to load bars and checks if successful.
