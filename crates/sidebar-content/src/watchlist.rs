@@ -62,6 +62,12 @@ pub struct WatchlistSymbol {
     /// Defaults to "binance" for migration of old watchlists.
     #[serde(default = "default_exchange")]
     pub exchange: String,
+    /// Account type short label (e.g. "FC" for FuturesCross, "M" for Margin).
+    ///
+    /// Empty string for Spot (the common case).
+    /// Uses `String` to avoid a dependency on digdigdig3 types.
+    #[serde(default)]
+    pub account_type: String,
 }
 
 fn default_exchange() -> String {
@@ -70,7 +76,7 @@ fn default_exchange() -> String {
 
 impl WatchlistSymbol {
     pub fn new(symbol: String, exchange: String) -> Self {
-        Self { symbol, exchange }
+        Self { symbol, exchange, account_type: String::new() }
     }
 }
 

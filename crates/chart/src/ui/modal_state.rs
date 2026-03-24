@@ -47,6 +47,12 @@ pub struct SearchResult {
     /// Set by the app layer before populating `ModalState::symbol_search_results`.
     /// Used by the renderer to show a filled or outline star icon.
     pub in_watchlist: bool,
+    /// Account type short label (e.g. "FC" for FuturesCross, "M" for Margin).
+    ///
+    /// Empty string for Spot (the common case — no badge shown).
+    /// Uses `String` instead of the `AccountType` enum so chart crate has no
+    /// dependency on digdigdig3.
+    pub account_type: String,
 }
 
 // =============================================================================

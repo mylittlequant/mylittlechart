@@ -160,6 +160,12 @@ pub struct WatchlistItem {
     pub low_24h: f64,
     /// 24-hour volume (in base asset).
     pub volume_24h: f64,
+    /// Account type short label (e.g. "FC" for FuturesCross, "M" for Margin).
+    ///
+    /// Empty string for Spot (the common case).
+    /// Uses `String` to avoid a dependency on digdigdig3 types.
+    #[serde(default)]
+    pub account_type: String,
 }
 
 impl WatchlistItem {

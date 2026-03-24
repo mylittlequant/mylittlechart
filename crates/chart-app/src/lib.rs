@@ -2906,19 +2906,19 @@ impl ChartApp {
                 use sidebar_content::types::WatchlistItem;
 
                 self.sidebar_state.watchlist_items.clear();
-                let watchlist_entries: Vec<(String, String)> = self
+                let watchlist_entries: Vec<(String, String, String)> = self
                     .sidebar_state
                     .watchlist_manager
                     .active_list()
                     .map(|list| {
                         list.all_symbols()
                             .iter()
-                            .map(|ws| (ws.symbol.clone(), ws.exchange.clone()))
+                            .map(|ws| (ws.symbol.clone(), ws.exchange.clone(), ws.account_type.clone()))
                             .collect()
                     })
                     .unwrap_or_default();
 
-                for (sym_name, sym_exchange) in &watchlist_entries {
+                for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
                     let price_data = self.panel_app.panel_grid.iter_windows()
                         .find(|(_, w)| w.symbol == *sym_name && w.exchange == *sym_exchange)
                         .and_then(|(_, w)| w.bars.last())
@@ -2938,6 +2938,7 @@ impl ChartApp {
                             high_24h: high,
                             low_24h: low,
                             volume_24h: volume,
+                            account_type: sym_account_type.clone(),
                         });
                     } else if let Some(ticker) = self.mini_ticker_cache.get(&format!("{}:{}", sym_name, sym_exchange)) {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
@@ -2948,6 +2949,7 @@ impl ChartApp {
                             high_24h: ticker.high_price,
                             low_24h: ticker.low_price,
                             volume_24h: ticker.volume,
+                            account_type: sym_account_type.clone(),
                         });
                     } else {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
@@ -2958,6 +2960,7 @@ impl ChartApp {
                             high_24h: 0.0,
                             low_24h: 0.0,
                             volume_24h: 0.0,
+                            account_type: sym_account_type.clone(),
                         });
                     }
                 }
@@ -5088,6 +5091,7 @@ impl ChartApp {
                         asset_type: asset_type.to_string(),
                         category_icon: category_icon.to_string(),
                         in_watchlist,
+                        account_type: s.account_type.short_label().to_string(),
                     });
                 }
             }

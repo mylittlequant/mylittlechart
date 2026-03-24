@@ -671,6 +671,14 @@ fn render_symbol_search_results_scrollable(
         ctx.set_font("12px sans-serif");
         ctx.fill_text(&item.category_icon, x + width - 70.0, current_y + item_height / 2.0);
 
+        // Account type badge (e.g. "FC", "M") — only shown for non-Spot accounts.
+        // Spot ("S") is the common case and is omitted to reduce visual noise.
+        if !item.account_type.is_empty() && item.account_type != "S" {
+            ctx.set_font("bold 9px sans-serif");
+            ctx.set_fill_color("#FF9800");
+            ctx.fill_text(&item.account_type, x + width - 90.0, current_y + item_height / 2.0);
+        }
+
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
