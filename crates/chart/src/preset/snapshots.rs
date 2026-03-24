@@ -8,6 +8,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+fn default_account_type_spot() -> String {
+    "S".to_string()
+}
+
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use crate::drawing::DrawingManager;
@@ -92,6 +96,9 @@ pub struct ChartWindowSnapshot {
     pub symbol: String,
     /// Exchange name (e.g. `"Binance"`).
     pub exchange: String,
+    /// Account type short label (e.g. "S", "F"). Default "S" for Spot.
+    #[serde(default = "default_account_type_spot")]
+    pub account_type: String,
     /// Timeframe (e.g. 1H, 4H).
     pub timeframe: Timeframe,
     /// Viewport state (pan/zoom position).
@@ -188,6 +195,7 @@ impl ChartWindowSnapshot {
             leaf_id,
             symbol: window.symbol.clone(),
             exchange: window.exchange.clone(),
+            account_type: window.account_type.clone(),
             timeframe: window.timeframe.clone(),
             viewport: window.viewport.clone(),
             price_scale: window.price_scale.clone(),

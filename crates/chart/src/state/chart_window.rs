@@ -31,6 +31,10 @@ use crate::layout::LayoutRect;
 use crate::chart::render::ChartRect;
 use crate::scale_settings::{PriceScalePosition, TimeScalePosition};
 
+fn default_account_type_spot() -> String {
+    "S".to_string()
+}
+
 /// Unique identifier for a chart window
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ChartId(pub u64);
@@ -151,6 +155,10 @@ pub struct ChartWindow {
     pub timeframe: Timeframe,
     /// Exchange name (e.g. "Binance", "Demo")
     pub exchange: String,
+    /// Account type short label (e.g. "S" for Spot, "F" for FuturesCross).
+    /// Stored as String so the chart crate has no dependency on digdigdig3.
+    /// Default is "S" (Spot) to match existing data on disk.
+    pub account_type: String,
 
     // === Computed Data ===
     /// Fast moving average
@@ -332,6 +340,7 @@ impl ChartWindow {
             symbol: symbol.to_string(),
             timeframe,
             exchange: data_provider.exchange_name(symbol),
+            account_type: default_account_type_spot(),
             ma_fast: Vec::new(),
             ma_slow: Vec::new(),
             // Interaction
@@ -501,6 +510,7 @@ impl ChartWindow {
             symbol: self.symbol.clone(),
             timeframe: self.timeframe.clone(),
             exchange: self.exchange.clone(),
+            account_type: self.account_type.clone(),
 
             // === Computed Data (cloned) ===
             ma_fast: self.ma_fast.clone(),

@@ -6966,6 +6966,7 @@ impl ChartApp {
                 if let Some(item) = self.sidebar_state.watchlist_items.get(idx) {
                     let symbol = item.symbol.clone();
                     let item_exchange = item.exchange.clone();
+                    let item_account_type = item.account_type.clone();
                     eprintln!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
 
                     // Resolve ExchangeId from the item's exchange string.
@@ -6989,6 +6990,7 @@ impl ChartApp {
                             window.snapshot_drawings_for_symbol(&old_sym);
                             window.symbol = symbol.clone();
                             window.exchange = item_exchange.clone();
+                            window.account_type = item_account_type.clone();
                             window.update_title();
                             window.bars.clear();
                             window.viewport.bar_count = 0;
@@ -7003,8 +7005,9 @@ impl ChartApp {
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
                         } else {
+                            let item_at = crate::account_type_from_label(&item_account_type);
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                         // Propagate the new symbol to all other windows in the same sync group.
                         if let Some(leaf) = active_leaf {
@@ -13645,6 +13648,14 @@ impl ChartApp {
                     .find(|eid| eid.as_str() == exchange_part)
                     .copied()
                     .unwrap_or(self.active_exchange);
+                // Look up account_type from watchlist manager for this symbol+exchange.
+                let wl_at_label = self.sidebar_state.watchlist_manager.active_list()
+                    .and_then(|list| {
+                        list.all_symbols().iter()
+                            .find(|ws| ws.symbol == sym_part && ws.exchange == exchange_part)
+                            .map(|ws| ws.account_type.clone())
+                    })
+                    .unwrap_or_else(|| "S".to_string());
                 // Switch the active chart to this symbol+exchange.
                 let timeframe = self.panel_app.panel_grid.active_window()
                     .map(|w| w.timeframe.clone())
@@ -13654,6 +13665,7 @@ impl ChartApp {
                     window.snapshot_drawings_for_symbol(&old_sym);
                     window.symbol = sym_part.to_string();
                     window.exchange = exchange_part.to_string();
+                    window.account_type = wl_at_label.clone();
                     window.update_title();
                     window.bars.clear();
                     window.viewport.bar_count = 0;
@@ -13667,8 +13679,9 @@ impl ChartApp {
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
                 } else {
+                    let wl_at = crate::account_type_from_label(&wl_at_label);
                     self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -13965,10 +13978,17 @@ impl ChartApp {
                 } else {
                     (composite, self.active_exchange.as_str())
                 };
+                // Look up account_type from the search results for this symbol+exchange.
+                let at_label = self.modal_state.symbol_search_results
+                    .iter()
+                    .find(|r| r.symbol == sym_part && r.exchange == exchange_part)
+                    .map(|r| r.account_type.clone())
+                    .unwrap_or_else(|| "S".to_string());
                 // Queue action for App to apply on AppState (single source of truth).
                 self.watchlist_actions.push(crate::WatchlistAction::Toggle {
                     symbol: sym_part.to_string(),
                     exchange: exchange_part.to_string(),
+                    account_type: at_label,
                 });
                 self.watchlists_dirty = true;
                 eprintln!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
@@ -14012,12 +14032,19 @@ impl ChartApp {
                         let timeframe = self.panel_app.panel_grid.active_window()
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
+                        // Look up account_type from the search results for this symbol+exchange.
+                        let search_at_label = self.modal_state.symbol_search_results
+                            .iter()
+                            .find(|r| r.symbol == symbol_part && r.exchange == exchange_id_part)
+                            .map(|r| r.account_type.clone())
+                            .unwrap_or_else(|| "S".to_string());
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             // Snapshot current drawings before switching symbol
                             let old_sym = window.symbol.clone();
                             window.snapshot_drawings_for_symbol(&old_sym);
                             window.symbol = symbol_part.to_string();
                             window.exchange = resolved_exchange.as_str().to_string();
+                            window.account_type = search_at_label.clone();
                             window.update_title();
                             window.bars.clear();
                             window.viewport.bar_count = 0;
@@ -14033,8 +14060,9 @@ impl ChartApp {
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
                         } else {
+                            let search_at = crate::account_type_from_label(&search_at_label);
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -15264,6 +15292,9 @@ impl ChartApp {
                     let symbol = self.panel_app.panel_grid.active_window()
                         .map(|w| w.symbol.clone())
                         .unwrap_or_default();
+                    let at_label_tf = self.panel_app.panel_grid.active_window()
+                        .map(|w| w.account_type.clone())
+                        .unwrap_or_else(|| "S".to_string());
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         window.timeframe = tf.clone();
                         window.update_title();
@@ -15277,7 +15308,8 @@ impl ChartApp {
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe change)", eid_str);
                         } else {
-                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            let at = crate::account_type_from_label(&at_label_tf);
+                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                     }
                     // Propagate new timeframe to all leaves in the same sync group.
@@ -15679,19 +15711,22 @@ impl ChartApp {
                                         snap.timeframe.clone(),
                                     );
 
-                                    // Build a data_provider for this window's own exchange.
+                                    // Build a data_provider for this window's own exchange and account_type.
                                     let snap_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                         .unwrap_or(digdigdig3::ExchangeId::Binance);
+                                    let snap_at = crate::account_type_from_label(&snap.account_type);
                                     window.data_provider = std::sync::Arc::new(
                                         live_data::LiveDataProvider::new(
                                             snap_exchange_id,
                                             snap_exchange_id.as_str().to_string(),
+                                            snap_at,
                                             std::sync::Arc::clone(&self.bridge),
                                         ),
                                     );
 
                                     // Apply all snapshot fields
                                     window.exchange = snap.exchange.clone();
+                                    window.account_type = snap.account_type.clone();
                                     window.viewport = snap.viewport.clone();
                                     window.price_scale = snap.price_scale.clone();
                                     window.grid_options = snap.grid_options.clone();
@@ -15861,13 +15896,16 @@ impl ChartApp {
                             if let Some(window) = windows.get_mut(&chart_id) {
                                 window.symbol = snap.symbol.clone();
                                 window.exchange = snap.exchange.clone();
+                                window.account_type = snap.account_type.clone();
                                 // Rebuild data_provider for this window's (possibly new) exchange.
                                 let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                     .unwrap_or(digdigdig3::ExchangeId::Binance);
+                                let patch_at = crate::account_type_from_label(&snap.account_type);
                                 window.data_provider = std::sync::Arc::new(
                                     live_data::LiveDataProvider::new(
                                         patch_exchange_id,
                                         patch_exchange_id.as_str().to_string(),
+                                        patch_at,
                                         std::sync::Arc::clone(&self.bridge),
                                     ),
                                 );
@@ -17737,22 +17775,23 @@ impl ChartApp {
             .collect();
         let symbol_owned = symbol.to_string();
 
-        // Collect (exchange_string, old_symbol, timeframe) for each peer BEFORE mutating
+        // Collect (exchange_string, old_symbol, timeframe, account_type) for each peer BEFORE mutating
         // windows so we can call bridge.request_bars() after the window mutations.
-        let mut peer_requests: Vec<(String, String, zengeld_chart::state::Timeframe)> = Vec::new();
+        let mut peer_requests: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = Vec::new();
         for leaf_id in &sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
                 peer_requests.push((
                     window.exchange.clone(),
                     window.symbol.clone(),
                     window.timeframe.clone(),
+                    window.account_type.clone(),
                 ));
             }
         }
 
         // Apply the symbol change to each peer window directly, bypassing
         // change_symbol() which uses NullDataProvider and always fails.
-        for (leaf_id, (_, old_symbol, _)) in sync_leaves.iter().zip(peer_requests.iter()) {
+        for (leaf_id, (_, old_symbol, _, _)) in sync_leaves.iter().zip(peer_requests.iter()) {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
                 window.snapshot_drawings_for_symbol(old_symbol);
                 window.symbol = symbol_owned.clone();
@@ -17768,7 +17807,7 @@ impl ChartApp {
 
         // Request fresh bars for each peer via the bridge.
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        for (exchange_str, _, timeframe) in peer_requests {
+        for (exchange_str, _, timeframe, at_label) in peer_requests {
             if symbol_owned.is_empty() {
                 continue;
             }
@@ -17785,8 +17824,9 @@ impl ChartApp {
                 );
                 continue;
             }
+            let at = crate::account_type_from_label(&at_label);
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, digdigdig3::AccountType::default(), None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count));
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
@@ -17828,12 +17868,12 @@ impl ChartApp {
             .map(|(&lid, _)| lid)
             .collect();
 
-        // Collect (exchange_string, symbol) for each peer BEFORE mutating windows,
+        // Collect (exchange_string, symbol, account_type) for each peer BEFORE mutating windows,
         // so we can call bridge.request_bars() after setting the new timeframe.
-        let mut peer_requests: Vec<(String, String)> = Vec::new();
+        let mut peer_requests: Vec<(String, String, String)> = Vec::new();
         for leaf_id in &sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
-                peer_requests.push((window.exchange.clone(), window.symbol.clone()));
+                peer_requests.push((window.exchange.clone(), window.symbol.clone(), window.account_type.clone()));
             }
         }
 
@@ -17850,7 +17890,7 @@ impl ChartApp {
 
         // Request fresh bars for each peer via the bridge.
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        for (exchange_str, symbol) in peer_requests {
+        for (exchange_str, symbol, at_label) in peer_requests {
             if symbol.is_empty() {
                 continue;
             }
@@ -17867,8 +17907,9 @@ impl ChartApp {
                 );
                 continue;
             }
+            let at = crate::account_type_from_label(&at_label);
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol, &tf, digdigdig3::AccountType::default(), None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count));
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf

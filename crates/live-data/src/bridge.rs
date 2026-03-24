@@ -833,15 +833,16 @@ impl DataBridge {
 
     /// Snapshot the entire bar cache for disk persistence.
     ///
-    /// Returns `(exchange_str, symbol, timeframe, bars)` tuples for all cached entries.
-    /// Only Spot entries are included for backwards compatibility with the disk format.
-    pub fn dump_cache_snapshot(&self) -> Vec<(String, String, String, Vec<bar_store::Bar>)> {
+    /// Returns `(exchange_str, symbol, timeframe, account_type_label, bars)` tuples
+    /// for all cached entries. The `account_type_label` is the short label string
+    /// (e.g. `"S"` for Spot, `"F"` for FuturesCross).
+    pub fn dump_cache_snapshot(&self) -> Vec<(String, String, String, String, Vec<bar_store::Bar>)> {
         let Ok(cache) = self.bar_cache.lock() else {
             return vec![];
         };
         cache
             .iter()
-            .map(|((ex, _account_type, sym, tf), bars)| {
+            .map(|((ex, account_type, sym, tf), bars)| {
                 let store_bars: Vec<bar_store::Bar> = bars
                     .iter()
                     .map(|b| bar_store::Bar {
@@ -853,7 +854,13 @@ impl DataBridge {
                         volume: b.volume,
                     })
                     .collect();
-                (ex.as_str().to_string(), sym.clone(), tf.clone(), store_bars)
+                (
+                    ex.as_str().to_string(),
+                    sym.clone(),
+                    tf.clone(),
+                    account_type.short_label().to_string(),
+                    store_bars,
+                )
             })
             .collect()
     }
@@ -866,18 +873,19 @@ impl DataBridge {
     /// are left untouched (`or_insert` semantics).
     pub fn seed_bar_cache(
         &self,
-        entries: Vec<(String, String, String, Vec<bar_store::Bar>)>,
+        entries: Vec<(String, String, String, String, Vec<bar_store::Bar>)>,
     ) {
         let Ok(mut cache) = self.bar_cache.lock() else {
             return;
         };
-        for (exchange_str, symbol, timeframe, store_bars) in entries {
+        for (exchange_str, symbol, timeframe, account_type_label, store_bars) in entries {
             if store_bars.is_empty() {
                 continue;
             }
             let Some(exchange_id) = digdigdig3::ExchangeId::from_str(&exchange_str) else {
                 continue;
             };
+            let account_type = account_type_from_short_label(&account_type_label);
             let bars: Vec<Bar> = store_bars
                 .iter()
                 .map(|b| Bar {
@@ -889,7 +897,7 @@ impl DataBridge {
                     volume: b.volume,
                 })
                 .collect();
-            let key = (exchange_id, AccountType::default(), symbol, timeframe);
+            let key = (exchange_id, account_type, symbol, timeframe);
             cache.entry(key).or_insert(bars);
         }
     }
@@ -900,6 +908,27 @@ impl DataBridge {
     }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCOUNT TYPE HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert an account type short label string back to an [`AccountType`] enum.
+///
+/// Unknown labels fall back to [`AccountType::Spot`] — the safe default and
+/// backward-compatible case (old disk files without an account_type prefix).
+pub fn account_type_from_short_label(s: &str) -> AccountType {
+    match s {
+        "M"  => AccountType::Margin,
+        "F"  => AccountType::FuturesCross,
+        "FI" => AccountType::FuturesIsolated,
+        "E"  => AccountType::Earn,
+        "L"  => AccountType::Lending,
+        "O"  => AccountType::Options,
+        "CV" => AccountType::Convert,
+        _    => AccountType::Spot, // "S" and unknown → Spot
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERVAL HELPERS

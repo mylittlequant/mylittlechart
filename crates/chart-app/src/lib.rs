@@ -58,6 +58,30 @@ use zengeld_chart::panel_app::ChartPanelApp;
 use uzor::input::{InputCoordinator, InputState};
 
 // =============================================================================
+// Account type helpers
+// =============================================================================
+
+/// Convert a short account-type label (e.g. `"S"`, `"FC"`) into the
+/// `digdigdig3::AccountType` enum.
+///
+/// Falls back to `AccountType::Spot` for unknown or empty labels so that
+/// existing serialised data without an `account_type` field continues to
+/// work correctly.
+pub fn account_type_from_label(label: &str) -> digdigdig3::AccountType {
+    use digdigdig3::AccountType;
+    match label {
+        "M"  => AccountType::Margin,
+        "FC" => AccountType::FuturesCross,
+        "FI" => AccountType::FuturesIsolated,
+        "E"  => AccountType::Earn,
+        "L"  => AccountType::Lending,
+        "O"  => AccountType::Options,
+        "C"  => AccountType::Convert,
+        _    => AccountType::Spot, // "S" and unknown → Spot (backward compat)
+    }
+}
+
+// =============================================================================
 // Timeframe parsing
 // =============================================================================
 
@@ -450,7 +474,7 @@ pub struct ChartApp {
 #[derive(Debug, Clone)]
 pub enum WatchlistAction {
     /// Toggle symbol in/out of watchlist (star button in search overlay).
-    Toggle { symbol: String, exchange: String },
+    Toggle { symbol: String, exchange: String, account_type: String },
     /// Remove a specific symbol from watchlist.
     Remove { symbol: String, exchange: String },
     /// Reorder a symbol within the active list (drag & drop).
@@ -766,7 +790,7 @@ impl ChartApp {
         let exchange_id = digdigdig3::ExchangeId::Binance;
         let exchange_name = exchange_id.as_str().to_string();
         let data_provider: SharedDataProvider = std::sync::Arc::new(
-            LiveDataProvider::new(exchange_id, exchange_name.clone(), bridge.clone()),
+            LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
         // Check if a saved preset exists for the active_preset_id.
@@ -789,19 +813,20 @@ impl ChartApp {
 
             // Ensure all windows have a data_provider and toolbar config.
             // Each window uses its own exchange from the saved preset.
-            let window_data: Vec<(String, String, zengeld_chart::state::Timeframe)> = app
+            let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
                 .panel_app
                 .panel_grid
                 .iter_windows()
-                .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone()))
+                .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                 .collect();
 
             for window in app.panel_app.panel_grid.windows_mut().values_mut() {
                 let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let win_exchange_name = win_exchange_id.as_str().to_string();
+                let win_at = account_type_from_label(&window.account_type);
                 let win_provider: SharedDataProvider = std::sync::Arc::new(
-                    LiveDataProvider::new(win_exchange_id, win_exchange_name, bridge.clone()),
+                    LiveDataProvider::new(win_exchange_id, win_exchange_name, win_at, bridge.clone()),
                 );
                 window.data_provider = win_provider;
                 window.toolbar_config = ToolbarConfig::standalone();
@@ -814,14 +839,15 @@ impl ChartApp {
             }
 
             // Ensure connectors are ready and request bars for each window's own exchange.
-            for (sym, exch, tf) in &window_data {
+            for (sym, exch, tf, at_label) in &window_data {
                 let eid = digdigdig3::ExchangeId::from_str(exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
+                let at = account_type_from_label(at_label);
                 bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
             }
 
             // Defer viewport positioning until the first resize() when chart_width is known.
@@ -841,7 +867,7 @@ impl ChartApp {
 
             // Ensure Binance connector and request paginated bars.
             bridge.ensure_connector(exchange_id);
-            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::Spot, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
         }
 
         // Ensure connectors for all registered exchanges.
@@ -885,8 +911,9 @@ impl ChartApp {
                 if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                     continue;
                 }
+                let ws_at = account_type_from_label(&ws.account_type);
                 bridge.ensure_connector(ws_exchange);
-                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, digdigdig3::AccountType::default());
+                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
             }
         }
 
@@ -1017,7 +1044,7 @@ impl ChartApp {
         let exchange_id = digdigdig3::ExchangeId::Binance;
         let exchange_name = exchange_id.as_str().to_string();
         let data_provider: SharedDataProvider = std::sync::Arc::new(
-            LiveDataProvider::new(exchange_id, exchange_name.clone(), bridge.clone()),
+            LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
         if let Some(window) = app.panel_app.panel_grid.active_window_mut() {
@@ -1042,7 +1069,7 @@ impl ChartApp {
             exchange_id,
             "BTCUSDT",
             &zengeld_chart::state::Timeframe::new("1H", 60),
-            digdigdig3::AccountType::default(),
+            digdigdig3::AccountType::Spot,
             None,
             Some(app.panel_app.user_manager.profile.bar_count as usize),
         );
@@ -1250,7 +1277,7 @@ impl ChartApp {
         let exchange_id = digdigdig3::ExchangeId::Binance;
         let exchange_name = exchange_id.as_str().to_string();
         let data_provider: SharedDataProvider = std::sync::Arc::new(
-            LiveDataProvider::new(exchange_id, exchange_name.clone(), bridge.clone()),
+            LiveDataProvider::new(exchange_id, exchange_name.clone(), digdigdig3::AccountType::Spot, bridge.clone()),
         );
 
         if skeleton {
@@ -1278,17 +1305,18 @@ impl ChartApp {
                 );
 
                 // Ensure all windows have data_provider and toolbar config.
-                let window_data: Vec<(String, String, zengeld_chart::state::Timeframe)> = app
+                let window_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = app
                     .panel_app.panel_grid.iter_windows()
-                    .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone()))
+                    .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
                     .collect();
 
                 for window in app.panel_app.panel_grid.windows_mut().values_mut() {
                     let win_exchange_id = digdigdig3::ExchangeId::from_str(&window.exchange)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     let win_exchange_name = win_exchange_id.as_str().to_string();
+                    let win_at = account_type_from_label(&window.account_type);
                     let win_provider: SharedDataProvider = std::sync::Arc::new(
-                        LiveDataProvider::new(win_exchange_id, win_exchange_name, bridge.clone()),
+                        LiveDataProvider::new(win_exchange_id, win_exchange_name, win_at, bridge.clone()),
                     );
                     window.data_provider = win_provider;
                     window.toolbar_config = ToolbarConfig::standalone();
@@ -1299,14 +1327,15 @@ impl ChartApp {
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                 }
 
-                for (sym, exch, tf) in &window_data {
+                for (sym, exch, tf, at_label) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                         continue;
                     }
+                    let at = account_type_from_label(at_label);
                     bridge.ensure_connector(eid);
-                    bridge.request_bars(eid, sym, tf, digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                    bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
                 }
 
                 app.needs_initial_viewport_fit = true;
@@ -1342,7 +1371,7 @@ impl ChartApp {
                     exchange_id,
                     "BTCUSDT",
                     &zengeld_chart::state::Timeframe::new("1H", 60),
-                    digdigdig3::AccountType::default(),
+                    digdigdig3::AccountType::Spot,
                     None,
                     Some(app.panel_app.user_manager.profile.bar_count as usize),
                 );
@@ -1390,8 +1419,9 @@ impl ChartApp {
                     if !app.sidebar_state.connector_enabled.get(ws_exchange.as_str()).copied().unwrap_or(true) {
                         continue;
                     }
+                    let ws_at = account_type_from_label(&ws.account_type);
                     bridge.ensure_connector(ws_exchange);
-                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, digdigdig3::AccountType::default());
+                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
                 }
             }
         }
@@ -1517,11 +1547,17 @@ impl ChartApp {
         // Human-readable exchange name used by the window header.
         let exchange_name = exchange_id.as_str().to_string();
 
+        // Use the active window's account_type for the new provider.
+        let switch_at = self.panel_app.panel_grid.active_window()
+            .map(|w| account_type_from_label(&w.account_type))
+            .unwrap_or(digdigdig3::AccountType::Spot);
+
         // Build a LiveDataProvider backed by this bridge.
         let provider: SharedDataProvider =
             std::sync::Arc::new(LiveDataProvider::new(
                 exchange_id,
                 exchange_name.clone(),
+                switch_at,
                 bridge.clone(),
             ));
 
@@ -1534,7 +1570,8 @@ impl ChartApp {
             window.exchange = exchange_name;
             let symbol = window.symbol.clone();
             let timeframe = window.timeframe.clone();
-            bridge.request_bars(exchange_id, &symbol, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+            let at = account_type_from_label(&window.account_type);
+            bridge.request_bars(exchange_id, &symbol, &timeframe, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
         }
     }
 
@@ -1701,9 +1738,10 @@ impl ChartApp {
             }
             let eid = digdigdig3::ExchangeId::from_str(&window.exchange)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
+            let at = account_type_from_label(&window.account_type);
             // Passing `None` for both limit and total_bars lets the bridge
             // pick up incremental mode from its bar cache.
-            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
+            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, at, None, None);
         }
     }
 
@@ -1795,7 +1833,7 @@ impl ChartApp {
                 }
             }
             match update {
-                LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type: _ } => {
+                LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type } => {
                     let loaded_tf = parse_timeframe_name(&tf_name);
                     eprintln!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
                         exchange_id, symbol, tf_name, bars.len(),
@@ -1805,7 +1843,10 @@ impl ChartApp {
                     let mut any_matched = false;
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
-                        let matched = window.symbol == symbol && window.exchange == exchange_id.as_str() && tf_matches;
+                        let matched = window.symbol == symbol
+                            && window.exchange == exchange_id.as_str()
+                            && tf_matches
+                            && window.account_type == account_type.short_label();
                         if matched {
                             any_matched = true;
                             eprintln!("[ChartApp]   -> window matched: sym={} exch={} tf={}", window.symbol, window.exchange, window.timeframe.name);
@@ -1887,7 +1928,7 @@ impl ChartApp {
                     if any_matched {
                         // Auto-subscribe to WebSocket trade stream for live updates after bars load.
                         if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-                            self.bridge.subscribe_trades(exchange_id, &symbol, digdigdig3::AccountType::default());
+                            self.bridge.subscribe_trades(exchange_id, &symbol, account_type);
                         }
 
                         // Bars are kept in-memory (window.bars) for tab-switch UX.
@@ -1897,7 +1938,7 @@ impl ChartApp {
                 LiveUpdate::BarUpdate { .. } => {
                     // BarUpdate is superseded by TradeUpdate — no-op.
                 }
-                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type: _ } => {
+                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type } => {
                     self.trade_count += 1;
                     had_trade_update = true;
                     // Track whether any window formed a new bar for this symbol.
@@ -1913,7 +1954,7 @@ impl ChartApp {
                             // to treat the load as a backfill and skip viewport repositioning.
                             continue;
                         }
-                        if window.symbol == symbol {
+                        if window.symbol == symbol && window.account_type == account_type.short_label() {
                             // Period in seconds derived from minutes field of Timeframe.
                             let period_secs = (window.timeframe.minutes as i64) * 60;
                             let trade_ts_secs = timestamp / 1000;
@@ -2006,8 +2047,9 @@ impl ChartApp {
                         eprintln!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
                         for window in self.panel_app.panel_grid.windows().values() {
-                            if window.symbol == symbol {
-                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
+                            if window.symbol == symbol && window.account_type == account_type.short_label() {
+                                let at = account_type_from_label(&window.account_type);
+                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None);
                             }
                         }
                     }
@@ -2035,15 +2077,15 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type: _ } => {
-                    // Cache the 24h ticker stats keyed by symbol:exchange so that
-                    // the same symbol on different exchanges gets separate entries.
+                LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type } => {
+                    // Cache the 24h ticker stats keyed by symbol:exchange:account_type so that
+                    // the same symbol on different exchanges or account types gets separate entries.
                     //
                     // Stats fields (price_change_percent, high, low, volume) are
                     // Option: BBO-only events (e.g. KuCoin `trade.ticker`) carry
                     // None for those fields and must not overwrite the values that
                     // a prior full-snapshot event already wrote into the cache.
-                    let cache_key = format!("{}:{}", symbol, exchange_id.as_str());
+                    let cache_key = format!("{}:{}:{}", symbol, exchange_id.as_str(), account_type.short_label());
                     let entry = self.mini_ticker_cache
                         .entry(cache_key)
                         .or_insert(MiniTickerData {
@@ -2076,7 +2118,8 @@ impl ChartApp {
                     if let Some(wl) = self.sidebar_state.watchlist_manager.active_list() {
                         for ws in wl.all_symbols() {
                             if ws.exchange == exchange_str {
-                                bridge.subscribe_mini_ticker(exchange_id, &ws.symbol, digdigdig3::AccountType::default());
+                                let ws_at = account_type_from_label(&ws.account_type);
+                                bridge.subscribe_mini_ticker(exchange_id, &ws.symbol, ws_at);
                             }
                         }
                     }
@@ -2087,7 +2130,8 @@ impl ChartApp {
                         let win_eid = digdigdig3::ExchangeId::from_str(&window.exchange)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
-                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
+                            let at = account_type_from_label(&window.account_type);
+                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None);
                         }
                     }
                 }
@@ -2940,7 +2984,7 @@ impl ChartApp {
                             volume_24h: volume,
                             account_type: sym_account_type.clone(),
                         });
-                    } else if let Some(ticker) = self.mini_ticker_cache.get(&format!("{}:{}", sym_name, sym_exchange)) {
+                    } else if let Some(ticker) = self.mini_ticker_cache.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
                             symbol: sym_name.clone(),
                             exchange: sym_exchange.clone(),
@@ -3658,7 +3702,7 @@ impl ChartApp {
                     &window.symbol,
                     &window.timeframe.name,
                     &window.exchange,
-                    "S",  // account_type — default Spot until ChartWindow carries it
+                    &window.account_type,
                     is_active_leaf,
                     hover_zone,
                     color_tag,
@@ -3892,10 +3936,10 @@ impl ChartApp {
 
             let chart_theme = self.panel_app.chart_theme_for_render();
 
-            // Snapshot symbol/timeframe before the window borrow for the overlay tab.
-            let single_window_info: Option<(String, String, String)> = self.panel_app.panel_grid
+            // Snapshot symbol/timeframe/exchange/account_type before the window borrow for the overlay tab.
+            let single_window_info: Option<(String, String, String, String)> = self.panel_app.panel_grid
                 .active_window()
-                .map(|w| (w.symbol.clone(), w.timeframe.name.clone(), w.exchange.clone()));
+                .map(|w| (w.symbol.clone(), w.timeframe.name.clone(), w.exchange.clone(), w.account_type.clone()));
 
             // Scope indicator queries to the active window for single-window mode.
             if let Some(chart_id) = self.panel_app.panel_grid.active_chart_id() {
@@ -3921,10 +3965,10 @@ impl ChartApp {
                 &self.indicator_manager,
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
-                // single_window_info = (symbol, timeframe, exchange) captured above.
+                // single_window_info = (symbol, timeframe, exchange, account_type) captured above.
                 let (single_sym, _, single_exch) = single_window_info
                     .as_ref()
-                    .map(|(s, tf, e)| (s.as_str(), tf.as_str(), e.as_str()))
+                    .map(|(s, tf, e, _at)| (s.as_str(), tf.as_str(), e.as_str()))
                     .unwrap_or(("", "", ""));
                 self.alert_manager.items()
                     .iter()
@@ -4067,7 +4111,7 @@ impl ChartApp {
             self.indicator_manager.current_render_window_id.set(None);
 
             // Render overlay tab header (always, even in single mode).
-            if let Some((symbol, timeframe, exchange)) = single_window_info {
+            if let Some((symbol, timeframe, exchange, account_type_label)) = single_window_info {
                 let single_leaf_id = self.panel_app.panel_grid.docking()
                     .active_leaf()
                     .unwrap_or(zengeld_chart::LeafId(0));
@@ -4085,7 +4129,7 @@ impl ChartApp {
                     &symbol,
                     &timeframe,
                     &exchange,
-                    "S",  // account_type
+                    &account_type_label,
                     true, // always active in single mode
                     hover_zone,
                     single_color_tag,

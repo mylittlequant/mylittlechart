@@ -1821,12 +1821,12 @@ fn encode_png(pixels: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     Some(png_bytes)
 }
 
-/// Collect `(exchange, symbol, timeframe)` triples from all windows of all open tabs
-/// in the given profile.  Used at startup to pre-load the bar cache from disk.
+/// Collect `(exchange, symbol, timeframe, account_type)` 4-tuples from all windows of all
+/// open tabs in the given profile.  Used at startup to pre-load the bar cache from disk.
 fn collect_bar_keys_from_presets(
     profile: &zengeld_chart::UserProfile,
     presets: &std::collections::HashMap<String, zengeld_chart::preset::preset::ChartPreset>,
-) -> Vec<(String, String, String)> {
+) -> Vec<(String, String, String, String)> {
     let mut keys = std::collections::HashSet::new();
     for ws in &profile.windows {
         for tab_id in &ws.open_tabs {
@@ -1837,6 +1837,7 @@ fn collect_bar_keys_from_presets(
                             win.exchange.to_lowercase(),
                             win.symbol.clone(),
                             win.timeframe.name.clone(),
+                            win.account_type.clone(), // "S" by default (serde(default) on ChartWindowSnapshot)
                         ));
                     }
                 }
@@ -2157,9 +2158,9 @@ impl App<'_> {
         // Collect bar keys from presets and load them from disk.
         {
             let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
-            let bar_key_refs: Vec<(&str, &str, &str)> = bar_keys
+            let bar_key_refs: Vec<(&str, &str, &str, &str)> = bar_keys
                 .iter()
-                .map(|(e, s, t)| (e.as_str(), s.as_str(), t.as_str()))
+                .map(|(e, s, t, a)| (e.as_str(), s.as_str(), t.as_str(), a.as_str()))
                 .collect();
             let loaded = bar_store.load_many(&bar_key_refs);
             if !loaded.is_empty() {
@@ -3124,11 +3125,12 @@ impl App<'_> {
         // 10. Flush bar cache to disk.
         let snapshot = self.bridge.dump_cache_snapshot();
         eprintln!("[App] save_all: flushing {} bar cache entries to disk", snapshot.len());
-        for (exchange, symbol, timeframe, bars) in snapshot {
+        for (exchange, symbol, timeframe, account_type, bars) in snapshot {
             self.bar_store.write_async(
                 &exchange,
                 &symbol,
                 &timeframe,
+                &account_type,
                 std::sync::Arc::new(bars),
             );
         }
@@ -3842,11 +3844,12 @@ impl ApplicationHandler for App<'_> {
         if self.last_bar_cache_save.elapsed() >= std::time::Duration::from_secs(300) {
             self.last_bar_cache_save = std::time::Instant::now();
             let snapshot = self.bridge.dump_cache_snapshot();
-            for (exchange, symbol, timeframe, bars) in snapshot {
+            for (exchange, symbol, timeframe, account_type, bars) in snapshot {
                 self.bar_store.write_async(
                     &exchange,
                     &symbol,
                     &timeframe,
+                    &account_type,
                     std::sync::Arc::new(bars),
                 );
             }
@@ -3867,7 +3870,7 @@ impl ApplicationHandler for App<'_> {
             for action in pw.chart.watchlist_actions.drain(..) {
                 watchlist_had_actions = true;
                 match action {
-                    chart_app::WatchlistAction::Toggle { symbol, exchange } => {
+                    chart_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
                         let now_in = self.app_state.watchlist_manager.toggle_symbol(&symbol, &exchange);
                         eprintln!("[App] watchlist toggle: {}:{} -> in_watchlist={}", symbol, exchange, now_in);
                         if now_in {
@@ -3875,8 +3878,9 @@ impl ApplicationHandler for App<'_> {
                                 let enabled = self.app_state.connector_enabled
                                     .get(eid.as_str()).copied().unwrap_or(true);
                                 if enabled {
+                                    let at = chart_app::account_type_from_label(&account_type);
                                     self.bridge.ensure_connector(eid);
-                                    self.bridge.subscribe_mini_ticker(eid, &symbol, live_data::AccountType::default());
+                                    self.bridge.subscribe_mini_ticker(eid, &symbol, at);
                                 }
                             }
                             if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
@@ -3884,7 +3888,8 @@ impl ApplicationHandler for App<'_> {
                             }
                         } else {
                             if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
-                                self.bridge.unsubscribe_mini_ticker(eid, &symbol, live_data::AccountType::default());
+                                let at = chart_app::account_type_from_label(&account_type);
+                                self.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
                             }
                             if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
                                 if let Some(ref mut snap) = list.order_snapshot {

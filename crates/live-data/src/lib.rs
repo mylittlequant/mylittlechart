@@ -47,7 +47,7 @@ mod provider;
 mod convert;
 mod ws_manager;
 
-pub use bridge::{DataBridge, LiveUpdate};
+pub use bridge::{DataBridge, LiveUpdate, account_type_from_short_label};
 pub use provider::LiveDataProvider;
 pub use convert::{kline_to_bar, timeframe_to_interval};
 

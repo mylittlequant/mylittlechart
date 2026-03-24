@@ -44,12 +44,19 @@ impl BarStoreHandle {
         Self { tx, bars_dir }
     }
 
-    /// Build the file path for a given exchange/symbol/timeframe.
-    pub fn file_path(&self, exchange: &str, symbol: &str, timeframe: &str) -> PathBuf {
+    /// Build the file path for a given exchange/symbol/timeframe/account_type.
+    ///
+    /// Backward compat: Spot (`"S"`) and empty string produce the OLD filename
+    /// format so existing disk cache files are found without migration.
+    /// Non-Spot account types produce `SYMBOL_AT_TF.bin` (e.g. `BTCUSDT_F_15m.bin`).
+    pub fn file_path(&self, exchange: &str, symbol: &str, timeframe: &str, account_type: &str) -> PathBuf {
         let safe_symbol = symbol.replace('/', "-").replace(':', "_");
-        self.bars_dir
-            .join(exchange.to_lowercase())
-            .join(format!("{}_{}.bin", safe_symbol, timeframe))
+        let filename = if account_type.is_empty() || account_type == "S" {
+            format!("{}_{}.bin", safe_symbol, timeframe)
+        } else {
+            format!("{}_{}_{}.bin", safe_symbol, account_type, timeframe)
+        };
+        self.bars_dir.join(exchange.to_lowercase()).join(filename)
     }
 
     /// Queue an async write. Never blocks the caller.
@@ -58,23 +65,25 @@ impl BarStoreHandle {
         exchange: &str,
         symbol: &str,
         timeframe: &str,
+        account_type: &str,
         bars: Arc<Vec<Bar>>,
     ) {
-        let path = self.file_path(exchange, symbol, timeframe);
+        let path = self.file_path(exchange, symbol, timeframe, account_type);
         let _ = self.tx.send(BarWriteCmd::Write { path, bars });
     }
 
     /// Load bars from disk for the given keys.
     ///
+    /// Keys are 4-tuples `(exchange, symbol, timeframe, account_type)`.
     /// Returns successfully loaded entries. Errors are logged and skipped.
     /// `NotFound` errors are silently ignored (expected on first run).
     pub fn load_many(
         &self,
-        keys: &[(&str, &str, &str)],
-    ) -> Vec<(String, String, String, Vec<Bar>)> {
+        keys: &[(&str, &str, &str, &str)],
+    ) -> Vec<(String, String, String, String, Vec<Bar>)> {
         let mut result = Vec::with_capacity(keys.len());
-        for &(exchange, symbol, timeframe) in keys {
-            let path = self.file_path(exchange, symbol, timeframe);
+        for &(exchange, symbol, timeframe, account_type) in keys {
+            let path = self.file_path(exchange, symbol, timeframe, account_type);
             match format::read_bars(&path) {
                 Ok(bars) => {
                     eprintln!("[BarStore] loaded {} bars from {:?}", bars.len(), path);
@@ -82,6 +91,7 @@ impl BarStoreHandle {
                         exchange.to_string(),
                         symbol.to_string(),
                         timeframe.to_string(),
+                        account_type.to_string(),
                         bars,
                     ));
                 }
