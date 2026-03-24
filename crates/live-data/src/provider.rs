@@ -114,6 +114,16 @@ impl DataProvider for LiveDataProvider {
         None
     }
 
+    fn insert_bars(&self, symbol: &str, timeframe: &str, bars: Vec<Bar>) {
+        let key = (symbol.to_string(), timeframe.to_string());
+        if let Ok(mut cache) = self.cache.write() {
+            cache.insert(key.clone(), bars);
+        }
+        if let Ok(mut pending) = self.pending.write() {
+            pending.remove(&key);
+        }
+    }
+
     fn has_symbol(&self, _symbol: &str) -> bool {
         // We cannot know without an async round-trip; optimistically return true.
         true
