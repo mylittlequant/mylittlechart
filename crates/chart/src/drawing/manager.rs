@@ -887,6 +887,20 @@ impl DrawingManager {
         }
     }
 
+    /// Ensure all primitives have point_timestamps populated.
+    ///
+    /// For primitives with empty timestamps, compute them from current bar indices.
+    /// This is a one-time migration for old presets that did not save timestamps.
+    /// Must be called BEFORE recalculate_all_bar_caches so that method has
+    /// timestamps to work with and will not skip these primitives.
+    pub fn ensure_timestamps_populated(&mut self, bars: &[Bar]) {
+        for prim in &mut self.primitives {
+            if prim.data().point_timestamps.is_empty() && !bars.is_empty() {
+                Self::sync_primitive_timestamps(prim.as_mut(), bars);
+            }
+        }
+    }
+
     /// Update timestamps from current bar indices for all primitives.
     ///
     /// Should be called after primitive creation or drag operations to sync timestamps.

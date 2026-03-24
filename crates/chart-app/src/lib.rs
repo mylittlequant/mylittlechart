@@ -1825,6 +1825,12 @@ impl ChartApp {
                                 window.set_bars(bars.clone());
                                 window.pending_symbol_load = false;
                             }
+                            // Force-fill empty timestamps BEFORE recalculate.
+                            // Old presets may have primitives with empty point_timestamps
+                            // (timestamps were not saved in earlier versions).  Without this
+                            // call, recalculate_all_bar_caches skips those primitives and
+                            // they render at wrong positions after a symbol/TF switch.
+                            window.drawing_manager.ensure_timestamps_populated(&window.bars);
                             // Recalculate bar-index caches for all drawings so primitives
                             // render at correct positions now that real bars are available.
                             window.drawing_manager.recalculate_all_bar_caches(&window.bars);

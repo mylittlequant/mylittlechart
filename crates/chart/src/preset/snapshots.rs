@@ -156,12 +156,12 @@ pub struct ChartWindowSnapshot {
     /// primitive snapshots that were active on this window for that symbol.
     #[serde(default)]
     pub symbol_drawings_snapshots: std::collections::HashMap<String, Vec<PrimitiveSnapshot>>,
-    /// Cached OHLCV bars so that switching presets (tabs) restores the chart
-    /// instantly without waiting for an async network request.
+    /// Bars are never serialized to preset JSON — they come from bar-store
+    /// (disk cache) or from the exchange at load time.
     ///
-    /// Serialized only when non-empty; old presets without this field default
-    /// to an empty `Vec` and fall back to the data-provider path.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Old presets that contain a `bars` field still deserialize fine via
+    /// `serde(default)` — the field is simply ignored on write.
+    #[serde(default, skip_serializing)]
     pub bars: Vec<crate::Bar>,
     /// Stashed primitives: the window's own drawing primitives saved when
     /// the window joined an existing sync group (color tag). Restored on desync.
@@ -216,7 +216,7 @@ impl ChartWindowSnapshot {
             stashed_command_history: window.stashed_command_history.clone(),
             compare_overlay: window.compare_overlay.clone(),
             symbol_drawings_snapshots: window.symbol_drawings.clone(),
-            bars: window.bars.clone(),
+            bars: Vec::new(),
             stashed_primitives: window
                 .stashed_primitives
                 .iter()
