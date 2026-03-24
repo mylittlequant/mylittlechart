@@ -874,8 +874,11 @@ impl DrawingManager {
             let new_points: Vec<(f64, f64)> = timestamps
                 .iter()
                 .zip(current_points.iter())
-                .map(|(ts, (_old_bar, price))| {
-                    let bar = find_bar_for_timestamp(bars, *ts).unwrap_or(0) as f64;
+                .map(|(ts, (old_bar, price))| {
+                    let bar = match find_bar_for_timestamp(bars, *ts) {
+                        Some(idx) => idx as f64,
+                        None => *old_bar,
+                    };
                     (bar, *price)
                 })
                 .collect();
@@ -1864,7 +1867,8 @@ impl DrawingManager {
             prim_data.display_name = data.display_name.clone();
             prim_data.text = data.text.clone();
             prim_data.timeframe_visibility = data.timeframe_visibility.clone();
-            // Note: we don't change id or other immutable properties
+            prim_data.point_timestamps = data.point_timestamps.clone();
+            // Note: we don't change id, type_id, origin_id, symbol, or other immutable identity properties
         }
     }
 

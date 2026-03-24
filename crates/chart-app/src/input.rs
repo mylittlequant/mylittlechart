@@ -3167,6 +3167,10 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 window.drawing_manager.complete_freehand();
             }
+            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                let bars = window.bars.clone();
+                window.drawing_manager.update_all_timestamps_from_bars(&bars);
+            }
             // For grouped windows: move the completed freehand primitive to TagManager.
             // For standalone windows: record undo and propagate to color-tag peers.
             if !self.intercept_completed_primitive_to_group() {
@@ -5523,6 +5527,10 @@ impl ChartApp {
                                             }
                                         }
                                     }
+                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                        let bars = window.bars.clone();
+                                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                                    }
                                 }
                             }
                         }
@@ -5542,6 +5550,10 @@ impl ChartApp {
                                                 prims[idx].set_points(&pts);
                                             }
                                         }
+                                    }
+                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                        let bars = window.bars.clone();
+                                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
                                     }
                                 }
                             }
@@ -6403,6 +6415,10 @@ impl ChartApp {
                 } else {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                         w.drawing_manager.set_points_at(*index, new_points);
+                    }
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        let bars = w.bars.clone();
+                        w.drawing_manager.update_all_timestamps_from_bars(&bars);
                     }
                 }
             }
@@ -9948,6 +9964,10 @@ impl ChartApp {
                                 }
                             }
                         }
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            let bars = window.bars.clone();
+                            window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                        }
                     }
                 }
             }
@@ -9967,6 +9987,10 @@ impl ChartApp {
                                     prims[idx].set_points(&pts);
                                 }
                             }
+                        }
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            let bars = window.bars.clone();
+                            window.drawing_manager.update_all_timestamps_from_bars(&bars);
                         }
                     }
                 }
@@ -14895,6 +14919,8 @@ impl ChartApp {
                                     0.0
                                 };
                                 w.drawing_manager.translate_at(new_idx, bar_delta, price_delta);
+                                let bars = w.bars.clone();
+                                w.drawing_manager.update_all_timestamps_from_bars(&bars);
                                 w.drawing_manager.select_by_index(new_idx);
                             }
                             // Capture the NEW primitive's data for undo.

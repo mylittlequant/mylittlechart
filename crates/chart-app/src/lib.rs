@@ -5570,6 +5570,10 @@ impl ChartApp {
                     if let Some(cmd) = move_cmd {
                         self.push_undo_command(cmd);
                     }
+                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        let bars = window.bars.clone();
+                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                    }
                     // Propagate final primitive position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_prim_id {
                         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
