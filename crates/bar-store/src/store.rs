@@ -46,7 +46,7 @@ impl BarStoreHandle {
 
     /// Build the file path for a given exchange/symbol/timeframe.
     pub fn file_path(&self, exchange: &str, symbol: &str, timeframe: &str) -> PathBuf {
-        let safe_symbol = symbol.replace('/', "-");
+        let safe_symbol = symbol.replace('/', "-").replace(':', "_");
         self.bars_dir
             .join(exchange.to_lowercase())
             .join(format!("{}_{}.bin", safe_symbol, timeframe))

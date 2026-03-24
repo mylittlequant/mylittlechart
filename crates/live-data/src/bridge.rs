@@ -623,28 +623,35 @@ impl DataBridge {
                 }
             };
 
-            // Uses get_exchange_info from the MarketData trait, available on all connectors.
-            // Non-supporting connectors return UnsupportedOperation.
-            let result = connector.get_exchange_info(AccountType::Spot).await;
+            // Fetch Spot and Futures symbols independently; merge into one list.
+            // If an exchange doesn't support a given account type it returns an
+            // error which we silently ignore — we keep whatever succeeded.
+            let mut all_symbols: Vec<SymbolInfo> = Vec::new();
 
-            match result {
-                Ok(symbols) => {
-                    // Cache for session.
-                    if let Ok(mut c) = cache.lock() {
-                        c.insert(exchange_id, symbols.clone());
-                    }
-                    let _ = tx.send(LiveUpdate::SymbolsLoaded {
-                        exchange_id,
-                        symbols,
-                    });
-                }
-                Err(e) => {
-                    let _ = tx.send(LiveUpdate::Error {
-                        exchange_id,
-                        message: format!("get_exchange_info failed: {}", e),
-                    });
-                }
+            if let Ok(spot) = connector.get_exchange_info(AccountType::Spot).await {
+                all_symbols.extend(spot);
             }
+
+            if let Ok(futures) = connector.get_exchange_info(AccountType::FuturesCross).await {
+                all_symbols.extend(futures);
+            }
+
+            if all_symbols.is_empty() {
+                let _ = tx.send(LiveUpdate::Error {
+                    exchange_id,
+                    message: "get_exchange_info failed for all account types".to_string(),
+                });
+                return;
+            }
+
+            // Cache for session.
+            if let Ok(mut c) = cache.lock() {
+                c.insert(exchange_id, all_symbols.clone());
+            }
+            let _ = tx.send(LiveUpdate::SymbolsLoaded {
+                exchange_id,
+                symbols: all_symbols,
+            });
         });
     }
 
