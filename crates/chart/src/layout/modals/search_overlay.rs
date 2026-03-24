@@ -671,11 +671,8 @@ fn render_symbol_search_results_scrollable(
         ctx.set_font("12px sans-serif");
         ctx.fill_text(&item.category_icon, x + width - 70.0, current_y + item_height / 2.0);
 
-        // Account type badge — always visible: green "S" for Spot, orange for others
+        // Account type badge (S/F) — same style as category icon
         if !item.account_type.is_empty() {
-            ctx.set_font("bold 9px sans-serif");
-            let badge_color = if item.account_type == "S" { "#4CAF50" } else { "#FF9800" };
-            ctx.set_fill_color(badge_color);
             ctx.fill_text(&item.account_type, x + width - 90.0, current_y + item_height / 2.0);
         }
 

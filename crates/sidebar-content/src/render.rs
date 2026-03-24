@@ -1090,45 +1090,23 @@ fn render_watchlist_items(
                 let (align, tx) = col_text_x(0, clip_l, clip_r);
                 let row_mid_y = current_y + data_row_h / 2.0;
 
-                // Resolve badge label: always show — "S" for Spot (empty), or the actual label.
-                let badge_label = if item.account_type.is_empty() {
-                    "S"
-                } else {
-                    item.account_type.as_str()
-                };
-
-                // Badge colors: green for Spot, orange for everything else.
-                let (badge_bg, badge_fg) = if badge_label == "S" {
-                    ("#1a3a2a", "#26a69a") // dark-green bg, teal text
-                } else {
-                    ("#3a2a10", "#f59e0b") // dark-amber bg, amber text
-                };
-
-                // Measure badge dimensions.
-                ctx.set_font("bold 8px sans-serif");
-                let badge_text_w = ctx.measure_text(badge_label);
-                let badge_pad_h = 3.0;
-                let badge_pad_v = 2.0;
-                let badge_w = badge_text_w + badge_pad_h * 2.0;
-                let badge_h = 12.0;
-
-                // Badge is drawn at the left of the clip area; symbol text follows.
+                // Account type letter (S/F) — muted text, small font, left of symbol.
+                let badge_label = item.account_type.as_str();
+                let badge_gap = if badge_label.is_empty() { 0.0 } else { 4.0 };
+                ctx.set_font("9px sans-serif");
+                let badge_text_w = if badge_label.is_empty() { 0.0 } else { ctx.measure_text(badge_label) };
                 let badge_x = clip_l + 2.0;
-                let badge_y = row_mid_y - badge_h / 2.0;
-                let symbol_x = badge_x + badge_w + 4.0;
+                let symbol_x = badge_x + badge_text_w + badge_gap;
                 let symbol_clip_w = (clip_r - symbol_x).max(0.0);
 
-                // Draw badge background.
-                ctx.set_fill_color(badge_bg);
-                ctx.fill_rounded_rect(badge_x, badge_y, badge_w, badge_h, 2.0);
+                if !badge_label.is_empty() {
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(badge_label, badge_x, row_mid_y);
+                }
 
-                // Draw badge text.
-                ctx.set_fill_color(badge_fg);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(badge_label, badge_x + badge_pad_h, row_mid_y + badge_pad_v * 0.25);
-
-                // Draw symbol text after the badge.
+                // Draw symbol text after the badge letter.
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(align);
