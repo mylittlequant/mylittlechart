@@ -11,7 +11,7 @@ zengeld-chart = { path = "../chart" }
 bar-store = { path = "../bar-store" }
 
 # V5 connectors (async exchange API) — separate workspace, use path
-digdigdig3 = "0.1.7"
+digdigdig3 = "0.1.8"
 
 # Async runtime for background tasks
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
