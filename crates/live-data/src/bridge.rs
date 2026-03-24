@@ -344,7 +344,28 @@ impl DataBridge {
 
             let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
 
-            // ── Phase A: Quick fresh fetch — always 300 bars from now ────────
+            // ── Phase A: Quick fresh fetch ───────────────────────────────────
+            // Skip the network fetch if the cache is already fresh (last bar
+            // within 2× the interval of now). This avoids redundant API calls
+            // when switching between presets that share the same data.
+            let interval_secs = interval_to_seconds(&interval);
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let cache_is_fresh = disk_last_ts
+                .map(|ts| (now_secs - ts) < interval_secs * 2)
+                .unwrap_or(false);
+
+            if cache_is_fresh {
+                eprintln!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
+                    exchange_id, symbol_str, interval,
+                    now_secs - disk_last_ts.unwrap_or(0),
+                    interval_secs * 2);
+                finish_fetch!();
+                return;
+            }
+
             eprintln!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
             let phase_a_result = connector

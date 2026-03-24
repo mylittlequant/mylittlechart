@@ -189,6 +189,10 @@ async fn run_ws_actor(
                 }
             };
 
+        // Grab the event stream BEFORE re-subscribing so we don't lose
+        // any messages that arrive between subscribe() and event_stream().
+        let mut event_stream = ws.event_stream();
+
         // Re-subscribe all symbols that were active before this reconnect.
         for symbol in state.refcounts.keys().cloned().collect::<Vec<_>>() {
             let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
@@ -196,8 +200,6 @@ async fn run_ws_actor(
                 eprintln!("[WsActor] re-subscribe {} failed: {}", symbol, e);
             }
         }
-
-        let mut event_stream = ws.event_stream();
 
         // Inner event loop — exits on stream error/close; 'outer then reconnects.
         loop {
