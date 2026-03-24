@@ -376,15 +376,17 @@ impl DataBridge {
                             if batch.is_empty() && pages == 1 {
                                 break;
                             }
-                            // Find the oldest timestamp in this page for backward pagination
-                            if let Some(oldest_ts) = klines.iter().map(|k| k.open_time as i64).min() {
+                            // Find the oldest timestamp in this page for backward pagination.
+                            // Kline.open_time is in milliseconds; last_ts is in seconds.
+                            if let Some(oldest_ts_ms) = klines.iter().map(|k| k.open_time).min() {
+                                let oldest_ts_secs = oldest_ts_ms / 1000;
                                 // If oldest bar in this page is already older than our cache,
                                 // we've covered the gap — stop paginating.
-                                if oldest_ts <= last_ts {
+                                if oldest_ts_secs <= last_ts {
                                     all_new.extend(batch);
                                     break;
                                 }
-                                end_time_cursor = Some(oldest_ts * 1000 - 1);
+                                end_time_cursor = Some(oldest_ts_ms - 1);
                             } else {
                                 all_new.extend(batch);
                                 break;
