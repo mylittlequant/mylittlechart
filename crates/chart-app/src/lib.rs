@@ -821,7 +821,7 @@ impl ChartApp {
                     continue;
                 }
                 bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                bridge.request_bars(eid, sym, tf, digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
             }
 
             // Defer viewport positioning until the first resize() when chart_width is known.
@@ -841,7 +841,7 @@ impl ChartApp {
 
             // Ensure Binance connector and request paginated bars.
             bridge.ensure_connector(exchange_id);
-            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
         }
 
         // Ensure connectors for all registered exchanges.
@@ -886,7 +886,7 @@ impl ChartApp {
                     continue;
                 }
                 bridge.ensure_connector(ws_exchange);
-                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol);
+                bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, digdigdig3::AccountType::default());
             }
         }
 
@@ -1042,6 +1042,7 @@ impl ChartApp {
             exchange_id,
             "BTCUSDT",
             &zengeld_chart::state::Timeframe::new("1H", 60),
+            digdigdig3::AccountType::default(),
             None,
             Some(app.panel_app.user_manager.profile.bar_count as usize),
         );
@@ -1305,7 +1306,7 @@ impl ChartApp {
                         continue;
                     }
                     bridge.ensure_connector(eid);
-                    bridge.request_bars(eid, sym, tf, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                    bridge.request_bars(eid, sym, tf, digdigdig3::AccountType::default(), None, Some(app.panel_app.user_manager.profile.bar_count as usize));
                 }
 
                 app.needs_initial_viewport_fit = true;
@@ -1341,6 +1342,7 @@ impl ChartApp {
                     exchange_id,
                     "BTCUSDT",
                     &zengeld_chart::state::Timeframe::new("1H", 60),
+                    digdigdig3::AccountType::default(),
                     None,
                     Some(app.panel_app.user_manager.profile.bar_count as usize),
                 );
@@ -1389,7 +1391,7 @@ impl ChartApp {
                         continue;
                     }
                     bridge.ensure_connector(ws_exchange);
-                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol);
+                    bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, digdigdig3::AccountType::default());
                 }
             }
         }
@@ -1532,7 +1534,7 @@ impl ChartApp {
             window.exchange = exchange_name;
             let symbol = window.symbol.clone();
             let timeframe = window.timeframe.clone();
-            bridge.request_bars(exchange_id, &symbol, &timeframe, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+            bridge.request_bars(exchange_id, &symbol, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
         }
     }
 
@@ -1701,7 +1703,7 @@ impl ChartApp {
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             // Passing `None` for both limit and total_bars lets the bridge
             // pick up incremental mode from its bar cache.
-            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, None, None);
+            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
         }
     }
 
@@ -1793,7 +1795,7 @@ impl ChartApp {
                 }
             }
             match update {
-                LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars } => {
+                LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type: _ } => {
                     let loaded_tf = parse_timeframe_name(&tf_name);
                     eprintln!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
                         exchange_id, symbol, tf_name, bars.len(),
@@ -1885,7 +1887,7 @@ impl ChartApp {
                     if any_matched {
                         // Auto-subscribe to WebSocket trade stream for live updates after bars load.
                         if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-                            self.bridge.subscribe_trades(exchange_id, &symbol);
+                            self.bridge.subscribe_trades(exchange_id, &symbol, digdigdig3::AccountType::default());
                         }
 
                         // Bars are kept in-memory (window.bars) for tab-switch UX.
@@ -1895,7 +1897,7 @@ impl ChartApp {
                 LiveUpdate::BarUpdate { .. } => {
                     // BarUpdate is superseded by TradeUpdate — no-op.
                 }
-                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp } => {
+                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type: _ } => {
                     self.trade_count += 1;
                     had_trade_update = true;
                     // Track whether any window formed a new bar for this symbol.
@@ -2005,7 +2007,7 @@ impl ChartApp {
                         let bridge = self.bridge.clone();
                         for window in self.panel_app.panel_grid.windows().values() {
                             if window.symbol == symbol {
-                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, None, None);
+                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
                             }
                         }
                     }
@@ -2033,7 +2035,7 @@ impl ChartApp {
                         }
                     }
                 }
-                LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume } => {
+                LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type: _ } => {
                     // Cache the 24h ticker stats keyed by symbol:exchange so that
                     // the same symbol on different exchanges gets separate entries.
                     //
@@ -2074,7 +2076,7 @@ impl ChartApp {
                     if let Some(wl) = self.sidebar_state.watchlist_manager.active_list() {
                         for ws in wl.all_symbols() {
                             if ws.exchange == exchange_str {
-                                bridge.subscribe_mini_ticker(exchange_id, &ws.symbol);
+                                bridge.subscribe_mini_ticker(exchange_id, &ws.symbol, digdigdig3::AccountType::default());
                             }
                         }
                     }
@@ -2085,7 +2087,7 @@ impl ChartApp {
                         let win_eid = digdigdig3::ExchangeId::from_str(&window.exchange)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
-                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, None, None);
+                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, digdigdig3::AccountType::default(), None, None);
                         }
                     }
                 }

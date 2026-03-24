@@ -26,6 +26,7 @@ pub enum LiveUpdate {
     /// Historical bars loaded from the exchange REST API.
     BarsLoaded {
         exchange_id: ExchangeId,
+        account_type: AccountType,
         symbol: String,
         timeframe: String,
         bars: Vec<Bar>,
@@ -36,6 +37,7 @@ pub enum LiveUpdate {
     /// `is_closed = false` means the current (last) candle is being updated.
     BarUpdate {
         exchange_id: ExchangeId,
+        account_type: AccountType,
         symbol: String,
         bar: Bar,
         is_closed: bool,
@@ -43,6 +45,7 @@ pub enum LiveUpdate {
     /// Live trade update from WebSocket.
     TradeUpdate {
         exchange_id: ExchangeId,
+        account_type: AccountType,
         symbol: String,
         price: f64,
         quantity: f64,
@@ -55,6 +58,7 @@ pub enum LiveUpdate {
     /// previously set by a snapshot event.
     MiniTickerUpdate {
         exchange_id: ExchangeId,
+        account_type: AccountType,
         symbol: String,
         last_price: f64,
         /// `None` when the event does not carry 24h stats (BBO-only update).
@@ -129,12 +133,12 @@ pub struct DataBridge {
     ws_actors: Mutex<WsActorMap>,
     /// Session-level bar cache.
     ///
-    /// Key: `(exchange_id, symbol, timeframe_name)`. Stores bars from previous
+    /// Key: `(exchange_id, account_type, symbol, timeframe_name)`. Stores bars from previous
     /// requests so that switching back to an already-visited exchange+symbol+TF
     /// is instant. On each new `request_bars`, the cache is sent immediately
     /// and then a background fetch retrieves only the *newer* bars (after the
     /// last cached timestamp).
-    bar_cache: Arc<Mutex<HashMap<(ExchangeId, String, String), Vec<Bar>>>>,
+    bar_cache: Arc<Mutex<HashMap<(ExchangeId, AccountType, String, String), Vec<Bar>>>>,
     /// Session-level symbol cache.
     ///
     /// Key: `ExchangeId`. Stores the full list of trading symbols so that
@@ -142,10 +146,10 @@ pub struct DataBridge {
     symbol_cache: Arc<Mutex<HashMap<ExchangeId, Vec<SymbolInfo>>>>,
     /// In-flight bar fetch keys.
     ///
-    /// Prevents duplicate concurrent fetches for the same `(exchange, symbol,
-    /// timeframe)` triple. A key is inserted before the task is spawned and
+    /// Prevents duplicate concurrent fetches for the same `(exchange, account_type, symbol,
+    /// timeframe)` tuple. A key is inserted before the task is spawned and
     /// removed at every exit point of the task.
-    active_fetches: Arc<Mutex<HashSet<(ExchangeId, String, String)>>>,
+    active_fetches: Arc<Mutex<HashSet<(ExchangeId, AccountType, String, String)>>>,
     /// Live WS ping RTT handles, keyed by exchange.
     ///
     /// Populated when a WebSocket task creates a connector that exposes a
@@ -222,7 +226,7 @@ impl DataBridge {
         let connector_ready_tx = self.connector_ready_tx.clone();
         self.runtime.spawn(async move {
             // Creating connector asynchronously.
-            match ConnectorFactory::create_public(exchange_id).await {
+            match ConnectorFactory::create_public(exchange_id, false).await {
                 Ok(connector) => {
                     pool.insert(exchange_id, connector);
                     let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });
@@ -267,6 +271,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         symbol: &str,
         timeframe: &Timeframe,
+        account_type: AccountType,
         _limit: Option<u16>,
         _total_bars: Option<usize>,
     ) {
@@ -278,7 +283,7 @@ impl DataBridge {
         let cache = self.bar_cache.clone();
         let active_fetches = self.active_fetches.clone();
 
-        let cache_key = (exchange_id, symbol_str.clone(), tf_name.clone());
+        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
 
         // ── Deduplication guard: skip if a fetch for this key is already running ──
         {
@@ -300,6 +305,7 @@ impl DataBridge {
             eprintln!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
+                account_type,
                 symbol: symbol_str.clone(),
                 timeframe: tf_name.clone(),
                 bars: bars.clone(),
@@ -369,7 +375,7 @@ impl DataBridge {
             eprintln!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
             let phase_a_result = connector
-                .get_klines(sym.clone(), &interval, Some(300), AccountType::Spot, None)
+                .get_klines(sym.clone(), &interval, Some(300), account_type, None)
                 .await;
 
             let fresh_300: Vec<Bar> = match phase_a_result {
@@ -417,6 +423,7 @@ impl DataBridge {
             // Send Phase A BarsLoaded (Level 2 — viewport goes to Follow mode).
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
+                account_type,
                 symbol: symbol_str.clone(),
                 timeframe: tf_name.clone(),
                 bars: merged_a.clone(),
@@ -469,7 +476,7 @@ impl DataBridge {
 
             'heal: loop {
                 let result = connector
-                    .get_klines(sym.clone(), &interval, Some(500), AccountType::Spot, end_time_cursor)
+                    .get_klines(sym.clone(), &interval, Some(500), account_type, end_time_cursor)
                     .await;
 
                 match result {
@@ -538,6 +545,7 @@ impl DataBridge {
             // Send Phase B BarsLoaded (Level 3 — fully healed dataset).
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
+                account_type,
                 symbol: symbol_str,
                 timeframe: tf_name,
                 bars: merged_b,
@@ -556,6 +564,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         symbol: &str,
         timeframe: &Timeframe,
+        account_type: AccountType,
         limit: Option<u16>,
         _total_bars: Option<usize>,
     ) -> Option<Vec<Bar>> {
@@ -565,7 +574,7 @@ impl DataBridge {
 
         self.runtime.block_on(async move {
             let page_size: u16 = limit.unwrap_or(500).min(500);
-            let result = connector.get_klines(sym, &interval, Some(page_size), AccountType::Spot, None).await;
+            let result = connector.get_klines(sym, &interval, Some(page_size), account_type, None).await;
 
             match result {
                 Ok(klines) => {
@@ -644,8 +653,8 @@ impl DataBridge {
     /// Routes the symbol to the shared per-exchange trade actor, which
     /// multiplexes all symbols over a single WS connection.  If no actor
     /// exists yet for this exchange it is spawned automatically.
-    pub fn subscribe_trades(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades };
+    pub fn subscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
@@ -658,8 +667,8 @@ impl DataBridge {
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
     ///
     /// Routes the symbol to the shared per-exchange ticker actor.
-    pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker };
+    pub fn subscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker, account_type };
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
@@ -673,8 +682,8 @@ impl DataBridge {
     ///
     /// Sends a `RemoveSymbol` command to the trade actor; the actor applies a
     /// 30-second grace period before actually unsubscribing from the exchange.
-    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades };
+    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
             actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
@@ -702,8 +711,8 @@ impl DataBridge {
     ///
     /// Sends a `RemoveSymbol` command to the ticker actor; the actor applies a
     /// 30-second grace period before actually unsubscribing from the exchange.
-    pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker };
+    pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Ticker, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
             actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
@@ -791,23 +800,24 @@ impl DataBridge {
     // Agent API accessors
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Get cached bars for a specific (exchange, symbol, timeframe) key.
+    /// Get cached bars for a specific (exchange, account_type, symbol, timeframe) key.
     ///
     /// Returns `None` if the key is not in the cache or the lock is poisoned.
     pub fn get_cached_bars(
         &self,
         exchange_id: &ExchangeId,
+        account_type: AccountType,
         symbol: &str,
         timeframe: &str,
     ) -> Option<Vec<Bar>> {
         let cache = self.bar_cache.lock().ok()?;
         cache
-            .get(&(*exchange_id, symbol.to_string(), timeframe.to_string()))
+            .get(&(*exchange_id, account_type, symbol.to_string(), timeframe.to_string()))
             .cloned()
     }
 
     /// Return all keys currently stored in the bar cache.
-    pub fn cached_bar_keys(&self) -> Vec<(ExchangeId, String, String)> {
+    pub fn cached_bar_keys(&self) -> Vec<(ExchangeId, AccountType, String, String)> {
         self.bar_cache
             .lock()
             .map(|c| c.keys().cloned().collect())
@@ -817,13 +827,14 @@ impl DataBridge {
     /// Snapshot the entire bar cache for disk persistence.
     ///
     /// Returns `(exchange_str, symbol, timeframe, bars)` tuples for all cached entries.
+    /// Only Spot entries are included for backwards compatibility with the disk format.
     pub fn dump_cache_snapshot(&self) -> Vec<(String, String, String, Vec<bar_store::Bar>)> {
         let Ok(cache) = self.bar_cache.lock() else {
             return vec![];
         };
         cache
             .iter()
-            .map(|((ex, sym, tf), bars)| {
+            .map(|((ex, _account_type, sym, tf), bars)| {
                 let store_bars: Vec<bar_store::Bar> = bars
                     .iter()
                     .map(|b| bar_store::Bar {
@@ -871,7 +882,7 @@ impl DataBridge {
                     volume: b.volume,
                 })
                 .collect();
-            let key = (exchange_id, symbol, timeframe);
+            let key = (exchange_id, AccountType::default(), symbol, timeframe);
             cache.entry(key).or_insert(bars);
         }
     }

@@ -3876,7 +3876,7 @@ impl ApplicationHandler for App<'_> {
                                     .get(eid.as_str()).copied().unwrap_or(true);
                                 if enabled {
                                     self.bridge.ensure_connector(eid);
-                                    self.bridge.subscribe_mini_ticker(eid, &symbol);
+                                    self.bridge.subscribe_mini_ticker(eid, &symbol, live_data::AccountType::default());
                                 }
                             }
                             if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
@@ -3884,7 +3884,7 @@ impl ApplicationHandler for App<'_> {
                             }
                         } else {
                             if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
-                                self.bridge.unsubscribe_mini_ticker(eid, &symbol);
+                                self.bridge.unsubscribe_mini_ticker(eid, &symbol, live_data::AccountType::default());
                             }
                             if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
                                 if let Some(ref mut snap) = list.order_snapshot {

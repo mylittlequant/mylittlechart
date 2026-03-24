@@ -14,8 +14,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use digdigdig3::{
-    AccountType, ExchangeId, StreamEvent, SubscriptionRequest, Symbol,
-    WebSocketConnector, WebSocketExt,
+    AccountType, ExchangeId, StreamEvent, SubscriptionRequest,
+    WebSocketConnector,
 };
 use digdigdig3::crypto::cex::binance::BinanceWebSocket;
 use digdigdig3::crypto::cex::bybit::BybitWebSocket;
@@ -36,7 +36,6 @@ use digdigdig3::crypto::cex::deribit::DeribitWebSocket;
 use digdigdig3::crypto::cex::hyperliquid::HyperliquidWebSocket;
 use digdigdig3::crypto::dex::dydx::DydxWebSocket;
 use digdigdig3::crypto::dex::paradex::ParadexWebSocket;
-use digdigdig3::crypto::dex::gmx::GmxWebSocket;
 use digdigdig3::stocks::russia::moex::MoexWebSocket;
 use digdigdig3::crypto::cex::gemini::GeminiWebSocket;
 use digdigdig3::crypto::cex::crypto_com::CryptoComWebSocket;
@@ -53,6 +52,7 @@ use crate::bridge::LiveUpdate;
 pub(crate) struct WsKey {
     pub exchange_id: ExchangeId,
     pub stream_type: WsStreamType,
+    pub account_type: AccountType,
 }
 
 /// The type of data stream multiplexed over a WS connection.
@@ -139,6 +139,7 @@ impl WsActorMap {
 struct WsActorState {
     exchange_id: ExchangeId,
     stream_type: WsStreamType,
+    account_type: AccountType,
     /// Reference counts per symbol — incremented on AddSymbol, decremented on RemoveSymbol.
     refcounts: HashMap<String, u32>,
     /// Symbols with count == 0 waiting for the 30-second grace period before
@@ -159,6 +160,7 @@ async fn run_ws_actor(
     let mut state = WsActorState {
         exchange_id: key.exchange_id,
         stream_type: key.stream_type,
+        account_type: key.account_type,
         refcounts: HashMap::new(),
         deferred_unsub: HashMap::new(),
     };
@@ -195,7 +197,7 @@ async fn run_ws_actor(
 
         // Re-subscribe all symbols that were active before this reconnect.
         for symbol in state.refcounts.keys().cloned().collect::<Vec<_>>() {
-            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
             if let Err(e) = ws.subscribe(req).await {
                 eprintln!("[WsActor] re-subscribe {} failed: {}", symbol, e);
             }
@@ -232,7 +234,7 @@ async fn run_ws_actor(
                             // Subscribe only if this is the first reference and was not
                             // simply re-activated from the deferred-unsub queue.
                             if *count == 1 && !already_subbed {
-                                let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+                                let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
                                 if let Err(e) = ws.subscribe(req).await {
                                     eprintln!("[WsActor] subscribe {} failed: {}", symbol, e);
                                 }
@@ -267,7 +269,7 @@ async fn run_ws_actor(
                         state.deferred_unsub.remove(&symbol);
                         if state.refcounts.get(&symbol).copied().unwrap_or(0) == 0 {
                             state.refcounts.remove(&symbol);
-                            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol);
+                            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
                             let _ = ws.unsubscribe(req).await;
                             eprintln!(
                                 "[WsActor] {:?} unsubscribed {} after 30s grace",
@@ -467,18 +469,6 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── GMX: new(creds) async ──
-        ExchangeId::Gmx => {
-            let mut ws = GmxWebSocket::new(None)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
-            ws.connect(AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS connect failed: {}", e))?;
-            capture_rtt(&ws, exchange_id, ws_rtt_handles);
-            Box::new(ws)
-        }
-
         // ── MOEX: sync new_public() ──
         ExchangeId::Moex => {
             let mut ws = MoexWebSocket::new_public();
@@ -567,11 +557,12 @@ pub(crate) fn make_sub_request(
     stream_type: WsStreamType,
     exchange_id: ExchangeId,
     symbol: &str,
+    account_type: AccountType,
 ) -> SubscriptionRequest {
     let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, symbol);
     match stream_type {
-        WsStreamType::Trades => SubscriptionRequest::trade(sym),
-        WsStreamType::Ticker => SubscriptionRequest::ticker(sym),
+        WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
+        WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
     }
 }
 
@@ -588,6 +579,7 @@ fn dispatch_event(
         StreamEvent::Trade(trade) => {
             let _ = tx.send(LiveUpdate::TradeUpdate {
                 exchange_id: state.exchange_id,
+                account_type: state.account_type,
                 symbol: trade.symbol.clone(),
                 price: trade.price,
                 quantity: trade.quantity,
@@ -597,6 +589,7 @@ fn dispatch_event(
         StreamEvent::Ticker(ticker) => {
             let _ = tx.send(LiveUpdate::MiniTickerUpdate {
                 exchange_id: state.exchange_id,
+                account_type: state.account_type,
                 symbol: ticker.symbol.clone(),
                 last_price: ticker.last_price,
                 price_change_percent: ticker.price_change_percent_24h,
@@ -626,6 +619,7 @@ fn dispatch_event(
                         if count > 0 {
                             let _ = tx.send(LiveUpdate::MiniTickerUpdate {
                                 exchange_id: state.exchange_id,
+                                account_type: state.account_type,
                                 symbol: sym.clone(),
                                 last_price: mid,
                                 price_change_percent: None,
@@ -660,6 +654,7 @@ fn dispatch_event(
                         if count > 0 {
                             let _ = tx.send(LiveUpdate::MiniTickerUpdate {
                                 exchange_id: state.exchange_id,
+                                account_type: state.account_type,
                                 symbol: sym.clone(),
                                 last_price: mid,
                                 price_change_percent: None,

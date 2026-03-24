@@ -7004,7 +7004,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
                         } else {
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                         // Propagate the new symbol to all other windows in the same sync group.
                         if let Some(leaf) = active_leaf {
@@ -13668,7 +13668,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
                 } else {
                     self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -14034,7 +14034,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
                         } else {
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -15277,7 +15277,7 @@ impl ChartApp {
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe change)", eid_str);
                         } else {
-                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, digdigdig3::AccountType::default(), None, Some(self.panel_app.user_manager.profile.bar_count as usize));
                         }
                     }
                     // Propagate new timeframe to all leaves in the same sync group.
@@ -16110,7 +16110,7 @@ impl ChartApp {
 
                     for (eid, symbol) in &old_subscriptions {
                         if !new_subscriptions.contains(&(*eid, symbol.clone())) {
-                            self.bridge.unsubscribe_trades(*eid, symbol);
+                            self.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
                             eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                         }
                     }
@@ -17786,7 +17786,7 @@ impl ChartApp {
                 continue;
             }
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, digdigdig3::AccountType::default(), None, Some(bar_count));
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
@@ -17868,7 +17868,7 @@ impl ChartApp {
                 continue;
             }
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol, &tf, None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol, &tf, digdigdig3::AccountType::default(), None, Some(bar_count));
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf

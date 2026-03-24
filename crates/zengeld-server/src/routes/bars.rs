@@ -15,7 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use live_data::ExchangeId;
+use live_data::{AccountType, ExchangeId};
 
 use crate::AgentState;
 
@@ -78,7 +78,7 @@ async fn get_bars(
     // Look up bars in the bridge cache.
     let bars = state
         .bridge
-        .get_cached_bars(&exchange_id, &q.symbol, &q.timeframe)
+        .get_cached_bars(&exchange_id, AccountType::default(), &q.symbol, &q.timeframe)
         .unwrap_or_default();
 
     // Apply optional limit (keep the most-recent `limit` bars).

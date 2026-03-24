@@ -108,7 +108,7 @@ impl DataProvider for LiveDataProvider {
 
         if !already_pending {
             self.bridge
-                .request_bars(self.exchange_id, symbol, timeframe, None, None);
+                .request_bars(self.exchange_id, symbol, timeframe, digdigdig3::AccountType::default(), None, None);
         }
 
         None
