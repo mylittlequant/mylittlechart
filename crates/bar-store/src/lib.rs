@@ -1,7 +1,9 @@
 mod error;
 mod format;
 mod store;
+pub mod cleanup;
 
+pub use cleanup::{BarStoreCleanup, BarStoreStats};
 pub use error::BarStoreError;
 pub use store::BarStoreHandle;
 

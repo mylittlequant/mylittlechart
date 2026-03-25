@@ -318,6 +318,13 @@ pub struct ChartWindow {
     /// and produce wrong Y-axis bounds. `prepare_frame()` checks this flag after
     /// `sync_viewport_from_layout()` has set the real dimensions and re-runs the scale.
     pub needs_auto_scale_after_bars: bool,
+
+    /// `true` while an async scroll-left (historical bar extension) fetch is in flight.
+    ///
+    /// Guards against issuing multiple concurrent scroll-fetch requests for the
+    /// same window. Reset to `false` when `ScrollBarsLoaded` arrives (or on error).
+    /// Runtime-only state — not persisted to disk.
+    pub scroll_fetch_in_flight: bool,
 }
 
 impl ChartWindow {
@@ -408,6 +415,7 @@ impl ChartWindow {
             pending_viewport_restore: None,
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
+            scroll_fetch_in_flight: false,
         }
     }
 
@@ -603,6 +611,8 @@ impl ChartWindow {
             pending_symbol_load: false,
             // Split child has no deferred auto-scale pending.
             needs_auto_scale_after_bars: false,
+            // Split child has no in-flight scroll fetch.
+            scroll_fetch_in_flight: false,
         }
     }
 

@@ -77,6 +77,41 @@ pub struct WindowState {
 }
 
 // =============================================================================
+// DataLoadSettings
+// =============================================================================
+
+/// Settings that control how historical bar data is fetched and retained.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataLoadSettings {
+    /// Bars to backfill after initial 300. Default 2000.
+    #[serde(default = "default_background_bar_count")]
+    pub background_bar_count: u32,
+
+    /// Max bars kept in memory per chart window. 0 = unlimited. Default 10000.
+    #[serde(default = "default_max_loaded_bars")]
+    pub max_loaded_bars: u32,
+
+    /// Max total bar-store size on disk (MB). Default 500.
+    #[serde(default = "default_max_store_size_mb")]
+    pub max_store_size_mb: u32,
+
+    /// Delete bar files not accessed in N days. Default 30.
+    #[serde(default = "default_store_cleanup_days")]
+    pub store_cleanup_days: u32,
+}
+
+impl Default for DataLoadSettings {
+    fn default() -> Self {
+        Self {
+            background_bar_count: default_background_bar_count(),
+            max_loaded_bars: default_max_loaded_bars(),
+            max_store_size_mb: default_max_store_size_mb(),
+            store_cleanup_days: default_store_cleanup_days(),
+        }
+    }
+}
+
+// =============================================================================
 // UserProfile
 // =============================================================================
 
@@ -320,6 +355,14 @@ pub struct UserProfile {
     /// Profile creation timestamp (unix seconds)
     #[serde(default)]
     pub profile_created_at: i64,
+
+    // -------------------------------------------------------------------------
+    // Data load settings
+    // -------------------------------------------------------------------------
+
+    /// Historical bar data fetch and retention settings.
+    #[serde(default)]
+    pub data_load: DataLoadSettings,
 }
 
 // =============================================================================
@@ -440,6 +483,7 @@ impl UserProfile {
             display_name: "Default".to_string(),
             avatar: "chart".to_string(),
             profile_created_at: 0,
+            data_load: DataLoadSettings::default(),
         }
     }
 
@@ -825,4 +869,20 @@ fn default_profile_name() -> String {
 
 fn default_avatar() -> String {
     "chart".to_string()
+}
+
+fn default_background_bar_count() -> u32 {
+    2000
+}
+
+fn default_max_loaded_bars() -> u32 {
+    10_000
+}
+
+fn default_max_store_size_mb() -> u32 {
+    500
+}
+
+fn default_store_cleanup_days() -> u32 {
+    30
 }

@@ -79,6 +79,29 @@ pub enum LiveUpdate {
     ConnectorReady {
         exchange_id: ExchangeId,
     },
+    /// Backfill complete — initial historical bars fetched for a newly loaded symbol/TF.
+    ///
+    /// Distinct from `BarsLoaded` so consumers can apply post-backfill logic
+    /// (e.g. unlocking scroll-fetch) without re-checking every `BarsLoaded`.
+    BackfillComplete {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
+        bars: Vec<Bar>,
+    },
+    /// Older bars loaded in response to a scroll-left (historical extension) request.
+    ///
+    /// `prepend_count` is how many bars should be prepended before the existing
+    /// series so the consumer can keep the viewport position stable.
+    ScrollBarsLoaded {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        timeframe: String,
+        bars: Vec<Bar>,
+        prepend_count: usize,
+    },
     /// An error occurred during an async operation.
     Error {
         exchange_id: ExchangeId,
@@ -156,6 +179,12 @@ pub struct DataBridge {
     /// shared RTT arc (currently OKX only). `collect_metrics` reads from
     /// these handles via `try_lock` so it never blocks.
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+    /// Oldest bar timestamp fetched per `(exchange_id, account_type, symbol, timeframe)`.
+    ///
+    /// Tracks how far back in history the bridge has already fetched so that
+    /// scroll-left requests can request the correct older window without
+    /// re-fetching data that is already cached.
+    oldest_fetched_ts: Arc<Mutex<HashMap<(ExchangeId, AccountType, String, String), i64>>>,
 }
 
 impl DataBridge {
@@ -195,6 +224,7 @@ impl DataBridge {
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
+            oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -211,6 +241,40 @@ impl DataBridge {
     /// Get a reference to the connector pool.
     pub fn pool(&self) -> &ConnectorPool {
         &self.pool
+    }
+
+    /// Record the oldest bar timestamp seen for a given key.
+    ///
+    /// Only updates the stored value when `ts` is strictly older (smaller) than
+    /// whatever was previously recorded. Safe to call from any thread.
+    pub fn record_oldest_ts(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+        timeframe: &str,
+        ts: i64,
+    ) {
+        if let Ok(mut map) = self.oldest_fetched_ts.lock() {
+            let key = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+            let entry = map.entry(key).or_insert(i64::MAX);
+            if ts < *entry {
+                *entry = ts;
+            }
+        }
+    }
+
+    /// Return the oldest bar timestamp fetched for the given key, or `None` if
+    /// no fetch has been recorded yet.
+    pub fn get_oldest_fetched_ts(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+        timeframe: &str,
+    ) -> Option<i64> {
+        let key = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+        self.oldest_fetched_ts.lock().ok()?.get(&key).copied()
     }
 
     /// Ensure a connector is initialized for the given exchange.
@@ -900,6 +964,518 @@ impl DataBridge {
             let key = (exchange_id, account_type, symbol, timeframe);
             cache.entry(key).or_insert(bars);
         }
+    }
+
+    /// Request background backfill of historical bars for a symbol/timeframe.
+    ///
+    /// Non-blocking — spawns an async task that pages backward through history
+    /// until `target_bars` are accumulated in the cache. On completion, sends
+    /// `BackfillComplete` through the update channel.
+    ///
+    /// This is Layer 2 of the data loading pipeline. It is designed to run
+    /// silently after `request_bars` (Layer 1) has already populated the cache
+    /// with recent bars, extending history further into the past.
+    ///
+    /// If the cache already holds `>= target_bars`, or a backfill for this key
+    /// is already in-flight, the call returns immediately without spawning a task.
+    pub fn request_background_backfill(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        target_bars: u32,
+    ) {
+        let pool = self.pool.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let interval = timeframe_to_interval(timeframe);
+        let tf_name = timeframe.name.clone();
+        let cache = self.bar_cache.clone();
+        let active_fetches = self.active_fetches.clone();
+        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
+
+        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+
+        // Backfill dedup key: encode the "backfill" role by prefixing the symbol.
+        // This avoids colliding with the regular request_bars fetch key while
+        // reusing the same HashSet type.
+        let backfill_fetch_key = (
+            exchange_id,
+            account_type,
+            format!("backfill:{}", symbol_str),
+            tf_name.clone(),
+        );
+
+        // ── Deduplication guard ───────────────────────────────────────────────
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&backfill_fetch_key) {
+                eprintln!(
+                    "[Bridge] backfill already in flight for {:?} sym={} tf={}, skipping",
+                    exchange_id, symbol_str, tf_name
+                );
+                return;
+            }
+            af.insert(backfill_fetch_key.clone());
+        }
+
+        // ── Early-exit if cache is already satisfied ─────────────────────────
+        let cached_len = cache
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&cache_key).map(|b| b.len()))
+            .unwrap_or(0);
+
+        if cached_len >= target_bars as usize {
+            eprintln!(
+                "[Bridge] backfill {:?} sym={} tf={}: cache already has {} >= {} bars, skipping",
+                exchange_id, symbol_str, tf_name, cached_len, target_bars
+            );
+            if let Ok(mut af) = active_fetches.lock() {
+                af.remove(&backfill_fetch_key);
+            }
+            return;
+        }
+
+        self.runtime.spawn(async move {
+            macro_rules! finish_backfill {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&backfill_fetch_key);
+                    }
+                };
+            }
+
+            // Wait for connector (same pattern as request_bars).
+            let connector = {
+                let mut attempts = 0;
+                loop {
+                    if let Some(c) = pool.get(&exchange_id) {
+                        break c;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        eprintln!(
+                            "[Bridge] backfill: connector {:?} not initialized after 5s",
+                            exchange_id
+                        );
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            message: format!(
+                                "backfill: connector {:?} not initialized",
+                                exchange_id
+                            ),
+                        });
+                        finish_backfill!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+
+            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+
+            // Re-check cache length after connector wait — another task may have
+            // already satisfied the target while we were waiting.
+            let (still_need, end_time_cursor_init) = {
+                let guard = cache.lock().ok();
+                let cached = guard.as_ref().and_then(|c| c.get(&cache_key).cloned());
+                match cached {
+                    Some(ref bars) if bars.len() >= target_bars as usize => {
+                        eprintln!(
+                            "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
+                            exchange_id, symbol_str, tf_name, bars.len()
+                        );
+                        finish_backfill!();
+                        return;
+                    }
+                    Some(ref bars) => {
+                        let need = target_bars as usize - bars.len();
+                        // Cursor: just before the oldest cached bar (in ms).
+                        let oldest_ms = bars.first().map(|b| b.timestamp * 1000 - 1);
+                        (need, oldest_ms)
+                    }
+                    None => (target_bars as usize, None),
+                }
+            };
+
+            eprintln!(
+                "[Bridge] backfill {:?} sym={} tf={}: need {} more bars, cursor={:?}",
+                exchange_id, symbol_str, tf_name, still_need, end_time_cursor_init
+            );
+
+            let mut end_time_cursor = end_time_cursor_init;
+            let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
+            let mut pages: usize = 0;
+
+            'backfill: loop {
+                let result = connector
+                    .get_klines(sym.clone(), &interval, Some(500), account_type, end_time_cursor)
+                    .await;
+
+                match result {
+                    Ok(klines) => {
+                        if klines.is_empty() {
+                            eprintln!("[Bridge] backfill: empty page at page {}, stopping", pages);
+                            break 'backfill;
+                        }
+                        pages += 1;
+                        let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+
+                        // Move cursor to before the oldest bar in this page.
+                        if let Some(oldest_ms) = klines.iter().map(|k| k.open_time).min() {
+                            end_time_cursor = Some(oldest_ms - 1);
+                        }
+
+                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
+
+                        // Track oldest fetched timestamp.
+                        if oldest_bar_ts > 0 {
+                            if let Ok(mut map) = oldest_fetched_ts.lock() {
+                                let key = (
+                                    exchange_id,
+                                    account_type,
+                                    symbol_str.clone(),
+                                    tf_name.clone(),
+                                );
+                                let entry = map.entry(key).or_insert(i64::MAX);
+                                if oldest_bar_ts < *entry {
+                                    *entry = oldest_bar_ts;
+                                }
+                            }
+                        }
+
+                        accumulated = merge_bars(batch, accumulated);
+
+                        eprintln!(
+                            "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={})",
+                            pages,
+                            accumulated.len(),
+                            oldest_bar_ts
+                        );
+
+                        if accumulated.len() >= still_need {
+                            eprintln!(
+                                "[Bridge] backfill: reached target ({} >= {})",
+                                accumulated.len(),
+                                still_need
+                            );
+                            break 'backfill;
+                        }
+                        if pages >= 40 {
+                            eprintln!("[Bridge] backfill: capped at 40 pages (~20k bars)");
+                            break 'backfill;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Bridge] backfill: error at page {}: {}", pages, e);
+                        break 'backfill;
+                    }
+                }
+            }
+
+            if accumulated.is_empty() {
+                eprintln!("[Bridge] backfill: no bars fetched, done");
+                finish_backfill!();
+                return;
+            }
+
+            eprintln!(
+                "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, merging into cache",
+                exchange_id, symbol_str, tf_name, accumulated.len(), pages
+            );
+
+            // Merge accumulated into current cache.
+            let merged = {
+                let current = cache
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.get(&cache_key).cloned())
+                    .unwrap_or_default();
+                merge_bars(accumulated, current)
+            };
+
+            // Update cache.
+            if let Ok(mut c) = cache.lock() {
+                c.insert(cache_key.clone(), merged.clone());
+            }
+
+            eprintln!(
+                "[Bridge] backfill done: sending BackfillComplete with {} bars",
+                merged.len()
+            );
+
+            let _ = tx.send(LiveUpdate::BackfillComplete {
+                exchange_id,
+                account_type,
+                symbol: symbol_str,
+                timeframe: tf_name,
+                bars: merged,
+            });
+
+            finish_backfill!();
+        });
+    }
+
+    /// Request a single page of bars older than `before_ts` for scroll-left (infinite scroll).
+    ///
+    /// Non-blocking — spawns an async task. On completion, sends
+    /// `ScrollBarsLoaded` through the update channel.
+    ///
+    /// This is Layer 3 of the data loading pipeline. It is triggered when the
+    /// user scrolls left past the oldest bar currently in the viewport. The
+    /// caller should fire it again when the user scrolls further left; the
+    /// dedup guard ensures only one in-flight scroll fetch exists per key at
+    /// any time.
+    ///
+    /// # Parameters
+    ///
+    /// - `before_ts`: oldest timestamp currently in the window's bar series
+    ///   (seconds). The fetch retrieves bars strictly older than this.
+    /// - `batch_size`: number of bars to request per page (typically 500).
+    ///
+    /// # Behaviour
+    ///
+    /// 1. Dedup: if a scroll fetch for this key is already in-flight, returns immediately.
+    /// 2. Cache hit: if the session bar cache already contains bars older than
+    ///    `before_ts`, extracts them and sends `ScrollBarsLoaded` without a
+    ///    network request.
+    /// 3. Oldest-ts guard: if we already know the exchange has no data before
+    ///    `before_ts` (recorded by a previous scroll fetch), returns immediately.
+    /// 4. REST fetch: fetches one page ending just before `before_ts`, merges
+    ///    the result into the cache, and sends `ScrollBarsLoaded`.
+    pub fn request_scroll_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+        before_ts: i64,
+        batch_size: usize,
+    ) {
+        let pool = self.pool.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let interval = timeframe_to_interval(timeframe);
+        let tf_name = timeframe.name.clone();
+        let cache = self.bar_cache.clone();
+        let active_fetches = self.active_fetches.clone();
+        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
+
+        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+
+        // Scroll dedup key: encode "scroll:" role by prefixing the symbol,
+        // matching the pattern used by "backfill:" in request_background_backfill.
+        let scroll_fetch_key = (
+            exchange_id,
+            account_type,
+            format!("scroll:{}", symbol_str),
+            tf_name.clone(),
+        );
+
+        // ── Deduplication guard ───────────────────────────────────────────────
+        {
+            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&scroll_fetch_key) {
+                eprintln!(
+                    "[Bridge] scroll fetch already in flight for {:?} sym={} tf={}, skipping",
+                    exchange_id, symbol_str, tf_name
+                );
+                return;
+            }
+            af.insert(scroll_fetch_key.clone());
+        }
+
+        // ── Cache check: do we already have bars older than before_ts? ────────
+        let cached_older: Option<Vec<Bar>> = cache.lock().ok().and_then(|c| {
+            c.get(&cache_key).map(|bars| {
+                bars.iter()
+                    .filter(|b| b.timestamp < before_ts)
+                    .cloned()
+                    .collect::<Vec<Bar>>()
+            })
+        });
+
+        if let Some(ref older_bars) = cached_older {
+            if !older_bars.is_empty() {
+                let prepend_count = older_bars.len().min(batch_size);
+                // Full merged set is whatever is in cache (already sorted).
+                let full_bars: Vec<Bar> = cache
+                    .lock()
+                    .ok()
+                    .and_then(|c| c.get(&cache_key).cloned())
+                    .unwrap_or_default();
+
+                eprintln!(
+                    "[Bridge] scroll {:?} sym={} tf={}: {} cached bars older than {}, serving {} from cache",
+                    exchange_id, symbol_str, tf_name, older_bars.len(), before_ts, prepend_count
+                );
+
+                let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_str.clone(),
+                    timeframe: tf_name.clone(),
+                    bars: full_bars,
+                    prepend_count,
+                });
+
+                if let Ok(mut af) = active_fetches.lock() {
+                    af.remove(&scroll_fetch_key);
+                }
+                return;
+            }
+        }
+
+        // ── Oldest-ts guard: no point fetching if exchange has no more data ───
+        let known_oldest = oldest_fetched_ts
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&cache_key).copied());
+
+        if let Some(oldest) = known_oldest {
+            if before_ts <= oldest {
+                eprintln!(
+                    "[Bridge] scroll {:?} sym={} tf={}: before_ts={} <= oldest_fetched={}, nothing more from exchange",
+                    exchange_id, symbol_str, tf_name, before_ts, oldest
+                );
+                if let Ok(mut af) = active_fetches.lock() {
+                    af.remove(&scroll_fetch_key);
+                }
+                return;
+            }
+        }
+
+        // ── REST fetch ────────────────────────────────────────────────────────
+        self.runtime.spawn(async move {
+            macro_rules! finish_scroll {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&scroll_fetch_key);
+                    }
+                };
+            }
+
+            // Wait for connector (same pattern as other methods).
+            let connector = {
+                let mut attempts = 0;
+                loop {
+                    if let Some(c) = pool.get(&exchange_id) {
+                        break c;
+                    }
+                    attempts += 1;
+                    if attempts > 50 {
+                        eprintln!(
+                            "[Bridge] scroll: connector {:?} not initialized after 5s",
+                            exchange_id
+                        );
+                        finish_scroll!();
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            };
+
+            let sym = parse_symbol_for_exchange(exchange_id, &symbol_str);
+
+            // end_time = just before the oldest timestamp the caller has (ms).
+            let end_time_ms = Some(before_ts * 1000 - 1);
+
+            eprintln!(
+                "[Bridge] scroll fetch: {:?} sym={} tf={} end_time_ms={:?} batch={}",
+                exchange_id, symbol_str, tf_name, end_time_ms, batch_size
+            );
+
+            let limit = (batch_size as u16).min(500);
+            let result = connector
+                .get_klines(sym, &interval, Some(limit), account_type, end_time_ms)
+                .await;
+
+            match result {
+                Err(e) => {
+                    eprintln!(
+                        "[Bridge] scroll fetch error: {:?} sym={} tf={}: {}",
+                        exchange_id, symbol_str, tf_name, e
+                    );
+                    // Record before_ts as the oldest known — no more data here.
+                    if let Ok(mut map) = oldest_fetched_ts.lock() {
+                        let key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+                        let entry = map.entry(key).or_insert(i64::MAX);
+                        if before_ts < *entry {
+                            *entry = before_ts;
+                        }
+                    }
+                    finish_scroll!();
+                }
+                Ok(klines) if klines.is_empty() => {
+                    eprintln!(
+                        "[Bridge] scroll fetch: {:?} sym={} tf={}: empty page, no more history",
+                        exchange_id, symbol_str, tf_name
+                    );
+                    // Record before_ts as the oldest known — exchange has nothing older.
+                    if let Ok(mut map) = oldest_fetched_ts.lock() {
+                        let key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+                        let entry = map.entry(key).or_insert(i64::MAX);
+                        if before_ts < *entry {
+                            *entry = before_ts;
+                        }
+                    }
+                    finish_scroll!();
+                }
+                Ok(klines) => {
+                    let new_page: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
+                    let prepend_count = new_page.len();
+
+                    eprintln!(
+                        "[Bridge] scroll fetch: {:?} sym={} tf={}: got {} bars",
+                        exchange_id, symbol_str, tf_name, prepend_count
+                    );
+
+                    // Update oldest_fetched_ts with the oldest bar from this page.
+                    let oldest_bar_ts = new_page.first().map(|b| b.timestamp).unwrap_or(0);
+                    if oldest_bar_ts > 0 {
+                        if let Ok(mut map) = oldest_fetched_ts.lock() {
+                            let key = (
+                                exchange_id,
+                                account_type,
+                                symbol_str.clone(),
+                                tf_name.clone(),
+                            );
+                            let entry = map.entry(key).or_insert(i64::MAX);
+                            if oldest_bar_ts < *entry {
+                                *entry = oldest_bar_ts;
+                            }
+                        }
+                    }
+
+                    // Merge new page into bar cache.
+                    let merged = {
+                        let current = cache
+                            .lock()
+                            .ok()
+                            .and_then(|c| c.get(&cache_key).cloned())
+                            .unwrap_or_default();
+                        merge_bars(new_page, current)
+                    };
+
+                    if let Ok(mut c) = cache.lock() {
+                        c.insert(cache_key.clone(), merged.clone());
+                    }
+
+                    let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_str,
+                        timeframe: tf_name,
+                        bars: merged,
+                        prepend_count,
+                    });
+
+                    finish_scroll!();
+                }
+            }
+        });
     }
 
     /// Get a reference to the tokio runtime owned by this bridge.

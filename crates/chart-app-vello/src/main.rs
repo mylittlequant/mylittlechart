@@ -641,6 +641,8 @@ struct App<'s> {
     bar_store: bar_store::BarStoreHandle,
     /// Wall-clock instant of the last periodic bar-cache save.
     last_bar_cache_save: std::time::Instant,
+    /// Wall-clock instant of the last periodic bar-cache cleanup run.
+    last_cleanup_check: std::time::Instant,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2169,6 +2171,19 @@ impl App<'_> {
             }
         }
 
+        // ── Bar store startup cleanup ─────────────────────────────────────────
+        // Run stale-file eviction and LRU size trim on a background thread so
+        // app startup is not blocked by disk I/O.
+        {
+            let bars_dir = bar_store.bars_dir.clone();
+            let max_size_mb = profile.data_load.max_store_size_mb;
+            let cleanup_days = profile.data_load.store_cleanup_days;
+            std::thread::spawn(move || {
+                let cleanup = bar_store::BarStoreCleanup::new(bars_dir);
+                cleanup.run_cleanup(max_size_mb, cleanup_days);
+            });
+        }
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -2238,6 +2253,7 @@ impl App<'_> {
             pending_promote_after_recovery_key: false,
             bar_store,
             last_bar_cache_save: std::time::Instant::now(),
+            last_cleanup_check: std::time::Instant::now(),
         }
     }
 
@@ -3853,6 +3869,18 @@ impl ApplicationHandler for App<'_> {
                     std::sync::Arc::new(bars),
                 );
             }
+        }
+
+        // ── Periodic bar store cleanup (every hour) ───────────────────────────
+        if self.last_cleanup_check.elapsed() >= std::time::Duration::from_secs(3600) {
+            self.last_cleanup_check = std::time::Instant::now();
+            let bars_dir = self.bar_store.bars_dir.clone();
+            let max_size_mb = self.profile.data_load.max_store_size_mb;
+            let cleanup_days = self.profile.data_load.store_cleanup_days;
+            std::thread::spawn(move || {
+                let cleanup = bar_store::BarStoreCleanup::new(bars_dir);
+                cleanup.run_cleanup(max_size_mb, cleanup_days);
+            });
         }
 
         // ── Accumulator for event-driven sync push ───────────────────────────

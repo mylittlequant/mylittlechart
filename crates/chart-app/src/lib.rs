@@ -1853,6 +1853,10 @@ impl ChartApp {
                         bars.last().map(|b| b.timestamp).unwrap_or(0));
 
                     let mut any_matched = false;
+                    // Collect (symbol, timeframe, account_type) for windows that received
+                    // an initial load so we can trigger background backfill after the loop
+                    // (can't borrow self.bridge while windows_mut() is held).
+                    let mut backfill_requests: Vec<(String, zengeld_chart::state::Timeframe, digdigdig3::AccountType)> = Vec::new();
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         let matched = window.symbol == symbol
@@ -1879,6 +1883,16 @@ impl ChartApp {
                                 window.price_scale.scale_mode = self.default_scale_mode;
                                 window.set_bars(bars.clone());
                                 window.pending_symbol_load = false;
+                                // Schedule a Layer 2 background backfill to extend history
+                                // beyond the initial 300 bars.
+                                let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
+                                if target > 300 {
+                                    backfill_requests.push((
+                                        window.symbol.clone(),
+                                        window.timeframe.clone(),
+                                        account_type_from_label(&window.account_type),
+                                    ));
+                                }
                             }
                             // Force-fill empty timestamps BEFORE recalculate.
                             // Old presets may have primitives with empty point_timestamps
@@ -1903,6 +1917,14 @@ impl ChartApp {
                                 window.price_scale.scale_mode = vp.scale_mode;
                             }
                         }
+                    }
+
+                    // Trigger Layer 2 background backfill for initial loads.
+                    // Done after the window loop to avoid borrow conflicts with self.bridge.
+                    let bg_target = self.panel_app.user_manager.profile.data_load.background_bar_count;
+                    for (sym, tf, at) in backfill_requests {
+                        eprintln!("[ChartApp] Scheduling background backfill: {} {} tf={} target={}", exchange_id.as_str(), sym, tf.name, bg_target);
+                        self.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
                     }
 
                     // Populate data_provider cache so future LoadPreset calls
@@ -1945,6 +1967,103 @@ impl ChartApp {
 
                         // Bars are kept in-memory (window.bars) for tab-switch UX.
                         // No disk write or sync needed — bars are re-fetchable cache.
+                    }
+                }
+                LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
+                    eprintln!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
+                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        let tf_matches = window.timeframe.name == tf_name;
+                        if !(window.symbol == symbol
+                            && window.exchange == exchange_id.as_str()
+                            && tf_matches
+                            && window.account_type == account_type.short_label())
+                        {
+                            continue;
+                        }
+                        // Backfill always uses update_bars — viewport is never reset.
+                        window.update_bars(bars.clone());
+                        window.drawing_manager.recalculate_all_bar_caches(&window.bars);
+                        window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
+                        if window.price_scale.scale_mode.is_auto_y() {
+                            window.calc_auto_scale();
+                        }
+                    }
+
+                    // Recalculate indicators for matched windows.
+                    let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
+                        .panel_app
+                        .panel_grid
+                        .windows()
+                        .iter()
+                        .filter(|(_, w)| {
+                            w.symbol == symbol
+                                && w.exchange == exchange_id.as_str()
+                                && w.timeframe.name == tf_name
+                        })
+                        .map(|(cid, w)| (cid.0, w.bars.clone()))
+                        .collect();
+                    for (wid, bars_for_window) in &matched_ids {
+                        self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
+                    }
+                }
+                LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
+                    eprintln!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
+                        exchange_id.as_str(), symbol, tf_name, bars.len(), prepend_count);
+
+                    let at_label = account_type.short_label();
+                    let mut any_matched = false;
+
+                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        let tf_matches = window.timeframe.name == tf_name;
+                        if !(window.symbol == symbol
+                            && window.exchange == exchange_id.as_str()
+                            && tf_matches
+                            && window.account_type == at_label)
+                        {
+                            continue;
+                        }
+
+                        any_matched = true;
+                        window.scroll_fetch_in_flight = false;
+
+                        // Viewport shift: prepending N bars pushes all existing indices up by N.
+                        window.viewport.view_start += prepend_count as f64;
+
+                        // Replace bars with the full merged set from the bridge.
+                        window.update_bars(bars.clone());
+
+                        // Enforce max_loaded_bars: evict oldest bars if over limit.
+                        let max = self.panel_app.user_manager.profile.data_load.max_loaded_bars as usize;
+                        if max > 0 && window.bars.len() > max {
+                            let excess = window.bars.len() - max;
+                            window.bars.drain(..excess);
+                            window.viewport.view_start = (window.viewport.view_start - excess as f64).max(0.0);
+                            window.viewport.bar_count = window.bars.len();
+                        }
+
+                        window.drawing_manager.recalculate_all_bar_caches(&window.bars);
+                        window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
+                        if window.price_scale.scale_mode.is_auto_y() {
+                            window.calc_auto_scale();
+                        }
+                    }
+
+                    if any_matched {
+                        let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
+                            .panel_app
+                            .panel_grid
+                            .windows()
+                            .iter()
+                            .filter(|(_, w)| {
+                                w.symbol == symbol
+                                    && w.exchange == exchange_id.as_str()
+                                    && w.timeframe.name == tf_name
+                            })
+                            .map(|(cid, w)| (cid.0, w.bars.clone()))
+                            .collect();
+                        for (wid, bars_for_window) in &matched_ids {
+                            self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
+                        }
                     }
                 }
                 LiveUpdate::BarUpdate { .. } => {
@@ -2313,6 +2432,60 @@ impl ChartApp {
             self.trade_count = 0;
             self.recalc_count = 0;
             self.recalc_log_timer = std::time::Instant::now();
+        }
+
+        // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
+        // Collect (symbol, exchange, tf_name, at_label) for windows that need a
+        // historical extension fetch.  Two-pass to avoid a mutable/immutable
+        // borrow conflict: first collect while mutating `scroll_fetch_in_flight`,
+        // then re-borrow immutably to read `oldest_ts` for each request.
+        {
+            let mut scroll_requests: Vec<(String, String, String, String)> = Vec::new();
+
+            let max_loaded = self.panel_app.user_manager.profile.data_load.max_loaded_bars;
+
+            for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                if window.scroll_fetch_in_flight { continue; }
+                if window.bars.is_empty() { continue; }
+                if window.pending_symbol_load { continue; }
+
+                let visible = window.viewport.visible_bars() as f64;
+                let threshold = (visible * 0.20).max(5.0);
+                if window.viewport.view_start > threshold { continue; }
+
+                if max_loaded > 0 && window.bars.len() >= max_loaded as usize { continue; }
+
+                window.scroll_fetch_in_flight = true;
+                scroll_requests.push((
+                    window.symbol.clone(),
+                    window.exchange.clone(),
+                    window.timeframe.name.clone(),
+                    window.account_type.clone(),
+                ));
+            }
+
+            for (symbol, exchange, tf_name, at_label) in scroll_requests {
+                let oldest_ts = self.panel_app.panel_grid.windows()
+                    .values()
+                    .find(|w| {
+                        w.symbol == symbol
+                            && w.exchange == exchange
+                            && w.timeframe.name == tf_name
+                            && w.account_type == at_label
+                    })
+                    .and_then(|w| w.bars.first().map(|b| b.timestamp))
+                    .unwrap_or(0);
+
+                if oldest_ts == 0 { continue; }
+
+                let eid = digdigdig3::ExchangeId::from_str(&exchange)
+                    .unwrap_or(digdigdig3::ExchangeId::Binance);
+                let at = account_type_from_label(&at_label);
+
+                if let Some(tf) = parse_timeframe_name(&tf_name) {
+                    self.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);
+                }
+            }
         }
     }
 
@@ -6025,6 +6198,7 @@ impl ChartApp {
             linked_account: existing.linked_account.clone(),
             telemetry: existing.telemetry.clone(),
             bar_count: existing.bar_count,
+            data_load: existing.data_load.clone(),
             recalc_mode: existing.recalc_mode.clone(),
             language: self.panel_app.user_settings_state.language.clone(),
             scale_mode: match self.default_scale_mode {
