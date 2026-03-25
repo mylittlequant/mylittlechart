@@ -3871,6 +3871,28 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
+        // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
+        // When any window received BackfillComplete or ScrollBarsLoaded this
+        // frame, flush the bridge's in-memory bar cache to disk immediately so
+        // newly fetched bars survive a crash before the 5-minute periodic save.
+        let any_bars_dirty = self.windows.values().any(|pw| pw.chart.bars_cache_dirty);
+        if any_bars_dirty {
+            for pw in self.windows.values_mut() {
+                pw.chart.bars_cache_dirty = false;
+            }
+            let snapshot = self.bridge.dump_cache_snapshot();
+            eprintln!("[App] bars_cache_dirty: flushing {} bar cache entries to disk", snapshot.len());
+            for (exchange, symbol, timeframe, account_type, bars) in snapshot {
+                self.bar_store.write_async(
+                    &exchange,
+                    &symbol,
+                    &timeframe,
+                    &account_type,
+                    std::sync::Arc::new(bars),
+                );
+            }
+        }
+
         // ── Periodic bar store cleanup (every hour) ───────────────────────────
         if self.last_cleanup_check.elapsed() >= std::time::Duration::from_secs(3600) {
             self.last_cleanup_check = std::time::Instant::now();

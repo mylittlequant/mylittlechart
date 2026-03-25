@@ -333,6 +333,9 @@ pub struct ChartApp {
     /// Set to true when this window's tab/preset state changed and needs saving.
     /// Checked and cleared by App each frame.
     pub profile_dirty: bool,
+    /// Set to true when backfill or scroll-load added bars to the bridge cache.
+    /// Checked and cleared by App in about_to_wait() to trigger a bar-store flush.
+    pub bars_cache_dirty: bool,
     /// Set to true when window geometry (position/size) changed.
     /// Triggers local save but NOT cloud sync.
     pub profile_geometry_dirty: bool,
@@ -732,6 +735,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -995,6 +999,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -1153,6 +1158,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            bars_cache_dirty: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -2005,6 +2011,8 @@ impl ChartApp {
                     for (wid, bars_for_window) in &matched_ids {
                         self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
                     }
+                    // Backfill wrote new bars into the bridge cache — mark for disk flush.
+                    self.bars_cache_dirty = true;
                 }
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     eprintln!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
@@ -2064,6 +2072,10 @@ impl ChartApp {
                         for (wid, bars_for_window) in &matched_ids {
                             self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
                         }
+                    }
+                    // Scroll-load wrote new bars into the bridge cache — mark for disk flush.
+                    if any_matched {
+                        self.bars_cache_dirty = true;
                     }
                 }
                 LiveUpdate::BarUpdate { .. } => {

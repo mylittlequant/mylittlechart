@@ -1336,9 +1336,13 @@ impl DataBridge {
 
         if let Some(oldest) = known_oldest {
             if before_ts <= oldest {
+                // This is correct behavior: the exchange returned an empty page or error
+                // at this timestamp in a previous fetch, so there are no older bars.
+                // All available bars are already loaded — scroll has reached the beginning
+                // of the exchange's history for this symbol/timeframe.
                 eprintln!(
-                    "[Bridge] scroll {:?} sym={} tf={}: before_ts={} <= oldest_fetched={}, nothing more from exchange",
-                    exchange_id, symbol_str, tf_name, before_ts, oldest
+                    "[Bridge] scroll {}: all available bars already loaded (oldest_fetched={}, before_ts={})",
+                    symbol_str, oldest, before_ts
                 );
                 if let Ok(mut af) = active_fetches.lock() {
                     af.remove(&scroll_fetch_key);
