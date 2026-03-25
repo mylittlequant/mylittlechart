@@ -476,7 +476,7 @@ pub enum WatchlistAction {
     /// Toggle symbol in/out of watchlist (star button in search overlay).
     Toggle { symbol: String, exchange: String, account_type: String },
     /// Remove a specific symbol from watchlist.
-    Remove { symbol: String, exchange: String },
+    Remove { symbol: String, exchange: String, account_type: String },
     /// Reorder a symbol within the active list (drag & drop).
     Reorder { from_idx: usize, to_idx: usize },
     /// Create a new watchlist with given name.

@@ -3872,7 +3872,7 @@ impl ApplicationHandler for App<'_> {
                 match action {
                     chart_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
                         let now_in = self.app_state.watchlist_manager.toggle_symbol(&symbol, &exchange, &account_type);
-                        eprintln!("[App] watchlist toggle: {}:{} -> in_watchlist={}", symbol, exchange, now_in);
+                        eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
                                 let enabled = self.app_state.connector_enabled
@@ -3898,8 +3898,8 @@ impl ApplicationHandler for App<'_> {
                             }
                         }
                     }
-                    chart_app::WatchlistAction::Remove { symbol, exchange } => {
-                        self.app_state.watchlist_manager.remove_symbol(&symbol, &exchange);
+                    chart_app::WatchlistAction::Remove { symbol, exchange, account_type } => {
+                        self.app_state.watchlist_manager.remove_symbol(&symbol, &exchange, &account_type);
                     }
                     chart_app::WatchlistAction::ClearOrderSnapshot => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {

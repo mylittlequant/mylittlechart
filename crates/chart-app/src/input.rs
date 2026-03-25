@@ -6943,18 +6943,19 @@ impl ChartApp {
                 if let Some(item) = self.sidebar_state.watchlist_items.get(idx) {
                     let symbol = item.symbol.clone();
                     let exchange = item.exchange.clone();
+                    let account_type = item.account_type.clone();
                     // Remove symbol from snapshot (if active) before removing from list.
                     if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
                         if let Some(ref mut snap) = list.order_snapshot {
-                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange));
+                            snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
                         }
                     }
-                    self.sidebar_state.watchlist_manager.remove_symbol(&symbol, &exchange);
-                    self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone() });
+                    self.sidebar_state.watchlist_manager.remove_symbol(&symbol, &exchange, &account_type);
+                    self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone() });
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    eprintln!("[Sidebar] Watchlist delete: {} @ {} ({})", symbol, exchange, idx);
+                    eprintln!("[Sidebar] Watchlist delete: {}:{}:{} ({})", symbol, exchange, account_type, idx);
                 }
             }
             return;
@@ -13700,17 +13701,22 @@ impl ChartApp {
                     (key, ex)
                 };
                 let exchange = exchange_owned.as_str();
+                // Look up account_type from watchlist for this symbol+exchange.
+                let account_type_owned = self.sidebar_state.watchlist_manager.active_list()
+                    .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == symbol && ws.exchange == exchange).map(|ws| ws.account_type.clone()))
+                    .unwrap_or_default();
+                let account_type = account_type_owned.as_str();
                 // Remove symbol from snapshot (if active) before removing from list.
                 if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
                     if let Some(ref mut snap) = list.order_snapshot {
-                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange));
+                        snap.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
                     }
                 }
-                self.sidebar_state.watchlist_manager.remove_symbol(symbol, exchange);
-                self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string() });
+                self.sidebar_state.watchlist_manager.remove_symbol(symbol, exchange, account_type);
+                self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
-                eprintln!("[WatchlistModal] symbol removed: {} @ {}", symbol, exchange);
+                eprintln!("[WatchlistModal] symbol removed: {}:{}:{}", symbol, exchange, account_type);
             }
             // Switch active watchlist
             _ if rest.starts_with("group:") => {

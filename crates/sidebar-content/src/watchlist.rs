@@ -240,18 +240,18 @@ impl WatchlistList {
         }
     }
 
-    /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange) pair already present.
+    /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange, account_type) triple already present.
     pub fn add_symbol_with_type(&mut self, symbol: String, exchange: String, account_type: String) {
-        if !self.contains(&symbol, &exchange) {
+        if !self.contains_with_type(&symbol, &exchange, &account_type) {
             self.ungrouped.push(WatchlistSymbol { symbol, exchange, account_type });
         }
     }
 
-    /// Remove a specific (symbol, exchange) pair from everywhere in this list.
-    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str) {
-        self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange));
+    /// Remove a specific (symbol, exchange, account_type) triple from everywhere in this list.
+    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
+        self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
         for g in &mut self.groups {
-            g.symbols.retain(|s| !(s.symbol == symbol && s.exchange == exchange));
+            g.symbols.retain(|s| !(s.symbol == symbol && s.exchange == exchange && s.account_type == account_type));
         }
     }
 
@@ -381,17 +381,17 @@ impl WatchlistManager {
         }
     }
 
-    /// Remove a specific (symbol, exchange) pair from active watchlist.
-    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str) {
+    /// Remove a specific (symbol, exchange, account_type) triple from active watchlist.
+    pub fn remove_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
         if let Some(list) = self.active_list_mut() {
-            list.remove_symbol(symbol, exchange);
+            list.remove_symbol(symbol, exchange, account_type);
         }
     }
 
     /// Toggle symbol: add if missing, remove if present. Returns new state (`true` = now in list).
     pub fn toggle_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) -> bool {
-        if self.contains(symbol, exchange) {
-            self.remove_symbol(symbol, exchange);
+        if self.contains_with_type(symbol, exchange, account_type) {
+            self.remove_symbol(symbol, exchange, account_type);
             false
         } else {
             self.add_symbol_with_type(symbol.to_string(), exchange.to_string(), account_type.to_string());
@@ -491,13 +491,13 @@ mod tests {
     #[test]
     fn test_toggle_symbol_add_remove() {
         let mut mgr = WatchlistManager::default();
-        assert!(!mgr.contains("ETHUSDT", "Binance"));
-        let added = mgr.toggle_symbol("ETHUSDT", "Binance");
+        assert!(!mgr.contains_with_type("ETHUSDT", "Binance", ""));
+        let added = mgr.toggle_symbol("ETHUSDT", "Binance", "");
         assert!(added);
-        assert!(mgr.contains("ETHUSDT", "Binance"));
-        let removed = mgr.toggle_symbol("ETHUSDT", "Binance");
+        assert!(mgr.contains_with_type("ETHUSDT", "Binance", ""));
+        let removed = mgr.toggle_symbol("ETHUSDT", "Binance", "");
         assert!(!removed);
-        assert!(!mgr.contains("ETHUSDT", "Binance"));
+        assert!(!mgr.contains_with_type("ETHUSDT", "Binance", ""));
     }
 
     #[test]
@@ -511,7 +511,7 @@ mod tests {
         assert!(mgr.contains("BTCUSDT", "OKX"));
         assert!(!mgr.contains("BTCUSDT", "KuCoin"));
         // Remove only the OKX one
-        mgr.remove_symbol("BTCUSDT", "OKX");
+        mgr.remove_symbol("BTCUSDT", "OKX", "");
         assert!(mgr.contains("BTCUSDT", "Binance"));
         assert!(!mgr.contains("BTCUSDT", "OKX"));
     }
@@ -586,6 +586,31 @@ mod tests {
         let syms = list.all_symbols();
         assert_eq!(syms[0].symbol, "BTC");
         assert_eq!(syms[1].symbol, "AAPL");
+    }
+
+    #[test]
+    fn test_toggle_does_not_cross_account_types() {
+        // Regression: toggling BTCUSDT:binance:F must not remove BTCUSDT:binance:S.
+        let mut mgr = WatchlistManager::default();
+        mgr.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "S".to_string());
+        mgr.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "F".to_string());
+        // Toggle off the futures entry.
+        let removed = mgr.toggle_symbol("BTCUSDT", "binance", "F");
+        assert!(!removed);
+        // Spot entry must still be present.
+        assert!(mgr.contains_with_type("BTCUSDT", "binance", "S"));
+        assert!(!mgr.contains_with_type("BTCUSDT", "binance", "F"));
+    }
+
+    #[test]
+    fn test_remove_does_not_cross_account_types() {
+        // Regression: removing BTCUSDT:binance:F must not touch BTCUSDT:binance:S.
+        let mut mgr = WatchlistManager::default();
+        mgr.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "S".to_string());
+        mgr.add_symbol_with_type("BTCUSDT".to_string(), "binance".to_string(), "F".to_string());
+        mgr.remove_symbol("BTCUSDT", "binance", "F");
+        assert!(mgr.contains_with_type("BTCUSDT", "binance", "S"));
+        assert!(!mgr.contains_with_type("BTCUSDT", "binance", "F"));
     }
 
     #[test]
