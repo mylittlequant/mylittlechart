@@ -167,6 +167,13 @@ impl ChartApp {
                                     window.calc_auto_scale();
                                 }
                             }
+                            // Propagate scale_mode change to sync-group peers.
+                            let viewport_state = self.panel_app.panel_grid
+                                .window_for_leaf(leaf_id)
+                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                            if let Some((view_start, bar_spacing)) = viewport_state {
+                                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, Some(next_mode));
+                            }
                         }
                         ScaleCornerButton::Mode => {
                             self.process_output_actions(vec![zengeld_chart::ChartOutputAction::TogglePriceScaleMode]);
@@ -9386,13 +9393,26 @@ impl ChartApp {
                     }
                 }
                 "auto_scale" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        let next = w.price_scale.scale_mode.next();
-                        w.price_scale.scale_mode = next;
-                        if next.is_auto_y() {
-                            w.calc_auto_scale();
+                    let next = self.panel_app.panel_grid
+                        .active_window()
+                        .map(|w| w.price_scale.scale_mode.next());
+                    if let Some(next) = next {
+                        if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                            w.price_scale.scale_mode = next;
+                            if next.is_auto_y() {
+                                w.calc_auto_scale();
+                            }
+                            eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }
-                        eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
+                        // Propagate scale_mode change to sync-group peers.
+                        if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                            let viewport_state = self.panel_app.panel_grid
+                                .active_window()
+                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                            if let Some((view_start, bar_spacing)) = viewport_state {
+                                self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next));
+                            }
+                        }
                     }
                 }
                 "show_bar_countdown" => {
@@ -14364,6 +14384,15 @@ impl ChartApp {
                         window.calc_auto_scale();
                     }
                 }
+                // Propagate scale_mode change to sync-group peers.
+                if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                    let viewport_state = self.panel_app.panel_grid
+                        .active_window()
+                        .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                    if let Some((view_start, bar_spacing)) = viewport_state {
+                        self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next_mode));
+                    }
+                }
                 return;
             }
             ScaleCornerButton::Mode => {
@@ -16575,7 +16604,7 @@ impl ChartApp {
                             .active_window()
                             .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
-                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing);
+                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, None);
                         }
                     }
                 }
@@ -17906,7 +17935,7 @@ impl ChartApp {
         // Propagate crosshair to all sync peers.
         self.propagate_crosshair_to_sync_group(source_leaf, bar_f64, price, visible, pane_index);
         // Propagate viewport to all sync peers.
-        self.propagate_viewport_to_sync_group(source_leaf, view_start, bar_spacing);
+        self.propagate_viewport_to_sync_group(source_leaf, view_start, bar_spacing, None);
     }
 
     /// Propagate a symbol change to all leaves in the same sync color group.

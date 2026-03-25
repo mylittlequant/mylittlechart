@@ -2906,7 +2906,7 @@ impl ChartApp {
         // to here where layout dimensions are guaranteed valid.
         let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
         for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
-            if window.needs_auto_scale_after_bars && !window.bars.is_empty() {
+            if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                 window.needs_auto_scale_after_bars = false;
                 // Focus-style snap: position last bar with right margin
                 let count = window.bars.len();
@@ -2930,7 +2930,7 @@ impl ChartApp {
         // align to the same TIME position after bar load (not just user pan/zoom).
         for (chart_id, view_start, bar_spacing) in snapped_windows {
             if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
-                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing);
+                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
             }
         }
 
@@ -5503,7 +5503,7 @@ impl ChartApp {
                     let _ = window;
                     let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                     if let Some(active_leaf) = active_leaf_opt {
-                        self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing);
+                        self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, None);
                     }
                 }
                 ChartOutputAction::Zoom { center_x, factor_x, factor_y, .. } => {
@@ -5542,7 +5542,7 @@ impl ChartApp {
                     if factor_x != 1.0 {
                         let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(active_leaf) = active_leaf_opt {
-                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing);
+                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, None);
                         }
                     }
                 }
@@ -6087,12 +6087,13 @@ impl ChartApp {
 
     /// `source_leaf` is the leaf whose viewport was just changed.
     /// All other leaves sharing the same color tag receive the same
-    /// `view_start` and `bar_spacing`.
+    /// `view_start`, `bar_spacing`, and optionally `scale_mode`.
     pub(crate) fn propagate_viewport_to_sync_group(
         &mut self,
         source_leaf: zengeld_chart::LeafId,
         view_start: f64,
         bar_spacing: f64,
+        scale_mode: Option<zengeld_chart::ScaleMode>,
     ) {
         let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
@@ -6111,6 +6112,10 @@ impl ChartApp {
             .collect();
         for leaf_id in sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.
+                if let Some(mode) = scale_mode {
+                    window.price_scale.scale_mode = mode;
+                }
                 window.viewport.view_start = view_start;
                 window.viewport.bar_spacing = bar_spacing.clamp(
                     window.viewport.min_bar_spacing(),
