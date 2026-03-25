@@ -1885,6 +1885,16 @@ impl ChartApp {
                             };
                             if is_backfill {
                                 window.update_bars(bars.clone());
+                                // Also schedule backfill for cached windows that haven't
+                                // reached the target bar count yet.
+                                let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
+                                if target > 0 && (window.bars.len() as u32) < target {
+                                    backfill_requests.push((
+                                        window.symbol.clone(),
+                                        window.timeframe.clone(),
+                                        account_type_from_label(&window.account_type),
+                                    ));
+                                }
                             } else {
                                 // Apply scale mode BEFORE set_bars so calc_auto_scale()
                                 // runs with the correct mode (not stale Manual from previous symbol).
@@ -2894,7 +2904,8 @@ impl ChartApp {
 
         // Deferred viewport snap: set_bars() defers snap-to-end + auto-scale
         // to here where layout dimensions are guaranteed valid.
-        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+        let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
+        for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
             if window.needs_auto_scale_after_bars && !window.bars.is_empty() {
                 window.needs_auto_scale_after_bars = false;
                 // Focus-style snap: position last bar with right margin
@@ -2911,6 +2922,15 @@ impl ChartApp {
                 window.price_scale.scale_mode = ScaleMode::Auto;
                 window.calc_auto_scale();
                 window.price_scale.scale_mode = saved_mode;
+                snapped_windows.push((chart_id, window.viewport.view_start, window.viewport.bar_spacing));
+            }
+        }
+
+        // Propagate viewport snap to sync-group peers so all synced windows
+        // align to the same TIME position after bar load (not just user pan/zoom).
+        for (chart_id, view_start, bar_spacing) in snapped_windows {
+            if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing);
             }
         }
 
