@@ -221,6 +221,12 @@ impl WatchlistList {
             || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange))
     }
 
+    /// Check if a (symbol, exchange, account_type) triple is in this list.
+    pub fn contains_with_type(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.ungrouped.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type)
+            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type))
+    }
+
     /// Check if a symbol (any exchange) is in this list.
     pub fn contains_symbol(&self, symbol: &str) -> bool {
         self.ungrouped.iter().any(|s| s.symbol == symbol)
@@ -349,6 +355,11 @@ impl WatchlistManager {
     /// Check if a (symbol, exchange) pair is in the active watchlist.
     pub fn contains(&self, symbol: &str, exchange: &str) -> bool {
         self.active_list().map(|l| l.contains(symbol, exchange)).unwrap_or(false)
+    }
+
+    /// Check if a (symbol, exchange, account_type) triple is in the active watchlist.
+    pub fn contains_with_type(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.active_list().map(|l| l.contains_with_type(symbol, exchange, account_type)).unwrap_or(false)
     }
 
     /// Check if a symbol (any exchange) is in the active watchlist.

@@ -508,12 +508,12 @@ fn render_watchlist_config_dropdown(
     // Column options: (field_name, label, current_value)
     let options: &[(&str, &str, bool)] = &[
         ("show_exchange",     "Exchange",    col_cfg.show_exchange),
+        ("show_account_type", "Type",        col_cfg.show_account_type),
         ("show_last_price",   "Last Price",  col_cfg.show_last_price),
         ("show_change_pct",   "Change %",    col_cfg.show_change_pct),
         ("show_change_abs",   "Change",      col_cfg.show_change_abs),
         ("show_volume",       "Volume",      col_cfg.show_volume),
         ("show_high_low",     "High / Low",  col_cfg.show_high_low),
-        ("show_account_type", "Type",        col_cfg.show_account_type),
     ];
 
     let dropdown_w = 180.0;
@@ -638,12 +638,12 @@ fn render_watchlist_column_header(
     let mut col_labels: Vec<&str> = Vec::with_capacity(9);
     col_labels.push("Symbol");
     if col_cfg.show_exchange      { col_labels.push("Exchange"); }
+    if col_cfg.show_account_type  { col_labels.push("Type"); }
     if col_cfg.show_last_price    { col_labels.push("Last"); }
     if col_cfg.show_change_pct    { col_labels.push("Chg %"); }
     if col_cfg.show_change_abs    { col_labels.push("Chg"); }
     if col_cfg.show_high_low      { col_labels.push("High"); col_labels.push("Low"); }
     if col_cfg.show_volume        { col_labels.push("Vol"); }
-    if col_cfg.show_account_type  { col_labels.push("Type"); }
 
     let n_cols = col_labels.len();
     let usable_w = content_width - item_padding * 2.0;
@@ -857,6 +857,9 @@ fn render_watchlist_items(
     if col_cfg.show_exchange {
         col_labels.push("Exchange");
     }
+    if col_cfg.show_account_type {
+        col_labels.push("Type");
+    }
     if col_cfg.show_last_price {
         col_labels.push("Last");
     }
@@ -872,9 +875,6 @@ fn render_watchlist_items(
     }
     if col_cfg.show_volume {
         col_labels.push("Vol");
-    }
-    if col_cfg.show_account_type {
-        col_labels.push("Type");
     }
 
     let n_cols = col_labels.len();
@@ -1126,6 +1126,23 @@ fn render_watchlist_items(
         ctx.set_font(data_font);
         ctx.set_text_baseline(TextBaseline::Middle);
 
+        if col_cfg.show_account_type {
+            let (clip_l, clip_r) = col_clip(col_idx);
+            let clip_w = (clip_r - clip_l).max(0.0);
+            if clip_w >= 1.0 {
+                let type_label = if item.account_type.is_empty() { "S" } else { item.account_type.as_str() };
+                let (align, tx) = col_text_x(col_idx, clip_l, clip_r);
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.set_text_align(align);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                let display_type = truncate_to_width(ctx, type_label, clip_w);
+                ctx.fill_text(&display_type, tx, current_y + data_row_h / 2.0);
+                ctx.set_font(data_font);
+            }
+            col_idx += 1;
+        }
+
         if col_cfg.show_last_price {
             let (clip_l, clip_r) = col_clip(col_idx);
             let clip_w = (clip_r - clip_l).max(0.0);
@@ -1250,22 +1267,6 @@ fn render_watchlist_items(
                 );
             }
             col_idx += 1;
-        }
-
-        if col_cfg.show_account_type {
-            let (clip_l, clip_r) = col_clip(col_idx);
-            let clip_w = (clip_r - clip_l).max(0.0);
-            if clip_w >= 1.0 {
-                let type_label = if item.account_type.is_empty() { "S" } else { item.account_type.as_str() };
-                let (align, tx) = col_text_x(col_idx, clip_l, clip_r);
-                ctx.set_font("10px sans-serif");
-                ctx.set_fill_color(&theme.item_text_muted);
-                ctx.set_text_align(align);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                let display_type = truncate_to_width(ctx, type_label, clip_w);
-                ctx.fill_text(&display_type, tx, current_y + data_row_h / 2.0);
-            }
-            let _ = col_idx;
         }
 
         // Delete (×) overlay — drawn AFTER column text so it's on top.

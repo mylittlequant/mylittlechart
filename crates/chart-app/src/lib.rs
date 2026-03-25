@@ -5126,7 +5126,7 @@ impl ChartApp {
                     .collect();
 
                 for s in filtered.iter().take(100) {
-                    let in_watchlist = watchlist_manager.contains(&s.symbol, exchange_slug);
+                    let in_watchlist = watchlist_manager.contains_with_type(&s.symbol, exchange_slug, s.account_type.short_label());
                     let asset_type = if exchange_slug == "moex" { "Stock" } else { "Crypto" };
                     let category_icon = if exchange_slug == "moex" { "S" } else { "C" };
                     results.push(SearchResult {
