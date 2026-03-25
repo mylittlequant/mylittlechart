@@ -6124,7 +6124,12 @@ impl ChartApp {
 
     /// `source_leaf` is the leaf whose viewport was just changed.
     /// All other leaves sharing the same color tag receive the same
-    /// `view_start`, `bar_spacing`, and optionally `scale_mode`.
+    /// visible bar count, time-aligned `view_start`, and optionally `scale_mode`.
+    ///
+    /// Instead of copying raw `bar_spacing`, we sync the NUMBER of visible bars.
+    /// Each peer recalculates its own `bar_spacing = peer.chart_width / visible_bars`
+    /// so that a small 85px window and a large 271px window both show the same
+    /// number of candles (just at different pixel densities).
     pub(crate) fn propagate_viewport_to_sync_group(
         &mut self,
         source_leaf: zengeld_chart::LeafId,
@@ -6139,16 +6144,20 @@ impl ChartApp {
             .unwrap_or(true);
         if !should_sync { return; }
 
-        // Resolve source window's anchor timestamp for time-based sync.
-        // This avoids the raw bar-index mismatch when peer windows have
-        // different bar counts (bar N in window A ≠ bar N in window B).
-        let anchor_ts: Option<i64> = self.panel_app.panel_grid.window_for_leaf(source_leaf)
-            .and_then(|w| {
-                if w.bars.is_empty() { return None; }
-                let idx = (view_start.floor() as usize).min(w.bars.len().saturating_sub(1));
-                Some(w.bars[idx].timestamp)
-            });
-        let frac = view_start - view_start.floor();
+        // Compute source visible bar count — the metric we actually sync.
+        let (source_chart_width, anchor_ts, frac) = match self.panel_app.panel_grid.window_for_leaf(source_leaf) {
+            Some(w) => {
+                let ts = if w.bars.is_empty() {
+                    None
+                } else {
+                    let idx = (view_start.floor() as usize).min(w.bars.len().saturating_sub(1));
+                    Some(w.bars[idx].timestamp)
+                };
+                (w.viewport.chart_width, ts, view_start - view_start.floor())
+            }
+            None => return,
+        };
+        let visible_bars = if bar_spacing > 0.0 { source_chart_width / bar_spacing } else { 100.0 };
 
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
@@ -6171,10 +6180,17 @@ impl ChartApp {
                     .map(|idx| idx as f64 + frac)
                     .unwrap_or(view_start);
                 window.viewport.view_start = peer_view_start;
-                window.viewport.bar_spacing = bar_spacing.clamp(
-                    window.viewport.min_bar_spacing(),
-                    window.viewport.max_bar_spacing(),
-                );
+                // Sync visible bar count: peer gets the same number of bars in view,
+                // but its own bar_spacing adapts to its chart_width.
+                let peer_spacing = if visible_bars > 0.0 && window.viewport.chart_width > 0.0 {
+                    (window.viewport.chart_width / visible_bars).clamp(
+                        window.viewport.min_bar_spacing(),
+                        window.viewport.max_bar_spacing(),
+                    )
+                } else {
+                    bar_spacing
+                };
+                window.viewport.bar_spacing = peer_spacing;
                 if window.price_scale.scale_mode.is_auto_y() {
                     window.calc_auto_scale();
                 }
