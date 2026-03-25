@@ -15967,6 +15967,12 @@ impl ChartApp {
                                     let viewport_is_stripped = snap.viewport.bar_count == 0
                                         && snap.viewport.view_start == 0.0;
 
+                                    // Always restore bar_spacing (zoom level) from preset —
+                                    // it's tied to window size, not scroll position.
+                                    if snap.viewport.bar_spacing > 0.0 {
+                                        window.viewport.bar_spacing = snap.viewport.bar_spacing;
+                                    }
+
                                     if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
                                         window.set_bars(bars);
                                         window.drawing_manager.recalculate_all_bar_caches(&window.bars);
@@ -16124,6 +16130,10 @@ impl ChartApp {
                                 };
                                 let viewport_is_stripped = snap.viewport.bar_count == 0
                                     && snap.viewport.view_start == 0.0;
+                                // Always restore bar_spacing (zoom level) from preset.
+                                if snap.viewport.bar_spacing > 0.0 {
+                                    window.viewport.bar_spacing = snap.viewport.bar_spacing;
+                                }
                                 if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
                                     window.set_bars(bars);
                                     window.drawing_manager.recalculate_all_bar_caches(&window.bars);

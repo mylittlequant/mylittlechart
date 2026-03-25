@@ -3553,9 +3553,9 @@ impl ChartApp {
                 let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new();
                 for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
                     if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
-                        eprintln!("[SNAP-SPLIT] window {} sym={} chart_width={} bars={} view_start_before={}",
-                            chart_id.0, window.symbol, window.viewport.chart_width, window.bars.len(), window.viewport.view_start);
                         window.needs_auto_scale_after_bars = false;
+                        // Snap-to-end: position last bar with right margin,
+                        // using CURRENT bar_spacing (restored from preset).
                         let count = window.bars.len();
                         let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
                         let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
@@ -3568,18 +3568,10 @@ impl ChartApp {
                         window.price_scale.scale_mode = ScaleMode::Auto;
                         window.calc_auto_scale();
                         window.price_scale.scale_mode = saved_mode;
-                        eprintln!("[SNAP-SPLIT] window {} -> view_start={} visible_f={}", chart_id.0, window.viewport.view_start, visible_f);
                         snapped_windows.push((chart_id, window.viewport.view_start, window.viewport.bar_spacing));
                     }
                 }
-                if snapped_windows.is_empty() {
-                    // Log which windows exist and their state
-                    for (&chart_id, window) in self.panel_app.panel_grid.windows().iter() {
-                        eprintln!("[SNAP-SPLIT-SKIP] window {} sym={} needs_snap={} bars={} chart_w={} view_start={}",
-                            chart_id.0, window.symbol, window.needs_auto_scale_after_bars,
-                            window.bars.len(), window.viewport.chart_width, window.viewport.view_start);
-                    }
-                }
+                // (diagnostic logging removed — snap-to-end confirmed working)
                 for (chart_id, view_start, bar_spacing) in snapped_windows {
                     if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
                         self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
