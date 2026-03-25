@@ -98,24 +98,6 @@ impl WindowRect {
 /// Default gap between windows in multi-window layouts
 pub const WINDOW_GAP: f32 = 4.0;
 
-/// Saved viewport and price-scale state that should be applied once bars arrive.
-///
-/// Created during `LoadPreset` when the data provider cannot supply bars
-/// synchronously. After `BarsLoaded` calls `set_bars()` (which resets the
-/// viewport), the deferred snapshot is applied to restore the preset position.
-#[derive(Clone, Debug)]
-pub struct ViewportSnapshot {
-    /// Saved `view_start` (horizontal scroll position).
-    pub view_start: f64,
-    /// Saved `bar_spacing` (horizontal zoom level).
-    pub bar_spacing: f64,
-    /// Saved `price_min` (bottom of Y axis).
-    pub price_min: f64,
-    /// Saved `price_max` (top of Y axis).
-    pub price_max: f64,
-    /// Saved scale mode (Auto / Manual / etc.).
-    pub scale_mode: ScaleMode,
-}
 
 /// Individual chart window with its own state
 ///
@@ -301,12 +283,6 @@ pub struct ChartWindow {
     pub symbol_drawings: std::collections::HashMap<String, Vec<crate::preset::snapshots::PrimitiveSnapshot>>,
 
     /// Deferred viewport / price-scale position to apply once `BarsLoaded` fires.
-    ///
-    /// Set during `LoadPreset` when bars cannot be fetched synchronously.
-    /// `set_bars()` resets the viewport, so the desired position must be
-    /// re-applied after bars arrive. Cleared in the `BarsLoaded` handler.
-    pub pending_viewport_restore: Option<ViewportSnapshot>,
-
     /// Set to `true` when a symbol switch is initiated (bars cleared, new request sent).
     /// Forces the `BarsLoaded` handler to take the initial-load path (set_bars + reposition
     /// to end) even if a stray `TradeUpdate` inserted a synthetic bar before bars arrived.
@@ -419,7 +395,6 @@ impl ChartWindow {
             stashed_primitives: Vec::new(),
             stashed_command_history: None,
             symbol_drawings: HashMap::new(),
-            pending_viewport_restore: None,
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
             scroll_fetch_in_flight: false,
@@ -614,7 +589,6 @@ impl ChartWindow {
             // Split child does not inherit per-symbol drawing cache.
             symbol_drawings: HashMap::new(),
             // Split child has no pending viewport restore.
-            pending_viewport_restore: None,
             // Split child has no pending symbol load.
             pending_symbol_load: false,
             // Split child has no deferred auto-scale pending.

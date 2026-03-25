@@ -1927,15 +1927,8 @@ impl ChartApp {
                             // populated (catches any created without sync, e.g. via undo
                             // restore or deserialization without timestamp migration).
                             window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
-                            eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={} pending_vp_restore={}",
-                                window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing,
-                                window.pending_viewport_restore.is_some());
-                            // Restore only the scale mode (A/M/F) from the preset.
-                            // Viewport position is never inherited — the chart always
-                            // starts at live data (Follow mode) after fresh bars arrive.
-                            if let Some(vp) = window.pending_viewport_restore.take() {
-                                window.price_scale.scale_mode = vp.scale_mode;
-                            }
+                            eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
+                                window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
                         }
                     }
 

@@ -15948,48 +15948,18 @@ impl ChartApp {
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
-                                    // Load bars. Priority:
-                                    //   1. Data-provider synchronous cache — e.g. demo provider.
-                                    //   2. Async BarsLoaded — defer viewport restore.
-                                    //
-                                    // After set_bars() the viewport is reset, so we always
-                                    // re-apply the snapshotted viewport/price_scale afterwards.
-                                    let deferred_vp = zengeld_chart::state::chart_window::ViewportSnapshot {
-                                        view_start: snap.viewport.view_start,
-                                        bar_spacing: snap.viewport.bar_spacing,
-                                        price_min: snap.price_scale.price_min,
-                                        price_max: snap.price_scale.price_max,
-                                        scale_mode: snap.price_scale.scale_mode.clone(),
-                                    };
-                                    // Detect whether the viewport was stripped for persistence
-                                    // (view_start=0, bar_count=0 = default).  If so, use set_bars()
-                                    // which auto-positions the viewport to show the latest bars.
-                                    let viewport_is_stripped = snap.viewport.bar_count == 0
-                                        && snap.viewport.view_start == 0.0;
-
-                                    // Always restore bar_spacing (zoom level) from preset —
-                                    // it's tied to window size, not scroll position.
+                                    // Restore persisted bar_spacing (zoom) and scale_mode.
+                                    // Viewport position (view_start) is NOT persisted — always
+                                    // snap-to-end after bars arrive.
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
+                                    window.price_scale.scale_mode = snap.price_scale.scale_mode.clone();
 
-                                    if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
-                                        window.set_bars(bars);
-                                        window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                                        if !viewport_is_stripped {
-                                            window.viewport = snap.viewport.clone();
-                                            window.viewport.bar_count = window.bars.len();
-                                            window.price_scale = snap.price_scale.clone();
-                                        }
-                                        window.calc_auto_scale();
-                                        // No pending restore needed — bars arrived synchronously.
-                                    } else {
-                                        // Bars will arrive asynchronously via BarsLoaded.
-                                        window.pending_symbol_load = true;
-                                        if !viewport_is_stripped {
-                                            window.pending_viewport_restore = Some(deferred_vp);
-                                        }
-                                    }
+                                    // Bars arrive asynchronously via BarsLoaded.
+                                    // set_bars() will set needs_auto_scale_after_bars = true,
+                                    // and the deferred snap in prepare_frame will position view_start.
+                                    window.pending_symbol_load = true;
 
                                     eprintln!(
                                         "[ChartApp] built window {} → {}/{} ({} drawings)",
@@ -16118,37 +16088,14 @@ impl ChartApp {
                                 // Restore per-symbol drawing cache
                                 window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
-                                // Restore bars. Priority:
-                                //   1. Data-provider synchronous cache.
-                                //   2. Async BarsLoaded with deferred viewport.
-                                let deferred_vp = zengeld_chart::state::chart_window::ViewportSnapshot {
-                                    view_start: snap.viewport.view_start,
-                                    bar_spacing: snap.viewport.bar_spacing,
-                                    price_min: snap.price_scale.price_min,
-                                    price_max: snap.price_scale.price_max,
-                                    scale_mode: snap.price_scale.scale_mode.clone(),
-                                };
-                                let viewport_is_stripped = snap.viewport.bar_count == 0
-                                    && snap.viewport.view_start == 0.0;
-                                // Always restore bar_spacing (zoom level) from preset.
+                                // Restore persisted bar_spacing (zoom) and scale_mode.
                                 if snap.viewport.bar_spacing > 0.0 {
                                     window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                 }
-                                if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
-                                    window.set_bars(bars);
-                                    window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                                    if !viewport_is_stripped {
-                                        window.viewport = snap.viewport.clone();
-                                        window.viewport.bar_count = window.bars.len();
-                                        window.price_scale = snap.price_scale.clone();
-                                    }
-                                    window.calc_auto_scale();
-                                } else {
-                                    window.pending_symbol_load = true;
-                                    if !viewport_is_stripped {
-                                        window.pending_viewport_restore = Some(deferred_vp);
-                                    }
-                                }
+                                window.price_scale.scale_mode = snap.price_scale.scale_mode.clone();
+
+                                // Bars arrive asynchronously via BarsLoaded.
+                                window.pending_symbol_load = true;
 
                                 eprintln!("[ChartApp] patched window {} → {}/{} ({} drawings)",
                                     snap.window_id, snap.symbol, snap.timeframe.name,

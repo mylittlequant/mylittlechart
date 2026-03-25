@@ -190,6 +190,17 @@ impl ChartWindowSnapshot {
     pub fn from_window(window: &ChartWindow, leaf_id: u64) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &window.drawing_manager);
 
+        // Persist only bar_spacing (zoom level) and scale_mode from viewport/price_scale.
+        // view_start, bar_count, chart_width, chart_height, price_min, price_max are
+        // runtime state — always recomputed from live data on restore.
+        let mut saved_viewport = Viewport::default();
+        saved_viewport.bar_spacing = window.viewport.bar_spacing;
+
+        let mut saved_price_scale = window.price_scale.clone();
+        // price_min/price_max are recalculated from bars; zero them out.
+        saved_price_scale.price_min = 0.0;
+        saved_price_scale.price_max = 0.0;
+
         Self {
             window_id: window.id.0,
             leaf_id,
@@ -197,8 +208,8 @@ impl ChartWindowSnapshot {
             exchange: window.exchange.clone(),
             account_type: window.account_type.clone(),
             timeframe: window.timeframe.clone(),
-            viewport: window.viewport.clone(),
-            price_scale: window.price_scale.clone(),
+            viewport: saved_viewport,
+            price_scale: saved_price_scale,
             group_id: window.group_id.map(|g| g.0),
             grid_options: window.grid_options.clone(),
             crosshair_options: window.crosshair_options.clone(),
