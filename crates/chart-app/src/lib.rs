@@ -6102,6 +6102,17 @@ impl ChartApp {
             .unwrap_or(true);
         if !should_sync { return; }
 
+        // Resolve source window's anchor timestamp for time-based sync.
+        // This avoids the raw bar-index mismatch when peer windows have
+        // different bar counts (bar N in window A ≠ bar N in window B).
+        let anchor_ts: Option<i64> = self.panel_app.panel_grid.window_for_leaf(source_leaf)
+            .and_then(|w| {
+                if w.bars.is_empty() { return None; }
+                let idx = (view_start.floor() as usize).min(w.bars.len().saturating_sub(1));
+                Some(w.bars[idx].timestamp)
+            });
+        let frac = view_start - view_start.floor();
+
         let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
             Some(c) => c,
             None => return,
@@ -6116,7 +6127,13 @@ impl ChartApp {
                 if let Some(mode) = scale_mode {
                     window.price_scale.scale_mode = mode;
                 }
-                window.viewport.view_start = view_start;
+                // Time-based sync: convert source timestamp to peer's bar index so
+                // windows with different bar counts land on the same calendar date.
+                let peer_view_start = anchor_ts
+                    .and_then(|ts| zengeld_chart::find_bar_for_timestamp(&window.bars, ts))
+                    .map(|idx| idx as f64 + frac)
+                    .unwrap_or(view_start);
+                window.viewport.view_start = peer_view_start;
                 window.viewport.bar_spacing = bar_spacing.clamp(
                     window.viewport.min_bar_spacing(),
                     window.viewport.max_bar_spacing(),

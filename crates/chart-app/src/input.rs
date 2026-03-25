@@ -16122,13 +16122,22 @@ impl ChartApp {
                                     price_max: snap.price_scale.price_max,
                                     scale_mode: snap.price_scale.scale_mode.clone(),
                                 };
+                                let viewport_is_stripped = snap.viewport.bar_count == 0
+                                    && snap.viewport.view_start == 0.0;
                                 if let Some(bars) = window.data_provider.get_bars(&snap.symbol, &snap.timeframe) {
                                     window.set_bars(bars);
                                     window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                                    window.viewport = snap.viewport.clone();
+                                    if !viewport_is_stripped {
+                                        window.viewport = snap.viewport.clone();
+                                        window.viewport.bar_count = window.bars.len();
+                                        window.price_scale = snap.price_scale.clone();
+                                    }
+                                    window.calc_auto_scale();
                                 } else {
                                     window.pending_symbol_load = true;
-                                    window.pending_viewport_restore = Some(deferred_vp);
+                                    if !viewport_is_stripped {
+                                        window.pending_viewport_restore = Some(deferred_vp);
+                                    }
                                 }
 
                                 eprintln!("[ChartApp] patched window {} → {}/{} ({} drawings)",
