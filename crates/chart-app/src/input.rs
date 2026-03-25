@@ -533,12 +533,13 @@ impl ChartApp {
                         .map(|l| &l.column_config);
                     let n_seps = col_cfg.map(|c| {
                         let mut n = 0usize; // symbol always present
-                        if c.show_exchange   { n += 1; }
-                        if c.show_last_price { n += 1; }
-                        if c.show_change_pct { n += 1; }
-                        if c.show_change_abs { n += 1; }
-                        if c.show_high_low   { n += 2; }
-                        if c.show_volume     { n += 1; }
+                        if c.show_exchange     { n += 1; }
+                        if c.show_account_type { n += 1; }
+                        if c.show_last_price   { n += 1; }
+                        if c.show_change_pct   { n += 1; }
+                        if c.show_change_abs   { n += 1; }
+                        if c.show_high_low     { n += 2; }
+                        if c.show_volume       { n += 1; }
                         n
                     }).unwrap_or(0);
 
@@ -1964,12 +1965,13 @@ impl ChartApp {
                     .map(|l| &l.column_config);
                 let mut n = 0usize;
                 if let Some(c) = cfg {
-                    if c.show_exchange   { n += 1; }
-                    if c.show_last_price { n += 1; }
-                    if c.show_change_pct { n += 1; }
-                    if c.show_change_abs { n += 1; }
-                    if c.show_high_low   { n += 2; }
-                    if c.show_volume     { n += 1; }
+                    if c.show_exchange     { n += 1; }
+                    if c.show_account_type { n += 1; }
+                    if c.show_last_price   { n += 1; }
+                    if c.show_change_pct   { n += 1; }
+                    if c.show_change_abs   { n += 1; }
+                    if c.show_high_low     { n += 2; }
+                    if c.show_volume       { n += 1; }
                 }
                 n
             };
@@ -2021,7 +2023,13 @@ impl ChartApp {
                         }
                     }
                 }
-                self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffset { index: sep_idx, value: clamped });
+                // Send the full offsets vector so app_state gets a correctly
+                // initialized copy (main.rs doesn't know the sidebar width).
+                if let Some(list) = self.sidebar_state.watchlist_manager.active_list() {
+                    if let Some(offsets) = &list.column_config.separator_offsets {
+                        self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
+                    }
+                }
                 self.watchlists_dirty = true;
             }
             return;
