@@ -1117,9 +1117,27 @@ impl DataBridge {
                 match result {
                     Ok(klines) => {
                         if klines.is_empty() {
+                            // Exchange has no more data — record oldest_ts so scroll
+                            // can stop asking for more.
                             eprintln!("[Bridge] backfill: empty page at page {}, stopping", pages);
+                            if let Some(oldest_so_far) = accumulated.first().map(|b| b.timestamp) {
+                                if let Ok(mut map) = oldest_fetched_ts.lock() {
+                                    let key = (
+                                        exchange_id,
+                                        account_type,
+                                        symbol_str.clone(),
+                                        tf_name.clone(),
+                                    );
+                                    let entry = map.entry(key).or_insert(i64::MAX);
+                                    if oldest_so_far < *entry {
+                                        *entry = oldest_so_far;
+                                    }
+                                }
+                            }
                             break 'backfill;
                         }
+
+                        let page_len = klines.len();
                         pages += 1;
                         let batch: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
 
@@ -1130,8 +1148,11 @@ impl DataBridge {
 
                         let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
 
-                        // Track oldest fetched timestamp.
-                        if oldest_bar_ts > 0 {
+                        // If the exchange returned fewer bars than requested, it has run out of
+                        // history — record oldest_ts so scroll-left stops requesting more.
+                        // Do NOT record when the page is full (500 bars): we stopped by choice
+                        // (target reached or page cap), not because the exchange ran out.
+                        if page_len < 500 && oldest_bar_ts > 0 {
                             if let Ok(mut map) = oldest_fetched_ts.lock() {
                                 let key = (
                                     exchange_id,
@@ -1149,22 +1170,26 @@ impl DataBridge {
                         accumulated = merge_bars(batch, accumulated);
 
                         eprintln!(
-                            "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={})",
+                            "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={}, page_len={})",
                             pages,
                             accumulated.len(),
-                            oldest_bar_ts
+                            oldest_bar_ts,
+                            page_len,
                         );
 
                         if accumulated.len() >= still_need {
                             eprintln!(
-                                "[Bridge] backfill: reached target ({} >= {})",
+                                "[Bridge] backfill: reached target ({} >= {}), more data may exist on exchange",
                                 accumulated.len(),
                                 still_need
                             );
+                            // Do NOT record oldest_ts here — we stopped by choice, not
+                            // because the exchange ran out of data.
                             break 'backfill;
                         }
                         if pages >= 40 {
                             eprintln!("[Bridge] backfill: capped at 40 pages (~20k bars)");
+                            // Page cap also does not mean exchange ran out.
                             break 'backfill;
                         }
                     }
@@ -1428,6 +1453,7 @@ impl DataBridge {
                     finish_scroll!();
                 }
                 Ok(klines) => {
+                    let page_len = klines.len();
                     let new_page: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
                     let prepend_count = new_page.len();
 
@@ -1436,9 +1462,12 @@ impl DataBridge {
                         exchange_id, symbol_str, tf_name, prepend_count
                     );
 
-                    // Update oldest_fetched_ts with the oldest bar from this page.
+                    // Only record oldest_fetched_ts when the exchange returned fewer bars
+                    // than requested — that means it ran out of history.  A full page
+                    // (page_len == limit) means there is more data available further back;
+                    // recording oldest_ts here would incorrectly block future scroll requests.
                     let oldest_bar_ts = new_page.first().map(|b| b.timestamp).unwrap_or(0);
-                    if oldest_bar_ts > 0 {
+                    if oldest_bar_ts > 0 && page_len < limit as usize {
                         if let Ok(mut map) = oldest_fetched_ts.lock() {
                             let key = (
                                 exchange_id,
