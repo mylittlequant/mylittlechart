@@ -13,6 +13,7 @@ use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+use crate::ui::widgets::{render_single_slider, SliderConfig, SliderTrackInfo};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::UserSettingsResult;
@@ -1475,6 +1476,175 @@ fn render_performance_tab(
     );
 
     cy = desc_y + 15.0;
+
+    // ── DATA & CACHE ──────────────────────────────────────────────────────────
+    cy += 24.0;
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("DATA & CACHE", x, cy);
+    cy += 22.0;
+
+    let content_w = available_w;
+    let slider_h = 28.0;
+    let desc_gap = 14.0;
+
+    // Helper: display value is the committed value, unless a drag preview is active.
+    let floating = state.data_slider_floating();
+
+    // ── Slider 1: Background bars (300–10000) ──────────────────────────────
+    let bg_bars_val = if let Some(("data_bg_bars", v)) = floating { v } else { state.data_bg_bars as f64 };
+    let bg_bars_config = SliderConfig::new(300.0, 10000.0).with_step(100.0);
+    let bg_bars_rect = WidgetRect::new(x, cy, content_w, slider_h);
+    let bg_bars_result = render_single_slider(
+        ctx,
+        &bg_bars_config,
+        bg_bars_val,
+        bg_bars_rect,
+        "Background bars",
+        &widget_theme,
+        false,
+        None,
+    );
+    if let Some(track_info) = bg_bars_result.track_info {
+        result.slider_tracks.push(SliderTrackInfo::new(
+            "data_bg_bars",
+            track_info.track_x,
+            track_info.track_width,
+            track_info.min_val,
+            track_info.max_val,
+        ));
+        result.content_items.push(("data_bg_bars".to_string(), bg_bars_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:data_bg_bars",
+            uzor::types::Rect::new(x, cy, content_w, slider_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += slider_h;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Bars loaded after initial 300", x + 4.0, cy);
+    cy += desc_gap;
+
+    // ── Slider 2: Max bars in memory (0–50000) ────────────────────────────
+    cy += 8.0;
+    let max_bars_val = if let Some(("data_max_bars", v)) = floating { v } else { state.data_max_bars as f64 };
+    let max_bars_config = SliderConfig::new(0.0, 50000.0).with_step(500.0);
+    let max_bars_rect = WidgetRect::new(x, cy, content_w, slider_h);
+    let max_bars_result = render_single_slider(
+        ctx,
+        &max_bars_config,
+        max_bars_val,
+        max_bars_rect,
+        "Max bars in memory",
+        &widget_theme,
+        false,
+        None,
+    );
+    if let Some(track_info) = max_bars_result.track_info {
+        result.slider_tracks.push(SliderTrackInfo::new(
+            "data_max_bars",
+            track_info.track_x,
+            track_info.track_width,
+            track_info.min_val,
+            track_info.max_val,
+        ));
+        result.content_items.push(("data_max_bars".to_string(), max_bars_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:data_max_bars",
+            uzor::types::Rect::new(x, cy, content_w, slider_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += slider_h;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Per window limit. 0 = unlimited", x + 4.0, cy);
+    cy += desc_gap;
+
+    // ── Slider 3: Cache size limit MB (50–5000) ───────────────────────────
+    cy += 8.0;
+    let store_mb_val = if let Some(("data_store_size_mb", v)) = floating { v } else { state.data_store_size_mb as f64 };
+    let store_mb_config = SliderConfig::new(50.0, 5000.0).with_step(50.0);
+    let store_mb_rect = WidgetRect::new(x, cy, content_w, slider_h);
+    let store_mb_result = render_single_slider(
+        ctx,
+        &store_mb_config,
+        store_mb_val,
+        store_mb_rect,
+        "Cache size limit (MB)",
+        &widget_theme,
+        false,
+        None,
+    );
+    if let Some(track_info) = store_mb_result.track_info {
+        result.slider_tracks.push(SliderTrackInfo::new(
+            "data_store_size_mb",
+            track_info.track_x,
+            track_info.track_width,
+            track_info.min_val,
+            track_info.max_val,
+        ));
+        result.content_items.push(("data_store_size_mb".to_string(), store_mb_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:data_store_size_mb",
+            uzor::types::Rect::new(x, cy, content_w, slider_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += slider_h;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Max disk space for bar cache", x + 4.0, cy);
+    cy += desc_gap;
+
+    // ── Slider 4: Auto-cleanup days (1–365) ───────────────────────────────
+    cy += 8.0;
+    let cleanup_days_val = if let Some(("data_cleanup_days", v)) = floating { v } else { state.data_cleanup_days as f64 };
+    let cleanup_days_config = SliderConfig::new(1.0, 365.0).with_step(1.0);
+    let cleanup_days_rect = WidgetRect::new(x, cy, content_w, slider_h);
+    let cleanup_days_result = render_single_slider(
+        ctx,
+        &cleanup_days_config,
+        cleanup_days_val,
+        cleanup_days_rect,
+        "Auto-cleanup (days)",
+        &widget_theme,
+        false,
+        None,
+    );
+    if let Some(track_info) = cleanup_days_result.track_info {
+        result.slider_tracks.push(SliderTrackInfo::new(
+            "data_cleanup_days",
+            track_info.track_x,
+            track_info.track_width,
+            track_info.min_val,
+            track_info.max_val,
+        ));
+        result.content_items.push(("data_cleanup_days".to_string(), cleanup_days_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:data_cleanup_days",
+            uzor::types::Rect::new(x, cy, content_w, slider_h),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+    cy += slider_h;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Delete unused cache files after N days", x + 4.0, cy);
+    cy += desc_gap;
+
+    cy += 8.0;
 
     let total_content_h = cy - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);

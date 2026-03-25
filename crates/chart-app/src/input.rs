@@ -1272,6 +1272,32 @@ impl ChartApp {
                     }
                 }
             }
+            // User settings DATA & CACHE slider drag start
+            if self.panel_app.user_settings_state.is_open {
+                use zengeld_chart::ui::modal_settings::UserSettingsTab;
+                if self.panel_app.user_settings_state.active_tab == UserSettingsTab::Performance {
+                    if let Some(ref us) = result.user_settings {
+                        for track in &us.slider_tracks {
+                            if let Some((_, item_rect)) = us.content_items.iter().find(|(id, _)| id == &track.field_id) {
+                                let hit = x >= item_rect.x - 2.0 && x <= item_rect.x + item_rect.width + 2.0
+                                    && y >= item_rect.y && y <= item_rect.y + item_rect.height;
+                                if hit {
+                                    let field_id = track.field_id.clone();
+                                    let track_x = track.track_x;
+                                    let track_width = track.track_width;
+                                    let min_val = track.min_val;
+                                    let max_val = track.max_val;
+                                    self.panel_app.user_settings_state.start_data_slider_drag(
+                                        &field_id, track_x, track_width, min_val, max_val,
+                                    );
+                                    self.panel_app.user_settings_state.update_data_slider_drag(x);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Profile list scrollbar drag start + track click
             if self.panel_app.user_settings_state.show_profile_manager {
                 if let Some(ref us) = result.user_settings {
@@ -2551,6 +2577,11 @@ impl ChartApp {
             }
             return;
         }
+        // === User settings DATA & CACHE slider drag move ===
+        if self.panel_app.user_settings_state.is_data_slider_dragging() {
+            self.panel_app.user_settings_state.update_data_slider_drag(x);
+            return;
+        }
 
         // === Color picker L2 drag move ===
         if self.color_picker_drag.is_some() {
@@ -3159,6 +3190,15 @@ impl ChartApp {
                 }
             } else {
                 self.panel_app.compare_settings_state.end_slider_drag();
+            }
+            return;
+        }
+        // === User settings DATA & CACHE slider drag end ===
+        if self.panel_app.user_settings_state.is_data_slider_dragging() {
+            if let Some((field_id, value)) = self.panel_app.user_settings_state.take_data_slider_value() {
+                self.apply_data_cache_slider_value(&field_id, value);
+            } else {
+                self.panel_app.user_settings_state.end_data_slider_drag();
             }
             return;
         }
@@ -17045,6 +17085,46 @@ impl ChartApp {
                     edit.cursor = edit.text.len();
                 }
             }
+        }
+        self.autosave_snapshot();
+    }
+
+    // =========================================================================
+    // DATA & CACHE slider commit helper
+    // =========================================================================
+
+    /// Commit a DATA & CACHE slider value to the user profile.
+    ///
+    /// `field_id` matches the IDs used in the Performance tab renderer:
+    /// `"data_bg_bars"`, `"data_max_bars"`, `"data_store_size_mb"`, `"data_cleanup_days"`.
+    fn apply_data_cache_slider_value(&mut self, field_id: &str, value: f64) {
+        let dl = &mut self.panel_app.user_manager.profile.data_load;
+        match field_id {
+            "data_bg_bars" => {
+                dl.background_bar_count = (value.round() as u32).clamp(300, 10000);
+                let v = dl.background_bar_count;
+                self.panel_app.user_settings_state.data_bg_bars = v;
+                eprintln!("[ChartApp] data_load.background_bar_count = {}", v);
+            }
+            "data_max_bars" => {
+                dl.max_loaded_bars = (value.round() as u32).min(50000);
+                let v = dl.max_loaded_bars;
+                self.panel_app.user_settings_state.data_max_bars = v;
+                eprintln!("[ChartApp] data_load.max_loaded_bars = {}", v);
+            }
+            "data_store_size_mb" => {
+                dl.max_store_size_mb = (value.round() as u32).clamp(50, 5000);
+                let v = dl.max_store_size_mb;
+                self.panel_app.user_settings_state.data_store_size_mb = v;
+                eprintln!("[ChartApp] data_load.max_store_size_mb = {}", v);
+            }
+            "data_cleanup_days" => {
+                dl.store_cleanup_days = (value.round() as u32).clamp(1, 365);
+                let v = dl.store_cleanup_days;
+                self.panel_app.user_settings_state.data_cleanup_days = v;
+                eprintln!("[ChartApp] data_load.store_cleanup_days = {}", v);
+            }
+            _ => eprintln!("[ChartApp] apply_data_cache_slider_value: unknown field: {}", field_id),
         }
         self.autosave_snapshot();
     }

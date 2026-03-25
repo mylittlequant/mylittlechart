@@ -431,6 +431,8 @@ pub struct UserSettingsResult {
     pub scrollbar_track_rect: Option<WidgetRect>,
     /// Viewport height of the active tab's scrollable area.
     pub scroll_viewport_height: f64,
+    /// Slider track info for drag handling (Performance tab DATA & CACHE sliders).
+    pub slider_tracks: Vec<SliderTrackInfo>,
 }
 
 // =============================================================================

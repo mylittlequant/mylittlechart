@@ -2845,6 +2845,16 @@ impl ChartApp {
         };
         // Sync diagnostics flag so the checkbox reflects the current state.
         self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
+        // Sync data_load settings into user_settings_state for the DATA & CACHE sliders.
+        // Only update the cached values when the slider is not being dragged so the
+        // handle does not snap back to the committed value on every frame during drag.
+        if !self.panel_app.user_settings_state.is_data_slider_dragging() {
+            let dl = &self.panel_app.user_manager.profile.data_load;
+            self.panel_app.user_settings_state.data_bg_bars      = dl.background_bar_count;
+            self.panel_app.user_settings_state.data_max_bars     = dl.max_loaded_bars;
+            self.panel_app.user_settings_state.data_store_size_mb = dl.max_store_size_mb;
+            self.panel_app.user_settings_state.data_cleanup_days  = dl.store_cleanup_days;
+        }
 
         // Sync viewport dimensions.
         // In split mode, viewport sync is handled later in the split-pane

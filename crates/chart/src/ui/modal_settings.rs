@@ -3504,6 +3504,18 @@ pub struct UserSettingsState {
     /// Defaults to "connected".  Consumed when the user clicks "Продолжить".
     pub new_profile_sync_level: String,
 
+    // ── DATA & CACHE slider state ─────────────────────────────────────────────
+    /// Cached value synced from `UserProfile.data_load.background_bar_count`.
+    pub data_bg_bars: u32,
+    /// Cached value synced from `UserProfile.data_load.max_loaded_bars`.
+    pub data_max_bars: u32,
+    /// Cached value synced from `UserProfile.data_load.max_store_size_mb`.
+    pub data_store_size_mb: u32,
+    /// Cached value synced from `UserProfile.data_load.store_cleanup_days`.
+    pub data_cleanup_days: u32,
+    /// Active slider drag for the DATA & CACHE sliders.
+    pub data_slider_drag: Option<SliderDragState>,
+
 }
 
 impl Default for UserSettingsState {
@@ -3640,6 +3652,11 @@ impl Default for UserSettingsState {
             },
             recovery_key_display_focused: false,
             new_profile_sync_level: "connected".to_string(),
+            data_bg_bars: 2000,
+            data_max_bars: 10000,
+            data_store_size_mb: 500,
+            data_cleanup_days: 30,
+            data_slider_drag: None,
         }
     }
 }
@@ -3693,5 +3710,53 @@ impl UserSettingsState {
     /// End dragging.
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
+    }
+
+    // ── DATA & CACHE slider helpers ───────────────────────────────────────────
+
+    /// Start dragging a DATA & CACHE slider from a track hit.
+    pub fn start_data_slider_drag(&mut self, field_id: &str, track_x: f64, track_width: f64, min_val: f64, max_val: f64) {
+        self.data_slider_drag = Some(SliderDragState {
+            field_id: field_id.to_string(),
+            slider_x: track_x,
+            slider_width: track_width,
+            min_val,
+            max_val,
+            dual_handle: None,
+            floating_value: None,
+            floating_value2: None,
+        });
+    }
+
+    /// Update floating value during drag.  Returns `Some((field_id, value))`.
+    pub fn update_data_slider_drag(&mut self, mouse_x: f64) -> Option<(&str, f64)> {
+        if let Some(ref mut drag) = self.data_slider_drag {
+            let t = ((mouse_x - drag.slider_x) / drag.slider_width).clamp(0.0, 1.0);
+            let value = drag.min_val + t * (drag.max_val - drag.min_val);
+            drag.floating_value = Some(value);
+            Some((&drag.field_id, value))
+        } else {
+            None
+        }
+    }
+
+    /// Whether a DATA & CACHE slider is currently being dragged.
+    pub fn is_data_slider_dragging(&self) -> bool {
+        self.data_slider_drag.is_some()
+    }
+
+    /// Consume the final value on drag-end.  Clears drag state.
+    pub fn take_data_slider_value(&mut self) -> Option<(String, f64)> {
+        self.data_slider_drag.take().and_then(|d| d.floating_value.map(|v| (d.field_id, v)))
+    }
+
+    /// Cancel drag without committing.
+    pub fn end_data_slider_drag(&mut self) {
+        self.data_slider_drag = None;
+    }
+
+    /// Return the floating (preview) value if dragging.
+    pub fn data_slider_floating(&self) -> Option<(&str, f64)> {
+        self.data_slider_drag.as_ref().and_then(|d| d.floating_value.map(|v| (d.field_id.as_str(), v)))
     }
 }
