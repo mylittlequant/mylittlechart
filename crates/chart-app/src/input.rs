@@ -13972,18 +13972,21 @@ impl ChartApp {
             }
             _ if rest.starts_with("star:") => {
                 let composite = &rest["star:".len()..];
-                // Composite key format: "SYMBOL:exchange_id" — split on the last colon.
-                let (sym_part, exchange_part) = if let Some(colon_pos) = composite.rfind(':') {
-                    (&composite[..colon_pos], &composite[colon_pos + 1..])
-                } else {
-                    (composite, self.active_exchange.as_str())
-                };
-                // Look up account_type from the search results for this symbol+exchange.
-                let at_label = self.modal_state.symbol_search_results
-                    .iter()
-                    .find(|r| r.symbol == sym_part && r.exchange == exchange_part)
-                    .map(|r| r.account_type.clone())
-                    .unwrap_or_else(|| "S".to_string());
+                // Composite key format: "SYMBOL:exchange_id:account_type" — split from the
+                // right twice so that symbols containing ':' (e.g. "tETH2X:USD") are handled
+                // correctly.
+                let (sym_part, exchange_part, at_label) =
+                    if let Some(at_pos) = composite.rfind(':') {
+                        let at_part = &composite[at_pos + 1..];
+                        let remainder = &composite[..at_pos];
+                        if let Some(ex_pos) = remainder.rfind(':') {
+                            (&remainder[..ex_pos], &remainder[ex_pos + 1..], at_part.to_string())
+                        } else {
+                            (remainder, self.active_exchange.as_str(), at_part.to_string())
+                        }
+                    } else {
+                        (composite, self.active_exchange.as_str(), "S".to_string())
+                    };
                 // Queue action for App to apply on AppState (single source of truth).
                 self.watchlist_actions.push(crate::WatchlistAction::Toggle {
                     symbol: sym_part.to_string(),
@@ -13997,15 +14000,28 @@ impl ChartApp {
                 let item_id = &rest["item:".len()..];
                 eprintln!("[ChartApp] search modal item selected: {}", item_id);
 
-                // Parse composite key "SYMBOL:exchange_id" (split on the LAST colon so that
-                // symbols containing colons or hyphens are handled correctly).
-                let (symbol_part, exchange_id_part) = if let Some(colon_pos) = item_id.rfind(':') {
-                    (&item_id[..colon_pos], &item_id[colon_pos + 1..])
-                } else {
-                    // No colon — treat the whole string as the symbol and fall back to
-                    // the current active exchange.
-                    (item_id, "")
-                };
+                // Parse composite key "SYMBOL:exchange_id:account_type" — split from the
+                // right twice so that symbols containing ':' (e.g. "tETH2X:USD") are handled
+                // correctly.
+                let (symbol_part, exchange_id_part, item_at_label) =
+                    if let Some(at_pos) = item_id.rfind(':') {
+                        let at_part = &item_id[at_pos + 1..];
+                        let remainder = &item_id[..at_pos];
+                        if let Some(ex_pos) = remainder.rfind(':') {
+                            (
+                                &remainder[..ex_pos],
+                                &remainder[ex_pos + 1..],
+                                at_part.to_string(),
+                            )
+                        } else {
+                            // Only one colon — treat as "SYMBOL:exchange", no account_type.
+                            (remainder, at_part, "S".to_string())
+                        }
+                    } else {
+                        // No colon — treat the whole string as the symbol and fall back to
+                        // the current active exchange.
+                        (item_id, "", "S".to_string())
+                    };
 
                 // Resolve the exchange from the parsed exchange_id string.
                 // Walk the known exchange_symbols keys to find a matching entry so we
@@ -14032,12 +14048,8 @@ impl ChartApp {
                         let timeframe = self.panel_app.panel_grid.active_window()
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
-                        // Look up account_type from the search results for this symbol+exchange.
-                        let search_at_label = self.modal_state.symbol_search_results
-                            .iter()
-                            .find(|r| r.symbol == symbol_part && r.exchange == exchange_id_part)
-                            .map(|r| r.account_type.clone())
-                            .unwrap_or_else(|| "S".to_string());
+                        // account_type is embedded in the item key — use it directly.
+                        let search_at_label = item_at_label.clone();
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             // Snapshot current drawings before switching symbol
                             let old_sym = window.symbol.clone();

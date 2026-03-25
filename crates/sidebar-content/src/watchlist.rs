@@ -18,6 +18,9 @@ pub struct WatchlistColumnConfig {
     pub show_change_abs: bool,
     pub show_volume: bool,
     pub show_high_low: bool,
+    /// Show account type column (e.g. "S", "FC", "M"). Default false.
+    #[serde(default)]
+    pub show_account_type: bool,
 
     /// Custom separator X positions as offsets from the left edge of the usable area.
     ///
@@ -45,6 +48,7 @@ impl Default for WatchlistColumnConfig {
             show_change_abs: false,
             show_volume: false,
             show_high_low: false,
+            show_account_type: false,
             separator_offsets: None,
         }
     }
@@ -230,6 +234,13 @@ impl WatchlistList {
         }
     }
 
+    /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange) pair already present.
+    pub fn add_symbol_with_type(&mut self, symbol: String, exchange: String, account_type: String) {
+        if !self.contains(&symbol, &exchange) {
+            self.ungrouped.push(WatchlistSymbol { symbol, exchange, account_type });
+        }
+    }
+
     /// Remove a specific (symbol, exchange) pair from everywhere in this list.
     pub fn remove_symbol(&mut self, symbol: &str, exchange: &str) {
         self.ungrouped.retain(|s| !(s.symbol == symbol && s.exchange == exchange));
@@ -352,6 +363,13 @@ impl WatchlistManager {
         }
     }
 
+    /// Add symbol with explicit account_type to active watchlist.
+    pub fn add_symbol_with_type(&mut self, symbol: String, exchange: String, account_type: String) {
+        if let Some(list) = self.active_list_mut() {
+            list.add_symbol_with_type(symbol, exchange, account_type);
+        }
+    }
+
     /// Remove a specific (symbol, exchange) pair from active watchlist.
     pub fn remove_symbol(&mut self, symbol: &str, exchange: &str) {
         if let Some(list) = self.active_list_mut() {
@@ -360,12 +378,12 @@ impl WatchlistManager {
     }
 
     /// Toggle symbol: add if missing, remove if present. Returns new state (`true` = now in list).
-    pub fn toggle_symbol(&mut self, symbol: &str, exchange: &str) -> bool {
+    pub fn toggle_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) -> bool {
         if self.contains(symbol, exchange) {
             self.remove_symbol(symbol, exchange);
             false
         } else {
-            self.add_symbol(symbol.to_string(), exchange.to_string());
+            self.add_symbol_with_type(symbol.to_string(), exchange.to_string(), account_type.to_string());
             true
         }
     }

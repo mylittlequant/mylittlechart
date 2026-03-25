@@ -460,7 +460,7 @@ fn render_symbol_search_results(
     let mut current_y = y;
     let mut item_rects = Vec::new();
     for item in items.iter().take(10) {
-        let item_key = format!("{}:{}", item.symbol, item.exchange_id);
+        let item_key = format!("{}:{}:{}", item.symbol, item.exchange_id, item.account_type);
         let is_hovered = hovered_item_id == Some(item_key.as_str());
         if is_hovered { ctx.draw_hover_rect(x, current_y, width, item_height, &toolbar_theme.item_bg_active); }
         item_rects.push((item_key, WidgetRect::new(x, current_y, width, item_height)));
@@ -626,9 +626,9 @@ fn render_symbol_search_results_scrollable(
     // giving them higher input priority despite the overlapping row hit zone.
     let mut star_rects: Vec<(String, WidgetRect)> = Vec::new();
     for item in items.iter() {
-        // Composite key: "BTC-USDT:binance" — unique even when multiple exchanges
-        // list the same ticker symbol.
-        let item_key = format!("{}:{}", item.symbol, item.exchange_id);
+        // Composite key: "BTC-USDT:binance:S" — unique even when the same ticker
+        // appears under multiple account types on the same exchange.
+        let item_key = format!("{}:{}:{}", item.symbol, item.exchange_id, item.account_type);
 
         if current_y + item_height < y || current_y > y + viewport_height {
             item_rects.push((item_key.clone(), WidgetRect::new(x, current_y, width, item_height)));

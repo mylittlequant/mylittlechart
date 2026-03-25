@@ -3871,7 +3871,7 @@ impl ApplicationHandler for App<'_> {
                 watchlist_had_actions = true;
                 match action {
                     chart_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
-                        let now_in = self.app_state.watchlist_manager.toggle_symbol(&symbol, &exchange);
+                        let now_in = self.app_state.watchlist_manager.toggle_symbol(&symbol, &exchange, &account_type);
                         eprintln!("[App] watchlist toggle: {}:{} -> in_watchlist={}", symbol, exchange, now_in);
                         if now_in {
                             if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
@@ -3962,12 +3962,13 @@ impl ApplicationHandler for App<'_> {
                     chart_app::WatchlistAction::ToggleColumnVisibility { column } => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
                             match column.as_str() {
-                                "exchange"    => list.column_config.show_exchange    = !list.column_config.show_exchange,
-                                "last_price"  => list.column_config.show_last_price  = !list.column_config.show_last_price,
-                                "change_pct"  => list.column_config.show_change_pct  = !list.column_config.show_change_pct,
-                                "change_abs"  => list.column_config.show_change_abs  = !list.column_config.show_change_abs,
-                                "volume"      => list.column_config.show_volume      = !list.column_config.show_volume,
-                                "high_low"    => list.column_config.show_high_low    = !list.column_config.show_high_low,
+                                "exchange"     => list.column_config.show_exchange     = !list.column_config.show_exchange,
+                                "last_price"   => list.column_config.show_last_price   = !list.column_config.show_last_price,
+                                "change_pct"   => list.column_config.show_change_pct   = !list.column_config.show_change_pct,
+                                "change_abs"   => list.column_config.show_change_abs   = !list.column_config.show_change_abs,
+                                "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
+                                "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
+                                "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
                                 _ => {}
                             }
                             // Reset separator offsets when column visibility changes

@@ -70,14 +70,14 @@ use uzor::input::{InputCoordinator, InputState};
 pub fn account_type_from_label(label: &str) -> digdigdig3::AccountType {
     use digdigdig3::AccountType;
     match label {
-        "M"  => AccountType::Margin,
-        "FC" => AccountType::FuturesCross,
-        "FI" => AccountType::FuturesIsolated,
-        "E"  => AccountType::Earn,
-        "L"  => AccountType::Lending,
-        "O"  => AccountType::Options,
-        "C"  => AccountType::Convert,
-        _    => AccountType::Spot, // "S" and unknown → Spot (backward compat)
+        "M"        => AccountType::Margin,
+        "F" | "FC" => AccountType::FuturesCross,
+        "FI"       => AccountType::FuturesIsolated,
+        "E"        => AccountType::Earn,
+        "L"        => AccountType::Lending,
+        "O"        => AccountType::Options,
+        "C" | "CV" => AccountType::Convert,
+        _          => AccountType::Spot, // "S" and unknown → Spot (backward compat)
     }
 }
 
