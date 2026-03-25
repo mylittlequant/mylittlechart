@@ -1105,13 +1105,17 @@ impl DataBridge {
                 exchange_id, symbol_str, tf_name, still_need, end_time_cursor_init
             );
 
+            // Effective limit accounts for exchange-specific per-request caps
+            // (e.g. OKX returns at most 300 bars regardless of what we request).
+            let effective_limit = exchange_kline_limit(exchange_id, 500);
+
             let mut end_time_cursor = end_time_cursor_init;
             let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
             let mut pages: usize = 0;
 
             'backfill: loop {
                 let result = connector
-                    .get_klines(sym.clone(), &interval, Some(500), account_type, end_time_cursor)
+                    .get_klines(sym.clone(), &interval, Some(effective_limit), account_type, end_time_cursor)
                     .await;
 
                 match result {
@@ -1148,11 +1152,12 @@ impl DataBridge {
 
                         let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
 
-                        // If the exchange returned fewer bars than requested, it has run out of
-                        // history — record oldest_ts so scroll-left stops requesting more.
-                        // Do NOT record when the page is full (500 bars): we stopped by choice
-                        // (target reached or page cap), not because the exchange ran out.
-                        if page_len < 500 && oldest_bar_ts > 0 {
+                        // If the exchange returned fewer bars than its effective limit, it has
+                        // run out of history — record oldest_ts so scroll-left stops requesting
+                        // more.  A full page (page_len == effective_limit) means there is more
+                        // data available further back; recording oldest_ts here would
+                        // incorrectly block future fetches.
+                        if page_len < effective_limit as usize && oldest_bar_ts > 0 {
                             if let Ok(mut map) = oldest_fetched_ts.lock() {
                                 let key = (
                                     exchange_id,
@@ -1416,7 +1421,10 @@ impl DataBridge {
                 exchange_id, symbol_str, tf_name, end_time_ms, batch_size
             );
 
-            let limit = (batch_size as u16).min(500);
+            // Clamp to the exchange's actual per-request maximum so we request
+            // exactly what the exchange will return, and can correctly distinguish
+            // a full page from an exhausted-history short page.
+            let limit = exchange_kline_limit(exchange_id, (batch_size as u16).min(500));
             let result = connector
                 .get_klines(sym, &interval, Some(limit), account_type, end_time_ms)
                 .await;
@@ -1517,6 +1525,28 @@ impl DataBridge {
     }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXCHANGE KLINE LIMIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the effective per-request kline limit for a given exchange.
+///
+/// Many exchanges silently clamp the `limit` parameter to their internal
+/// maximum.  When we ask for 500 bars and OKX only returns 300, the count 300
+/// must be treated as a *full page* — not as "exchange ran out of data".
+///
+/// Compare `page_len` against this value (not against our requested number) to
+/// correctly detect exhausted history.
+fn exchange_kline_limit(exchange_id: ExchangeId, requested: u16) -> u16 {
+    let exchange_max: u16 = match exchange_id {
+        ExchangeId::OKX => 300,
+        ExchangeId::KuCoin => 1500,
+        // Binance, Bybit, and most others cap at 1 000.
+        _ => 1000,
+    };
+    requested.min(exchange_max)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ACCOUNT TYPE HELPERS
