@@ -6882,7 +6882,9 @@ impl ChartApp {
             let column_key = field.strip_prefix("show_").unwrap_or(field);
             eprintln!("[Sidebar] watchlist column toggled: {}", field);
             self.watchlist_actions.push(crate::WatchlistAction::ToggleColumnVisibility { column: column_key.to_string() });
-            self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
+            if column_key != "align_columns" {
+                self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
+            }
             self.watchlists_dirty = true;
             return;
         }

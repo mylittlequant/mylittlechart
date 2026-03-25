@@ -518,7 +518,9 @@ fn render_watchlist_config_dropdown(
     ];
 
     let dropdown_w = 180.0;
-    let dropdown_h = row_h * options.len() as f64 + pad * 2.0;
+    // Extra height for the separator line before the last option (Align columns).
+    let sep_line_h = 8.0;
+    let dropdown_h = row_h * options.len() as f64 + pad * 2.0 + sep_line_h;
 
     // Position: drop below the header, right-aligned inside the sidebar.
     let dropdown_x = rect.x + rect.width - dropdown_w - 4.0;
@@ -549,9 +551,25 @@ fn render_watchlist_config_dropdown(
         uzor::input::Sense::CLICK,
     );
 
+    // Index of the separator (before "Align columns", the last option).
+    let sep_before_idx = options.len() - 1;
+
     // Option rows.
     for (row_idx, (field, label, enabled)) in options.iter().enumerate() {
-        let row_y = dropdown_rect.y + pad + row_idx as f64 * row_h;
+        // Offset rows after the separator line.
+        let extra = if row_idx >= sep_before_idx { sep_line_h } else { 0.0 };
+        let row_y = dropdown_rect.y + pad + row_idx as f64 * row_h + extra;
+
+        // Draw separator line before this row if needed.
+        if row_idx == sep_before_idx {
+            let line_y = row_y - sep_line_h / 2.0;
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(dropdown_rect.x + pad, line_y);
+            ctx.line_to(dropdown_rect.x + dropdown_w - pad, line_y);
+            ctx.stroke();
+        }
         let widget_id = format!("watchlist_cfg:{}", field);
 
         let row_rect = WidgetRect::new(dropdown_rect.x, row_y, dropdown_w, row_h);

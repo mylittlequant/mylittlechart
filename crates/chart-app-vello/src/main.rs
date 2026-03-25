@@ -3987,18 +3987,17 @@ impl ApplicationHandler for App<'_> {
                                 "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
                                 "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
                                 "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
-                                "show_align_columns" => {
+                                "align_columns" => {
                                     list.column_config.align_columns = !list.column_config.align_columns;
                                     if list.column_config.align_columns {
-                                        // Toggled back to equal-width mode — discard custom offsets.
                                         list.column_config.separator_offsets = None;
                                     }
                                 }
                                 _ => {}
                             }
                             // Reset separator offsets when column visibility changes
-                            // (but not for align_columns which manages separator_offsets itself).
-                            if column != "show_align_columns" {
+                            // (but not for align_columns which manages its own offsets).
+                            if column != "align_columns" {
                                 list.column_config.separator_offsets = None;
                             }
                         }
