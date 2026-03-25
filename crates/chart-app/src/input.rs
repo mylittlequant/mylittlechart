@@ -2023,14 +2023,9 @@ impl ChartApp {
                         }
                     }
                 }
-                // Send the full offsets vector so app_state gets a correctly
-                // initialized copy (main.rs doesn't know the sidebar width).
-                if let Some(list) = self.sidebar_state.watchlist_manager.active_list() {
-                    if let Some(offsets) = &list.column_config.separator_offsets {
-                        self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
-                    }
-                }
-                self.watchlists_dirty = true;
+                // Do NOT push an action or set watchlists_dirty during drag:
+                // that would cause main.rs to clone app_state back over sidebar_state
+                // next frame (1-frame stutter). Persist happens in on_drag_end.
             }
             return;
         }
@@ -2719,8 +2714,15 @@ impl ChartApp {
             return;
         }
 
-        // End watchlist column-separator drag.
+        // End watchlist column-separator drag: push the final offsets once to sync
+        // app_state for persistence, then clear the drag handle.
         if self.sidebar_state.watchlist_sep_drag.is_some() {
+            if let Some(list) = self.sidebar_state.watchlist_manager.active_list() {
+                if let Some(offsets) = &list.column_config.separator_offsets {
+                    self.watchlist_actions.push(crate::WatchlistAction::SetSeparatorOffsets { offsets: offsets.clone() });
+                }
+            }
+            self.watchlists_dirty = true;
             self.sidebar_state.watchlist_sep_drag = None;
             self.persist_watchlists();
             eprintln!("[ChartApp] Watchlist sep drag ended");
