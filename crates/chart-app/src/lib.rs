@@ -2904,33 +2904,37 @@ impl ChartApp {
 
         // Deferred viewport snap: set_bars() defers snap-to-end + auto-scale
         // to here where layout dimensions are guaranteed valid.
-        let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
-        for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
-            if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
-                window.needs_auto_scale_after_bars = false;
-                // Focus-style snap: position last bar with right margin
-                let count = window.bars.len();
-                let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
-                    else if (visible_f as usize) <= 20 { 2.0 }
-                    else if (visible_f as usize) <= 50 { 3.0 }
-                    else if (visible_f as usize) <= 100 { 4.0 }
-                    else { 5.0 };
-                window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
-                // Force auto-scale regardless of current scale_mode
-                let saved_mode = window.price_scale.scale_mode;
-                window.price_scale.scale_mode = ScaleMode::Auto;
-                window.calc_auto_scale();
-                window.price_scale.scale_mode = saved_mode;
-                snapped_windows.push((chart_id, window.viewport.view_start, window.viewport.bar_spacing));
+        // In split mode this runs AFTER the split-layout block sets real
+        // chart_width values (see below).
+        if !self.panel_app.panel_grid.is_split() {
+            let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new(); // (chart_id, view_start, bar_spacing)
+            for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+                if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
+                    window.needs_auto_scale_after_bars = false;
+                    // Focus-style snap: position last bar with right margin
+                    let count = window.bars.len();
+                    let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+                    let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
+                        else if (visible_f as usize) <= 20 { 2.0 }
+                        else if (visible_f as usize) <= 50 { 3.0 }
+                        else if (visible_f as usize) <= 100 { 4.0 }
+                        else { 5.0 };
+                    window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                    // Force auto-scale regardless of current scale_mode
+                    let saved_mode = window.price_scale.scale_mode;
+                    window.price_scale.scale_mode = ScaleMode::Auto;
+                    window.calc_auto_scale();
+                    window.price_scale.scale_mode = saved_mode;
+                    snapped_windows.push((chart_id, window.viewport.view_start, window.viewport.bar_spacing));
+                }
             }
-        }
 
-        // Propagate viewport snap to sync-group peers so all synced windows
-        // align to the same TIME position after bar load (not just user pan/zoom).
-        for (chart_id, view_start, bar_spacing) in snapped_windows {
-            if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
-                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
+            // Propagate viewport snap to sync-group peers so all synced windows
+            // align to the same TIME position after bar load (not just user pan/zoom).
+            for (chart_id, view_start, bar_spacing) in snapped_windows {
+                if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                    self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
+                }
             }
         }
 
@@ -3526,12 +3530,47 @@ impl ChartApp {
             for (leaf_id, new_chart_w, new_chart_h) in leaf_dims {
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                     let old_w = window.viewport.chart_width;
-                    if (old_w - new_chart_w).abs() > 0.5 && window.viewport.bar_spacing > 0.0 && old_w > 0.0 {
+                    // Skip bar_shift when window hasn't been snapped yet (still has
+                    // placeholder chart_width from Viewport::default).  The deferred
+                    // snap below will compute view_start with the real chart_width.
+                    if !window.needs_auto_scale_after_bars
+                        && (old_w - new_chart_w).abs() > 0.5
+                        && window.viewport.bar_spacing > 0.0
+                        && old_w > 0.0
+                    {
                         let bar_shift = (old_w - new_chart_w) / window.viewport.bar_spacing;
                         window.viewport.view_start += bar_shift;
                     }
                     window.viewport.chart_width = new_chart_w;
                     window.viewport.chart_height = new_chart_h;
+                }
+            }
+
+            // Deferred viewport snap for split mode: now chart_width is real.
+            {
+                let mut snapped_windows: Vec<(ChartId, f64, f64)> = Vec::new();
+                for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
+                    if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
+                        window.needs_auto_scale_after_bars = false;
+                        let count = window.bars.len();
+                        let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
+                        let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
+                            else if (visible_f as usize) <= 20 { 2.0 }
+                            else if (visible_f as usize) <= 50 { 3.0 }
+                            else if (visible_f as usize) <= 100 { 4.0 }
+                            else { 5.0 };
+                        window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                        let saved_mode = window.price_scale.scale_mode;
+                        window.price_scale.scale_mode = ScaleMode::Auto;
+                        window.calc_auto_scale();
+                        window.price_scale.scale_mode = saved_mode;
+                        snapped_windows.push((chart_id, window.viewport.view_start, window.viewport.bar_spacing));
+                    }
+                }
+                for (chart_id, view_start, bar_spacing) in snapped_windows {
+                    if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_chart_id(chart_id) {
+                        self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, None);
+                    }
                 }
             }
 
