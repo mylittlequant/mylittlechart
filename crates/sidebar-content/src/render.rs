@@ -507,13 +507,14 @@ fn render_watchlist_config_dropdown(
 
     // Column options: (field_name, label, current_value)
     let options: &[(&str, &str, bool)] = &[
-        ("show_exchange",     "Exchange",    col_cfg.show_exchange),
-        ("show_account_type", "Type",        col_cfg.show_account_type),
-        ("show_last_price",   "Last Price",  col_cfg.show_last_price),
-        ("show_change_pct",   "Change %",    col_cfg.show_change_pct),
-        ("show_change_abs",   "Change",      col_cfg.show_change_abs),
-        ("show_volume",       "Volume",      col_cfg.show_volume),
-        ("show_high_low",     "High / Low",  col_cfg.show_high_low),
+        ("show_exchange",     "Exchange",      col_cfg.show_exchange),
+        ("show_account_type", "Type",          col_cfg.show_account_type),
+        ("show_last_price",   "Last Price",    col_cfg.show_last_price),
+        ("show_change_pct",   "Change %",      col_cfg.show_change_pct),
+        ("show_change_abs",   "Change",        col_cfg.show_change_abs),
+        ("show_volume",       "Volume",        col_cfg.show_volume),
+        ("show_high_low",     "High / Low",    col_cfg.show_high_low),
+        ("show_align_columns","Align columns", col_cfg.align_columns),
     ];
 
     let dropdown_w = 180.0;

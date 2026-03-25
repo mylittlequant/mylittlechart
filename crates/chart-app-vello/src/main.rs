@@ -3948,9 +3948,27 @@ impl ApplicationHandler for App<'_> {
                     }
                     chart_app::WatchlistAction::SetSeparatorOffset { index, value } => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
-                            if list.column_config.separator_offsets.is_none() {
-                                // Default: 6 columns → 5 separators, evenly spaced
-                                list.column_config.separator_offsets = Some(vec![0.0; 5]);
+                            // Count visible columns to get correct separator count.
+                            let n_cols = {
+                                let c = &list.column_config;
+                                let mut n: usize = 1; // Symbol always on
+                                if c.show_exchange     { n += 1; }
+                                if c.show_account_type { n += 1; }
+                                if c.show_last_price   { n += 1; }
+                                if c.show_change_pct   { n += 1; }
+                                if c.show_change_abs   { n += 1; }
+                                if c.show_high_low     { n += 2; }
+                                if c.show_volume       { n += 1; }
+                                n
+                            };
+                            let n_seps = n_cols.saturating_sub(1);
+
+                            let needs_init = list.column_config.separator_offsets
+                                .as_ref()
+                                .map(|o| o.len() != n_seps)
+                                .unwrap_or(true);
+                            if needs_init {
+                                list.column_config.separator_offsets = Some(vec![0.0; n_seps]);
                             }
                             if let Some(ref mut offsets) = list.column_config.separator_offsets {
                                 if index < offsets.len() {
@@ -3969,10 +3987,20 @@ impl ApplicationHandler for App<'_> {
                                 "volume"       => list.column_config.show_volume       = !list.column_config.show_volume,
                                 "high_low"     => list.column_config.show_high_low     = !list.column_config.show_high_low,
                                 "account_type" => list.column_config.show_account_type = !list.column_config.show_account_type,
+                                "show_align_columns" => {
+                                    list.column_config.align_columns = !list.column_config.align_columns;
+                                    if list.column_config.align_columns {
+                                        // Toggled back to equal-width mode — discard custom offsets.
+                                        list.column_config.separator_offsets = None;
+                                    }
+                                }
                                 _ => {}
                             }
                             // Reset separator offsets when column visibility changes
-                            list.column_config.separator_offsets = None;
+                            // (but not for align_columns which manages separator_offsets itself).
+                            if column != "show_align_columns" {
+                                list.column_config.separator_offsets = None;
+                            }
                         }
                     }
                     chart_app::WatchlistAction::SortCycle => {

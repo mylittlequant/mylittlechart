@@ -37,6 +37,16 @@ pub struct WatchlistColumnConfig {
     /// the default layout positions and are never moved — only clipped.
     #[serde(default)]
     pub separator_offsets: Option<Vec<f64>>,
+
+    /// When `true` (the default), all visible columns share equal width and
+    /// separator drag is disabled.  Setting to `false` lets the user drag
+    /// column separators to custom widths.
+    #[serde(default = "default_true")]
+    pub align_columns: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for WatchlistColumnConfig {
@@ -50,6 +60,7 @@ impl Default for WatchlistColumnConfig {
             show_high_low: false,
             show_account_type: false,
             separator_offsets: None,
+            align_columns: true,
         }
     }
 }

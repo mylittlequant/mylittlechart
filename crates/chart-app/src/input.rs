@@ -513,7 +513,12 @@ impl ChartApp {
             let on_sep = self.input_coordinator.borrow_mut().hovered_widget()
                 .and_then(|h| h.0.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
-            if let Some(sep_idx) = on_sep {
+            // Skip separator drag when columns are in equal-width (aligned) mode.
+            let align_cols = self.sidebar_state.watchlist_manager
+                .active_list()
+                .map(|l| l.column_config.align_columns)
+                .unwrap_or(true);
+            if let Some(sep_idx) = on_sep.filter(|_| !align_cols) {
                 // Compute the current separator absolute X offset from area_left.
                 let item_padding = 8.0_f64;
                 let scrollbar_width = 8.0_f64;
@@ -1937,6 +1942,15 @@ impl ChartApp {
 
         // Watchlist column-separator drag: update absolute separator offset (clip curtain model).
         if let Some((sep_idx, start_x, sep_offset_at_start)) = self.sidebar_state.watchlist_sep_drag {
+            // Skip drag when columns are aligned (equal-width mode).
+            let align = self.sidebar_state.watchlist_manager
+                .active_list()
+                .map(|l| l.column_config.align_columns)
+                .unwrap_or(true);
+            if align {
+                return;
+            }
+
             // Compute layout constants (must match render.rs exactly).
             let item_padding = 8.0_f64;
             let scrollbar_width = 8.0_f64;
