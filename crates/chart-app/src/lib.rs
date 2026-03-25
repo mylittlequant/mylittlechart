@@ -1538,6 +1538,15 @@ impl ChartApp {
             eprintln!("[ChartApp] Exchange {} is disabled, skipping", exchange_id.as_str());
             return;
         }
+        // Capture old trade-stream identity BEFORE updating active_exchange or window state.
+        let old_trade_exchange = self.active_exchange;
+        let old_trade_symbol = self.panel_app.panel_grid.active_window()
+            .map(|w| w.symbol.clone())
+            .unwrap_or_default();
+        let old_trade_at = self.panel_app.panel_grid.active_window()
+            .map(|w| account_type_from_label(&w.account_type))
+            .unwrap_or(digdigdig3::AccountType::Spot);
+
         let bridge = self.bridge.clone();
         self.active_exchange = exchange_id;
 
@@ -1561,8 +1570,11 @@ impl ChartApp {
                 bridge.clone(),
             ));
 
-        // Unsubscribe existing WS streams.
-        bridge.unsubscribe_all();
+        // Unsubscribe only the old symbol's trade stream on the old exchange,
+        // leaving other windows' streams intact.
+        if !old_trade_symbol.is_empty() {
+            bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+        }
 
         // Attach the provider to the active window and request paginated bars.
         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {

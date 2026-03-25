@@ -7008,6 +7008,14 @@ impl ChartApp {
                     let prev_exchange = self.panel_app.panel_grid.active_window()
                         .map(|w| w.exchange.clone());
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) {
+                        // Capture old trade-stream identity BEFORE mutating window state.
+                        let old_trade_exchange = self.active_exchange;
+                        let old_trade_symbol = self.panel_app.panel_grid.active_window()
+                            .map(|w| w.symbol.clone())
+                            .unwrap_or_default();
+                        let old_trade_at = self.panel_app.panel_grid.active_window()
+                            .map(|w| crate::account_type_from_label(&w.account_type))
+                            .unwrap_or(digdigdig3::AccountType::Spot);
                         let timeframe = self.panel_app.panel_grid.active_window()
                             .map(|w| w.timeframe.clone())
                             .unwrap_or_default();
@@ -7027,7 +7035,11 @@ impl ChartApp {
                             window.restore_drawings_for_symbol(&symbol);
                         }
                         self.active_exchange = resolved_exchange;
-                        self.bridge.unsubscribe_all();
+                        // Unsubscribe only the old symbol's trade stream, leaving other
+                        // windows' streams intact.
+                        if !old_trade_symbol.is_empty() {
+                            self.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                        }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
@@ -13684,6 +13696,14 @@ impl ChartApp {
                     })
                     .unwrap_or_else(|| "S".to_string());
                 // Switch the active chart to this symbol+exchange.
+                // Capture old trade-stream identity BEFORE mutating window state.
+                let old_trade_exchange = self.active_exchange;
+                let old_trade_symbol = self.panel_app.panel_grid.active_window()
+                    .map(|w| w.symbol.clone())
+                    .unwrap_or_default();
+                let old_trade_at = self.panel_app.panel_grid.active_window()
+                    .map(|w| crate::account_type_from_label(&w.account_type))
+                    .unwrap_or(digdigdig3::AccountType::Spot);
                 let timeframe = self.panel_app.panel_grid.active_window()
                     .map(|w| w.timeframe.clone())
                     .unwrap_or_default();
@@ -13701,7 +13721,11 @@ impl ChartApp {
                     window.restore_drawings_for_symbol(sym_part);
                 }
                 self.active_exchange = resolved_exchange;
-                self.bridge.unsubscribe_all();
+                // Unsubscribe only the old symbol's trade stream, leaving other
+                // windows' streams intact.
+                if !old_trade_symbol.is_empty() {
+                    self.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
@@ -14070,10 +14094,14 @@ impl ChartApp {
 
                 match self.modal_state.current {
                     OpenModal::SymbolSearch => {
-                        // Capture previous symbol and active leaf BEFORE changing.
+                        // Capture previous symbol, exchange, and account_type BEFORE changing.
                         let previous_symbol = self.panel_app.panel_grid.active_window()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_default();
+                        let old_trade_exchange = self.active_exchange;
+                        let old_trade_at = self.panel_app.panel_grid.active_window()
+                            .map(|w| crate::account_type_from_label(&w.account_type))
+                            .unwrap_or(digdigdig3::AccountType::Spot);
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         let new_symbol_str = symbol_part.to_string();
                         // Set symbol, clear bars, and request data asynchronously.
@@ -14099,7 +14127,11 @@ impl ChartApp {
                         }
                         // Switch to the exchange that owns this symbol and request bars.
                         self.active_exchange = resolved_exchange;
-                        self.bridge.unsubscribe_all();
+                        // Unsubscribe only the old symbol's trade stream, leaving other
+                        // windows' streams intact.
+                        if !previous_symbol.is_empty() {
+                            self.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                        }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
@@ -15345,8 +15377,8 @@ impl ChartApp {
                         window.bars.clear();
                         window.viewport.bar_count = 0;
                     }
-                    // Unsubscribe old WS and fetch bars for new timeframe.
-                    self.bridge.unsubscribe_all();
+                    // Fetch bars for new timeframe. Trade stream stays alive — trades
+                    // build bars regardless of timeframe and the symbol has not changed.
                     if !symbol.is_empty() {
                         let eid_str = self.active_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
