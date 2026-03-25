@@ -7086,7 +7086,7 @@ impl ChartApp {
                         } else {
                             let item_at = crate::account_type_from_label(&item_account_type);
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                         // Propagate the new symbol to all other windows in the same sync group.
                         if let Some(leaf) = active_leaf {
@@ -13772,7 +13772,7 @@ impl ChartApp {
                 } else {
                     let wl_at = crate::account_type_from_label(&wl_at_label);
                     self.bridge.ensure_connector(resolved_exchange);
-                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                    self.bridge.request_bars(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                 }
                 self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
@@ -14178,7 +14178,7 @@ impl ChartApp {
                         } else {
                             let search_at = crate::account_type_from_label(&search_at_label);
                             self.bridge.ensure_connector(resolved_exchange);
-                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                         // Record ChangeSymbol if it actually changed.
                         if previous_symbol != new_symbol_str {
@@ -15425,7 +15425,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe change)", eid_str);
                         } else {
                             let at = crate::account_type_from_label(&at_label_tf);
-                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
                     }
                     // Propagate new timeframe to all leaves in the same sync group.
@@ -17982,7 +17982,7 @@ impl ChartApp {
             }
             let at = crate::account_type_from_label(&at_label);
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
@@ -18065,7 +18065,7 @@ impl ChartApp {
             }
             let at = crate::account_type_from_label(&at_label);
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count));
+            self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), false);
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf

@@ -338,6 +338,7 @@ impl DataBridge {
         account_type: AccountType,
         _limit: Option<u16>,
         _total_bars: Option<usize>,
+        force: bool,
     ) {
         let pool = self.pool.clone();
         let tx = self.tx.clone();
@@ -427,7 +428,7 @@ impl DataBridge {
                 .map(|ts| (now_secs - ts) < interval_secs * 2)
                 .unwrap_or(false);
 
-            if cache_is_fresh {
+            if cache_is_fresh && !force {
                 eprintln!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
                     exchange_id, symbol_str, interval,
                     now_secs - disk_last_ts.unwrap_or(0),
@@ -558,7 +559,8 @@ impl DataBridge {
                         }
 
                         let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
-                        heal_bars = merge_bars(batch, heal_bars);
+                        // batch is fresh REST data and wins on conflicts (second arg wins).
+                        heal_bars = merge_bars(heal_bars, batch);
 
                         eprintln!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
 
@@ -1216,20 +1218,18 @@ impl DataBridge {
                 exchange_id, symbol_str, tf_name, accumulated.len(), pages
             );
 
-            // Merge accumulated into current cache.
-            let merged = {
-                let current = cache
-                    .lock()
-                    .ok()
-                    .and_then(|c| c.get(&cache_key).cloned())
-                    .unwrap_or_default();
-                merge_bars(accumulated, current)
-            };
-
-            // Update cache.
-            if let Ok(mut c) = cache.lock() {
+            // Merge accumulated into current cache — hold the lock across the entire
+            // read-merge-write to prevent a race with concurrent tasks.
+            let merged = if let Ok(mut c) = cache.lock() {
+                let current = c.get(&cache_key).cloned().unwrap_or_default();
+                let merged = merge_bars(current, accumulated);
                 c.insert(cache_key.clone(), merged.clone());
-            }
+                merged
+            } else {
+                eprintln!("[Bridge] backfill: cache lock poisoned, skipping cache update");
+                finish_backfill!();
+                return;
+            };
 
             eprintln!(
                 "[Bridge] backfill done: sending BackfillComplete with {} bars",
@@ -1435,14 +1435,8 @@ impl DataBridge {
                         "[Bridge] scroll fetch error: {:?} sym={} tf={}: {}",
                         exchange_id, symbol_str, tf_name, e
                     );
-                    // Record before_ts as the oldest known — no more data here.
-                    if let Ok(mut map) = oldest_fetched_ts.lock() {
-                        let key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-                        let entry = map.entry(key).or_insert(i64::MAX);
-                        if before_ts < *entry {
-                            *entry = before_ts;
-                        }
-                    }
+                    // Do NOT record oldest_fetched_ts — this may be a temporary error
+                    // (e.g. rate limit). The scroll trigger will retry on the next frame.
                     finish_scroll!();
                 }
                 Ok(klines) if klines.is_empty() => {
@@ -1490,19 +1484,18 @@ impl DataBridge {
                         }
                     }
 
-                    // Merge new page into bar cache.
-                    let merged = {
-                        let current = cache
-                            .lock()
-                            .ok()
-                            .and_then(|c| c.get(&cache_key).cloned())
-                            .unwrap_or_default();
-                        merge_bars(new_page, current)
-                    };
-
-                    if let Ok(mut c) = cache.lock() {
+                    // Merge new page into bar cache — hold the lock across the entire
+                    // read-merge-write to prevent a race with concurrent tasks.
+                    let merged = if let Ok(mut c) = cache.lock() {
+                        let current = c.get(&cache_key).cloned().unwrap_or_default();
+                        let merged = merge_bars(current, new_page);
                         c.insert(cache_key.clone(), merged.clone());
-                    }
+                        merged
+                    } else {
+                        eprintln!("[Bridge] scroll: cache lock poisoned, skipping cache update");
+                        finish_scroll!();
+                        return;
+                    };
 
                     let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
                         exchange_id,

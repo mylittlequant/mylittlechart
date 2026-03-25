@@ -851,7 +851,7 @@ impl ChartApp {
                 }
                 let at = account_type_from_label(at_label);
                 bridge.ensure_connector(eid);
-                bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
             }
 
             // Defer viewport positioning until the first resize() when chart_width is known.
@@ -871,7 +871,7 @@ impl ChartApp {
 
             // Ensure Binance connector and request paginated bars.
             bridge.ensure_connector(exchange_id);
-            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::Spot, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+            bridge.request_bars(exchange_id, "BTCUSDT", &zengeld_chart::state::Timeframe::new("1H", 60), digdigdig3::AccountType::Spot, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
         }
 
         // Ensure connectors for all registered exchanges.
@@ -1077,6 +1077,7 @@ impl ChartApp {
             digdigdig3::AccountType::Spot,
             None,
             Some(app.panel_app.user_manager.profile.bar_count as usize),
+            false,
         );
 
         app.needs_initial_viewport_fit = true;
@@ -1341,7 +1342,7 @@ impl ChartApp {
                     }
                     let at = account_type_from_label(at_label);
                     bridge.ensure_connector(eid);
-                    bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize));
+                    bridge.request_bars(eid, sym, tf, at, None, Some(app.panel_app.user_manager.profile.bar_count as usize), false);
                 }
 
                 app.needs_initial_viewport_fit = true;
@@ -1380,6 +1381,7 @@ impl ChartApp {
                     digdigdig3::AccountType::Spot,
                     None,
                     Some(app.panel_app.user_manager.profile.bar_count as usize),
+                    false,
                 );
             }
         }
@@ -1589,7 +1591,7 @@ impl ChartApp {
             let symbol = window.symbol.clone();
             let timeframe = window.timeframe.clone();
             let at = account_type_from_label(&window.account_type);
-            bridge.request_bars(exchange_id, &symbol, &timeframe, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize));
+            bridge.request_bars(exchange_id, &symbol, &timeframe, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
         }
     }
 
@@ -1759,7 +1761,7 @@ impl ChartApp {
             let at = account_type_from_label(&window.account_type);
             // Passing `None` for both limit and total_bars lets the bridge
             // pick up incremental mode from its bar cache.
-            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, at, None, None);
+            self.bridge.request_bars(eid, &window.symbol, &window.timeframe, at, None, None, false);
         }
     }
 
@@ -2033,6 +2035,7 @@ impl ChartApp {
 
                         any_matched = true;
                         window.scroll_fetch_in_flight = false;
+                        window.scroll_fetch_started = None;
 
                         // Viewport shift: prepending N bars pushes all existing indices up by N.
                         window.viewport.view_start += prepend_count as f64;
@@ -2192,7 +2195,7 @@ impl ChartApp {
                         for window in self.panel_app.panel_grid.windows().values() {
                             if window.symbol == symbol && window.account_type == account_type.short_label() {
                                 let at = account_type_from_label(&window.account_type);
-                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None);
+                                bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None, false);
                             }
                         }
                     }
@@ -2268,13 +2271,15 @@ impl ChartApp {
                     }
 
                     // Backfill bars for ALL windows on this exchange (covers reconnect gaps).
+                    // force=true bypasses the cache_is_fresh guard so a reconnect always
+                    // fetches fresh data even if the last cached bar is recent.
                     for window in self.panel_app.panel_grid.windows().values() {
                         if window.symbol.is_empty() { continue; }
                         let win_eid = digdigdig3::ExchangeId::from_str(&window.exchange)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if win_eid == exchange_id {
                             let at = account_type_from_label(&window.account_type);
-                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None);
+                            bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None, true);
                         }
                     }
                 }
@@ -2457,7 +2462,16 @@ impl ChartApp {
             let max_loaded = self.panel_app.user_manager.profile.data_load.max_loaded_bars;
 
             for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-                if window.scroll_fetch_in_flight { continue; }
+                if window.scroll_fetch_in_flight {
+                    if let Some(started) = window.scroll_fetch_started {
+                        if started.elapsed() > std::time::Duration::from_secs(10) {
+                            eprintln!("[ChartApp] scroll_fetch_in_flight timeout, resetting for {}", window.symbol);
+                            window.scroll_fetch_in_flight = false;
+                            window.scroll_fetch_started = None;
+                        }
+                    }
+                    if window.scroll_fetch_in_flight { continue; }
+                }
                 if window.bars.is_empty() { continue; }
                 if window.pending_symbol_load { continue; }
 
@@ -2468,6 +2482,7 @@ impl ChartApp {
                 if max_loaded > 0 && window.bars.len() >= max_loaded as usize { continue; }
 
                 window.scroll_fetch_in_flight = true;
+                window.scroll_fetch_started = Some(std::time::Instant::now());
                 scroll_requests.push((
                     window.symbol.clone(),
                     window.exchange.clone(),

@@ -122,7 +122,7 @@ impl DataProvider for LiveDataProvider {
 
         if !already_pending {
             self.bridge
-                .request_bars(self.exchange_id, symbol, timeframe, self.account_type, None, None);
+                .request_bars(self.exchange_id, symbol, timeframe, self.account_type, None, None, false);
         }
 
         None

@@ -325,6 +325,13 @@ pub struct ChartWindow {
     /// same window. Reset to `false` when `ScrollBarsLoaded` arrives (or on error).
     /// Runtime-only state — not persisted to disk.
     pub scroll_fetch_in_flight: bool,
+
+    /// When the current scroll fetch was started (for timeout reset).
+    ///
+    /// If `ScrollBarsLoaded` is dropped (channel lag), the 10-second timeout
+    /// resets `scroll_fetch_in_flight` so the window can fetch again.
+    /// Runtime-only state — not persisted to disk.
+    pub scroll_fetch_started: Option<std::time::Instant>,
 }
 
 impl ChartWindow {
@@ -416,6 +423,7 @@ impl ChartWindow {
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
             scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
         }
     }
 
@@ -613,6 +621,7 @@ impl ChartWindow {
             needs_auto_scale_after_bars: false,
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
         }
     }
 
