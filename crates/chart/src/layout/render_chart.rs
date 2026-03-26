@@ -1191,6 +1191,19 @@ pub fn render_sub_pane(
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);
 
+    // 4b. Draw a distinct zero baseline when the pane range straddles zero.
+    let pane_range = pane_max - pane_min;
+    if pane_min < 0.0 && pane_max > 0.0 && pane_range > 0.0 {
+        let zero_ratio = (0.0_f64 - pane_min) / pane_range;
+        let zero_y = content.y + content.height - (zero_ratio * content.height);
+        ctx.set_stroke_color("rgba(255,255,255,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(content.x, zero_y);
+        ctx.line_to(content.x + content.width, zero_y);
+        ctx.stroke();
+    }
+
     // 5. Draw indicator outputs
     ctx.save();
     if !state.disable_clip {
@@ -1427,6 +1440,19 @@ pub fn draw_sub_pane_price_scale(
 
         ctx.fill_text(&label, text_x, label_y);
     }
+
+    // Draw a "0" label when zero is within the visible range but was not
+    // already rendered by the loop above.  This makes the zero baseline
+    // immediately visible on oscillator sub-panes (MACD, RSI, etc.).
+    if price_min < 0.0 && price_max > 0.0 && price_range > 0.0 {
+        let zero_ratio = (0.0_f64 - price_min) / price_range;
+        let zero_y = y + height - (zero_ratio * height);
+
+        // Only draw if not too close to the edges (avoids clipping/overlap).
+        if zero_y >= y + 8.0 && zero_y <= y + height - 8.0 {
+            ctx.fill_text("0", text_x, zero_y);
+        }
+    }
 }
 
 /// Draw a crosshair price label on the sub-pane Y-axis.
@@ -1589,6 +1615,22 @@ pub fn render_sub_pane_base(
 
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);
+
+    // 4b. Draw a distinct zero baseline when the pane range straddles zero.
+    // This makes the zero level immediately readable on oscillators (MACD,
+    // histogram, etc.) without relying on the regular grid spacing happening
+    // to land there.
+    let pane_range = pane_max - pane_min;
+    if pane_min < 0.0 && pane_max > 0.0 && pane_range > 0.0 {
+        let zero_ratio = (0.0_f64 - pane_min) / pane_range;
+        let zero_y = content.y + content.height - (zero_ratio * content.height);
+        ctx.set_stroke_color("rgba(255,255,255,0.25)");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(content.x, zero_y);
+        ctx.line_to(content.x + content.width, zero_y);
+        ctx.stroke();
+    }
 
     // 5. Draw price scale for this pane
     draw_sub_pane_price_scale(

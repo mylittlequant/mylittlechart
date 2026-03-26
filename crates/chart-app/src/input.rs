@@ -165,6 +165,11 @@ impl ChartApp {
                                 }
                                 if next_mode.is_auto_y() {
                                     window.calc_auto_scale();
+                                } else {
+                                    // Transitioning Auto→Manual: refresh sub-pane ranges
+                                    // while auto_scale is still true so price_min/price_max
+                                    // are current before we freeze them.
+                                    window.update_sub_pane_ranges();
                                 }
                                 let is_auto = next_mode.is_auto_y();
                                 for sp in &mut window.sub_panes {
@@ -6867,7 +6872,22 @@ impl ChartApp {
             } else {
                 DEFAULT_H
             };
-            let new_h = (current_h - delta_y).max(min_h);
+
+            // Upper bound: leave at least min_h for the main chart and for every
+            // OTHER sub-pane.  This prevents a sub-pane from consuming 100% of the
+            // available space, which would otherwise freeze drag because
+            // max_h == min_h simultaneously.
+            let other_panes_h: f64 = window.sub_panes.iter().enumerate()
+                .filter(|(i, _)| *i != 0)
+                .map(|(_, sp)| if sp.height_ratio > 0.0 {
+                    sp.height_ratio as f64 * available_h
+                } else {
+                    DEFAULT_H
+                })
+                .sum();
+            let max_h = (available_h - min_h - other_panes_h).max(min_h);
+            let new_h = (current_h - delta_y).clamp(min_h, max_h);
+
             if available_h > 0.0 {
                 window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
             }
@@ -6889,9 +6909,12 @@ impl ChartApp {
             DEFAULT_H
         };
 
-        // Apply delta: growing above shrinks below and vice-versa.
-        let new_above = (h_above + delta_y).max(min_h);
-        let new_below = (h_below - delta_y).max(min_h);
+        // Apply delta while preserving the combined height so neither pane
+        // can steal space from the total.  Each pane is clamped to [min_h,
+        // total - min_h] so the sibling always retains at least min_h.
+        let total = h_above + h_below;
+        let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
+        let new_below = total - new_above;
 
         if available_h > 0.0 {
             window.sub_panes[above].height_ratio = (new_above / available_h) as f32;
@@ -9513,6 +9536,11 @@ impl ChartApp {
                             w.price_scale.scale_mode = next;
                             if next.is_auto_y() {
                                 w.calc_auto_scale();
+                            } else {
+                                // Transitioning Auto→Manual: refresh sub-pane ranges
+                                // while auto_scale is still true so price_min/price_max
+                                // are current before we freeze them.
+                                w.update_sub_pane_ranges();
                             }
                             let is_auto = next.is_auto_y();
                             for sp in &mut w.sub_panes {
@@ -14498,6 +14526,11 @@ impl ChartApp {
                     }
                     if next_mode.is_auto_y() {
                         window.calc_auto_scale();
+                    } else {
+                        // Transitioning Auto→Manual: refresh sub-pane ranges
+                        // while auto_scale is still true so price_min/price_max
+                        // are current before we freeze them.
+                        window.update_sub_pane_ranges();
                     }
                     let is_auto = next_mode.is_auto_y();
                     for sp in &mut window.sub_panes {

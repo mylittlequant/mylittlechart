@@ -5603,7 +5603,13 @@ impl ChartApp {
                             if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                                 sub_pane.auto_scale = false;
                                 let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
-                                let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * factor_y;
+                                // Dampen the zoom factor for sub-panes.  The engine computes
+                                // factor_y relative to the main chart height; sub-panes are
+                                // smaller so the raw factor is too aggressive.  Pulling the
+                                // factor 70% of the way back toward 1.0 makes it feel similar
+                                // to zooming the main chart price scale.
+                                let dampened_factor = 1.0 + (factor_y - 1.0) * 0.3;
+                                let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * dampened_factor;
                                 sub_pane.price_min = center - half_range;
                                 sub_pane.price_max = center + half_range;
                             }
