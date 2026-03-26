@@ -3189,17 +3189,7 @@ impl App<'_> {
         }
 
         // 10. Flush bar cache to disk.
-        // Flush bridge cache through BarService for full coverage.
-        let bridge_snapshot = self.bridge.dump_cache_snapshot();
-        eprintln!("[App] save_all: merging {} bridge cache entries into bar_service", bridge_snapshot.len());
-        for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
-            if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
-                let at = chart_app::account_type_from_label(&account_type_label);
-                let period_secs = timeframe_period_secs(&timeframe);
-                let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
-                self.bar_service.merge_rest_batch(&key, bars, period_secs);
-            }
-        }
+        eprintln!("[App] save_all: flushing {} bar series to disk", self.bar_service.series_count());
         self.bar_service.flush_dirty();
         self.bar_service.flush_sync();
     }
@@ -3910,38 +3900,19 @@ impl ApplicationHandler for App<'_> {
         // ── Periodic bar cache save (every 5 minutes) ─────────────────────────
         if self.last_bar_cache_save.elapsed() >= std::time::Duration::from_secs(300) {
             self.last_bar_cache_save = std::time::Instant::now();
-            // Merge bridge cache into BarService, then flush dirty series.
-            let bridge_snapshot = self.bridge.dump_cache_snapshot();
-            for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
-                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
-                    let at = chart_app::account_type_from_label(&account_type_label);
-                    let period_secs = timeframe_period_secs(&timeframe);
-                    let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
-                    self.bar_service.merge_rest_batch(&key, bars, period_secs);
-                }
-            }
+            // BarService already has all data from tick() events — just flush.
             self.bar_service.flush_dirty();
         }
 
         // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
-        // When any window received BackfillComplete or ScrollBarsLoaded this
-        // frame, flush the bridge's in-memory bar cache to disk immediately so
-        // newly fetched bars survive a crash before the 5-minute periodic save.
-        let any_bars_dirty = self.windows.values().any(|pw| pw.chart.bars_cache_dirty);
+        // BarService tracks dirty state internally via merge_rest_batch /
+        // apply_trade.  Also check per-window flag for backward compat
+        // (BackfillComplete / ScrollBarsLoaded set it).
+        let any_bars_dirty = self.bar_service.has_any_dirty()
+            || self.windows.values().any(|pw| pw.chart.bars_cache_dirty);
         if any_bars_dirty {
             for pw in self.windows.values_mut() {
                 pw.chart.bars_cache_dirty = false;
-            }
-            // Merge bridge cache into BarService, then flush dirty series.
-            let bridge_snapshot = self.bridge.dump_cache_snapshot();
-            eprintln!("[App] bars_cache_dirty: merging {} bridge entries, flushing dirty", bridge_snapshot.len());
-            for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
-                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
-                    let at = chart_app::account_type_from_label(&account_type_label);
-                    let period_secs = timeframe_period_secs(&timeframe);
-                    let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
-                    self.bar_service.merge_rest_batch(&key, bars, period_secs);
-                }
             }
             self.bar_service.flush_dirty();
         }

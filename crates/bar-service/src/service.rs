@@ -230,6 +230,19 @@ impl BarService {
         self.bar_store.flush_sync();
     }
 
+    /// Returns true if any series has been mutated since the last flush.
+    /// Used by App to decide whether an event-driven disk write is needed.
+    pub fn has_any_dirty(&self) -> bool {
+        self.series.values().any(|h| {
+            h.read().map(|s| s.dirty).unwrap_or(false)
+        })
+    }
+
+    /// Number of tracked series.
+    pub fn series_count(&self) -> usize {
+        self.series.len()
+    }
+
     /// Snapshot all series for disk persistence.
     ///
     /// Returns `(exchange, symbol, timeframe, account_type, bars)` tuples.
