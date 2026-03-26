@@ -362,11 +362,15 @@ impl ExtendedFrameLayout {
         None
     }
 
-    /// Check if Y coordinate is on a separator between panes
-    /// Returns sub-pane index below the separator
+    /// Check if Y coordinate is on a separator between panes.
+    /// Returns the sub-pane index whose separator was hit.  The hit zone is
+    /// expanded to ±4 px around the separator centre so a 1-px separator line
+    /// is reliably clickable.
     pub fn find_separator_at_y(&self, y: f64) -> Option<usize> {
+        const HIT_TOLERANCE: f64 = 4.0;
         for (idx, pane) in self.sub_panes.iter().enumerate() {
-            if pane.separator.contains(pane.separator.x, y) {
+            let sep_center = pane.separator.y + pane.separator.height * 0.5;
+            if (y - sep_center).abs() <= HIT_TOLERANCE {
                 return Some(idx);
             }
         }

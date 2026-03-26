@@ -6847,8 +6847,29 @@ impl ChartApp {
         };
 
         let pane_count = window.sub_panes.len();
-        // The separator sits *above* `pane_index`.  We need pane_index >= 1.
-        if pane_index == 0 || pane_index >= pane_count {
+        if pane_index >= pane_count {
+            return;
+        }
+
+        eprintln!(
+            "[PANE-DRAG] pane_index={} delta_y={:.1} pane_count={}",
+            pane_index, delta_y, pane_count
+        );
+
+        if pane_index == 0 {
+            // Separator between the main chart (above) and sub-pane 0 (below).
+            // delta_y > 0 → dragging DOWN → sub-pane 0 shrinks.
+            // delta_y < 0 → dragging UP   → sub-pane 0 grows.
+            // So the new sub-pane height is current_height − delta_y.
+            let current_h = if window.sub_panes[0].height_ratio > 0.0 {
+                (window.sub_panes[0].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+            } else {
+                DEFAULT_H
+            };
+            let new_h = (current_h - delta_y).max(MIN_SUB_PANE_PX);
+            if available_h > 0.0 {
+                window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
+            }
             return;
         }
 
