@@ -1829,7 +1829,7 @@ impl ChartApp {
     ///
     /// Drains the async `LiveUpdate` channel (bar loads, WebSocket bar updates,
     /// connector-ready events) and runs the alert crossing checker.
-    pub fn tick(&mut self, current_time_ms: u64) {
+    pub fn tick(&mut self, current_time_ms: u64, bar_svc: &mut bar_service::BarService) {
         let _ = current_time_ms;
 
         // ── Live data: drain the async update channel ─────────────────────
@@ -1880,6 +1880,21 @@ impl ChartApp {
                         exchange_id, symbol, tf_name, bars.len(),
                         bars.first().map(|b| b.timestamp).unwrap_or(0),
                         bars.last().map(|b| b.timestamp).unwrap_or(0));
+
+                    // Merge into BarService so it tracks all REST-loaded bars.
+                    {
+                        let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
+                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
+                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
+                            timestamp: b.timestamp,
+                            open: b.open,
+                            high: b.high,
+                            low: b.low,
+                            close: b.close,
+                            volume: b.volume,
+                        }).collect();
+                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                    }
 
                     let mut any_matched = false;
                     // Collect (symbol, timeframe, account_type) for windows that received
@@ -2005,6 +2020,20 @@ impl ChartApp {
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     eprintln!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
+                    // Merge into BarService.
+                    {
+                        let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
+                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
+                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
+                            timestamp: b.timestamp,
+                            open: b.open,
+                            high: b.high,
+                            low: b.low,
+                            close: b.close,
+                            volume: b.volume,
+                        }).collect();
+                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                    }
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
@@ -2045,6 +2074,21 @@ impl ChartApp {
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     eprintln!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
                         exchange_id.as_str(), symbol, tf_name, bars.len(), prepend_count);
+
+                    // Merge into BarService.
+                    {
+                        let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
+                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
+                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
+                            timestamp: b.timestamp,
+                            open: b.open,
+                            high: b.high,
+                            low: b.low,
+                            close: b.close,
+                            volume: b.volume,
+                        }).collect();
+                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                    }
 
                     let at_label = account_type.short_label();
                     let mut any_matched = false;
@@ -2117,6 +2161,22 @@ impl ChartApp {
                     let mut is_new_bar = false;
                     // Track whether a multi-bar gap was detected (needs REST backfill).
                     let mut needs_backfill = false;
+
+                    // Feed trade into BarService for each active timeframe.
+                    {
+                        let mut seen_tfs: Vec<String> = Vec::new();
+                        for window in self.panel_app.panel_grid.windows().values() {
+                            if window.pending_symbol_load { continue; }
+                            if window.symbol == symbol && window.account_type == account_type.short_label() {
+                                let tf_name = &window.timeframe.name;
+                                if !seen_tfs.contains(tf_name) {
+                                    seen_tfs.push(tf_name.clone());
+                                    let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
+                                    bar_svc.apply_trade(&key, price, quantity, timestamp);
+                                }
+                            }
+                        }
+                    }
 
                     // Update the last bar of every window matching this symbol.
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {

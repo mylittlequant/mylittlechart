@@ -6622,8 +6622,9 @@ impl ApplicationHandler for App<'_> {
             }
 
             let frame_time = now_ms();
+            let bar_svc = &mut self.bar_service;
             for pw in self.windows.values_mut() {
-                pw.chart.tick(frame_time);
+                pw.chart.tick(frame_time, bar_svc);
             }
         }
         // Capture the active window's scale mode back to AppState so it
