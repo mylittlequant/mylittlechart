@@ -791,9 +791,8 @@ impl ChartWindow {
         }
         self.update_prev_close_line();
 
-        // Update bar_count so viewport knows the data length, but do NOT
-        // touch view_start or scale_mode.
         self.viewport.bar_count = self.bars.len();
+        self.snap_to_end(DEFAULT_SNAP_MARGIN);
 
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale();
