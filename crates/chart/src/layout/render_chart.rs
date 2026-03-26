@@ -1046,7 +1046,7 @@ pub fn draw_sub_pane_histogram(
 
     match histogram_style {
         HistogramStyle::Centered => {
-            let max_bar_height = pane_height * 0.15;
+            let max_bar_height = pane_height * 0.45;
 
             let mut max_abs = 0.0f64;
             for i in start_bar..end_bar {

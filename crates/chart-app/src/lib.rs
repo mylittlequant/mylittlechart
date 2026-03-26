@@ -6213,6 +6213,10 @@ impl ChartApp {
                 // Apply scale_mode BEFORE the auto-scale check so the new mode takes effect.
                 if let Some(mode) = scale_mode {
                     window.price_scale.scale_mode = mode;
+                    let is_auto = mode.is_auto_y();
+                    for sp in &mut window.sub_panes {
+                        sp.auto_scale = is_auto;
+                    }
                 }
                 // Time-based sync: convert source timestamp to peer's bar index so
                 // windows with different bar counts land on the same calendar date.

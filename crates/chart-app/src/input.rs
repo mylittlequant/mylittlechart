@@ -166,6 +166,10 @@ impl ChartApp {
                                 if next_mode.is_auto_y() {
                                     window.calc_auto_scale();
                                 }
+                                let is_auto = next_mode.is_auto_y();
+                                for sp in &mut window.sub_panes {
+                                    sp.auto_scale = is_auto;
+                                }
                             }
                             // Propagate scale_mode change to sync-group peers.
                             let viewport_state = self.panel_app.panel_grid
@@ -9513,6 +9517,10 @@ impl ChartApp {
                             if next.is_auto_y() {
                                 w.calc_auto_scale();
                             }
+                            let is_auto = next.is_auto_y();
+                            for sp in &mut w.sub_panes {
+                                sp.auto_scale = is_auto;
+                            }
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }
                         // Propagate scale_mode change to sync-group peers.
@@ -14493,6 +14501,10 @@ impl ChartApp {
                     }
                     if next_mode.is_auto_y() {
                         window.calc_auto_scale();
+                    }
+                    let is_auto = next_mode.is_auto_y();
+                    for sp in &mut window.sub_panes {
+                        sp.auto_scale = is_auto;
                     }
                 }
                 // Propagate scale_mode change to sync-group peers.
