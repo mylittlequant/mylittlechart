@@ -168,21 +168,9 @@ impl ChartApp {
                                 }
                                 let is_auto = next_mode.is_auto_y();
                                 for sp in &mut window.sub_panes {
-                                    // When freezing auto→manual, symmetrize the range for
-                                    // centered indicators (those whose auto range straddles zero).
-                                    // The render path symmetrizes in auto mode; manual mode reads
-                                    // price_min/price_max directly, so we must bake it in here.
-                                    if sp.auto_scale && !is_auto {
-                                        if sp.price_min < 0.0 && sp.price_max > 0.0 {
-                                            let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                                            sp.price_min = -max_abs;
-                                            sp.price_max = max_abs;
-                                        }
-                                        // Apply 5% padding to match what the render path displays
-                                        let padding = (sp.price_max - sp.price_min) * 0.05;
-                                        sp.price_min -= padding;
-                                        sp.price_max += padding;
-                                    }
+                                    // update_sub_pane_ranges() already bakes in symmetrization
+                                    // and 5% padding, so price_min/price_max already match
+                                    // what is displayed.  Just flip the flag.
                                     sp.auto_scale = is_auto;
                                 }
                             }
@@ -9557,17 +9545,9 @@ impl ChartApp {
                             }
                             let is_auto = next.is_auto_y();
                             for sp in &mut w.sub_panes {
-                                if sp.auto_scale && !is_auto {
-                                    if sp.price_min < 0.0 && sp.price_max > 0.0 {
-                                        let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                                        sp.price_min = -max_abs;
-                                        sp.price_max = max_abs;
-                                    }
-                                    // Apply 5% padding to match what the render path displays
-                                    let padding = (sp.price_max - sp.price_min) * 0.05;
-                                    sp.price_min -= padding;
-                                    sp.price_max += padding;
-                                }
+                                // update_sub_pane_ranges() already bakes in symmetrization
+                                // and 5% padding, so price_min/price_max already match
+                                // what is displayed.  Just flip the flag.
                                 sp.auto_scale = is_auto;
                             }
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
@@ -14553,17 +14533,9 @@ impl ChartApp {
                     }
                     let is_auto = next_mode.is_auto_y();
                     for sp in &mut window.sub_panes {
-                        if sp.auto_scale && !is_auto {
-                            if sp.price_min < 0.0 && sp.price_max > 0.0 {
-                                let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                                sp.price_min = -max_abs;
-                                sp.price_max = max_abs;
-                            }
-                            // Apply 5% padding to match what the render path displays
-                            let padding = (sp.price_max - sp.price_min) * 0.05;
-                            sp.price_min -= padding;
-                            sp.price_max += padding;
-                        }
+                        // update_sub_pane_ranges() already bakes in symmetrization
+                        // and 5% padding, so price_min/price_max already match
+                        // what is displayed.  Just flip the flag.
                         sp.auto_scale = is_auto;
                     }
                 }

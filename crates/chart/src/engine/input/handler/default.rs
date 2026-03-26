@@ -1025,8 +1025,8 @@ impl DefaultChartInputHandler {
         };
 
         match hit {
-            HitResult::PriceScale | HitResult::SubPanePriceScale { .. } => {
-                // Zoom price scale — invert factor so scroll-up expands range
+            HitResult::PriceScale => {
+                // Zoom main price scale — invert factor so scroll-up expands range.
                 let inv_factor = 1.0 / factor;
                 vec![
                     ChartOutputAction::Zoom {
@@ -1034,6 +1034,28 @@ impl DefaultChartInputHandler {
                         center_y: y,
                         factor_x: 1.0,
                         factor_y: inv_factor,
+                    },
+                    ChartOutputAction::Repaint,
+                ]
+            }
+            HitResult::SubPanePriceScale { pane_index } => {
+                // Zoom sub-pane Y axis via ZoomSubPane.
+                // ZoomSubPane computes: factor = 1.0 + delta_y / pane_h
+                // We want factor ≈ 1 ± scroll_zoom_factor regardless of pane height.
+                // Using a 200px proxy height gives a reasonable per-tick step:
+                //   scroll_zoom_factor=0.05, proxy=200 → delta=±10px
+                //   on a 300px pane → factor ≈ 1.033 (3.3% per tick)
+                //   on a 100px pane → factor ≈ 1.1   (10% per tick)
+                const PROXY_H: f64 = 200.0;
+                let scroll_delta = if delta_y > 0.0 {
+                    -self.config.scroll_zoom_factor * PROXY_H
+                } else {
+                    self.config.scroll_zoom_factor * PROXY_H
+                };
+                vec![
+                    ChartOutputAction::ZoomSubPane {
+                        pane_index,
+                        delta_y: scroll_delta,
                     },
                     ChartOutputAction::Repaint,
                 ]

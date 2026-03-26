@@ -907,18 +907,33 @@ impl ChartWindow {
         self.sub_panes.iter_mut().find(|p| p.instance_id == instance_id)
     }
 
-    /// Update sub-pane price ranges for auto-scaling panes
+    /// Update sub-pane price ranges for auto-scaling panes.
+    ///
+    /// Applies the same symmetrization and 5% padding that the render path
+    /// uses, so that `price_min`/`price_max` always reflect what is actually
+    /// displayed.  This ensures A→M freeze needs no further transformation.
     pub fn update_sub_pane_ranges(&mut self) {
         let (visible_start, visible_end) = self.viewport.visible_range();
         let visible_end = visible_end.min(self.bars.len());
 
         for sub_pane in &mut self.sub_panes {
             if sub_pane.auto_scale {
-                if let Some((p_min, p_max)) = self.indicator_source.calculate_pane_range(
+                if let Some((mut p_min, mut p_max)) = self.indicator_source.calculate_pane_range(
                     sub_pane.instance_id,
                     visible_start,
                     visible_end,
                 ) {
+                    // Symmetrize centered indicators (those straddling zero).
+                    if p_min < 0.0 && p_max > 0.0 {
+                        let max_abs = p_min.abs().max(p_max.abs());
+                        p_min = -max_abs;
+                        p_max = max_abs;
+                    }
+                    // 5% padding to match the render path.
+                    let padding = (p_max - p_min) * 0.05;
+                    p_min -= padding;
+                    p_max += padding;
+
                     sub_pane.price_min = p_min;
                     sub_pane.price_max = p_max;
                 }
