@@ -478,10 +478,8 @@ impl ExtendedFrameLayout {
 
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
-        let min_main_chart = {
-            let reserved = (separator_height + 20.0) * sub_pane_count as f64;
-            (available_height - reserved).clamp(50.0, 200.0)
-        };
+        // Main chart gets at least 15% of available height
+        let min_main_chart = available_height * 0.15;
         let main_chart_height = (available_height - total_sub_panes_height).max(min_main_chart);
 
         // Actual space available for sub-pane content (after clamping main chart).
@@ -495,9 +493,11 @@ impl ExtendedFrameLayout {
         } else {
             1.0
         };
+        // Scale sub-pane heights, minimum 15% of available each
+        let min_sub_pane = available_height * 0.15;
         let scaled_heights: Vec<f64> = pane_heights
             .iter()
-            .map(|&h| (h * scale_factor).max(20.0))
+            .map(|&h| (h * scale_factor).max(min_sub_pane))
             .collect();
 
         // Calculate chart and scale positions based on scale settings

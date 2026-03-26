@@ -6883,8 +6883,7 @@ impl ChartApp {
             }
         };
 
-        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
-        let min_h = (available_h * 0.15).max(20.0);
+        let min_h = available_h * 0.15;
 
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
