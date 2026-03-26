@@ -336,6 +336,10 @@ pub struct ChartApp {
     /// Set to true when backfill or scroll-load added bars to the bridge cache.
     /// Checked and cleared by App in about_to_wait() to trigger a bar-store flush.
     pub bars_cache_dirty: bool,
+    /// Per-window tracked series handles from BarService.
+    /// Key = (chart_id, BarSeriesKey) → handle.
+    /// Used for version-based change detection in future phases.
+    series_handles: std::collections::HashMap<(u64, bar_service::BarSeriesKey), bar_service::TrackedSeriesHandle>,
     /// Set to true when window geometry (position/size) changed.
     /// Triggers local save but NOT cloud sync.
     pub profile_geometry_dirty: bool,
@@ -784,6 +788,7 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            series_handles: std::collections::HashMap::new(),
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1049,6 +1054,7 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            series_handles: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1210,6 +1216,7 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            series_handles: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -1894,6 +1901,28 @@ impl ChartApp {
                             volume: b.volume,
                         }).collect();
                         bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                    }
+
+                    // Obtain/update TrackedSeriesHandle for matched windows.
+                    {
+                        let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
+                        let bs_key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
+                        let matched_cids: Vec<u64> = self.panel_app.panel_grid.windows().iter()
+                            .filter(|(_cid, window)| {
+                                window.symbol == symbol
+                                    && window.exchange == exchange_id.as_str()
+                                    && window.timeframe.name == tf_name
+                                    && window.account_type == account_type.short_label()
+                            })
+                            .map(|(cid, _window)| cid.0)
+                            .collect();
+                        for cid_val in matched_cids {
+                            let handle_key = (cid_val, bs_key.clone());
+                            if !self.series_handles.contains_key(&handle_key) {
+                                let arc = bar_svc.get_or_create(bs_key.clone(), period_secs);
+                                self.series_handles.insert(handle_key, bar_service::TrackedSeriesHandle::new(arc));
+                            }
+                        }
                     }
 
                     let mut any_matched = false;
