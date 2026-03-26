@@ -6837,13 +6837,15 @@ impl ChartApp {
     ///
     /// The delta is distributed by shrinking the pane above and growing the
     /// pane below (or vice-versa when dragging up).  Both panes are clamped to
-    /// a minimum of `MIN_SUB_PANE_PX` pixels.
+    /// a minimum of 15% of the available leaf height (absolute floor: 20 px).
     fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
-        const MIN_SUB_PANE_PX: f64 = 30.0;
         const DEFAULT_H: f64 = 100.0;
 
         // Work out the available height so we can convert pixel deltas to ratios.
         let available_h = self.height as f64;
+
+        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
+        let min_h = (available_h * 0.15).max(20.0);
 
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
@@ -6855,22 +6857,17 @@ impl ChartApp {
             return;
         }
 
-        eprintln!(
-            "[PANE-DRAG] pane_index={} delta_y={:.1} pane_count={}",
-            pane_index, delta_y, pane_count
-        );
-
         if pane_index == 0 {
             // Separator between the main chart (above) and sub-pane 0 (below).
             // delta_y > 0 → dragging DOWN → sub-pane 0 shrinks.
             // delta_y < 0 → dragging UP   → sub-pane 0 grows.
             // So the new sub-pane height is current_height − delta_y.
             let current_h = if window.sub_panes[0].height_ratio > 0.0 {
-                (window.sub_panes[0].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+                (window.sub_panes[0].height_ratio as f64 * available_h).max(min_h)
             } else {
                 DEFAULT_H
             };
-            let new_h = (current_h - delta_y).max(MIN_SUB_PANE_PX);
+            let new_h = (current_h - delta_y).max(min_h);
             if available_h > 0.0 {
                 window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
             }
@@ -6882,19 +6879,19 @@ impl ChartApp {
 
         // Resolve current pixel heights for the two panes.
         let h_above = if window.sub_panes[above].height_ratio > 0.0 {
-            (window.sub_panes[above].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+            (window.sub_panes[above].height_ratio as f64 * available_h).max(min_h)
         } else {
             DEFAULT_H
         };
         let h_below = if window.sub_panes[below].height_ratio > 0.0 {
-            (window.sub_panes[below].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+            (window.sub_panes[below].height_ratio as f64 * available_h).max(min_h)
         } else {
             DEFAULT_H
         };
 
         // Apply delta: growing above shrinks below and vice-versa.
-        let new_above = (h_above + delta_y).max(MIN_SUB_PANE_PX);
-        let new_below = (h_below - delta_y).max(MIN_SUB_PANE_PX);
+        let new_above = (h_above + delta_y).max(min_h);
+        let new_below = (h_below - delta_y).max(min_h);
 
         if available_h > 0.0 {
             window.sub_panes[above].height_ratio = (new_above / available_h) as f32;

@@ -1165,13 +1165,28 @@ pub fn render_sub_pane(
     let (visible_start, visible_end_raw) = state.viewport.visible_range();
     let visible_end = visible_end_raw.min(state.bars.len());
 
-    let (pane_min, pane_max) = if !sub_pane_auto_scale {
+    let (mut pane_min, mut pane_max) = if !sub_pane_auto_scale {
         (sub_pane_price_min, sub_pane_price_max)
     } else {
         indicator_source
             .calculate_pane_range(instance.id, visible_start as usize, visible_end)
             .unwrap_or((0.0, 100.0))
     };
+
+    // For centered histograms in auto-scale mode, symmetrize around zero so that
+    // the zero-line always sits at the vertical midpoint of the pane.
+    if sub_pane_auto_scale && instance.histogram_style == crate::indicator_source::HistogramStyle::Centered {
+        let max_abs = pane_min.abs().max(pane_max.abs());
+        if max_abs > 0.0 {
+            pane_min = -max_abs;
+            pane_max = max_abs;
+        }
+    }
+
+    // Add 5% padding so bars never touch the pane edges.
+    let padding = (pane_max - pane_min) * 0.05;
+    pane_min -= padding;
+    pane_max += padding;
 
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);

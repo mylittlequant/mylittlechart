@@ -322,41 +322,62 @@ pub fn draw_time_scale(
         ctx.fill_text(&tick.label, origin_x + tick.x, label_y);
     }
 
-    // Draw crosshair time indicator
+    // Draw crosshair time indicator.
+    // Works for both in-data and future (extrapolated) positions.
     if crosshair.visible {
-        if let Some(bar_idx) = crosshair.bar_idx {
-            if bar_idx < bars.len() {
-                let x = viewport.bar_to_x(bar_idx);
-                let ts = bars[bar_idx].timestamp;
-
-                // Get format settings (use default if not provided)
-                let default_settings = TimeFormatSettings::default();
-                let format_settings = state.time_format_settings.unwrap_or(&default_settings);
-
-                // Use new formatting function
-                let label = format_time_full_with_settings(ts, format_settings);
-
-                // Measure label width for centering
-                let tw = ctx.measure_text(&label) + 10.0;
-                let min_x = tw / 2.0;
-                let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
-                let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
-                let box_x = origin_x + tx - tw / 2.0;
-                let box_y = origin_y + 2.0;
-                let box_height = config.time_scale_height - 4.0;
-
-                // Draw blur background (for FrostedGlass/LiquidGlass styles)
-                ctx.draw_blur_background(box_x, box_y, tw, box_height);
-
-                // Draw label background with style opacity
-                ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
-                ctx.fill_rect(box_x, box_y, tw, box_height);
-
-                // Draw label text
-                ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
-                ctx.set_fill_color(&scale_theme.crosshair_label_text);
-                ctx.fill_text(&label, origin_x + tx, label_y);
+        // Resolve timestamp: use bar data when available, extrapolate for future bars.
+        let ts_opt: Option<i64> = if let Some(bar_idx) = crosshair.bar_idx {
+            bars.get(bar_idx).map(|b| b.timestamp)
+        } else if bars.len() >= 2 {
+            // Cursor is outside the data range (future or past).  Extrapolate from the
+            // last two bars: derive the bar interval and apply it to bar_f64.
+            let last = bars[bars.len() - 1].timestamp;
+            let prev = bars[bars.len() - 2].timestamp;
+            let interval_secs = last - prev; // seconds per bar (may be 0 for bad data)
+            if interval_secs > 0 {
+                let bars_past_end = crosshair.bar_f64 - (bars.len() - 1) as f64;
+                let extra_secs = (bars_past_end * interval_secs as f64).round() as i64;
+                Some(last + extra_secs)
+            } else {
+                None
             }
+        } else if bars.len() == 1 {
+            // Only one bar — can't derive interval; show that bar's time.
+            Some(bars[0].timestamp)
+        } else {
+            None
+        };
+
+        if let Some(ts) = ts_opt {
+            let x = viewport.bar_to_x_f64(crosshair.bar_f64);
+
+            // Get format settings (use default if not provided)
+            let default_settings = TimeFormatSettings::default();
+            let format_settings = state.time_format_settings.unwrap_or(&default_settings);
+
+            // Use new formatting function
+            let label = format_time_full_with_settings(ts, format_settings);
+
+            // Measure label width for centering
+            let tw = ctx.measure_text(&label) + 10.0;
+            let min_x = tw / 2.0;
+            let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
+            let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
+            let box_x = origin_x + tx - tw / 2.0;
+            let box_y = origin_y + 2.0;
+            let box_height = config.time_scale_height - 4.0;
+
+            // Draw blur background (for FrostedGlass/LiquidGlass styles)
+            ctx.draw_blur_background(box_x, box_y, tw, box_height);
+
+            // Draw label background with style opacity
+            ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
+            ctx.fill_rect(box_x, box_y, tw, box_height);
+
+            // Draw label text
+            ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
+            ctx.set_fill_color(&scale_theme.crosshair_label_text);
+            ctx.fill_text(&label, origin_x + tx, label_y);
         }
     }
 }
