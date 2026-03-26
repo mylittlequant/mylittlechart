@@ -194,15 +194,12 @@ impl ChartWindowSnapshot {
     pub fn from_window(window: &ChartWindow, leaf_id: u64) -> Self {
         let drawings = DrawingSnapshot::from_manager(window.id.0, &window.drawing_manager);
 
-        // Save ONLY bar_spacing and bar_count from the viewport.
-        // chart_width depends on the current window size and would be stale
-        // after restart. view_start is always recomputed by snap-to-end.
-        // Restore starts from Viewport::default() so no stale values leak.
-        let mut saved_viewport = Viewport::default();
-        saved_viewport.bar_spacing = window.viewport.bar_spacing;
-        saved_viewport.bar_count   = window.viewport.bar_count;
-        // view_start = 0.0 (default) — always snap to latest on restore.
-        // chart_width = 0.0 (default) — set_bars() deferred path handles first frame.
+        // Save full viewport — chart_width, bar_spacing, bar_count are all valid
+        // and needed for immediate snap in set_bars(). If app window was resized,
+        // sync_viewport_from_layout will proportionally adjust chart_width.
+        // Only zero view_start — snap-to-end always positions to latest bar.
+        let mut saved_viewport = window.viewport.clone();
+        saved_viewport.view_start = 0.0;
 
         let mut saved_price_scale = window.price_scale.clone();
         // price_min/price_max are recalculated from bars; zero them out.

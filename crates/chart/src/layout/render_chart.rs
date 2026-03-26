@@ -1207,9 +1207,13 @@ pub fn render_sub_pane(
     }
 
     // Add 5% padding so bars never touch the pane edges.
-    let padding = (pane_max - pane_min) * 0.05;
-    pane_min -= padding;
-    pane_max += padding;
+    // Only in auto-scale: manual mode's stored price_min/max already have
+    // padding baked in from the last auto-scale writeback.
+    if sub_pane_auto_scale {
+        let padding = (pane_max - pane_min) * 0.05;
+        pane_min -= padding;
+        pane_max += padding;
+    }
 
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);
