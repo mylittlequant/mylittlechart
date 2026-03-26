@@ -491,11 +491,21 @@ impl ChartApp {
         // For sub-pane price scales, process_output_actions cannot route
         // correctly (drag_mode is None during double-click), so handle it here.
         if let zengeld_chart::engine::input::HitResult::SubPanePriceScale { pane_index } = hit {
+            use zengeld_chart::ScaleMode;
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                     sub_pane.auto_scale = true;
                 }
+                // Restore the main chart to Auto so the A/M button reflects the true state.
+                window.price_scale.scale_mode = ScaleMode::Auto;
                 window.update_sub_pane_ranges();
+            }
+            // Propagate Auto mode to sync-group peers.
+            let viewport_state = self.panel_app.panel_grid.active_window()
+                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+            let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+            if let (Some((view_start, bar_spacing)), Some(active_leaf)) = (viewport_state, active_leaf_opt) {
+                self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(ScaleMode::Auto));
             }
         }
     }

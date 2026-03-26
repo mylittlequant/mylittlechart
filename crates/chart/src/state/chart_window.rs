@@ -923,11 +923,15 @@ impl ChartWindow {
                     visible_start,
                     visible_end,
                 ) {
-                    // Symmetrize centered indicators (those straddling zero).
-                    if p_min < 0.0 && p_max > 0.0 {
+                    // Mirror the render path exactly: symmetrize only for Centered
+                    // histogram style (not for every indicator that straddles zero).
+                    let style = self.indicator_source.histogram_style_for(sub_pane.instance_id);
+                    if style == crate::indicator_source::HistogramStyle::Centered {
                         let max_abs = p_min.abs().max(p_max.abs());
-                        p_min = -max_abs;
-                        p_max = max_abs;
+                        if max_abs > 0.0 {
+                            p_min = -max_abs;
+                            p_max = max_abs;
+                        }
                     }
                     // 5% padding to match the render path.
                     let padding = (p_max - p_min) * 0.05;

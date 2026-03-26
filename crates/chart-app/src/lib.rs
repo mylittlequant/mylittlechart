@@ -5680,7 +5680,21 @@ impl ChartApp {
                         if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                             sub_pane.auto_scale = true;
                         }
+                        // Restore main chart to Auto so the A/M button reflects the true state.
+                        window.price_scale.scale_mode = ScaleMode::Auto;
                         window.update_sub_pane_ranges();
+                        let view_start = window.viewport.view_start;
+                        let bar_spacing = window.viewport.bar_spacing;
+                        let _ = window;
+                        let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+                        if let Some(active_leaf) = active_leaf_opt {
+                            self.propagate_viewport_to_sync_group(
+                                active_leaf,
+                                view_start,
+                                bar_spacing,
+                                Some(ScaleMode::Auto),
+                            );
+                        }
                     } else {
                         window.price_scale.scale_mode = ScaleMode::Auto;
                         calc_visible_price_range(window);
@@ -6103,6 +6117,21 @@ impl ChartApp {
                             sub_pane.price_min = center - half_range;
                             sub_pane.price_max = center + half_range;
                         }
+                    }
+                    // Dragging a sub-pane price scale switches the whole window to
+                    // Manual mode so the A/M button reflects the true state.
+                    window.price_scale.scale_mode = ScaleMode::Manual;
+                    let view_start = window.viewport.view_start;
+                    let bar_spacing = window.viewport.bar_spacing;
+                    let _ = window;
+                    let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+                    if let Some(active_leaf) = active_leaf_opt {
+                        self.propagate_viewport_to_sync_group(
+                            active_leaf,
+                            view_start,
+                            bar_spacing,
+                            Some(ScaleMode::Manual),
+                        );
                     }
                 }
 

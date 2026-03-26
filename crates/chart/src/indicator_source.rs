@@ -196,6 +196,17 @@ pub trait IndicatorSource {
     /// Used by `render_sub_pane` to look up the indicator for a given sub-pane.
     fn get_render_instance(&self, instance_id: u64) -> Option<IndicatorRenderInstance>;
 
+    /// Return the histogram style for the given indicator instance.
+    ///
+    /// Used by `update_sub_pane_ranges` to match the symmetrize logic in the
+    /// render path.  The default implementation delegates to `get_render_instance`
+    /// so existing impls that don't override this get correct behavior for free.
+    fn histogram_style_for(&self, instance_id: u64) -> HistogramStyle {
+        self.get_render_instance(instance_id)
+            .map(|i| i.histogram_style)
+            .unwrap_or_default()
+    }
+
     // --- Settings-level methods (used by the indicator settings modal) ---
 
     /// Get settings data for a single indicator instance by ID.
