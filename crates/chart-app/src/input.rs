@@ -16465,6 +16465,33 @@ impl ChartApp {
                         }
                     }
 
+                    // ----------------------------------------------------------------
+                    // Step 10: Request bars for every window in the newly loaded preset.
+                    // At startup this is handled by a dedicated post-load loop in lib.rs,
+                    // but at runtime (tab-bar switch) only this handler runs, so we must
+                    // trigger the fetches here.
+                    // ----------------------------------------------------------------
+                    let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+                    let mut bars_requested: usize = 0;
+                    let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
+                        .panel_app
+                        .panel_grid
+                        .iter_windows()
+                        .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                        .collect();
+                    for (sym, exch, tf, at_label) in &window_bar_data {
+                        let eid = digdigdig3::ExchangeId::from_str(exch)
+                            .unwrap_or(digdigdig3::ExchangeId::Binance);
+                        if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                            continue;
+                        }
+                        let at = crate::account_type_from_label(at_label);
+                        self.bridge.ensure_connector(eid);
+                        self.bridge.request_bars(eid, sym, &tf, at, None, Some(bar_count), false);
+                        bars_requested += 1;
+                    }
+                    eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
+
                     eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
                 } else {
                     eprintln!("[ChartApp] preset '{}' not found in memory", id);
