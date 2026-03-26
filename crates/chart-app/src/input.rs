@@ -158,10 +158,7 @@ impl ChartApp {
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                                 window.price_scale.scale_mode = next_mode;
                                 if next_mode.is_follow() {
-                                    let count = window.bars.len();
-                                    let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                                    let right_margin = 2.0_f64;
-                                    window.viewport.view_start = (count as f64 + right_margin - visible_f).max(0.0);
+                                    window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                                 }
                                 if next_mode.is_auto_y() {
                                     window.calc_auto_scale();
@@ -14531,11 +14528,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     window.price_scale.scale_mode = next_mode;
                     if next_mode.is_follow() {
-                        // Focus mode: position viewport to last bar + 2 bar right margin
-                        let count = window.bars.len();
-                        let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                        let right_margin = 2.0_f64;
-                        window.viewport.view_start = (count as f64 + right_margin - visible_f).max(0.0);
+                        window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                     }
                     if next_mode.is_auto_y() {
                         window.calc_auto_scale();

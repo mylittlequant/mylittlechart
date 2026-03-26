@@ -1706,16 +1706,9 @@ impl ChartApp {
         if self.needs_initial_viewport_fit {
             self.needs_initial_viewport_fit = false;
             for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-                let count = window.bars.len();
-                let visible = window.viewport.visible_bars();
-                let right_margin: usize = 5;
-                // Snap ALL windows to the most recent bar with a right margin.
-                // Previously windows that already had bars were skipped here, which
-                // left non-active windows at view_start = 0 after preset load.
-                if count + right_margin > visible {
-                    window.viewport.view_start = (count + right_margin - visible) as f64;
-                } else {
-                    window.viewport.view_start = 0.0;
+                // Only snap if chart dimensions are valid and bars are loaded.
+                if window.viewport.chart_width > 0.0 && window.viewport.bar_spacing > 0.0 && !window.bars.is_empty() {
+                    window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                 }
                 window.calc_auto_scale();
             }
@@ -2188,18 +2181,10 @@ impl ChartApp {
 
                             let count = window.bars.len();
                             let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                            let visible_bars = visible_f as usize;
 
-                            // Dynamic right margin based on zoom level.
-                            let dynamic_margin = if visible_bars <= 10 { 1.0 }
-                                else if visible_bars <= 20 { 2.0 }
-                                else if visible_bars <= 50 { 3.0 }
-                                else if visible_bars <= 100 { 4.0 }
-                                else { 5.0 };
-
-                            // Follow mode: keep last bar visible with dynamic margin.
+                            // Follow mode: keep last bar visible with standard margin.
                             if window.price_scale.scale_mode.is_follow() {
-                                window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                                window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                             }
 
                             // Auto mode guard: if a new bar appeared and it would
@@ -2934,15 +2919,8 @@ impl ChartApp {
             for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
                 if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                     window.needs_auto_scale_after_bars = false;
-                    // Focus-style snap: position last bar with right margin
-                    let count = window.bars.len();
-                    let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                    let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
-                        else if (visible_f as usize) <= 20 { 2.0 }
-                        else if (visible_f as usize) <= 50 { 3.0 }
-                        else if (visible_f as usize) <= 100 { 4.0 }
-                        else { 5.0 };
-                    window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                    // Snap to end with standard margin.
+                    window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                     // No snap_cooldown needed: snap fires in prepare_frame AFTER
                     // sync_viewport_from_layout, so bar_shift cannot undo it this frame.
                     // Next frame old_width == new_width → bar_shift = 0.
@@ -3581,16 +3559,9 @@ impl ChartApp {
                 for (&chart_id, window) in self.panel_app.panel_grid.windows_mut().iter_mut() {
                     if window.needs_auto_scale_after_bars && !window.bars.is_empty() && window.viewport.chart_width > 0.0 {
                         window.needs_auto_scale_after_bars = false;
-                        // Snap-to-end: position last bar with right margin,
+                        // Snap to end with standard margin,
                         // using CURRENT bar_spacing (restored from preset).
-                        let count = window.bars.len();
-                        let visible_f = window.viewport.chart_width / window.viewport.bar_spacing;
-                        let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
-                            else if (visible_f as usize) <= 20 { 2.0 }
-                            else if (visible_f as usize) <= 50 { 3.0 }
-                            else if (visible_f as usize) <= 100 { 4.0 }
-                            else { 5.0 };
-                        window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                        window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
                         window.calc_auto_scale();
                         if let Some(mode) = window.restore_scale_mode.take() {
                             window.price_scale.scale_mode = mode;

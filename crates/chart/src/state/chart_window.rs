@@ -319,6 +319,10 @@ pub struct ChartWindow {
     pub restore_scale_mode: Option<ScaleMode>,
 }
 
+/// Default number of empty bars shown to the right of the last candle
+/// after a snap-to-end operation. Will be user-configurable in the future.
+pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
+
 impl ChartWindow {
     /// Create a new chart window with a data provider.
     pub fn new_with_provider(symbol: &str, timeframe: Timeframe, data_provider: SharedDataProvider) -> Self {
@@ -756,15 +760,8 @@ impl ChartWindow {
         self.viewport.bar_count = self.bars.len();
 
         if self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
-            // Eager snap: chart_width is valid, compute view_start immediately.
-            let count = self.bars.len();
-            let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
-            let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
-                else if (visible_f as usize) <= 20 { 2.0 }
-                else if (visible_f as usize) <= 50 { 3.0 }
-                else if (visible_f as usize) <= 100 { 4.0 }
-                else { 5.0 };
-            self.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+            // Eager snap: chart_width is valid, snap immediately.
+            self.snap_to_end(DEFAULT_SNAP_MARGIN);
             self.calc_auto_scale();
             // Restore user's scale mode preference if LoadPreset set one.
             if let Some(mode) = self.restore_scale_mode.take() {
@@ -830,7 +827,6 @@ impl ChartWindow {
         self.exchange = self.data_provider.exchange_name(symbol);
         self.update_title();
         self.set_bars(new_bars);
-        self.viewport.scroll_to_end();
 
         eprintln!(
             "[ChartWindow] Changed to {} ({} bars)",
@@ -863,8 +859,6 @@ impl ChartWindow {
 
         // Recalculate primitive bar caches for new timeframe
         self.drawing_manager.recalculate_all_bar_caches(&self.bars);
-
-        self.viewport.scroll_to_end();
 
         eprintln!(
             "[ChartWindow] Changed timeframe to {} ({} bars)",
@@ -1647,13 +1641,29 @@ impl ChartWindow {
         self.calc_auto_scale();
     }
 
+    /// Snap viewport to the most recent bar with `margin` bars of empty right space.
+    ///
+    /// `margin` is a count of empty bars shown to the right of the last candle.
+    /// Use [`DEFAULT_SNAP_MARGIN`] for the standard value.
+    ///
+    /// Formula: `view_start = (bar_count + margin - visible_f).max(0.0)`
+    ///
+    /// Preconditions: `self.viewport.chart_width > 0.0` and
+    /// `self.viewport.bar_spacing > 0.0` must both hold, or the result is
+    /// meaningless (those are the same preconditions as [`Viewport::visible_bars`]).
+    pub fn snap_to_end(&mut self, margin: f64) {
+        let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
+        let count = self.bars.len();
+        self.viewport.view_start = (count as f64 + margin - visible_f).max(0.0);
+    }
+
     /// Fit all bars into the visible chart area.
     pub fn fit_content(&mut self) {
         let bar_count = self.bars.len();
         if bar_count > 0 {
             self.viewport.bar_spacing = self.viewport.chart_width / bar_count as f64;
             self.viewport.bar_spacing = self.viewport.bar_spacing.clamp(1.0, 30.0);
-            self.viewport.scroll_to_end();
+            self.snap_to_end(DEFAULT_SNAP_MARGIN);
             self.calc_auto_scale();
         }
     }
@@ -1661,7 +1671,7 @@ impl ChartWindow {
     /// Reset zoom to default bar spacing (8px) and scroll to end.
     pub fn reset_zoom(&mut self) {
         self.viewport.bar_spacing = 8.0;
-        self.viewport.scroll_to_end();
+        self.snap_to_end(DEFAULT_SNAP_MARGIN);
         self.calc_auto_scale();
     }
 

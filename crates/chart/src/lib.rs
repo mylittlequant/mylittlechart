@@ -332,6 +332,8 @@ pub use state::{
     TimeframeVisibility,
     // ChartWindow - the main chart state aggregate
     ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDOW_GAP,
+    // Snap-to-end constant (canonical margin used by ChartWindow::snap_to_end)
+    DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
     ChartPanelGrid, ChartSubPanel, SplitHitResult, ChartInputTarget,
     // ChartId for the chart crate's ChartWindow
