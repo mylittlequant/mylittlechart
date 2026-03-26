@@ -1706,16 +1706,12 @@ impl ChartApp {
         if self.needs_initial_viewport_fit {
             self.needs_initial_viewport_fit = false;
             for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-                // Skip windows that already have bars from a snapshot restore —
-                // their viewport (view_start, bar_spacing) is already correct.
-                if !window.bars.is_empty() {
-                    // Just recalc auto-scale with the now-correct chart_width.
-                    window.calc_auto_scale();
-                    continue;
-                }
                 let count = window.bars.len();
                 let visible = window.viewport.visible_bars();
                 let right_margin: usize = 5;
+                // Snap ALL windows to the most recent bar with a right margin.
+                // Previously windows that already had bars were skipped here, which
+                // left non-active windows at view_start = 0 after preset load.
                 if count + right_margin > visible {
                     window.viewport.view_start = (count + right_margin - visible) as f64;
                 } else {
@@ -1736,14 +1732,28 @@ impl ChartApp {
     /// which does NOT subtract sub-pane heights, causing coordinate mismatches
     /// when RSI/MACD sub-panes are visible.
     fn sync_viewport_from_layout(&mut self) {
+        // In split mode, per-leaf dimensions are handled by the split-pane layout
+        // block in prepare_frame() which calls build_extended_layout_for_leaf().
+        // For non-split mode we compute one layout and apply it to ALL windows so
+        // that every window (not just the active one) gets a valid chart_width.
+        // Without this, non-active windows keep chart_width = 0.0 which blocks the
+        // needs_auto_scale_after_bars deferred snap from ever firing.
+        if self.panel_app.panel_grid.is_split() {
+            return;
+        }
         let extended = self.build_extended_layout();
         let new_width = extended.main_chart.chart.width;
         let new_height = extended.main_chart.chart.height;
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
             let old_width = window.viewport.chart_width;
             // Pin right edge: shift view_start so the last visible bars stay
             // anchored when the window is resized, matching terminal behavior.
-            if (old_width - new_width).abs() > 0.5
+            // Skip bar_shift for windows still waiting for their initial snap
+            // (needs_auto_scale_after_bars = true and old_width = 0) — the
+            // deferred snap in prepare_frame() will compute view_start correctly
+            // once chart_width is set here.
+            if !window.needs_auto_scale_after_bars
+                && (old_width - new_width).abs() > 0.5
                 && window.viewport.bar_spacing > 0.0
                 && old_width > 0.0
             {
