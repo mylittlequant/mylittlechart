@@ -16,6 +16,7 @@ members = [
     "crates/tiny-skia-context",
     "crates/updater",
     "crates/bar-store",
+    "crates/bar-service",
 ]
 resolver = "2"
 

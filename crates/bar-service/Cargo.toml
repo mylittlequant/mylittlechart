@@ -1,0 +1,11 @@
+[package]
+name = "bar-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bar-store = { path = "../bar-store" }
+digdigdig3 = "0.1.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "sync"] }
