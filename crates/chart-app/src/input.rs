@@ -172,13 +172,16 @@ impl ChartApp {
                                     // centered indicators (those whose auto range straddles zero).
                                     // The render path symmetrizes in auto mode; manual mode reads
                                     // price_min/price_max directly, so we must bake it in here.
-                                    if sp.auto_scale && !is_auto
-                                        && sp.price_min < 0.0
-                                        && sp.price_max > 0.0
-                                    {
-                                        let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                                        sp.price_min = -max_abs;
-                                        sp.price_max = max_abs;
+                                    if sp.auto_scale && !is_auto {
+                                        if sp.price_min < 0.0 && sp.price_max > 0.0 {
+                                            let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                                            sp.price_min = -max_abs;
+                                            sp.price_max = max_abs;
+                                        }
+                                        // Apply 5% padding to match what the render path displays
+                                        let padding = (sp.price_max - sp.price_min) * 0.05;
+                                        sp.price_min -= padding;
+                                        sp.price_max += padding;
                                     }
                                     sp.auto_scale = is_auto;
                                 }
@@ -6853,79 +6856,79 @@ impl ChartApp {
     fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
         const DEFAULT_H: f64 = 100.0;
 
-        // Get the FULL leaf height in pixels (not chart_height which excludes sub-panes).
+        // Get the active leaf and its absolute rect first (immutable borrows).
         let active_leaf = match self.panel_app.panel_grid.docking().active_leaf() {
             Some(l) => l,
             None => return,
         };
-        let leaf_h = self.get_leaf_absolute_rect(active_leaf)
-            .map(|r| r.height)
-            .unwrap_or(self.height as f64);
-        if leaf_h <= 0.0 {
+        let leaf_rect = match self.get_leaf_absolute_rect(active_leaf) {
+            Some(r) => r,
+            None => return,
+        };
+        let available_h = leaf_rect.height;
+        if available_h <= 0.0 {
             return;
         }
+
+        // Build the extended layout to get ACTUAL rendered heights (after scale_factor
+        // clamping inside compute_from_chart_panel).  This prevents the mismatch where
+        // height_ratio * available_h diverges from what the renderer actually drew.
+        // We extract the per-pane pixel heights into a plain Vec before taking &mut self.
+        let rendered_heights: Vec<f64> = {
+            match self.build_extended_layout_for_leaf(active_leaf, &leaf_rect) {
+                Some(ext) => ext.sub_panes.iter()
+                    .map(|sp| sp.content.height)
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
+        let min_h = (available_h * 0.15).max(20.0);
 
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
             None => return,
         };
 
-        let available_h = leaf_h;
-
-        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
-        let min_h = (available_h * 0.15).max(20.0);
-
         let pane_count = window.sub_panes.len();
         if pane_index >= pane_count {
             return;
         }
 
+        // Helper: resolve the actual rendered height for a pane, falling back to
+        // height_ratio or DEFAULT_H when the layout hasn't been computed yet.
+        let actual_h = |idx: usize| -> f64 {
+            rendered_heights.get(idx)
+                .copied()
+                .filter(|&h| h > 0.0)
+                .unwrap_or_else(|| {
+                    let ratio = window.sub_panes[idx].height_ratio as f64;
+                    if ratio > 0.0 { (ratio * available_h).max(min_h) } else { DEFAULT_H }
+                })
+        };
+
         if pane_index == 0 {
             // Separator between the main chart (above) and sub-pane 0 (below).
             // delta_y > 0 → dragging DOWN → sub-pane 0 shrinks.
             // delta_y < 0 → dragging UP   → sub-pane 0 grows.
-            // So the new sub-pane height is current_height − delta_y.
-            let current_h = if window.sub_panes[0].height_ratio > 0.0 {
-                (window.sub_panes[0].height_ratio as f64 * available_h).max(min_h)
-            } else {
-                DEFAULT_H
-            };
+            let current_h = actual_h(0);
 
-            // Upper bound: leave at least min_h for the main chart and for every
-            // OTHER sub-pane.  This prevents a sub-pane from consuming 100% of the
-            // available space, which would otherwise freeze drag because
-            // max_h == min_h simultaneously.
-            let other_panes_h: f64 = window.sub_panes.iter().enumerate()
-                .filter(|(i, _)| *i != 0)
-                .map(|(_, sp)| if sp.height_ratio > 0.0 {
-                    sp.height_ratio as f64 * available_h
-                } else {
-                    DEFAULT_H
-                })
-                .sum();
+            // Upper bound: leave at least min_h for the main chart and every OTHER sub-pane.
+            let other_panes_h: f64 = (1..pane_count).map(|i| actual_h(i)).sum();
             let max_h = (available_h - min_h - other_panes_h).max(min_h);
             let new_h = (current_h - delta_y).clamp(min_h, max_h);
 
-            if available_h > 0.0 {
-                window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
-            }
+            window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
             return;
         }
 
         let above = pane_index - 1;
         let below = pane_index;
 
-        // Resolve current pixel heights for the two panes.
-        let h_above = if window.sub_panes[above].height_ratio > 0.0 {
-            (window.sub_panes[above].height_ratio as f64 * available_h).max(min_h)
-        } else {
-            DEFAULT_H
-        };
-        let h_below = if window.sub_panes[below].height_ratio > 0.0 {
-            (window.sub_panes[below].height_ratio as f64 * available_h).max(min_h)
-        } else {
-            DEFAULT_H
-        };
+        // Use actual rendered heights so the drag tracks what the renderer drew.
+        let h_above = actual_h(above);
+        let h_below = actual_h(below);
 
         // Apply delta while preserving the combined height so neither pane
         // can steal space from the total.  Each pane is clamped to [min_h,
@@ -6934,10 +6937,8 @@ impl ChartApp {
         let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
         let new_below = total - new_above;
 
-        if available_h > 0.0 {
-            window.sub_panes[above].height_ratio = (new_above / available_h) as f32;
-            window.sub_panes[below].height_ratio = (new_below / available_h) as f32;
-        }
+        window.sub_panes[above].height_ratio = (new_above / available_h) as f32;
+        window.sub_panes[below].height_ratio = (new_below / available_h) as f32;
     }
 
     /// Hide the crosshair on all split leaves.
@@ -9557,13 +9558,16 @@ impl ChartApp {
                             }
                             let is_auto = next.is_auto_y();
                             for sp in &mut w.sub_panes {
-                                if sp.auto_scale && !is_auto
-                                    && sp.price_min < 0.0
-                                    && sp.price_max > 0.0
-                                {
-                                    let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                                    sp.price_min = -max_abs;
-                                    sp.price_max = max_abs;
+                                if sp.auto_scale && !is_auto {
+                                    if sp.price_min < 0.0 && sp.price_max > 0.0 {
+                                        let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                                        sp.price_min = -max_abs;
+                                        sp.price_max = max_abs;
+                                    }
+                                    // Apply 5% padding to match what the render path displays
+                                    let padding = (sp.price_max - sp.price_min) * 0.05;
+                                    sp.price_min -= padding;
+                                    sp.price_max += padding;
                                 }
                                 sp.auto_scale = is_auto;
                             }
@@ -14550,13 +14554,16 @@ impl ChartApp {
                     }
                     let is_auto = next_mode.is_auto_y();
                     for sp in &mut window.sub_panes {
-                        if sp.auto_scale && !is_auto
-                            && sp.price_min < 0.0
-                            && sp.price_max > 0.0
-                        {
-                            let max_abs = sp.price_min.abs().max(sp.price_max.abs());
-                            sp.price_min = -max_abs;
-                            sp.price_max = max_abs;
+                        if sp.auto_scale && !is_auto {
+                            if sp.price_min < 0.0 && sp.price_max > 0.0 {
+                                let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                                sp.price_min = -max_abs;
+                                sp.price_max = max_abs;
+                            }
+                            // Apply 5% padding to match what the render path displays
+                            let padding = (sp.price_max - sp.price_min) * 0.05;
+                            sp.price_min -= padding;
+                            sp.price_max += padding;
                         }
                         sp.auto_scale = is_auto;
                     }

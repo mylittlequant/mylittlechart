@@ -377,10 +377,10 @@ pub enum ChartOutputAction {
         pane_id: Option<u64>,
     },
 
-    /// Pan a sub-pane's Y-axis by a raw pixel delta.
-    /// Positive delta_y = drag down = shift range up.
-    PanSubPane {
-        /// Which sub-pane to pan.
+    /// Zoom a sub-pane's Y-axis by a raw pixel delta.
+    /// Positive delta_y = drag down = expand range.
+    ZoomSubPane {
+        /// Which sub-pane to zoom.
         pane_index: usize,
         /// Raw vertical drag delta in screen pixels.
         delta_y: f64,
@@ -772,7 +772,7 @@ impl DefaultChartInputHandler {
             }
 
             DragMode::SubPanePriceScale { pane_index } => {
-                outputs.push(ChartOutputAction::PanSubPane {
+                outputs.push(ChartOutputAction::ZoomSubPane {
                     pane_index,
                     delta_y,
                 });

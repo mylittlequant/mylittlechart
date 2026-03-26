@@ -6090,16 +6090,18 @@ impl ChartApp {
                     }
                 }
 
-                ChartOutputAction::PanSubPane { pane_index, delta_y } => {
+                ChartOutputAction::ZoomSubPane { pane_index, delta_y } => {
                     let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
                     if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
                         sub_pane.auto_scale = false;
                         let pane_h = sub_pane.height as f64;
-                        let range = sub_pane.price_max - sub_pane.price_min;
-                        if pane_h > 0.0 && range > 0.0 {
-                            let price_delta = delta_y * (range / pane_h);
-                            sub_pane.price_min += price_delta;
-                            sub_pane.price_max += price_delta;
+                        if pane_h > 0.0 {
+                            // 1:1 pixel-to-zoom: each pixel of drag = proportional range change
+                            let factor = 1.0 + delta_y / pane_h;
+                            let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
+                            let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * factor;
+                            sub_pane.price_min = center - half_range;
+                            sub_pane.price_max = center + half_range;
                         }
                     }
                 }
