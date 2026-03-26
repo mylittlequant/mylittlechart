@@ -308,6 +308,15 @@ pub struct ChartWindow {
     /// resets `scroll_fetch_in_flight` so the window can fetch again.
     /// Runtime-only state — not persisted to disk.
     pub scroll_fetch_started: Option<std::time::Instant>,
+
+    /// Cooldown counter set after a snap-to-end fires.
+    ///
+    /// After `needs_auto_scale_after_bars` snaps view_start to the last bar, the
+    /// sub-pane layout may settle over the following 1-3 frames (pending_sub_pane_ratios
+    /// applied), which changes chart_width and would normally trigger bar_shift — undoing
+    /// the snap. While `snap_cooldown > 0`, bar_shift is suppressed. Decremented each
+    /// frame; expires automatically. Runtime-only, not persisted to disk.
+    pub snap_cooldown: u8,
 }
 
 impl ChartWindow {
@@ -399,6 +408,7 @@ impl ChartWindow {
             needs_auto_scale_after_bars: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            snap_cooldown: 0,
         }
     }
 
@@ -596,6 +606,8 @@ impl ChartWindow {
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            // Split child starts with no snap cooldown active.
+            snap_cooldown: 0,
         }
     }
 

@@ -1752,7 +1752,12 @@ impl ChartApp {
             // (needs_auto_scale_after_bars = true and old_width = 0) — the
             // deferred snap in prepare_frame() will compute view_start correctly
             // once chart_width is set here.
-            if !window.needs_auto_scale_after_bars
+            // Also skip bar_shift during snap_cooldown: after a snap-to-end fires,
+            // sub-pane layout may settle over 1-3 frames causing chart_width changes
+            // that would undo the snap. chart_width/chart_height are always updated.
+            if window.snap_cooldown > 0 {
+                window.snap_cooldown -= 1;
+            } else if !window.needs_auto_scale_after_bars
                 && (old_width - new_width).abs() > 0.5
                 && window.viewport.bar_spacing > 0.0
                 && old_width > 0.0
@@ -2943,6 +2948,8 @@ impl ChartApp {
                         else if (visible_f as usize) <= 100 { 4.0 }
                         else { 5.0 };
                     window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                    // Arm cooldown so the next few frames don't let bar_shift undo this snap.
+                    window.snap_cooldown = 3;
                     // Force auto-scale regardless of current scale_mode
                     let saved_mode = window.price_scale.scale_mode;
                     window.price_scale.scale_mode = ScaleMode::Auto;
@@ -3556,7 +3563,12 @@ impl ChartApp {
                     // Skip bar_shift when window hasn't been snapped yet (still has
                     // placeholder chart_width from Viewport::default).  The deferred
                     // snap below will compute view_start with the real chart_width.
-                    if !window.needs_auto_scale_after_bars
+                    // Also suppress bar_shift during snap_cooldown to prevent sub-pane
+                    // layout settling from undoing a freshly-fired snap-to-end.
+                    // chart_width/chart_height are always updated regardless.
+                    if window.snap_cooldown > 0 {
+                        window.snap_cooldown -= 1;
+                    } else if !window.needs_auto_scale_after_bars
                         && (old_w - new_chart_w).abs() > 0.5
                         && window.viewport.bar_spacing > 0.0
                         && old_w > 0.0
@@ -3585,6 +3597,8 @@ impl ChartApp {
                             else if (visible_f as usize) <= 100 { 4.0 }
                             else { 5.0 };
                         window.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+                        // Arm cooldown so the next few frames don't let bar_shift undo this snap.
+                        window.snap_cooldown = 3;
                         let saved_mode = window.price_scale.scale_mode;
                         window.price_scale.scale_mode = ScaleMode::Auto;
                         window.calc_auto_scale();

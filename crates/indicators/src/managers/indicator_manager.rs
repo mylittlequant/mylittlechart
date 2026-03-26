@@ -1135,17 +1135,14 @@ impl IndicatorManager {
             return Some((-1.0, 1.0));
         }
 
-        // Add padding (5%)
-        let range = max_val - min_val;
-        let padding = range * 0.05;
-
         // Check if indicator has zero baseline (extends Y-range to include zero)
         if definition.zero_baseline && min_val > 0.0 {
             // Extend down to zero for histogram-type indicators
             min_val = 0.0;
         }
 
-        Some((min_val - padding, max_val + padding))
+        // Return raw min/max — callers are responsible for applying padding
+        Some((min_val, max_val))
     }
 
     /// Get the preferred pane index for a new indicator instance.
