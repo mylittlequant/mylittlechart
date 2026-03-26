@@ -5597,12 +5597,19 @@ impl ChartApp {
                     }
                     if factor_y != 1.0 {
                         if let zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } = drag_mode {
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.auto_scale = false;
-                                let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
-                                let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * factor_y;
-                                sub_pane.price_min = center - half_range;
-                                sub_pane.price_max = center + half_range;
+                            // Don't allow Y-axis drag when sub-pane is in auto-scale mode.
+                            // Mirrors the main chart behaviour where Auto (A) mode locks Y-axis dragging.
+                            let is_auto = window.sub_panes.get(pane_index)
+                                .map(|sp| sp.auto_scale)
+                                .unwrap_or(false);
+                            if !is_auto {
+                                if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                    sub_pane.auto_scale = false;
+                                    let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
+                                    let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * factor_y;
+                                    sub_pane.price_min = center - half_range;
+                                    sub_pane.price_max = center + half_range;
+                                }
                             }
                         } else {
                             window.price_scale.scale_mode = ScaleMode::Manual;

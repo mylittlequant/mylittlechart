@@ -625,7 +625,7 @@ pub fn draw_overlay_indicators(
     symbol: &str,
     selected_indicator_id: Option<u64>,
 ) {
-    use crate::indicator_source::{IndicatorOutputRenderType, HistogramStyle};
+    use crate::indicator_source::IndicatorOutputRenderType;
 
     // Clip overlay indicators to chart_rect so they don't bleed onto
     // the price scale, neighboring windows, or the chrome toolbar.
@@ -1046,22 +1046,15 @@ pub fn draw_sub_pane_histogram(
 
     match histogram_style {
         HistogramStyle::Centered => {
-            let max_bar_height = pane_height * 0.45;
-
-            let mut max_abs = 0.0f64;
-            for i in start_bar..end_bar {
-                let v = values[i];
-                if !v.is_nan() && !v.is_infinite() {
-                    max_abs = max_abs.max(v.abs());
-                }
+            let pane_range = pane_max - pane_min;
+            if pane_range <= 0.0 {
+                return;
             }
-            if max_abs == 0.0 { max_abs = 1.0; }
 
-            let zero_ratio = if pane_max > pane_min {
-                (0.0 - pane_min) / (pane_max - pane_min)
-            } else {
-                0.5
-            };
+            // Map zero to pixel Y using pane_min/pane_max coordinate system.
+            // Clamp zero to [pane_min, pane_max] so it stays inside the pane.
+            let zero_clamped = 0.0_f64.clamp(pane_min, pane_max);
+            let zero_ratio = (zero_clamped - pane_min) / pane_range;
             let zero_y = pane_y + pane_height - (zero_ratio * pane_height);
 
             for i in start_bar..end_bar {
@@ -1071,15 +1064,20 @@ pub fn draw_sub_pane_histogram(
                 }
 
                 let x = pane_x + state.viewport.bar_to_x(i) - bar_width / 2.0;
-                let bar_height = (v.abs() / max_abs) * max_bar_height;
+
+                // Map value to pixel Y using pane_min/pane_max coordinate system.
+                let val_ratio = (v - pane_min) / pane_range;
+                let val_y = pane_y + pane_height - (val_ratio * pane_height);
 
                 let bar_color = if v >= 0.0 { "#26A69A" } else { "#EF5350" };
                 ctx.set_fill_color(bar_color);
 
                 if v >= 0.0 {
-                    ctx.fill_rect(x, zero_y - bar_height, bar_width, bar_height);
+                    let h = (zero_y - val_y).abs().max(1.0);
+                    ctx.fill_rect(x, val_y, bar_width, h);
                 } else {
-                    ctx.fill_rect(x, zero_y, bar_width, bar_height);
+                    let h = (val_y - zero_y).abs().max(1.0);
+                    ctx.fill_rect(x, zero_y, bar_width, h);
                 }
             }
         }
@@ -1299,7 +1297,7 @@ pub fn render_sub_pane(
         scale_config,
     );
 
-    // 7. Draw horizontal crosshair line
+    // 7. Draw horizontal crosshair line and price label on Y-axis
     let crosshair = state.crosshair;
     if crosshair.enabled && crosshair.visible && crosshair.pane_index == Some(pane_index) {
         let pane_rect = ChartRect {
@@ -1316,6 +1314,21 @@ pub fn render_sub_pane(
             crosshair_config,
             &state.theme.crosshair,
             is_dragging,
+        );
+
+        // Draw price label on the sub-pane Y-axis at the crosshair position.
+        draw_sub_pane_crosshair_price_label(
+            ctx,
+            crosshair.y,
+            content.height,
+            price_scale_rect.x,
+            price_scale_rect.y,
+            price_scale_rect.width,
+            price_scale_rect.height,
+            pane_min,
+            pane_max,
+            scale_theme,
+            scale_config,
         );
     }
 
@@ -1399,6 +1412,86 @@ pub fn draw_sub_pane_price_scale(
 
         ctx.fill_text(&label, text_x, label_y);
     }
+}
+
+/// Draw a crosshair price label on the sub-pane Y-axis.
+///
+/// Mirrors the main chart's crosshair price indicator in `draw_price_scale`,
+/// but adapted for sub-pane coordinate space and compact inline price formatting.
+///
+/// # Parameters
+/// - `crosshair_y` - Crosshair Y offset within the pane content rect (0 = top of pane)
+/// - `pane_content_height` - Height of the pane content rect (used for bounds check)
+/// - `scale_x / scale_y / scale_width / scale_height` - Price scale rect geometry
+/// - `pane_min / pane_max` - Value range displayed in the pane
+/// - `theme / config` - Scale theme and config (same as passed to draw_sub_pane_price_scale)
+fn draw_sub_pane_crosshair_price_label(
+    ctx: &mut dyn RenderContext,
+    crosshair_y: f64,
+    pane_content_height: f64,
+    scale_x: f64,
+    scale_y: f64,
+    scale_width: f64,
+    scale_height: f64,
+    pane_min: f64,
+    pane_max: f64,
+    theme: &ScaleTheme,
+    config: &ScaleConfig,
+) {
+    // Check that the crosshair is within the pane content bounds.
+    if crosshair_y < 0.0 || crosshair_y > pane_content_height {
+        return;
+    }
+
+    let pane_range = pane_max - pane_min;
+    if pane_range <= 0.0 {
+        return;
+    }
+
+    // Compute the price corresponding to the crosshair Y offset.
+    // crosshair_y == 0 corresponds to pane_max, crosshair_y == pane_content_height corresponds to pane_min.
+    let price = pane_max - (crosshair_y / pane_content_height) * pane_range;
+
+    // Format price using the same precision logic as draw_sub_pane_price_scale.
+    let label = if pane_range < 1.0 {
+        format!("{:.4}", price)
+    } else if pane_range < 10.0 {
+        format!("{:.2}", price)
+    } else if pane_range < 100.0 {
+        format!("{:.1}", price)
+    } else {
+        format!("{:.0}", price)
+    };
+
+    // The label Y in screen space: scale_y is aligned with the pane content top.
+    let screen_y = scale_y + crosshair_y;
+
+    let label_width = scale_width - 2.0;
+    let label_height = 20.0;
+    let label_x = scale_x + 1.0;
+    let label_y = screen_y - label_height / 2.0;
+
+    // Clip to price scale rect so the label never overflows vertically.
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(scale_x, scale_y, scale_width, scale_height);
+    ctx.clip();
+
+    // Draw blur background (for FrostedGlass/LiquidGlass styles).
+    ctx.draw_blur_background(label_x, label_y, label_width, label_height);
+
+    // Draw label background using crosshair label style.
+    ctx.set_fill_color(&theme.crosshair_label_bg_styled);
+    ctx.fill_rect(label_x, label_y, label_width, label_height);
+
+    // Draw label text.
+    ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
+    ctx.set_fill_color(&theme.crosshair_label_text);
+    ctx.set_text_align(crate::render::TextAlign::Center);
+    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+    ctx.fill_text(&label, scale_x + scale_width / 2.0, screen_y);
+
+    ctx.restore();
 }
 
 /// Draw grid lines in a sub-pane
@@ -1514,6 +1607,21 @@ pub fn render_sub_pane_base(
             crosshair_config,
             &state.theme.crosshair,
             is_dragging,
+        );
+
+        // Draw price label on the sub-pane Y-axis at the crosshair position.
+        draw_sub_pane_crosshair_price_label(
+            ctx,
+            y_position,
+            content.height,
+            price_scale_rect.x,
+            price_scale_rect.y,
+            price_scale_rect.width,
+            price_scale_rect.height,
+            pane_min,
+            pane_max,
+            scale_theme,
+            scale_config,
         );
     }
 }
