@@ -16463,7 +16463,7 @@ impl ChartApp {
                         }
                         let at = crate::account_type_from_label(at_label);
                         self.bridge.ensure_connector(eid);
-                        self.bridge.request_bars(eid, sym, &tf, at, None, Some(bar_count), false);
+                        self.bridge.request_bars(eid, sym, &tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
