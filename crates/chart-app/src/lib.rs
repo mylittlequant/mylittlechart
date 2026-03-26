@@ -5705,7 +5705,6 @@ impl ChartApp {
                         window.price_scale.price_min += price_delta_scaled;
                         window.price_scale.price_max += price_delta_scaled;
                     }
-                    window.update_sub_pane_ranges();
                     // Propagate viewport change to sync group.
                     let view_start = window.viewport.view_start;
                     let bar_spacing = window.viewport.bar_spacing;
@@ -5725,7 +5724,6 @@ impl ChartApp {
                         if window.price_scale.scale_mode.is_auto_y() {
                             calc_visible_price_range(window);
                         }
-                        window.update_sub_pane_ranges();
                     }
                     if factor_y != 1.0 {
                         window.price_scale.scale_mode = ScaleMode::Manual;
@@ -5754,7 +5752,6 @@ impl ChartApp {
                         }
                         // Restore main chart to Auto so the A/M button reflects the true state.
                         window.price_scale.scale_mode = ScaleMode::Auto;
-                        window.update_sub_pane_ranges();
                         let view_start = window.viewport.view_start;
                         let bar_spacing = window.viewport.bar_spacing;
                         let _ = window;
@@ -5777,7 +5774,6 @@ impl ChartApp {
                     window.viewport.reset_to_default();
                     window.price_scale.scale_mode = ScaleMode::Auto;
                     calc_visible_price_range(window);
-                    window.update_sub_pane_ranges();
                 }
                 ChartOutputAction::TogglePriceScaleMode => {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
@@ -6406,7 +6402,6 @@ impl ChartApp {
                 if window.price_scale.scale_mode.is_auto_y() {
                     window.calc_auto_scale();
                 }
-                window.update_sub_pane_ranges();
             }
         }
     }

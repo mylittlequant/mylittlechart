@@ -1668,7 +1668,6 @@ impl ChartWindow {
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale();
         }
-        self.update_sub_pane_ranges();
     }
 
     /// Pan the price scale vertically by `pixel_delta` pixels.

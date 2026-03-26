@@ -498,7 +498,6 @@ impl ChartApp {
                 }
                 // Restore the main chart to Auto so the A/M button reflects the true state.
                 window.price_scale.scale_mode = ScaleMode::Auto;
-                window.update_sub_pane_ranges();
             }
             // Propagate Auto mode to sync-group peers.
             let viewport_state = self.panel_app.panel_grid.active_window()
