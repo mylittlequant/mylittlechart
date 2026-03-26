@@ -309,14 +309,14 @@ pub struct ChartWindow {
     /// Runtime-only state — not persisted to disk.
     pub scroll_fetch_started: Option<std::time::Instant>,
 
-    /// Cooldown counter set after a snap-to-end fires.
+    /// Scale mode to restore after the next `set_bars()` call completes.
     ///
-    /// After `needs_auto_scale_after_bars` snaps view_start to the last bar, the
-    /// sub-pane layout may settle over the following 1-3 frames (pending_sub_pane_ratios
-    /// applied), which changes chart_width and would normally trigger bar_shift — undoing
-    /// the snap. While `snap_cooldown > 0`, bar_shift is suppressed. Decremented each
-    /// frame; expires automatically. Runtime-only, not persisted to disk.
-    pub snap_cooldown: u8,
+    /// Set by `LoadPreset` before bars arrive asynchronously. Consumed and
+    /// cleared inside `set_bars()` — applied after snap-to-end and auto-scale
+    /// so the user's Manual/Auto preference survives the async boundary.
+    /// `None` = no restoration needed; `set_bars()` leaves the mode as-is.
+    /// Runtime-only, not persisted.
+    pub restore_scale_mode: Option<ScaleMode>,
 }
 
 impl ChartWindow {
@@ -406,9 +406,9 @@ impl ChartWindow {
             symbol_drawings: HashMap::new(),
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
+            restore_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            snap_cooldown: 0,
         }
     }
 
@@ -603,11 +603,11 @@ impl ChartWindow {
             pending_symbol_load: false,
             // Split child has no deferred auto-scale pending.
             needs_auto_scale_after_bars: false,
+            // Split child has no scale mode to restore.
+            restore_scale_mode: None,
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-            // Split child starts with no snap cooldown active.
-            snap_cooldown: 0,
         }
     }
 
@@ -733,6 +733,11 @@ impl ChartWindow {
     ///
     /// Use this only for the first data load. For backfill / incremental
     /// updates use [`update_bars`] which preserves the user's viewport.
+    ///
+    /// When `chart_width > 0` the snap fires eagerly here (most calls after
+    /// the first frame). When `chart_width == 0` (first-launch, brand-new
+    /// window) the snap is deferred to `prepare_frame()` via
+    /// `needs_auto_scale_after_bars`.
     pub fn set_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
         self.calc_moving_averages();
@@ -749,9 +754,28 @@ impl ChartWindow {
 
         // Update bar count so the viewport knows how many bars exist.
         self.viewport.bar_count = self.bars.len();
-        // Defer viewport snap-to-end + auto-scale to prepare_frame where
-        // layout dimensions are guaranteed to be valid.
-        self.needs_auto_scale_after_bars = true;
+
+        if self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
+            // Eager snap: chart_width is valid, compute view_start immediately.
+            let count = self.bars.len();
+            let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
+            let dynamic_margin = if (visible_f as usize) <= 10 { 1.0 }
+                else if (visible_f as usize) <= 20 { 2.0 }
+                else if (visible_f as usize) <= 50 { 3.0 }
+                else if (visible_f as usize) <= 100 { 4.0 }
+                else { 5.0 };
+            self.viewport.view_start = (count as f64 + dynamic_margin - visible_f).max(0.0);
+            self.calc_auto_scale();
+            // Restore user's scale mode preference if LoadPreset set one.
+            if let Some(mode) = self.restore_scale_mode.take() {
+                self.price_scale.scale_mode = mode;
+            }
+            self.needs_auto_scale_after_bars = false;
+        } else {
+            // Deferred: chart_width not yet set (first-launch, brand-new window).
+            // prepare_frame() will run the snap once layout sets real dimensions.
+            self.needs_auto_scale_after_bars = true;
+        }
     }
 
     /// Replace bars without resetting viewport position or scale mode.

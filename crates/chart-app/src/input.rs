@@ -16112,17 +16112,19 @@ impl ChartApp {
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
-                                    // Restore persisted bar_spacing (zoom) and scale_mode.
-                                    // Viewport position (view_start) is NOT persisted — always
-                                    // snap-to-end after bars arrive.
+                                    // Restore bar_spacing (user's zoom level). chart_width is NOT restored —
+                                    // it comes from layout on the first frame; view_start is NOT restored —
+                                    // snap-to-end always positions to the latest bar.
                                     if snap.viewport.bar_spacing > 0.0 {
                                         window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                     }
-                                    window.price_scale.scale_mode = snap.price_scale.scale_mode.clone();
+                                    // Do NOT set scale_mode here. Instead, stash it into restore_scale_mode
+                                    // so set_bars() can apply it AFTER auto-scale completes. This prevents
+                                    // the BarsLoaded handler's `window.price_scale.scale_mode = default_scale_mode`
+                                    // from clobbering a Manual scale preference.
+                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode.clone());
 
                                     // Bars arrive asynchronously via BarsLoaded.
-                                    // set_bars() will set needs_auto_scale_after_bars = true,
-                                    // and the deferred snap in prepare_frame will position view_start.
                                     window.pending_symbol_load = true;
 
                                     eprintln!(
@@ -16252,11 +16254,11 @@ impl ChartApp {
                                 // Restore per-symbol drawing cache
                                 window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
-                                // Restore persisted bar_spacing (zoom) and scale_mode.
+                                // Restore bar_spacing (user's zoom level).
                                 if snap.viewport.bar_spacing > 0.0 {
                                     window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                 }
-                                window.price_scale.scale_mode = snap.price_scale.scale_mode.clone();
+                                window.restore_scale_mode = Some(snap.price_scale.scale_mode.clone());
 
                                 // Bars arrive asynchronously via BarsLoaded.
                                 window.pending_symbol_load = true;
