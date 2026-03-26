@@ -672,6 +672,12 @@ pub struct RenderOutput {
     pub last_inline_bar_rect: Option<LayoutRect>,
     /// If `Some(v)`, sets `toolbar_state.open_submenu_id = v` after render.
     pub open_submenu_update: Option<Option<String>>,
+    /// Sub-pane range writebacks: `(leaf_id, pane_index, min, max)`.
+    ///
+    /// Populated by the render path after `render_sub_pane` returns the
+    /// final (symmetrized + padded) range.  Applied in `apply_render_output`
+    /// so that stored values always match what was displayed.
+    pub sub_pane_range_writebacks: Vec<(zengeld_chart::LeafId, usize, f64, f64)>,
 }
 
 impl ChartApp {
@@ -3774,6 +3780,9 @@ impl ChartApp {
         let mut out_leaf_tab_hit_zones: std::collections::HashMap<zengeld_chart::LeafId, zengeld_chart::LeafTabHitZones> = std::collections::HashMap::new();
         // Submenu state update from toolbar dropdown rendering.
         let mut out_open_submenu_update: Option<Option<String>> = None;
+        // Sub-pane range writebacks: render computes symmetrized+padded ranges,
+        // applied by apply_render_output() via window_for_leaf_mut.
+        let mut out_sub_pane_range_writebacks: Vec<(zengeld_chart::LeafId, usize, f64, f64)> = Vec::new();
 
         let _rt1 = std::time::Instant::now(); // checkpoint: before chart render
         let frame_theme = self.panel_app.frame_theme_for_render();
@@ -3818,6 +3827,8 @@ impl ChartApp {
                     (chart_id, pts)
                 })
                 .collect();
+
+            let mut sub_pane_writebacks: Vec<(zengeld_chart::LeafId, Vec<(usize, f64, f64)>)> = Vec::new();
 
             for (leaf_id, sub_rect) in leaf_rects {
                 let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
@@ -3911,7 +3922,10 @@ impl ChartApp {
                     toolbar_config: &no_toolbar,
                 };
 
-                render_full_chart_panel(ctx, &leaf_rect, &panel_data);
+                let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
+                if !render_result.sub_pane_ranges.is_empty() {
+                    sub_pane_writebacks.push((leaf_id, render_result.sub_pane_ranges));
+                }
 
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
@@ -4175,6 +4189,13 @@ impl ChartApp {
                 }
             }
 
+            // Flatten multi-panel sub-pane writebacks into the output list.
+            for (leaf_id, ranges) in sub_pane_writebacks {
+                for (pane_idx, min, max) in ranges {
+                    out_sub_pane_range_writebacks.push((leaf_id, pane_idx, min, max));
+                }
+            }
+
             // Render separators between split leaves.
             // thickness_for_state() returns 2.0 for idle, 4.0 for hover/dragging.
             // We use thickness > 2.0 as a proxy for "highlighted" state.
@@ -4290,6 +4311,8 @@ impl ChartApp {
                     .collect()
             };
 
+            let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
+
             let window_opt = self.panel_app.panel_grid.active_window();
             let corner_zones_single = if let Some(window) = window_opt {
                 use zengeld_chart::chart::render::ChartRect;
@@ -4332,7 +4355,10 @@ impl ChartApp {
                 let mut chart_panel_data = panel_data;
                 let no_toolbar = zengeld_chart::ToolbarConfig::minimal();
                 chart_panel_data.toolbar_config = &no_toolbar;
-                let corner_zones_ret = render_full_chart_panel(ctx, &chart_render_rect, &chart_panel_data);
+                let render_result = render_full_chart_panel(ctx, &chart_render_rect, &chart_panel_data);
+                // Stash ranges for writeback after the immutable borrow on `window` ends.
+                single_sub_pane_ranges = render_result.sub_pane_ranges;
+                let corner_zones_ret = render_result.corner_zones;
 
                 // Post-render: draw bell icons for alerts bound to this window's
                 // drawing primitives and overlay indicators.
@@ -4411,6 +4437,16 @@ impl ChartApp {
             } else {
                 ScaleCornerHitZones::default()
             };
+
+            // Collect single-window sub-pane ranges for writeback via RenderOutput.
+            if !single_sub_pane_ranges.is_empty() {
+                let single_leaf_id = self.panel_app.panel_grid.docking()
+                    .active_leaf()
+                    .unwrap_or(zengeld_chart::LeafId(0));
+                for (pane_idx, min, max) in single_sub_pane_ranges {
+                    out_sub_pane_range_writebacks.push((single_leaf_id, pane_idx, min, max));
+                }
+            }
 
             // Reset render scope after single-window render is complete.
             self.indicator_manager.current_render_window_id.set(None);
@@ -5162,6 +5198,7 @@ impl ChartApp {
             right_toolbar_left_x: out_right_toolbar_left_x,
             last_inline_bar_rect: out_last_inline_bar_rect,
             open_submenu_update: out_open_submenu_update,
+            sub_pane_range_writebacks: out_sub_pane_range_writebacks,
         }
     }
 
@@ -5185,6 +5222,17 @@ impl ChartApp {
         self.last_inline_bar_rect = output.last_inline_bar_rect;
         if let Some(submenu_update) = output.open_submenu_update {
             self.panel_app.toolbar_state.open_submenu_id = submenu_update;
+        }
+        // Write back render-computed sub-pane ranges (symmetrization + padding already applied).
+        for (leaf_id, pane_idx, min, max) in output.sub_pane_range_writebacks {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                if let Some(sp) = window.sub_panes.get_mut(pane_idx) {
+                    if sp.auto_scale {
+                        sp.price_min = min;
+                        sp.price_max = max;
+                    }
+                }
+            }
         }
     }
 

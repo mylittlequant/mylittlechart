@@ -909,35 +909,22 @@ impl ChartWindow {
 
     /// Update sub-pane price ranges for auto-scaling panes.
     ///
-    /// Applies the same symmetrization and 5% padding that the render path
-    /// uses, so that `price_min`/`price_max` always reflect what is actually
-    /// displayed.  This ensures A→M freeze needs no further transformation.
+    /// Stores raw (unpadded, unsymmetrized) values from the indicator data.
+    /// The render path (`render_sub_pane`) applies symmetrization and 5% padding
+    /// and writes the final values back via `ChartPanelRenderResult::sub_pane_ranges`,
+    /// so stored values always match what is displayed after the first frame.
+    /// This function is a lightweight fallback for the initial state before render runs.
     pub fn update_sub_pane_ranges(&mut self) {
         let (visible_start, visible_end) = self.viewport.visible_range();
         let visible_end = visible_end.min(self.bars.len());
 
         for sub_pane in &mut self.sub_panes {
             if sub_pane.auto_scale {
-                if let Some((mut p_min, mut p_max)) = self.indicator_source.calculate_pane_range(
+                if let Some((p_min, p_max)) = self.indicator_source.calculate_pane_range(
                     sub_pane.instance_id,
                     visible_start,
                     visible_end,
                 ) {
-                    // Mirror the render path exactly: symmetrize only for Centered
-                    // histogram style (not for every indicator that straddles zero).
-                    let style = self.indicator_source.histogram_style_for(sub_pane.instance_id);
-                    if style == crate::indicator_source::HistogramStyle::Centered {
-                        let max_abs = p_min.abs().max(p_max.abs());
-                        if max_abs > 0.0 {
-                            p_min = -max_abs;
-                            p_max = max_abs;
-                        }
-                    }
-                    // 5% padding to match the render path.
-                    let padding = (p_max - p_min) * 0.05;
-                    p_min -= padding;
-                    p_max += padding;
-
                     sub_pane.price_min = p_min;
                     sub_pane.price_max = p_max;
                 }

@@ -173,7 +173,7 @@ pub use layout::{
     ChartRenderConfig, render_chart_area, draw_scale_corner, render_scales,
     render_chart_window, render_chart_splits,
     // Full panel rendering (chart-internal, replaces terminal-assembled path)
-    ChartPanelRenderData, render_full_chart_panel,
+    ChartPanelRenderData, ChartPanelRenderResult, render_full_chart_panel,
     draw_content_borders, draw_frame_borders,
     // Scale corner with buttons
     ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton,

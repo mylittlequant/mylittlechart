@@ -168,6 +168,29 @@ impl ScaleCornerHitZones {
     }
 }
 
+/// Result returned by [`render_full_chart_panel`].
+#[derive(Clone, Debug)]
+pub struct ChartPanelRenderResult {
+    /// Hit zones for the scale corner A/M and mode buttons.
+    pub corner_zones: ScaleCornerHitZones,
+    /// Computed sub-pane ranges for auto-scaled panes: `(pane_index, min, max)`.
+    ///
+    /// Only populated for panes where `auto_scale == true`.  Callers should
+    /// write these values back to the stored [`SubPane`] so that the stored
+    /// range always matches what was actually rendered (symmetrization + padding
+    /// already applied).
+    pub sub_pane_ranges: Vec<(usize, f64, f64)>,
+}
+
+impl ChartPanelRenderResult {
+    fn empty() -> Self {
+        Self {
+            corner_zones: ScaleCornerHitZones::default(),
+            sub_pane_ranges: Vec::new(),
+        }
+    }
+}
+
 /// Which button in scale corner was clicked
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScaleCornerButton {
@@ -1121,23 +1144,23 @@ pub fn render_sub_pane(
     sub_pane_price_min: f64,
     sub_pane_price_max: f64,
     selected_indicator_id: Option<u64>,
-) {
+) -> (f64, f64) {
     use crate::indicator_source::IndicatorOutputRenderType;
 
     let instance = match indicator_source.get_render_instance(pane_layout.instance_id) {
         Some(i) => i,
-        None => return,
+        None => return (0.0, 100.0),
     };
 
     if !instance.visible {
-        return;
+        return (0.0, 100.0);
     }
 
     // Timeframe visibility enforcement
     if let Some(current_tf) = state.current_timeframe {
         if let Some(ref tf_config) = instance.timeframe_visibility {
             if !tf_config.is_visible_on_label(current_tf) {
-                return;
+                return (0.0, 100.0);
             }
         }
     }
@@ -1372,6 +1395,8 @@ pub fn render_sub_pane(
             pane_max,
         );
     }
+
+    (pane_min, pane_max)
 }
 
 // =============================================================================
@@ -2505,10 +2530,10 @@ pub fn render_full_chart_panel(
     ctx: &mut dyn RenderContext,
     window_rect: &LayoutRect,
     data: &ChartPanelRenderData,
-) -> ScaleCornerHitZones {
+) -> ChartPanelRenderResult {
     // Skip rendering if the panel is too small (e.g. collapsed during expand)
     if window_rect.width < 2.0 || window_rect.height < 2.0 {
-        return ScaleCornerHitZones::default();
+        return ChartPanelRenderResult::empty();
     }
 
     // Collect sub-pane instance IDs so layout can allocate vertical space.
@@ -2602,7 +2627,7 @@ pub fn render_full_chart_panel(
         ctx.set_text_align(crate::render::TextAlign::Center);
         ctx.set_text_baseline(crate::render::TextBaseline::Middle);
         ctx.fill_text("Loading...", cx, cy);
-        return ScaleCornerHitZones::default();
+        return ChartPanelRenderResult::empty();
     }
 
     // 2. Grid — extended variant covers the content area (under scales, excluding toolbars).
@@ -2660,6 +2685,7 @@ pub fn render_full_chart_panel(
     }
 
     // 12. Sub-panes (indicators with pane_index > 0).
+    let mut computed_ranges: Vec<(usize, f64, f64)> = Vec::new();
     if let Some(im) = data.indicator_source {
         for (pane_idx, pane_layout) in extended_layout.sub_panes.iter().enumerate() {
             let sub_pane_state = data.sub_panes.and_then(|panes| panes.get(pane_idx));
@@ -2667,7 +2693,7 @@ pub fn render_full_chart_panel(
                 Some(sp) => (sp.auto_scale, sp.price_min, sp.price_max),
                 None => (true, 0.0, 100.0),
             };
-            render_sub_pane(
+            let (final_min, final_max) = render_sub_pane(
                 ctx,
                 pane_layout,
                 pane_idx,
@@ -2684,6 +2710,9 @@ pub fn render_full_chart_panel(
                 price_max,
                 data.selected_indicator_id,
             );
+            if auto_scale {
+                computed_ranges.push((pane_idx, final_min, final_max));
+            }
         }
     }
 
@@ -2771,7 +2800,10 @@ pub fn render_full_chart_panel(
         }
     }
 
-    corner_zones
+    ChartPanelRenderResult {
+        corner_zones,
+        sub_pane_ranges: computed_ranges,
+    }
 }
 
 // =============================================================================
@@ -2890,7 +2922,10 @@ pub fn render_chart_splits(
             toolbar_config: &window.toolbar_config,
         };
 
-        render_full_chart_panel(ctx, &available, &panel_data);
+        // sub_pane_ranges writeback is not performed here because render_chart_splits
+        // holds only an immutable reference to panel_grid.  The chart-app render path
+        // (lib.rs) handles writeback for the windows it owns.
+        let _ = render_full_chart_panel(ctx, &available, &panel_data);
 
         // Restore the clip region saved at the start of this sub-window iteration.
         ctx.restore();
