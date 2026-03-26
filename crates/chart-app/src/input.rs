@@ -6853,19 +6853,24 @@ impl ChartApp {
     fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
         const DEFAULT_H: f64 = 100.0;
 
+        // Get the FULL leaf height in pixels (not chart_height which excludes sub-panes).
+        let active_leaf = match self.panel_app.panel_grid.docking().active_leaf() {
+            Some(l) => l,
+            None => return,
+        };
+        let leaf_h = self.get_leaf_absolute_rect(active_leaf)
+            .map(|r| r.height)
+            .unwrap_or(self.height as f64);
+        if leaf_h <= 0.0 {
+            return;
+        }
+
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
             None => return,
         };
 
-        // Use the leaf's actual chart height, not the total app window height.
-        // In split layouts the leaf may be a fraction of the total, so using
-        // self.height would produce min_h values larger than the leaf itself,
-        // blocking all drag.
-        let available_h = window.viewport.chart_height;
-        if available_h <= 0.0 {
-            return;
-        }
+        let available_h = leaf_h;
 
         // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
         let min_h = (available_h * 0.15).max(20.0);

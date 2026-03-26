@@ -3693,6 +3693,10 @@ impl ChartApp {
             };
             self.panel_app.indicator_overlay_state.visible = has_indicators || has_compare;
         }
+
+        // Sync sub-pane pixel geometry into window.sub_panes so that
+        // PanSubPane handlers and other &mut code see up-to-date values.
+        self.sync_sub_pane_geometry();
     }
 
     /// Convenience wrapper: calls `prepare_frame`, `render_to_scene`, then
@@ -5401,6 +5405,62 @@ impl ChartApp {
         self.pending_sub_pane_ratios.clear();
     }
 
+    /// Sync sub-pane pixel geometry (height, y_offset, chart_width) from the
+    /// computed layout into each window's sub_pane structs.
+    ///
+    /// Must be called with `&mut self` so we can write to sub_panes.  Call
+    /// once per frame inside `prepare_frame`, after the layout has been
+    /// computed, so that `PanSubPane` action handlers and other code that
+    /// reads these fields see up-to-date values.
+    fn sync_sub_pane_geometry(&mut self) {
+        // Phase 1: compute (leaf_id, leaf_rect, extended_layout) using &self.
+        // `build_extended_layout_for_leaf` borrows self immutably, so we must
+        // finish all those borrows before the mutable writes in phase 2.
+        let content_rect = self.content_rect;
+
+        let leaf_rects: Vec<(zengeld_chart::LeafId, LayoutRect)> = self
+            .panel_app
+            .panel_grid
+            .panel_rects()
+            .iter()
+            .map(|(&leaf_id, &sub_rect)| {
+                let leaf_rect = LayoutRect {
+                    x: content_rect.x + sub_rect.x as f64,
+                    y: content_rect.y + sub_rect.y as f64,
+                    width: sub_rect.width as f64,
+                    height: sub_rect.height as f64,
+                };
+                (leaf_id, leaf_rect)
+            })
+            .collect();
+
+        let extended_layouts: Vec<(zengeld_chart::LeafId, zengeld_chart::ExtendedFrameLayout)> =
+            leaf_rects
+                .iter()
+                .filter_map(|&(leaf_id, leaf_rect)| {
+                    let extended = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect)?;
+                    Some((leaf_id, extended))
+                })
+                .collect();
+
+        // Phase 2: apply geometry to sub_panes using &mut self.
+        for (leaf_id, extended) in &extended_layouts {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
+                for layout_sp in &extended.sub_panes {
+                    if let Some(sp) = window
+                        .sub_panes
+                        .iter_mut()
+                        .find(|s| s.instance_id == layout_sp.instance_id)
+                    {
+                        sp.height = layout_sp.content.height as f32;
+                        sp.y_offset = layout_sp.content.y as f32;
+                        sp.chart_width = layout_sp.content.width as f32;
+                    }
+                }
+            }
+        }
+    }
+
     /// Build indicator catalog items from the IndicatorManager definitions.
     fn build_indicator_catalog(&self) -> Vec<IndicatorCatalogItem> {
         let mut items: Vec<IndicatorCatalogItem> = self.indicator_manager.get_definitions().iter().map(|def| {
@@ -5596,30 +5656,11 @@ impl ChartApp {
                         window.update_sub_pane_ranges();
                     }
                     if factor_y != 1.0 {
-                        if let zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } = drag_mode {
-                            // First drag on a sub-pane price scale switches it from Auto to
-                            // Manual and seeds the manual range from the current auto values
-                            // (which are kept up-to-date by update_sub_pane_ranges).
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.auto_scale = false;
-                                let center = (sub_pane.price_min + sub_pane.price_max) / 2.0;
-                                // Dampen the zoom factor for sub-panes.  The engine computes
-                                // factor_y relative to the main chart height; sub-panes are
-                                // smaller so the raw factor is too aggressive.  Pulling the
-                                // factor 70% of the way back toward 1.0 makes it feel similar
-                                // to zooming the main chart price scale.
-                                let dampened_factor = 1.0 + (factor_y - 1.0) * 0.15;
-                                let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * dampened_factor;
-                                sub_pane.price_min = center - half_range;
-                                sub_pane.price_max = center + half_range;
-                            }
-                        } else {
-                            window.price_scale.scale_mode = ScaleMode::Manual;
-                            let center = (window.price_scale.price_min + window.price_scale.price_max) / 2.0;
-                            let half_range = (window.price_scale.price_max - window.price_scale.price_min) / 2.0 * factor_y;
-                            window.price_scale.price_min = center - half_range;
-                            window.price_scale.price_max = center + half_range;
-                        }
+                        window.price_scale.scale_mode = ScaleMode::Manual;
+                        let center = (window.price_scale.price_min + window.price_scale.price_max) / 2.0;
+                        let half_range = (window.price_scale.price_max - window.price_scale.price_min) / 2.0 * factor_y;
+                        window.price_scale.price_min = center - half_range;
+                        window.price_scale.price_max = center + half_range;
                     }
                     // Propagate viewport change to sync group (horizontal zoom only).
                     let view_start = window.viewport.view_start;
@@ -6045,6 +6086,20 @@ impl ChartApp {
                                 data,
                             });
                             self.autosave_snapshot();
+                        }
+                    }
+                }
+
+                ChartOutputAction::PanSubPane { pane_index, delta_y } => {
+                    let Some(window) = self.panel_app.panel_grid.active_window_mut() else { continue; };
+                    if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                        sub_pane.auto_scale = false;
+                        let pane_h = sub_pane.height as f64;
+                        let range = sub_pane.price_max - sub_pane.price_min;
+                        if pane_h > 0.0 && range > 0.0 {
+                            let price_delta = delta_y * (range / pane_h);
+                            sub_pane.price_min += price_delta;
+                            sub_pane.price_max += price_delta;
                         }
                     }
                 }
