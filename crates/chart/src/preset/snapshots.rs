@@ -180,6 +180,10 @@ pub struct ChartWindowSnapshot {
     /// Empty for windows that were not in a tag.
     #[serde(default)]
     pub pre_tag_indicator_ids: Vec<u64>,
+    /// Persisted height ratios for sub-panes, keyed by indicator instance_id.
+    /// `0.0` (absent) means use the default 100 px height.
+    #[serde(default)]
+    pub sub_pane_height_ratios: HashMap<u64, f32>,
 }
 
 impl ChartWindowSnapshot {
@@ -242,6 +246,12 @@ impl ChartWindowSnapshot {
                 .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
                 .collect(),
             pre_tag_indicator_ids: window.pre_tag_indicator_ids.clone(),
+            sub_pane_height_ratios: window
+                .sub_panes
+                .iter()
+                .filter(|p| p.height_ratio > 0.0)
+                .map(|p| (p.instance_id, p.height_ratio))
+                .collect(),
         }
     }
 }

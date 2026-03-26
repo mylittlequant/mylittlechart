@@ -433,13 +433,15 @@ impl ExtendedFrameLayout {
     /// * `chart_panel` - The available chart panel rect (already excludes toolbars/sidebars)
     /// * `sub_pane_instance_ids` - Instance IDs of indicators that need sub-panes
     /// * `scale_settings` - Scale settings for positioning and dimensions
-    /// * `sub_pane_height` - Height of each sub-pane (typically 100.0)
+    /// * `sub_pane_heights` - Per-pane heights in pixels (one per sub-pane, must match
+    ///   `sub_pane_instance_ids` length). Use [`default_sub_pane_heights`] to build a
+    ///   uniform slice when per-pane sizes are not available.
     /// * `separator_height` - Height of separator between panes (typically 1.0)
     pub fn compute_from_chart_panel(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
         scale_settings: &ScaleSettings,
-        sub_pane_height: f64,
+        sub_pane_heights: &[f64],
         separator_height: f64,
     ) -> Self {
         let price_scale_width = scale_settings.effective_price_scale_width();
@@ -458,26 +460,45 @@ impl ExtendedFrameLayout {
             };
         }
 
+        // Build per-pane heights, filling in the default (100px) for missing entries.
+        let default_h = 100.0_f64;
+        let pane_heights: Vec<f64> = (0..sub_pane_count)
+            .map(|i| {
+                sub_pane_heights
+                    .get(i)
+                    .copied()
+                    .filter(|&h| h > 0.0)
+                    .unwrap_or(default_h)
+            })
+            .collect();
+
         // Calculate total height needed for sub-panes
-        let total_sub_panes_height = (sub_pane_height + separator_height) * sub_pane_count as f64;
+        let total_sub_panes_height: f64 =
+            pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
 
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
-        let min_main_chart = if sub_pane_count > 0 {
+        let min_main_chart = {
             let reserved = (separator_height + 20.0) * sub_pane_count as f64;
             (available_height - reserved).clamp(50.0, 200.0)
-        } else {
-            200.0_f64.min(available_height)
         };
         let main_chart_height = (available_height - total_sub_panes_height).max(min_main_chart);
 
-        // Recalculate actual sub-pane height if main chart was clamped
-        let actual_available_for_subs = available_height - main_chart_height;
-        let actual_pane_height = if sub_pane_count > 0 {
-            (actual_available_for_subs - separator_height * sub_pane_count as f64) / sub_pane_count as f64
+        // Actual space available for sub-pane content (after clamping main chart).
+        let actual_available_for_subs = (available_height - main_chart_height).max(0.0);
+        // Scale all pane heights proportionally if they exceed available space.
+        let raw_content_total: f64 = pane_heights.iter().sum::<f64>();
+        let content_budget =
+            (actual_available_for_subs - separator_height * sub_pane_count as f64).max(0.0);
+        let scale_factor = if raw_content_total > 0.0 {
+            (content_budget / raw_content_total).min(1.0)
         } else {
-            0.0
+            1.0
         };
+        let scaled_heights: Vec<f64> = pane_heights
+            .iter()
+            .map(|&h| (h * scale_factor).max(20.0))
+            .collect();
 
         // Calculate chart and scale positions based on scale settings
         let (chart_x, price_scale_x) = match scale_settings.price_scale_position {
@@ -537,7 +558,9 @@ impl ExtendedFrameLayout {
         let mut sub_panes = Vec::with_capacity(sub_pane_count);
         let mut current_y = chart_y + main_chart_height;
 
-        for &instance_id in sub_pane_instance_ids {
+        for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
+            let pane_h = scaled_heights[i];
+
             // Separator
             let separator = LayoutRect::new(
                 chart_panel.x,
@@ -552,7 +575,7 @@ impl ExtendedFrameLayout {
                 chart_x,
                 current_y,
                 chart_width, // Same width as main chart
-                actual_pane_height,
+                pane_h,
             );
 
             // Price scale for this pane (respects price scale X position)
@@ -560,7 +583,7 @@ impl ExtendedFrameLayout {
                 price_scale_x,
                 current_y,
                 price_scale_width,
-                actual_pane_height,
+                pane_h,
             );
 
             sub_panes.push(SubPaneLayout {
@@ -570,7 +593,7 @@ impl ExtendedFrameLayout {
                 price_scale: pane_price_scale,
             });
 
-            current_y += actual_pane_height;
+            current_y += pane_h;
         }
 
         Self {
@@ -580,6 +603,46 @@ impl ExtendedFrameLayout {
             total_chart_height,
         }
     }
+}
+
+/// Build a uniform `sub_pane_heights` slice where every pane gets `height` pixels.
+///
+/// Use this when per-pane sizes are unavailable (e.g. when only instance IDs are
+/// known but the corresponding [`SubPane`] list is not accessible).
+///
+/// [`SubPane`]: crate::SubPane
+pub fn default_sub_pane_heights(count: usize, height: f64) -> Vec<f64> {
+    vec![height; count]
+}
+
+/// Build a `sub_pane_heights` slice from a live [`SubPane`] list.
+///
+/// For each sub-pane, uses `height_ratio` to derive a pixel height from the
+/// total available vertical space (excluding separators).  Falls back to
+/// `default_height` (typically 100 px) when `height_ratio == 0.0`.
+///
+/// The caller should pass `available_height` as the full chart-panel height
+/// minus the time-scale height and any already-allocated space.  A simple
+/// conservative value — such as the current window height — is fine because
+/// `compute_from_chart_panel` will proportionally re-scale the heights anyway
+/// if they overflow.
+///
+/// [`SubPane`]: crate::SubPane
+pub fn sub_pane_heights_from_panes(
+    sub_panes: &[crate::state::SubPane],
+    available_height: f64,
+    default_height: f64,
+) -> Vec<f64> {
+    sub_panes
+        .iter()
+        .map(|p| {
+            if p.height_ratio > 0.0 {
+                (p.height_ratio as f64 * available_height).max(20.0)
+            } else {
+                default_height
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -2656,6 +2656,15 @@ impl ChartApp {
         }
 
         let drag_mode = self.input_handler.state.drag_mode;
+
+        // Handle pane separator drag: resize the sub-pane above and below the
+        // separator by the vertical delta.  This updates height_ratio on the
+        // sub-pane so that compute_from_chart_panel picks it up next frame.
+        if let zengeld_chart::engine::input::DragMode::PaneSeparator { pane_index } = drag_mode {
+            self.handle_pane_separator_drag(pane_index, dy);
+            return;
+        }
+
         let extended = self.build_extended_layout();
         let hit_tester = ExtendedLayoutHitTester::new(&extended);
         let actions = self.input_handler.process_action(
@@ -2743,6 +2752,14 @@ impl ChartApp {
     /// Handle drag end at `(x, y)`.
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
+
+        // End pane separator drag: persist the new height ratios.
+        if let zengeld_chart::engine::input::DragMode::PaneSeparator { .. } = self.input_handler.state.drag_mode {
+            self.input_handler.state.drag_mode = zengeld_chart::engine::input::DragMode::None;
+            self.persist_profile();
+            eprintln!("[ChartApp] PaneSeparator drag ended — sub-pane heights persisted");
+            return;
+        }
 
         // End sidebar separator drag.
         if self.sidebar_separator_drag_active {
@@ -6718,14 +6735,27 @@ impl ChartApp {
             })
             .unwrap_or_default();
 
-        // sub_pane_height=100.0 and separator_height=1.0 must match the
-        // values used in render_full_chart_panel (render_chart.rs:2205-2206).
+        // Build per-pane heights from the active window's SubPane list so that
+        // hit-testing coordinates exactly match what render_full_chart_panel produced.
+        let sub_pane_heights: Vec<f64> = self.panel_app.panel_grid
+            .active_window()
+            .map(|win| {
+                zengeld_chart::sub_pane_heights_from_panes(
+                    &win.sub_panes,
+                    content_rect.height,
+                    100.0,
+                )
+            })
+            .unwrap_or_else(|| {
+                zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
+            });
+
         ExtendedFrameLayout::compute_from_chart_panel(
             &content_rect,
             &sub_pane_ids,
             &scale_settings,
-            100.0,  // sub_pane_height — height of each sub-pane, NOT viewport.chart_height
-            1.0,    // separator_height
+            &sub_pane_heights,
+            1.0, // separator_height
         )
     }
 
@@ -6759,12 +6789,20 @@ impl ChartApp {
         .map(|i| i.id)
         .collect();
 
+        // Build per-pane heights from this leaf's SubPane list so hit-testing
+        // coordinates match render_full_chart_panel exactly.
+        let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
+            &window.sub_panes,
+            leaf_rect.height,
+            100.0,
+        );
+
         Some(ExtendedFrameLayout::compute_from_chart_panel(
             leaf_rect,
             &sub_pane_ids,
             scale_settings,
-            100.0, // sub_pane_height — must match render_full_chart_panel
-            1.0,   // separator_height
+            &sub_pane_heights,
+            1.0, // separator_height
         ))
     }
 
@@ -6785,6 +6823,58 @@ impl ChartApp {
             width: sub_rect.width as f64,
             height: sub_rect.height as f64,
         })
+    }
+
+    /// Adjust sub-pane heights when the user drags a pane separator.
+    ///
+    /// `pane_index` is the index of the sub-pane *below* the separator (the
+    /// separator sits between pane `pane_index - 1` and pane `pane_index`,
+    /// matching the convention used by `HitResult::PaneSeparator`).
+    ///
+    /// The delta is distributed by shrinking the pane above and growing the
+    /// pane below (or vice-versa when dragging up).  Both panes are clamped to
+    /// a minimum of `MIN_SUB_PANE_PX` pixels.
+    fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
+        const MIN_SUB_PANE_PX: f64 = 30.0;
+        const DEFAULT_H: f64 = 100.0;
+
+        // Work out the available height so we can convert pixel deltas to ratios.
+        let available_h = self.height as f64;
+
+        let window = match self.panel_app.panel_grid.active_window_mut() {
+            Some(w) => w,
+            None => return,
+        };
+
+        let pane_count = window.sub_panes.len();
+        // The separator sits *above* `pane_index`.  We need pane_index >= 1.
+        if pane_index == 0 || pane_index >= pane_count {
+            return;
+        }
+
+        let above = pane_index - 1;
+        let below = pane_index;
+
+        // Resolve current pixel heights for the two panes.
+        let h_above = if window.sub_panes[above].height_ratio > 0.0 {
+            (window.sub_panes[above].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+        } else {
+            DEFAULT_H
+        };
+        let h_below = if window.sub_panes[below].height_ratio > 0.0 {
+            (window.sub_panes[below].height_ratio as f64 * available_h).max(MIN_SUB_PANE_PX)
+        } else {
+            DEFAULT_H
+        };
+
+        // Apply delta: growing above shrinks below and vice-versa.
+        let new_above = (h_above + delta_y).max(MIN_SUB_PANE_PX);
+        let new_below = (h_below - delta_y).max(MIN_SUB_PANE_PX);
+
+        if available_h > 0.0 {
+            window.sub_panes[above].height_ratio = (new_above / available_h) as f32;
+            window.sub_panes[below].height_ratio = (new_below / available_h) as f32;
+        }
     }
 
     /// Hide the crosshair on all split leaves.
@@ -16216,6 +16306,24 @@ impl ChartApp {
                         self.indicator_manager.calculate_for_window(&symbol, window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
+
+                    // ----------------------------------------------------------------
+                    // Step 6c: Stage sub-pane height ratios for application on the
+                    // next sync_sub_panes_from_manager() call.
+                    // ----------------------------------------------------------------
+                    self.pending_sub_pane_ratios.clear();
+                    for snap in &preset.windows {
+                        if !snap.sub_pane_height_ratios.is_empty() {
+                            self.pending_sub_pane_ratios
+                                .insert(snap.window_id, snap.sub_pane_height_ratios.clone());
+                        }
+                    }
+                    if !self.pending_sub_pane_ratios.is_empty() {
+                        eprintln!(
+                            "[ChartApp] staged sub-pane height ratios for {} windows",
+                            self.pending_sub_pane_ratios.len()
+                        );
+                    }
 
                     // ----------------------------------------------------------------
                     // Step 7: Clear stale per-leaf UI state

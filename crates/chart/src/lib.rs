@@ -163,6 +163,8 @@ pub use layout::{
     Margins,
     // Extended layout with sub-panes
     ExtendedFrameLayout, SubPaneLayout,
+    // Sub-pane height helpers
+    default_sub_pane_heights, sub_pane_heights_from_panes,
     // Configuration and manager
     LayoutConfig, LayoutManager,
     // Hit testing

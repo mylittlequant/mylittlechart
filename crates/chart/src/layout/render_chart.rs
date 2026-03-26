@@ -2366,12 +2366,19 @@ pub fn render_full_chart_panel(
     let panel_layout = crate::panel_app::ChartPanelLayout::compute(window_rect, data.toolbar_config);
     let content_rect = &panel_layout.content_rect;
 
+    // Build per-pane heights from the SubPane list (height_ratio encodes user-set sizes).
+    let sub_pane_heights: Vec<f64> = if let Some(panes) = data.sub_panes {
+        crate::layout::sub_pane_heights_from_panes(panes, content_rect.height, 100.0)
+    } else {
+        crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
+    };
+
     let extended_layout = crate::layout::ExtendedFrameLayout::compute_from_chart_panel(
         content_rect,
         &sub_pane_ids,
         data.scale_settings,
-        100.0, // sub_pane_height
-        1.0,   // separator_height
+        &sub_pane_heights,
+        1.0, // separator_height
     );
     let main_chart = &extended_layout.main_chart;
 

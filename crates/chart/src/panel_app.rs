@@ -277,7 +277,7 @@ pub fn compute_chart_internal_layout(
     toolbar_config: &ToolbarConfig,
     sub_pane_instance_ids: &[u64],
     scale_settings: &ScaleSettings,
-    sub_pane_height: f64,
+    sub_pane_heights: &[f64],
     separator_height: f64,
 ) -> ChartInternalLayout {
     let panel_layout = ChartPanelLayout::compute(full_panel_rect, toolbar_config);
@@ -285,7 +285,7 @@ pub fn compute_chart_internal_layout(
         &panel_layout.content_rect,
         sub_pane_instance_ids,
         scale_settings,
-        sub_pane_height,
+        sub_pane_heights,
         separator_height,
     );
     ChartInternalLayout {

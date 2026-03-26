@@ -357,6 +357,11 @@ pub struct SubPane {
     /// Saved state for drag operations
     drag_start_price_min: f64,
     drag_start_price_max: f64,
+
+    // Height state (persistent)
+    /// User-set height ratio: 0.0 means use default (100px), otherwise fraction
+    /// of available sub-pane space allocated to this pane.
+    pub height_ratio: f32,
 }
 
 impl SubPane {
@@ -373,6 +378,7 @@ impl SubPane {
             auto_scale: true,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
+            height_ratio: 0.0,
         }
     }
 

@@ -470,6 +470,15 @@ pub struct ChartApp {
     /// Instant when the banner was shown — used for the 10-second auto-dismiss.
     /// None until the banner is first made visible.
     pub launch_banner_shown_at: Option<std::time::Instant>,
+
+    // ── Sub-pane height restore ───────────────────────────────────────────────
+    /// Per-window sub-pane height ratios pending application on the next
+    /// `sync_sub_panes_from_manager` call.  Populated during `LoadPreset` from
+    /// the saved `ChartWindowSnapshot::sub_pane_height_ratios`.
+    ///
+    /// Format: `window_id → (instance_id → height_ratio)`.  Cleared after the
+    /// ratios are applied.
+    pub(crate) pending_sub_pane_ratios: std::collections::HashMap<u64, std::collections::HashMap<u64, f32>>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -768,6 +777,7 @@ impl ChartApp {
             launch_banner_visible: false,
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
+            pending_sub_pane_ratios: std::collections::HashMap::new(),
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1032,6 +1042,7 @@ impl ChartApp {
             launch_banner_visible: false,
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
+            pending_sub_pane_ratios: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1192,6 +1203,7 @@ impl ChartApp {
             launch_banner_visible: false,
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
+            pending_sub_pane_ratios: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -3915,11 +3927,16 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
+                    let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
+                        &window.sub_panes,
+                        leaf_rect.height,
+                        100.0,
+                    );
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &leaf_rect,
                         &sub_pane_ids,
                         &window.scale_settings,
-                        100.0,
+                        &sub_pane_heights,
                         1.0,
                     );
                     let main = &extended.main_chart;
@@ -4333,11 +4350,16 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
+                    let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
+                        &window.sub_panes,
+                        chart_render_rect.height,
+                        100.0,
+                    );
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &chart_render_rect,
                         &sub_pane_ids,
                         &window.scale_settings,
-                        100.0,
+                        &sub_pane_heights,
                         1.0,
                     );
                     let main = &extended.main_chart;
@@ -5337,13 +5359,23 @@ impl ChartApp {
                 None => continue,
             };
 
+            // Grab any pending height ratios for this window (from a preset restore).
+            let pending_ratios = self.pending_sub_pane_ratios.get(&window.id.0).cloned();
+
             let mut new_sub_panes = Vec::with_capacity(sub_pane_data.len());
             for (index, (instance_id, range)) in sub_pane_data.iter().enumerate() {
                 if let Some(existing) = window.sub_panes.iter().find(|p| p.instance_id == *instance_id) {
                     // Preserve existing Y-axis state (auto_scale, price_min/max from
                     // previous frames so we don't reset user-dragged scales).
+                    // height_ratio is also preserved here, surviving indicator recalcs.
                     let mut pane = existing.clone();
                     pane.index = index;
+                    // Apply pending ratio from preset restore if present.
+                    if let Some(ref ratios) = pending_ratios {
+                        if let Some(&ratio) = ratios.get(instance_id) {
+                            pane.height_ratio = ratio;
+                        }
+                    }
                     new_sub_panes.push(pane);
                 } else {
                     // New indicator — create a fresh SubPane and seed its price range.
@@ -5353,11 +5385,20 @@ impl ChartApp {
                         pane.price_min = *p_min;
                         pane.price_max = *p_max;
                     }
+                    // Apply pending ratio from preset restore if present.
+                    if let Some(ref ratios) = pending_ratios {
+                        if let Some(&ratio) = ratios.get(instance_id) {
+                            pane.height_ratio = ratio;
+                        }
+                    }
                     new_sub_panes.push(pane);
                 }
             }
             window.sub_panes = new_sub_panes;
         }
+
+        // Clear pending ratios once they have been applied (one-shot).
+        self.pending_sub_pane_ratios.clear();
     }
 
     /// Build indicator catalog items from the IndicatorManager definitions.
