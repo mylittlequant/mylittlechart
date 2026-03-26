@@ -165,14 +165,21 @@ impl ChartApp {
                                 }
                                 if next_mode.is_auto_y() {
                                     window.calc_auto_scale();
-                                } else {
-                                    // Transitioning Auto→Manual: refresh sub-pane ranges
-                                    // while auto_scale is still true so price_min/price_max
-                                    // are current before we freeze them.
-                                    window.update_sub_pane_ranges();
                                 }
                                 let is_auto = next_mode.is_auto_y();
                                 for sp in &mut window.sub_panes {
+                                    // When freezing auto→manual, symmetrize the range for
+                                    // centered indicators (those whose auto range straddles zero).
+                                    // The render path symmetrizes in auto mode; manual mode reads
+                                    // price_min/price_max directly, so we must bake it in here.
+                                    if sp.auto_scale && !is_auto
+                                        && sp.price_min < 0.0
+                                        && sp.price_max > 0.0
+                                    {
+                                        let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                                        sp.price_min = -max_abs;
+                                        sp.price_max = max_abs;
+                                    }
                                     sp.auto_scale = is_auto;
                                 }
                             }
@@ -6846,16 +6853,22 @@ impl ChartApp {
     fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
         const DEFAULT_H: f64 = 100.0;
 
-        // Work out the available height so we can convert pixel deltas to ratios.
-        let available_h = self.height as f64;
-
-        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
-        let min_h = (available_h * 0.15).max(20.0);
-
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
             None => return,
         };
+
+        // Use the leaf's actual chart height, not the total app window height.
+        // In split layouts the leaf may be a fraction of the total, so using
+        // self.height would produce min_h values larger than the leaf itself,
+        // blocking all drag.
+        let available_h = window.viewport.chart_height;
+        if available_h <= 0.0 {
+            return;
+        }
+
+        // 15% of leaf height, with a 20 px absolute floor so tiny windows stay usable.
+        let min_h = (available_h * 0.15).max(20.0);
 
         let pane_count = window.sub_panes.len();
         if pane_index >= pane_count {
@@ -9536,14 +9549,17 @@ impl ChartApp {
                             w.price_scale.scale_mode = next;
                             if next.is_auto_y() {
                                 w.calc_auto_scale();
-                            } else {
-                                // Transitioning Auto→Manual: refresh sub-pane ranges
-                                // while auto_scale is still true so price_min/price_max
-                                // are current before we freeze them.
-                                w.update_sub_pane_ranges();
                             }
                             let is_auto = next.is_auto_y();
                             for sp in &mut w.sub_panes {
+                                if sp.auto_scale && !is_auto
+                                    && sp.price_min < 0.0
+                                    && sp.price_max > 0.0
+                                {
+                                    let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                                    sp.price_min = -max_abs;
+                                    sp.price_max = max_abs;
+                                }
                                 sp.auto_scale = is_auto;
                             }
                             eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
@@ -14526,14 +14542,17 @@ impl ChartApp {
                     }
                     if next_mode.is_auto_y() {
                         window.calc_auto_scale();
-                    } else {
-                        // Transitioning Auto→Manual: refresh sub-pane ranges
-                        // while auto_scale is still true so price_min/price_max
-                        // are current before we freeze them.
-                        window.update_sub_pane_ranges();
                     }
                     let is_auto = next_mode.is_auto_y();
                     for sp in &mut window.sub_panes {
+                        if sp.auto_scale && !is_auto
+                            && sp.price_min < 0.0
+                            && sp.price_max > 0.0
+                        {
+                            let max_abs = sp.price_min.abs().max(sp.price_max.abs());
+                            sp.price_min = -max_abs;
+                            sp.price_max = max_abs;
+                        }
                         sp.auto_scale = is_auto;
                     }
                 }

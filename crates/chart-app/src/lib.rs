@@ -5608,7 +5608,7 @@ impl ChartApp {
                                 // smaller so the raw factor is too aggressive.  Pulling the
                                 // factor 70% of the way back toward 1.0 makes it feel similar
                                 // to zooming the main chart price scale.
-                                let dampened_factor = 1.0 + (factor_y - 1.0) * 0.3;
+                                let dampened_factor = 1.0 + (factor_y - 1.0) * 0.15;
                                 let half_range = (sub_pane.price_max - sub_pane.price_min) / 2.0 * dampened_factor;
                                 sub_pane.price_min = center - half_range;
                                 sub_pane.price_max = center + half_range;
