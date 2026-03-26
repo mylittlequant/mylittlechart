@@ -49,6 +49,16 @@ impl BarService {
         }
     }
 
+    /// Expose the underlying bars directory for cleanup tasks.
+    pub fn bars_dir(&self) -> &std::path::Path {
+        &self.bar_store.bars_dir
+    }
+
+    /// Delegate to the underlying store's bulk disk load.
+    pub fn load_many(&self, keys: &[(&str, &str, &str, &str)]) -> Vec<(String, String, String, String, Vec<Bar>)> {
+        self.bar_store.load_many(keys)
+    }
+
     /// Get or create a series handle. Cheap after first call — just a
     /// HashMap lookup returning an `Arc` clone.
     pub fn get_or_create(

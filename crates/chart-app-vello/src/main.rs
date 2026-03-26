@@ -637,8 +637,8 @@ struct App<'s> {
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
     pending_promote_after_recovery_key: bool,
 
-    /// Bar cache persistence handle — queues async writes to `{data_dir}/bars/`.
-    bar_store: bar_store::BarStoreHandle,
+    /// Bar cache persistence service — owns BarStoreHandle + in-memory series map.
+    bar_service: bar_service::BarService,
     /// Wall-clock instant of the last periodic bar-cache save.
     last_bar_cache_save: std::time::Instant,
     /// Wall-clock instant of the last periodic bar-cache cleanup run.
@@ -1823,6 +1823,44 @@ fn encode_png(pixels: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     Some(png_bytes)
 }
 
+/// Rough timeframe string → period in seconds for BarSeries.
+fn timeframe_period_secs(tf: &str) -> i64 {
+    match tf {
+        "1s" => 1,
+        "5s" => 5,
+        "15s" => 15,
+        "30s" => 30,
+        "1m" => 60,
+        "3m" => 180,
+        "5m" => 300,
+        "15m" => 900,
+        "30m" => 1800,
+        "1h" | "1H" => 3600,
+        "2h" | "2H" => 7200,
+        "4h" | "4H" => 14400,
+        "6h" | "6H" => 21600,
+        "8h" | "8H" => 28800,
+        "12h" | "12H" => 43200,
+        "1d" | "1D" => 86400,
+        "3d" | "3D" => 259200,
+        "1w" | "1W" => 604800,
+        "1M" => 2592000,
+        _ => {
+            // Try to parse numeric prefix as minutes/hours/days/weeks.
+            let num_str: String = tf.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(n) = num_str.parse::<i64>() {
+                if tf.ends_with('m') { n * 60 }
+                else if tf.ends_with('h') || tf.ends_with('H') { n * 3600 }
+                else if tf.ends_with('d') || tf.ends_with('D') { n * 86400 }
+                else if tf.ends_with('w') || tf.ends_with('W') { n * 604800 }
+                else { n * 60 } // default to minutes
+            } else {
+                60 // fallback: 1 minute
+            }
+        }
+    }
+}
+
 /// Collect `(exchange, symbol, timeframe, account_type)` 4-tuples from all windows of all
 /// open tabs in the given profile.  Used at startup to pre-load the bar cache from disk.
 fn collect_bar_keys_from_presets(
@@ -2152,21 +2190,33 @@ impl App<'_> {
         // ── Bar cache persistence ─────────────────────────────────────────────
         // Create the BarStoreHandle, load persisted bars, and seed the DataBridge
         // cache so that the first symbol switch is instant without a network round-trip.
-        let bar_store = {
+        let mut bar_service = {
             let bars_dir = zengeld_chart::app_data_dir().join("bars");
-            bar_store::BarStoreHandle::new(bars_dir, bridge.runtime())
+            let bar_store_handle = bar_store::BarStoreHandle::new(bars_dir, bridge.runtime());
+            bar_service::BarService::new(bar_store_handle, bar_service::DEFAULT_CAPACITY)
         };
 
         // Collect bar keys from presets and load them from disk.
+        // Seed both BarService (persistence) and DataBridge cache (runtime).
         {
             let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
             let bar_key_refs: Vec<(&str, &str, &str, &str)> = bar_keys
                 .iter()
                 .map(|(e, s, t, a)| (e.as_str(), s.as_str(), t.as_str(), a.as_str()))
                 .collect();
-            let loaded = bar_store.load_many(&bar_key_refs);
+            let loaded = bar_service.load_many(&bar_key_refs);
             if !loaded.is_empty() {
                 eprintln!("[App] pre-loaded {} bar cache entries from disk", loaded.len());
+                // Seed BarService series from disk data.
+                for (exchange_str, symbol, timeframe, account_type_label, bars) in &loaded {
+                    if let Some(eid) = chart_app::ExchangeId::from_str(exchange_str) {
+                        let at = chart_app::account_type_from_label(account_type_label);
+                        let period_secs = timeframe_period_secs(timeframe);
+                        let key = bar_service::BarSeriesKey::new(eid, at, symbol.clone(), timeframe.clone());
+                        bar_service.seed_from_disk(key, bars.clone(), period_secs);
+                    }
+                }
+                // Also seed bridge cache (still needed for Level 1 instant loads).
                 bridge.seed_bar_cache(loaded);
             }
         }
@@ -2175,7 +2225,7 @@ impl App<'_> {
         // Run stale-file eviction and LRU size trim on a background thread so
         // app startup is not blocked by disk I/O.
         {
-            let bars_dir = bar_store.bars_dir.clone();
+            let bars_dir = bar_service.bars_dir().to_path_buf();
             let max_size_mb = profile.data_load.max_store_size_mb;
             let cleanup_days = profile.data_load.store_cleanup_days;
             std::thread::spawn(move || {
@@ -2251,7 +2301,7 @@ impl App<'_> {
             pending_switch_sync_level: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
-            bar_store,
+            bar_service,
             last_bar_cache_save: std::time::Instant::now(),
             last_cleanup_check: std::time::Instant::now(),
         }
@@ -3139,18 +3189,19 @@ impl App<'_> {
         }
 
         // 10. Flush bar cache to disk.
-        let snapshot = self.bridge.dump_cache_snapshot();
-        eprintln!("[App] save_all: flushing {} bar cache entries to disk", snapshot.len());
-        for (exchange, symbol, timeframe, account_type, bars) in snapshot {
-            self.bar_store.write_async(
-                &exchange,
-                &symbol,
-                &timeframe,
-                &account_type,
-                std::sync::Arc::new(bars),
-            );
+        // Flush bridge cache through BarService for full coverage.
+        let bridge_snapshot = self.bridge.dump_cache_snapshot();
+        eprintln!("[App] save_all: merging {} bridge cache entries into bar_service", bridge_snapshot.len());
+        for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
+            if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
+                let at = chart_app::account_type_from_label(&account_type_label);
+                let period_secs = timeframe_period_secs(&timeframe);
+                let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
+                self.bar_service.merge_rest_batch(&key, bars, period_secs);
+            }
         }
-        self.bar_store.flush_sync();
+        self.bar_service.flush_dirty();
+        self.bar_service.flush_sync();
     }
 
     /// Drain app-level broadcast messages each frame.
@@ -3859,16 +3910,17 @@ impl ApplicationHandler for App<'_> {
         // ── Periodic bar cache save (every 5 minutes) ─────────────────────────
         if self.last_bar_cache_save.elapsed() >= std::time::Duration::from_secs(300) {
             self.last_bar_cache_save = std::time::Instant::now();
-            let snapshot = self.bridge.dump_cache_snapshot();
-            for (exchange, symbol, timeframe, account_type, bars) in snapshot {
-                self.bar_store.write_async(
-                    &exchange,
-                    &symbol,
-                    &timeframe,
-                    &account_type,
-                    std::sync::Arc::new(bars),
-                );
+            // Merge bridge cache into BarService, then flush dirty series.
+            let bridge_snapshot = self.bridge.dump_cache_snapshot();
+            for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
+                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
+                    let at = chart_app::account_type_from_label(&account_type_label);
+                    let period_secs = timeframe_period_secs(&timeframe);
+                    let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
+                    self.bar_service.merge_rest_batch(&key, bars, period_secs);
+                }
             }
+            self.bar_service.flush_dirty();
         }
 
         // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
@@ -3880,23 +3932,24 @@ impl ApplicationHandler for App<'_> {
             for pw in self.windows.values_mut() {
                 pw.chart.bars_cache_dirty = false;
             }
-            let snapshot = self.bridge.dump_cache_snapshot();
-            eprintln!("[App] bars_cache_dirty: flushing {} bar cache entries to disk", snapshot.len());
-            for (exchange, symbol, timeframe, account_type, bars) in snapshot {
-                self.bar_store.write_async(
-                    &exchange,
-                    &symbol,
-                    &timeframe,
-                    &account_type,
-                    std::sync::Arc::new(bars),
-                );
+            // Merge bridge cache into BarService, then flush dirty series.
+            let bridge_snapshot = self.bridge.dump_cache_snapshot();
+            eprintln!("[App] bars_cache_dirty: merging {} bridge entries, flushing dirty", bridge_snapshot.len());
+            for (exchange_str, symbol, timeframe, account_type_label, bars) in bridge_snapshot {
+                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange_str) {
+                    let at = chart_app::account_type_from_label(&account_type_label);
+                    let period_secs = timeframe_period_secs(&timeframe);
+                    let key = bar_service::BarSeriesKey::new(eid, at, symbol, timeframe);
+                    self.bar_service.merge_rest_batch(&key, bars, period_secs);
+                }
             }
+            self.bar_service.flush_dirty();
         }
 
         // ── Periodic bar store cleanup (every hour) ───────────────────────────
         if self.last_cleanup_check.elapsed() >= std::time::Duration::from_secs(3600) {
             self.last_cleanup_check = std::time::Instant::now();
-            let bars_dir = self.bar_store.bars_dir.clone();
+            let bars_dir = self.bar_service.bars_dir().to_path_buf();
             let max_size_mb = self.profile.data_load.max_store_size_mb;
             let cleanup_days = self.profile.data_load.store_cleanup_days;
             std::thread::spawn(move || {

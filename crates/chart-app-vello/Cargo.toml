@@ -14,6 +14,7 @@ sidebar-content = { path = "../sidebar-content" }
 alert-delivery = { path = "../alert-delivery" }
 live-data = { path = "../live-data" }
 bar-store = { path = "../bar-store" }
+bar-service = { path = "../bar-service" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
 uzor = "1.0.21"
