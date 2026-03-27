@@ -1446,6 +1446,12 @@ pub fn draw_sub_pane_price_scale(
     let num_labels = if height > 80.0 { 3 } else { 2 };
     let price_range = price_max - price_min;
 
+    // Clip tick labels to the sub-pane price scale so they slide off smoothly.
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+
     ctx.set_font(&format!("{}px sans-serif", config.font_size));
     ctx.set_fill_color(&theme.scale_text);
     ctx.set_text_align(crate::render::TextAlign::Center);
@@ -1454,15 +1460,8 @@ pub fn draw_sub_pane_price_scale(
     for i in 0..=num_labels {
         let ratio = i as f64 / num_labels as f64;
         let label_y = y + height - (ratio * height);
-
-        // Skip labels too close to edges
-        if label_y < y + 8.0 || label_y > y + height - 8.0 {
-            continue;
-        }
-
         let price = price_min + ratio * price_range;
 
-        // Format price (use appropriate precision)
         let label = if price_range < 1.0 {
             format!("{:.4}", price)
         } else if price_range < 10.0 {
@@ -1476,18 +1475,14 @@ pub fn draw_sub_pane_price_scale(
         ctx.fill_text(&label, text_x, label_y);
     }
 
-    // Draw a "0" label when zero is within the visible range but was not
-    // already rendered by the loop above.  This makes the zero baseline
-    // immediately visible on oscillator sub-panes (MACD, RSI, etc.).
+    // Draw a "0" label when zero is within the visible range.
     if price_min < 0.0 && price_max > 0.0 && price_range > 0.0 {
         let zero_ratio = (0.0_f64 - price_min) / price_range;
         let zero_y = y + height - (zero_ratio * height);
-
-        // Only draw if not too close to the edges (avoids clipping/overlap).
-        if zero_y >= y + 8.0 && zero_y <= y + height - 8.0 {
-            ctx.fill_text("0", text_x, zero_y);
-        }
+        ctx.fill_text("0", text_x, zero_y);
     }
+
+    ctx.restore();
 }
 
 /// Draw a crosshair price label on the sub-pane Y-axis.

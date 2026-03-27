@@ -109,6 +109,12 @@ pub fn draw_price_scale(
     // Generate price ticks
     let ticks = price_scale.generate_ticks_for_mode(viewport.chart_height);
 
+    // Clip tick labels to the price scale area so they slide off smoothly at edges.
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+    ctx.clip();
+
     ctx.set_font(&format!("{}px sans-serif", config.font_size));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -116,12 +122,11 @@ pub fn draw_price_scale(
 
     for price in &ticks {
         let y = price_scale.price_to_y(*price, viewport.chart_height);
-        // Skip labels too close to edges
-        if y > 10.0 && y < viewport.chart_height - 10.0 {
-            let label = price_scale.format_label(*price, viewport.chart_height);
-            ctx.fill_text(&label, text_x, origin_y + y);
-        }
+        let label = price_scale.format_label(*price, viewport.chart_height);
+        ctx.fill_text(&label, text_x, origin_y + y);
     }
+
+    ctx.restore();
 
     // Draw last price label (always visible, not just on hover)
     if let Some(last_bar) = state.bars.last() {
