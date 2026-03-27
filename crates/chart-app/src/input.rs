@@ -14729,6 +14729,8 @@ impl ChartApp {
                             }
                             self.indicator_manager.toggle_visibility(id);
                             self.sidebar_data_dirty = true;
+                            eprintln!("[Hide] instance_id={} indicator_visible={:?}",
+                                id, self.indicator_manager.get_instance(id).map(|i| i.visible));
                         }
                         self.autosave_snapshot();
                     }

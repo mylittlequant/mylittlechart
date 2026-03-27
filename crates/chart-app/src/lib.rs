@@ -5525,6 +5525,12 @@ impl ChartApp {
             for (i, pane) in new_sub_panes.iter_mut().enumerate() {
                 pane.index = i;
             }
+            eprintln!("[sync_sub_panes] window={} symbol={} sub_pane_data_ids={:?} existing={:?} new={:?}",
+                chart_id_val, symbol,
+                sub_pane_data.iter().map(|(id,_)| *id).collect::<Vec<_>>(),
+                window.sub_panes.iter().map(|p| (p.instance_id, p.hidden)).collect::<Vec<_>>(),
+                new_sub_panes.iter().map(|p| (p.instance_id, p.hidden)).collect::<Vec<_>>(),
+            );
             window.sub_panes = new_sub_panes;
         }
 
