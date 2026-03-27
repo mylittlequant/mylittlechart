@@ -38,14 +38,12 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
                 let y = viewport.price_to_y(price, price_scale.price_min, price_scale.price_max);
                 let screen_y = rect.y + y;
-                if screen_y >= rect.y && screen_y <= rect.bottom() {
-                    draw_styled_line(
-                        ctx,
-                        rect.x, screen_y,
-                        rect.right(), screen_y,
-                        &grid.horz_lines.style,
-                    );
-                }
+                draw_styled_line(
+                    ctx,
+                    rect.x, screen_y,
+                    rect.right(), screen_y,
+                    &grid.horz_lines.style,
+                );
             }
         }
     }
@@ -72,14 +70,12 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         for tick in ticks {
             // TimeTick already has pre-computed x coordinate
             let screen_x = rect.x + tick.x;
-            if screen_x >= rect.x && screen_x <= rect.right() {
-                draw_styled_line(
-                    ctx,
-                    screen_x, rect.y,
-                    screen_x, rect.bottom(),
-                    &grid.vert_lines.style,
-                );
-            }
+            draw_styled_line(
+                ctx,
+                screen_x, rect.y,
+                screen_x, rect.bottom(),
+                &grid.vert_lines.style,
+            );
         }
     }
 }
