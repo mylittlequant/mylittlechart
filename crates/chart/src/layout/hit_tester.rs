@@ -110,6 +110,14 @@ impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
                         };
                     }
                 }
+                if let Some(ref rect) = overlay.move_down_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::MoveDown,
+                        };
+                    }
+                }
                 if let Some(ref rect) = overlay.expand_rect {
                     if rect.contains(x, y) {
                         return HitResult::SubPaneOverlayButton {

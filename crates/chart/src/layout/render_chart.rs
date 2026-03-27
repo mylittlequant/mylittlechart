@@ -1942,7 +1942,7 @@ pub fn render_sub_pane_overlay(
     let icon_size = 14.0;
     let button_size = 18.0;
     let gap = 2.0;
-    let num_buttons: u32 = 4;
+    let num_buttons: u32 = 5;
     let bar_width = num_buttons as f64 * (button_size + gap) - gap;
     let bar_height = button_size;
     let margin = 6.0;
@@ -1975,8 +1975,8 @@ pub fn render_sub_pane_overlay(
     // Center the icon within the button.
     let icon_offset = (button_size - icon_size) / 2.0;
 
-    // Define the 4 buttons: (index, icon, button_type).
-    let buttons: [(u32, Icon, SubPaneButton); 4] = [
+    // Define the 5 buttons: (index, icon, button_type).
+    let buttons: [(u32, Icon, SubPaneButton); 5] = [
         (0, Icon::Delete, SubPaneButton::Delete),
         (
             1,
@@ -1984,8 +1984,9 @@ pub fn render_sub_pane_overlay(
             SubPaneButton::Hide,
         ),
         (2, Icon::ArrowUp, SubPaneButton::MoveUp),
+        (3, Icon::ArrowDown, SubPaneButton::MoveDown),
         (
-            3,
+            4,
             if is_maximized { Icon::Collapse } else { Icon::Expand },
             if is_maximized { SubPaneButton::Restore } else { SubPaneButton::Expand },
         ),
@@ -1996,6 +1997,7 @@ pub fn render_sub_pane_overlay(
         delete_rect: None,
         hide_rect: None,
         move_up_rect: None,
+        move_down_rect: None,
         expand_rect: None,
     };
 
@@ -2036,6 +2038,7 @@ pub fn render_sub_pane_overlay(
             SubPaneButton::Delete => result.delete_rect = Some(rect),
             SubPaneButton::Hide => result.hide_rect = Some(rect),
             SubPaneButton::MoveUp => result.move_up_rect = Some(rect),
+            SubPaneButton::MoveDown => result.move_down_rect = Some(rect),
             SubPaneButton::Expand | SubPaneButton::Restore => result.expand_rect = Some(rect),
         }
     }
@@ -2686,10 +2689,19 @@ pub fn render_full_chart_panel(
         return ChartPanelRenderResult::empty();
     }
 
-    // Collect sub-pane instance IDs so layout can allocate vertical space.
-    let sub_pane_ids: Vec<u64> = if let (Some(im), Some(symbol)) =
-        (data.indicator_source, data.symbol)
-    {
+    // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
+    // so that hidden/maximized flags and user-defined order are respected.
+    let sub_pane_ids: Vec<u64> = if let Some(panes) = data.sub_panes {
+        // Check for a maximized pane first — only show that one.
+        if let Some(maximized) = panes.iter().find(|p| p.maximized && !p.hidden) {
+            vec![maximized.instance_id]
+        } else {
+            panes.iter()
+                .filter(|p| !p.hidden)
+                .map(|p| p.instance_id)
+                .collect()
+        }
+    } else if let (Some(im), Some(symbol)) = (data.indicator_source, data.symbol) {
         im.get_instances_for_symbol(symbol)
             .into_iter()
             .filter(|i| i.visible && i.pane_index > 0)
@@ -2706,9 +2718,15 @@ pub fn render_full_chart_panel(
     let panel_layout = crate::panel_app::ChartPanelLayout::compute(window_rect, data.toolbar_config);
     let content_rect = &panel_layout.content_rect;
 
-    // Build per-pane heights from the SubPane list (height_ratio encodes user-set sizes).
+    // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
     let sub_pane_heights: Vec<f64> = if let Some(panes) = data.sub_panes {
-        crate::layout::sub_pane_heights_from_panes(panes, content_rect.height, 100.0)
+        sub_pane_ids.iter().map(|&id| {
+            let ratio = panes.iter()
+                .find(|p| p.instance_id == id)
+                .map(|p| p.height_ratio)
+                .unwrap_or(0.0);
+            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
+        }).collect()
     } else {
         crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
     };
@@ -2839,7 +2857,9 @@ pub fn render_full_chart_panel(
     let mut sub_pane_overlay_results: Vec<SubPaneOverlayResult> = Vec::new();
     if let Some(im) = data.indicator_source {
         for (pane_idx, pane_layout) in extended_layout.sub_panes.iter().enumerate() {
-            let sub_pane_state = data.sub_panes.and_then(|panes| panes.get(pane_idx));
+            let sub_pane_state = data.sub_panes.and_then(|panes|
+                panes.iter().find(|p| p.instance_id == pane_layout.instance_id)
+            );
             let (auto_scale, price_min, price_max) = match sub_pane_state {
                 Some(sp) => (sp.auto_scale, sp.price_min, sp.price_max),
                 None => (true, 0.0, 100.0),
@@ -2866,8 +2886,12 @@ pub fn render_full_chart_panel(
             }
 
             // Render the overlay button bar for this sub-pane.
+            // Look up overlay state by the original sub_panes index (not filtered index).
+            let overlay_state_idx = data.sub_panes
+                .and_then(|panes| panes.iter().position(|p| p.instance_id == pane_layout.instance_id))
+                .unwrap_or(pane_idx);
             let overlay_state = data.sub_pane_overlay_states
-                .get(pane_idx)
+                .get(overlay_state_idx)
                 .cloned()
                 .unwrap_or_default();
             let (is_hidden, is_maximized) = match sub_pane_state {

@@ -3882,6 +3882,8 @@ impl ChartApp {
                                         Some(SubPaneButton::Hide)
                                     } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::MoveUp)
+                                    } else if overlay.move_down_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::MoveDown)
                                     } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::Expand)
                                     } else {
@@ -4152,6 +4154,8 @@ impl ChartApp {
                             Some(SubPaneButton::Hide)
                         } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::MoveUp)
+                        } else if overlay.move_down_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::MoveDown)
                         } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::Expand)
                         } else {
@@ -6859,41 +6863,35 @@ impl ChartApp {
             .map(|win| win.scale_settings.clone())
             .unwrap_or_default();
 
-        // Collect sub-pane instance IDs so that ExtendedFrameLayout matches
-        // the one computed during render (render_full_chart_panel).  Without
-        // these, main_chart height is wrong and coordinate transforms break.
-        // Scope the query to the active chart window to avoid counting
-        // indicators from other split panes (which would double the sub_pane
-        // count and offset the crosshair).
-        let active_chart_id = self.panel_app.panel_grid.active_chart_id();
+        // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
+        // so that hidden/maximized flags and user-defined order are respected.
         let sub_pane_ids: Vec<u64> = self.panel_app.panel_grid
             .active_window()
             .map(|win| {
-                let symbol = &win.symbol;
-                if let Some(cid) = active_chart_id {
-                    self.indicator_manager
-                        .get_instances_for_symbol_in_window(symbol, cid.0)
+                if let Some(maximized) = win.sub_panes.iter().find(|p| p.maximized && !p.hidden) {
+                    vec![maximized.instance_id]
                 } else {
-                    self.indicator_manager
-                        .get_instances_for_symbol(symbol)
+                    win.sub_panes.iter()
+                        .filter(|p| !p.hidden)
+                        .map(|p| p.instance_id)
+                        .collect()
                 }
-                .into_iter()
-                .filter(|i| i.visible && i.pane > 0)
-                .map(|i| i.id)
-                .collect()
             })
             .unwrap_or_default();
 
         // Build per-pane heights from the active window's SubPane list so that
         // hit-testing coordinates exactly match what render_full_chart_panel produced.
+        // Build heights matching sub_pane_ids order (filtered by hidden/maximized).
         let sub_pane_heights: Vec<f64> = self.panel_app.panel_grid
             .active_window()
             .map(|win| {
-                zengeld_chart::sub_pane_heights_from_panes(
-                    &win.sub_panes,
-                    content_rect.height,
-                    100.0,
-                )
+                sub_pane_ids.iter().map(|&id| {
+                    let ratio = win.sub_panes.iter()
+                        .find(|p| p.instance_id == id)
+                        .map(|p| p.height_ratio)
+                        .unwrap_or(0.0);
+                    if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
+                }).collect()
             })
             .unwrap_or_else(|| {
                 zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
@@ -6921,30 +6919,25 @@ impl ChartApp {
         let window = self.panel_app.panel_grid.window_for_leaf(leaf_id)?;
         let scale_settings = &window.scale_settings;
 
-        // Collect sub-pane IDs for this leaf's window symbol, scoped to the
-        // leaf's own chart window so that indicators from other split panes
-        // are not counted (which would inflate sub_pane count and offset the
-        // crosshair position).
-        let chart_id = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id);
-        let sub_pane_ids: Vec<u64> = if let Some(cid) = chart_id {
-            self.indicator_manager
-                .get_instances_for_symbol_in_window(&window.symbol, cid.0)
+        // Collect sub-pane IDs from the window's SubPane list (not indicator_manager)
+        // so that hidden/maximized flags and user-defined order are respected.
+        let sub_pane_ids: Vec<u64> = if let Some(maximized) = window.sub_panes.iter().find(|p| p.maximized && !p.hidden) {
+            vec![maximized.instance_id]
         } else {
-            self.indicator_manager
-                .get_instances_for_symbol(&window.symbol)
-        }
-        .into_iter()
-        .filter(|i| i.visible && i.pane > 0)
-        .map(|i| i.id)
-        .collect();
+            window.sub_panes.iter()
+                .filter(|p| !p.hidden)
+                .map(|p| p.instance_id)
+                .collect()
+        };
 
-        // Build per-pane heights from this leaf's SubPane list so hit-testing
-        // coordinates match render_full_chart_panel exactly.
-        let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
-            &window.sub_panes,
-            leaf_rect.height,
-            100.0,
-        );
+        // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
+        let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
+            let ratio = window.sub_panes.iter()
+                .find(|p| p.instance_id == id)
+                .map(|p| p.height_ratio)
+                .unwrap_or(0.0);
+            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
+        }).collect();
 
         Some(ExtendedFrameLayout::compute_from_chart_panel(
             leaf_rect,
@@ -14729,6 +14722,17 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             if pane_index > 0 && pane_index < window.sub_panes.len() {
                                 window.sub_panes.swap(pane_index, pane_index - 1);
+                                for (i, pane) in window.sub_panes.iter_mut().enumerate() {
+                                    pane.index = i;
+                                }
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                    SubPaneButton::MoveDown => {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            if pane_index + 1 < window.sub_panes.len() {
+                                window.sub_panes.swap(pane_index, pane_index + 1);
                                 for (i, pane) in window.sub_panes.iter_mut().enumerate() {
                                     pane.index = i;
                                 }

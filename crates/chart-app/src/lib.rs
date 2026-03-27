@@ -5480,37 +5480,46 @@ impl ChartApp {
             // Grab any pending height ratios for this window (from a preset restore).
             let pending_ratios = self.pending_sub_pane_ratios.get(&window.id.0).cloned();
 
-            let mut new_sub_panes = Vec::with_capacity(sub_pane_data.len());
-            for (index, (instance_id, range)) in sub_pane_data.iter().enumerate() {
-                if let Some(existing) = window.sub_panes.iter().find(|p| p.instance_id == *instance_id) {
-                    // Preserve existing Y-axis state (auto_scale, price_min/max from
-                    // previous frames so we don't reset user-dragged scales).
-                    // height_ratio is also preserved here, surviving indicator recalcs.
+            // Build new_sub_panes preserving existing order from window.sub_panes.
+            // Existing panes keep their position; new panes are appended at the end.
+            let mut new_sub_panes: Vec<zengeld_chart::state::SubPane> = Vec::with_capacity(sub_pane_data.len());
+            let mut used_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+            // First pass: keep existing panes in their current order (if still present in sub_pane_data).
+            for existing in &window.sub_panes {
+                if sub_pane_data.iter().any(|(id, _)| *id == existing.instance_id) {
                     let mut pane = existing.clone();
-                    pane.index = index;
-                    // Apply pending ratio from preset restore if present.
                     if let Some(ref ratios) = pending_ratios {
-                        if let Some(&ratio) = ratios.get(instance_id) {
+                        if let Some(&ratio) = ratios.get(&existing.instance_id) {
                             pane.height_ratio = ratio;
                         }
                     }
                     new_sub_panes.push(pane);
-                } else {
-                    // New indicator — create a fresh SubPane and seed its price range.
-                    let mut pane = zengeld_chart::state::SubPane::new(*instance_id);
-                    pane.index = index;
-                    if let Some((p_min, p_max)) = range {
-                        pane.price_min = *p_min;
-                        pane.price_max = *p_max;
-                    }
-                    // Apply pending ratio from preset restore if present.
-                    if let Some(ref ratios) = pending_ratios {
-                        if let Some(&ratio) = ratios.get(instance_id) {
-                            pane.height_ratio = ratio;
-                        }
-                    }
-                    new_sub_panes.push(pane);
+                    used_ids.insert(existing.instance_id);
                 }
+            }
+
+            // Second pass: append new panes (not in existing order).
+            for (instance_id, range) in &sub_pane_data {
+                if used_ids.contains(instance_id) {
+                    continue;
+                }
+                let mut pane = zengeld_chart::state::SubPane::new(*instance_id);
+                if let Some((p_min, p_max)) = range {
+                    pane.price_min = *p_min;
+                    pane.price_max = *p_max;
+                }
+                if let Some(ref ratios) = pending_ratios {
+                    if let Some(&ratio) = ratios.get(instance_id) {
+                        pane.height_ratio = ratio;
+                    }
+                }
+                new_sub_panes.push(pane);
+            }
+
+            // Update indices.
+            for (i, pane) in new_sub_panes.iter_mut().enumerate() {
+                pane.index = i;
             }
             window.sub_panes = new_sub_panes;
         }

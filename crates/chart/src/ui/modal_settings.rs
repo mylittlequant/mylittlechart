@@ -1635,6 +1635,8 @@ pub enum SubPaneButton {
     Expand,
     /// Shown instead of Expand when the pane is already maximized — restores it.
     Restore,
+    /// Move this sub-pane down in the ordering.
+    MoveDown,
 }
 
 /// Per-sub-pane overlay button UI state (hover triggered visibility).
