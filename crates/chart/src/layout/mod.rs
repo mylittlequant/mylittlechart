@@ -60,4 +60,5 @@ pub use render_frame::{
     MultiChartRenderResult,
     ChartModalLayout,
     ChartModalRenderResult,
+    SubPaneOverlayResult,
 };

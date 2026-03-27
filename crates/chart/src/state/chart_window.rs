@@ -27,6 +27,8 @@ use crate::data_provider::{DataProvider, SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
 use crate::indicator_source::{IndicatorSource, NullIndicatorSource};
 use crate::panel_app::{ChartToolbarState, ToolbarConfig};
+use crate::ui::modal_settings::SubPaneOverlayState;
+use crate::layout::SubPaneOverlayResult;
 use crate::layout::LayoutRect;
 use crate::chart::render::ChartRect;
 use crate::scale_settings::{PriceScalePosition, TimeScalePosition};
@@ -125,6 +127,14 @@ pub struct ChartWindow {
     // === Sub-panes ===
     /// Sub-panes for indicators
     pub sub_panes: Vec<SubPane>,
+    /// Per-sub-pane overlay button UI state (hover visibility, hovered button).
+    ///
+    /// Indexed in the same order as `sub_panes`.  Grown on demand; missing
+    /// entries are treated as default (not visible).
+    pub sub_pane_overlay_states: Vec<SubPaneOverlayState>,
+    /// Cached sub-pane overlay button rects from the last render frame.
+    /// Used by hit tester to detect button clicks.
+    pub sub_pane_overlay_results: Vec<SubPaneOverlayResult>,
     /// Pane manager for layout
     pub pane_manager: PaneManager,
     /// Total chart height including sub-panes
@@ -338,6 +348,8 @@ impl ChartWindow {
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
             sub_panes: Vec::new(),
+            sub_pane_overlay_states: Vec::new(),
+            sub_pane_overlay_results: Vec::new(),
             pane_manager: PaneManager::new(),
             total_chart_height: 0.0,
             symbol: symbol.to_string(),
@@ -508,6 +520,10 @@ impl ChartWindow {
             // Clone sub_panes so the new window has correct layout immediately.
             // sync_sub_panes_from_manager will reconcile instance IDs on the next tick.
             sub_panes: self.sub_panes.clone(),
+            // Overlay state is not inherited — the split child starts with no hover state.
+            sub_pane_overlay_states: Vec::new(),
+            // Overlay results are frame-local; the split child starts empty.
+            sub_pane_overlay_results: Vec::new(),
             pane_manager: self.pane_manager.clone(),
             total_chart_height: self.total_chart_height,
 

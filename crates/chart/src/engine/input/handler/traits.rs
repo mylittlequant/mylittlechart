@@ -5,6 +5,7 @@
 
 use super::super::events::ChartInputAction;
 use super::super::objects::CursorStyle;
+use crate::ui::modal_settings::SubPaneButton;
 
 /// Result of a hit test on the chart.
 ///
@@ -91,6 +92,16 @@ pub enum HitResult {
         point_index: usize,
     },
 
+    /// Sub-pane overlay button (delete, hide, move-up, expand/restore).
+    ///
+    /// User clicked on a button in the sub-pane's overlay bar.
+    SubPaneOverlayButton {
+        /// Index of the sub-pane this button belongs to.
+        pane_index: usize,
+        /// Which button was hit.
+        button: SubPaneButton,
+    },
+
     /// Toolbar area.
     ///
     /// Any toolbar (top, left, right, bottom) - should not start chart interactions.
@@ -149,6 +160,7 @@ impl HitResult {
             HitResult::PaneSeparator { .. } => CursorStyle::NsResize,
             HitResult::Primitive { .. } => CursorStyle::Move,
             HitResult::ControlPoint { .. } => CursorStyle::Move,
+            HitResult::SubPaneOverlayButton { .. } => CursorStyle::Pointer,
             HitResult::ScaleCorner | HitResult::Toolbar | HitResult::None => CursorStyle::Default,
         }
     }

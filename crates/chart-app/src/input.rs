@@ -474,7 +474,11 @@ impl ChartApp {
         }
 
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_dc = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_dc);
 
         // Capture hit result before passing hit_tester into process_action.
         let hit = hit_tester.hit_test(x, y);
@@ -1828,7 +1832,11 @@ impl ChartApp {
         }
 
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_ds = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_ds);
 
         // Check whether the drag starts on a primitive (main chart or sub-pane)
         // or on a control point of the currently selected primitive.  If so,
@@ -2679,7 +2687,11 @@ impl ChartApp {
         }
 
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_dm = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_dm);
         let actions = self.input_handler.process_action(
             ChartInputAction::DragMove { mode: drag_mode, x, y, delta_x: dx, delta_y: dy },
             &hit_tester,
@@ -3322,7 +3334,11 @@ impl ChartApp {
 
         let drag_mode = self.input_handler.state.drag_mode;
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_de = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_de);
         let actions = self.input_handler.process_action(
             ChartInputAction::DragEnd { mode: drag_mode, x, y },
             &hit_tester,
@@ -4041,6 +4057,46 @@ impl ChartApp {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // --- Update sub-pane overlay visibility based on cursor position ---
+        // Clone overlay results to avoid conflicting borrows on panel_grid.
+        let overlay_results_mm = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            // Hide all overlays first.
+            for state in window.sub_pane_overlay_states.iter_mut() {
+                state.visible = false;
+                state.hovered_button = None;
+            }
+            // Show overlay for the pane the cursor is inside.
+            for (idx, pane_layout) in extended.sub_panes.iter().enumerate() {
+                if pane_layout.content.contains(x, y) {
+                    while window.sub_pane_overlay_states.len() <= idx {
+                        window.sub_pane_overlay_states.push(Default::default());
+                    }
+                    window.sub_pane_overlay_states[idx].visible = true;
+                    // Determine which button (if any) is hovered.
+                    if idx < overlay_results_mm.len() {
+                        use zengeld_chart::ui::modal_settings::SubPaneButton;
+                        let overlay = &overlay_results_mm[idx];
+                        let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::Delete)
+                        } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::Hide)
+                        } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::MoveUp)
+                        } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::Expand)
+                        } else {
+                            None
+                        };
+                        window.sub_pane_overlay_states[idx].hovered_button = hovered;
+                    }
+                    break; // cursor can only be in one pane
+                }
             }
         }
     }
@@ -4875,7 +4931,11 @@ impl ChartApp {
         }
 
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_sc = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_sc);
         let actions = self.input_handler.process_action(
             ChartInputAction::Scroll { x, y, delta_x: dx, delta_y: dy },
             &hit_tester,
@@ -14572,7 +14632,75 @@ impl ChartApp {
             ScaleCornerButton::None => {}
         }
 
-        // 2. Drawing tool check — if a tool is active, convert the click to
+        // 2. Sub-pane overlay button check — clicks on delete/hide/move-up/expand
+        //    buttons are handled here before any other canvas logic.
+        {
+            let overlay_results_btn = self.panel_app.panel_grid.active_window()
+                .map(|w| w.sub_pane_overlay_results.clone())
+                .unwrap_or_default();
+            let extended_btn = self.build_extended_layout();
+            let tester_btn = ExtendedLayoutHitTester::new(&extended_btn)
+                .with_overlays(&overlay_results_btn);
+            use zengeld_chart::input::ChartHitTester;
+            if let zengeld_chart::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } = tester_btn.hit_test(x, y) {
+                use zengeld_chart::ui::modal_settings::SubPaneButton;
+                match button {
+                    SubPaneButton::Delete => {
+                        let instance_id_opt = self.panel_app.panel_grid.active_window()
+                            .and_then(|w| w.sub_panes.get(pane_index))
+                            .map(|sp| sp.instance_id);
+                        if let Some(instance_id) = instance_id_opt {
+                            self.delete_indicator_instance(instance_id);
+                        }
+                    }
+                    SubPaneButton::Hide => {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                sub_pane.hidden = !sub_pane.hidden;
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                    SubPaneButton::MoveUp => {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            if pane_index > 0 && pane_index < window.sub_panes.len() {
+                                window.sub_panes.swap(pane_index, pane_index - 1);
+                                for (i, pane) in window.sub_panes.iter_mut().enumerate() {
+                                    pane.index = i;
+                                }
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                    SubPaneButton::Expand => {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                sub_pane.pre_maximize_height_ratio = sub_pane.height_ratio;
+                                sub_pane.maximized = true;
+                            }
+                            for (i, pane) in window.sub_panes.iter_mut().enumerate() {
+                                if i != pane_index {
+                                    pane.maximized = false;
+                                }
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                    SubPaneButton::Restore => {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                sub_pane.maximized = false;
+                                sub_pane.height_ratio = sub_pane.pre_maximize_height_ratio;
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                return;
+            }
+        }
+
+        // 3. Drawing tool check — if a tool is active, convert the click to
         //    chart-local data coordinates and forward to DrawingManager.on_click().
         //
         //    Handles both main chart and sub-pane areas.  Sub-panes share the
@@ -15064,7 +15192,11 @@ impl ChartApp {
         }
 
         let extended = self.build_extended_layout();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended);
+        let overlay_results_cc = self.panel_app.panel_grid.active_window()
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+            .with_overlays(&overlay_results_cc);
         let actions = self.input_handler.process_action(
             ChartInputAction::Click {
                 x,

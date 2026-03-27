@@ -305,6 +305,26 @@ pub struct IndicatorOverlayResult {
 }
 
 // =============================================================================
+// Sub-Pane Overlay Render Result
+// =============================================================================
+
+/// Hit-test data for a single sub-pane overlay button bar.
+/// Produced each frame by `render_sub_pane_overlay()`.
+#[derive(Clone, Debug, Default)]
+pub struct SubPaneOverlayResult {
+    /// Indicator instance ID this overlay belongs to.
+    pub instance_id: u64,
+    /// Rect for the delete button.
+    pub delete_rect: Option<LayoutRect>,
+    /// Rect for the hide/show button.
+    pub hide_rect: Option<LayoutRect>,
+    /// Rect for the move-up button.
+    pub move_up_rect: Option<LayoutRect>,
+    /// Rect for the expand/restore button.
+    pub expand_rect: Option<LayoutRect>,
+}
+
+// =============================================================================
 // Color Picker Render Result
 // =============================================================================
 

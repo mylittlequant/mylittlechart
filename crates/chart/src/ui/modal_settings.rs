@@ -1619,6 +1619,36 @@ impl IndicatorOverlayState {
 }
 
 // =============================================================================
+// Sub-Pane Overlay State
+// =============================================================================
+
+/// Which button on the sub-pane overlay bar is being referenced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SubPaneButton {
+    /// Delete the indicator (and its sub-pane).
+    Delete,
+    /// Hide / unhide the sub-pane (indicator still exists).
+    Hide,
+    /// Move this sub-pane up in the ordering.
+    MoveUp,
+    /// Expand this sub-pane to fill the entire chart area.
+    Expand,
+    /// Shown instead of Expand when the pane is already maximized — restores it.
+    Restore,
+}
+
+/// Per-sub-pane overlay button UI state (hover triggered visibility).
+///
+/// One instance lives in `ChartApp` keyed by `instance_id`.
+#[derive(Clone, Debug, Default)]
+pub struct SubPaneOverlayState {
+    /// Whether the button bar is visible (mouse inside sub-pane content area).
+    pub visible: bool,
+    /// Which button (if any) is currently hovered.
+    pub hovered_button: Option<SubPaneButton>,
+}
+
+// =============================================================================
 // Compare Settings Modal State
 // =============================================================================
 

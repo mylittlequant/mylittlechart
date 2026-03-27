@@ -43,7 +43,10 @@ use crate::drawing::{DrawingManager, draw_control_points};
 use crate::apply_opacity;
 use crate::scale_settings::ScaleSettings;
 use crate::state::SubPane;
+use crate::ui::icons::Icon;
+use crate::ui::modal_settings::SubPaneOverlayState;
 use super::rects::{ChartAreaLayout, FrameLayout, LayoutRect, SubPaneLayout};
+use super::render_frame::SubPaneOverlayResult;
 use uzor::panels::SeparatorOrientation;
 
 // =============================================================================
@@ -180,6 +183,8 @@ pub struct ChartPanelRenderResult {
     /// range always matches what was actually rendered (symmetrization + padding
     /// already applied).
     pub sub_pane_ranges: Vec<(usize, f64, f64)>,
+    /// Sub-pane overlay hit zones for button interaction.
+    pub sub_pane_overlays: Vec<SubPaneOverlayResult>,
 }
 
 impl ChartPanelRenderResult {
@@ -187,6 +192,7 @@ impl ChartPanelRenderResult {
         Self {
             corner_zones: ScaleCornerHitZones::default(),
             sub_pane_ranges: Vec::new(),
+            sub_pane_overlays: Vec::new(),
         }
     }
 }
@@ -1902,6 +1908,141 @@ pub fn render_sub_pane_primitives(
     ctx.restore();
 }
 
+// =============================================================================
+// Sub-Pane Overlay Button Bar
+// =============================================================================
+
+/// Render the overlay button bar for a single sub-pane.
+///
+/// Shows 4 small icon buttons in the top-right corner of the sub-pane content area.
+/// Buttons (left to right): Delete | Hide/Show | MoveUp | Expand/Restore
+///
+/// Returns [`SubPaneOverlayResult`] with button rects for hit-testing.
+pub fn render_sub_pane_overlay(
+    ctx: &mut dyn RenderContext,
+    content: &LayoutRect,
+    instance_id: u64,
+    state: &SubPaneOverlayState,
+    is_hidden: bool,
+    is_maximized: bool,
+    frame_theme: &FrameTheme,
+    text_color: &str,
+) -> SubPaneOverlayResult {
+    use crate::ui::modal_settings::SubPaneButton;
+    use crate::render::draw_svg_icon;
+
+    // Don't render if pane is too small or overlay not visible.
+    if content.height < 50.0 || !state.visible {
+        return SubPaneOverlayResult {
+            instance_id,
+            ..Default::default()
+        };
+    }
+
+    let icon_size = 14.0;
+    let button_size = 18.0;
+    let gap = 2.0;
+    let num_buttons: u32 = 4;
+    let bar_width = num_buttons as f64 * (button_size + gap) - gap;
+    let bar_height = button_size;
+    let margin = 6.0;
+
+    // Position: top-right corner of content area.
+    let bar_x = content.x + content.width - bar_width - margin;
+    let bar_y = content.y + margin;
+
+    // Draw background pill.
+    let bg_color = apply_opacity(&frame_theme.toolbar_bg, 0.80);
+    ctx.set_fill_color(&bg_color);
+    ctx.fill_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+
+    // Draw border.
+    let border_color = apply_opacity(&frame_theme.toolbar_border, 0.6);
+    ctx.set_stroke_color(&border_color);
+    ctx.set_stroke_width(0.5);
+    ctx.stroke_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+
+    // Helper: compute button rect at index.
+    let button_rect = |idx: u32| -> LayoutRect {
+        LayoutRect::new(
+            bar_x + idx as f64 * (button_size + gap),
+            bar_y,
+            button_size,
+            button_size,
+        )
+    };
+
+    // Center the icon within the button.
+    let icon_offset = (button_size - icon_size) / 2.0;
+
+    // Define the 4 buttons: (index, icon, button_type).
+    let buttons: [(u32, Icon, SubPaneButton); 4] = [
+        (0, Icon::Delete, SubPaneButton::Delete),
+        (
+            1,
+            if is_hidden { Icon::EyeOff } else { Icon::Eye },
+            SubPaneButton::Hide,
+        ),
+        (2, Icon::ArrowUp, SubPaneButton::MoveUp),
+        (
+            3,
+            if is_maximized { Icon::Collapse } else { Icon::Expand },
+            if is_maximized { SubPaneButton::Restore } else { SubPaneButton::Expand },
+        ),
+    ];
+
+    let mut result = SubPaneOverlayResult {
+        instance_id,
+        delete_rect: None,
+        hide_rect: None,
+        move_up_rect: None,
+        expand_rect: None,
+    };
+
+    for (idx, icon, button_type) in &buttons {
+        let rect = button_rect(*idx);
+        let is_hovered = state.hovered_button.as_ref() == Some(button_type);
+
+        // Determine icon color: red for delete on hover, accent for others, muted default.
+        let color = if is_hovered {
+            match button_type {
+                SubPaneButton::Delete => "#f23645".to_string(),
+                _ => "#2962ff".to_string(),
+            }
+        } else {
+            apply_opacity(text_color, 0.6)
+        };
+
+        // Draw hover background.
+        if is_hovered {
+            let hover_bg = apply_opacity(&frame_theme.toolbar_border, 0.4);
+            ctx.set_fill_color(&hover_bg);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 2.0);
+        }
+
+        // Draw icon.
+        draw_svg_icon(
+            ctx,
+            icon.svg(),
+            rect.x + icon_offset,
+            rect.y + icon_offset,
+            icon_size,
+            icon_size,
+            &color,
+        );
+
+        // Store rect for hit-testing.
+        match button_type {
+            SubPaneButton::Delete => result.delete_rect = Some(rect),
+            SubPaneButton::Hide => result.hide_rect = Some(rect),
+            SubPaneButton::MoveUp => result.move_up_rect = Some(rect),
+            SubPaneButton::Expand | SubPaneButton::Restore => result.expand_rect = Some(rect),
+        }
+    }
+
+    result
+}
+
 /// Render drawing primitives for the main chart area (pane_id == None).
 ///
 /// This is the chart-crate equivalent of `render_window_primitives` in core.
@@ -2507,6 +2648,11 @@ pub struct ChartPanelRenderData<'a> {
     pub selected_indicator_id: Option<u64>,
     /// Frame theme for borders and toolbar backgrounds
     pub frame_theme: &'a FrameTheme,
+    /// Sub-pane overlay button states, indexed by sub-pane position in the sub_panes slice.
+    ///
+    /// Each entry corresponds to a sub-pane at the same index.  A missing entry (index
+    /// out of bounds) is treated as a default (not visible) overlay state.
+    pub sub_pane_overlay_states: &'a [SubPaneOverlayState],
     /// Toolbar configuration used to carve the content rect from `window_rect`.
     ///
     /// `render_full_chart_panel` receives the full panel rect (including toolbar
@@ -2690,6 +2836,7 @@ pub fn render_full_chart_panel(
 
     // 12. Sub-panes (indicators with pane_index > 0).
     let mut computed_ranges: Vec<(usize, f64, f64)> = Vec::new();
+    let mut sub_pane_overlay_results: Vec<SubPaneOverlayResult> = Vec::new();
     if let Some(im) = data.indicator_source {
         for (pane_idx, pane_layout) in extended_layout.sub_panes.iter().enumerate() {
             let sub_pane_state = data.sub_panes.and_then(|panes| panes.get(pane_idx));
@@ -2717,6 +2864,27 @@ pub fn render_full_chart_panel(
             if auto_scale {
                 computed_ranges.push((pane_idx, final_min, final_max));
             }
+
+            // Render the overlay button bar for this sub-pane.
+            let overlay_state = data.sub_pane_overlay_states
+                .get(pane_idx)
+                .cloned()
+                .unwrap_or_default();
+            let (is_hidden, is_maximized) = match sub_pane_state {
+                Some(sp) => (sp.hidden, sp.maximized),
+                None => (false, false),
+            };
+            let overlay_result = render_sub_pane_overlay(
+                ctx,
+                &pane_layout.content,
+                pane_layout.instance_id,
+                &overlay_state,
+                is_hidden,
+                is_maximized,
+                data.frame_theme,
+                &data.state.theme.text,
+            );
+            sub_pane_overlay_results.push(overlay_result);
         }
     }
 
@@ -2807,6 +2975,7 @@ pub fn render_full_chart_panel(
     ChartPanelRenderResult {
         corner_zones,
         sub_pane_ranges: computed_ranges,
+        sub_pane_overlays: sub_pane_overlay_results,
     }
 }
 
@@ -2920,6 +3089,9 @@ pub fn render_chart_splits(
             scale_settings: &window.scale_settings,
             selected_indicator_id: None,
             frame_theme,
+            // Split sub-windows carry no overlay state — overlays are only shown in
+            // the main (single-chart) render path.
+            sub_pane_overlay_states: &[],
             // Split sub-windows have no toolbars — the caller already allocated
             // the full sub-rect to chart content.  Pass minimal so that
             // render_full_chart_panel computes layout from the full rect.

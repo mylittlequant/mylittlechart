@@ -673,6 +673,7 @@ impl DefaultChartInputHandler {
             HitResult::ControlPoint { primitive_id, point_index } => {
                 DragMode::ControlPoint { primitive_id, point_index }
             }
+            HitResult::SubPaneOverlayButton { .. } => DragMode::None,
             HitResult::ScaleCorner | HitResult::Toolbar | HitResult::None => DragMode::None,
         }
     }

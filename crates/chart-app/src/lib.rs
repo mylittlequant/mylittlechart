@@ -682,6 +682,11 @@ pub struct RenderOutput {
     /// final (symmetrized + padded) range.  Applied in `apply_render_output`
     /// so that stored values always match what was displayed.
     pub sub_pane_range_writebacks: Vec<(zengeld_chart::LeafId, usize, f64, f64)>,
+    /// Sub-pane overlay result writebacks: `(leaf_id, overlay_results)`.
+    ///
+    /// Produced each frame by `render_full_chart_panel`.  Applied in
+    /// `apply_render_output` so the hit tester can read button rects next frame.
+    pub sub_pane_overlay_writebacks: Vec<(zengeld_chart::LeafId, Vec<zengeld_chart::SubPaneOverlayResult>)>,
 }
 
 impl ChartApp {
@@ -3817,6 +3822,8 @@ impl ChartApp {
         // Sub-pane range writebacks: render computes symmetrized+padded ranges,
         // applied by apply_render_output() via window_for_leaf_mut.
         let mut out_sub_pane_range_writebacks: Vec<(zengeld_chart::LeafId, usize, f64, f64)> = Vec::new();
+        // Sub-pane overlay result writebacks: cached per-window for hit testing.
+        let mut out_sub_pane_overlay_writebacks: Vec<(zengeld_chart::LeafId, Vec<zengeld_chart::SubPaneOverlayResult>)> = Vec::new();
 
         let _rt1 = std::time::Instant::now(); // checkpoint: before chart render
         let frame_theme = self.panel_app.frame_theme_for_render();
@@ -3863,6 +3870,7 @@ impl ChartApp {
                 .collect();
 
             let mut sub_pane_writebacks: Vec<(zengeld_chart::LeafId, Vec<(usize, f64, f64)>)> = Vec::new();
+            let mut overlay_writebacks: Vec<(zengeld_chart::LeafId, Vec<zengeld_chart::SubPaneOverlayResult>)> = Vec::new();
 
             for (leaf_id, sub_rect) in leaf_rects {
                 let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
@@ -3953,6 +3961,7 @@ impl ChartApp {
                     scale_settings: &window.scale_settings,
                     selected_indicator_id: self.selected_indicator_id,
                     frame_theme: &frame_theme,
+                    sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &no_toolbar,
                 };
 
@@ -3960,6 +3969,8 @@ impl ChartApp {
                 if !render_result.sub_pane_ranges.is_empty() {
                     sub_pane_writebacks.push((leaf_id, render_result.sub_pane_ranges));
                 }
+                // Store overlay results for next frame's hit testing.
+                overlay_writebacks.push((leaf_id, render_result.sub_pane_overlays));
 
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
@@ -4230,6 +4241,9 @@ impl ChartApp {
                 }
             }
 
+            // Collect multi-panel overlay writebacks.
+            out_sub_pane_overlay_writebacks.extend(overlay_writebacks);
+
             // Render separators between split leaves.
             // thickness_for_state() returns 2.0 for idle, 4.0 for hover/dragging.
             // We use thickness > 2.0 as a proxy for "highlighted" state.
@@ -4346,6 +4360,7 @@ impl ChartApp {
             };
 
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
+            let mut single_sub_pane_overlays: Vec<zengeld_chart::SubPaneOverlayResult> = Vec::new();
 
             let window_opt = self.panel_app.panel_grid.active_window();
             let corner_zones_single = if let Some(window) = window_opt {
@@ -4378,6 +4393,7 @@ impl ChartApp {
                     scale_settings: &window.scale_settings,
                     selected_indicator_id: self.selected_indicator_id,
                     frame_theme: &frame_theme,
+                    sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &self.panel_app.toolbar_config,
                 };
 
@@ -4390,8 +4406,9 @@ impl ChartApp {
                 let no_toolbar = zengeld_chart::ToolbarConfig::minimal();
                 chart_panel_data.toolbar_config = &no_toolbar;
                 let render_result = render_full_chart_panel(ctx, &chart_render_rect, &chart_panel_data);
-                // Stash ranges for writeback after the immutable borrow on `window` ends.
+                // Stash ranges and overlay results for writeback after the immutable borrow on `window` ends.
                 single_sub_pane_ranges = render_result.sub_pane_ranges;
+                single_sub_pane_overlays = render_result.sub_pane_overlays;
                 let corner_zones_ret = render_result.corner_zones;
 
                 // Post-render: draw bell icons for alerts bound to this window's
@@ -4480,6 +4497,14 @@ impl ChartApp {
                 for (pane_idx, min, max) in single_sub_pane_ranges {
                     out_sub_pane_range_writebacks.push((single_leaf_id, pane_idx, min, max));
                 }
+            }
+
+            // Collect single-window overlay results for writeback via RenderOutput.
+            {
+                let single_leaf_id = self.panel_app.panel_grid.docking()
+                    .active_leaf()
+                    .unwrap_or(zengeld_chart::LeafId(0));
+                out_sub_pane_overlay_writebacks.push((single_leaf_id, single_sub_pane_overlays));
             }
 
             // Reset render scope after single-window render is complete.
@@ -5233,6 +5258,7 @@ impl ChartApp {
             last_inline_bar_rect: out_last_inline_bar_rect,
             open_submenu_update: out_open_submenu_update,
             sub_pane_range_writebacks: out_sub_pane_range_writebacks,
+            sub_pane_overlay_writebacks: out_sub_pane_overlay_writebacks,
         }
     }
 
@@ -5266,6 +5292,12 @@ impl ChartApp {
                         sp.price_max = max;
                     }
                 }
+            }
+        }
+        // Write back sub-pane overlay button rects for next frame's hit testing.
+        for (leaf_id, overlays) in output.sub_pane_overlay_writebacks {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                window.sub_pane_overlay_results = overlays;
             }
         }
     }

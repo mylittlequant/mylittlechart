@@ -174,6 +174,8 @@ pub use layout::{
     render_chart_window, render_chart_splits,
     // Full panel rendering (chart-internal, replaces terminal-assembled path)
     ChartPanelRenderData, ChartPanelRenderResult, render_full_chart_panel,
+    // Sub-pane overlay hit-test results (produced each frame, cached on ChartWindow)
+    SubPaneOverlayResult,
     draw_content_borders, draw_frame_borders,
     // Scale corner with buttons
     ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton,

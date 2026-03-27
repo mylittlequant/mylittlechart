@@ -5,7 +5,9 @@
 //! - `ExtendedLayoutHitTester` - for ExtendedFrameLayout (with sub-panes)
 
 use crate::input::{ChartHitTester, HitResult};
+use crate::ui::modal_settings::SubPaneButton;
 use super::rects::{ChartAreaLayout, ChartHitZone, ExtendedFrameLayout};
+use super::render_frame::SubPaneOverlayResult;
 
 /// Adapter that implements ChartHitTester for ChartAreaLayout
 ///
@@ -62,17 +64,63 @@ impl<'a> ChartHitTester for LayoutHitTester<'a> {
 pub struct ExtendedLayoutHitTester<'a> {
     /// The extended frame layout with sub-pane information
     pub layout: &'a ExtendedFrameLayout,
+    /// Optional sub-pane overlay results for button hit testing.
+    pub overlay_results: Option<&'a [SubPaneOverlayResult]>,
 }
 
 impl<'a> ExtendedLayoutHitTester<'a> {
     /// Create a new extended hit tester
     pub fn new(layout: &'a ExtendedFrameLayout) -> Self {
-        Self { layout }
+        Self { layout, overlay_results: None }
+    }
+
+    /// Attach sub-pane overlay results for button hit testing.
+    pub fn with_overlays(mut self, overlays: &'a [SubPaneOverlayResult]) -> Self {
+        self.overlay_results = Some(overlays);
+        self
     }
 }
 
 impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
     fn hit_test(&self, x: f64, y: f64) -> HitResult {
+        // 0. Check sub-pane overlay buttons (highest priority — small precise targets)
+        if let Some(overlays) = self.overlay_results {
+            for (idx, overlay) in overlays.iter().enumerate() {
+                if let Some(ref rect) = overlay.delete_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::Delete,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.hide_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::Hide,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.move_up_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::MoveUp,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.expand_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::Expand,
+                        };
+                    }
+                }
+            }
+        }
+
         // 1. Check sub-pane separators first (small targets, highest priority)
         if let Some(pane_index) = self.layout.find_separator_at_y(y) {
             // Check if X is within the chart+scale area
