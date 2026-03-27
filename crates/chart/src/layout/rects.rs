@@ -482,15 +482,17 @@ impl ExtendedFrameLayout {
             // Maximized: main chart keeps its normal height (rendered underneath).
             // The maximized pane is drawn as an overlay covering the full
             // available area.  Other panes get zero height (invisible).
+            // actual_available_for_subs stays normal so time_scale_y doesn't shift.
             let min_main_chart = available_height * 0.15;
             let total_sub_panes_height: f64 =
                 pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
             let mch = (available_height - total_sub_panes_height).max(min_main_chart);
-            // Maximized pane = full overlay, rest = 0 (won't be visible).
+            let afs = (available_height - mch).max(0.0);
+            // Maximized pane = full overlay (available_height), rest = 0.
             let sh: Vec<f64> = sub_pane_instance_ids.iter().map(|&id| {
                 if id == max_id { available_height } else { 0.0 }
             }).collect();
-            (mch, available_height, sh)
+            (mch, afs, sh)
         } else {
             // Calculate total height needed for sub-panes
             let total_sub_panes_height: f64 =
