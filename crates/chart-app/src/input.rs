@@ -14718,12 +14718,18 @@ impl ChartApp {
                         }
                     }
                     SubPaneButton::Hide => {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.hidden = !sub_pane.hidden;
+                        let instance_id = self.panel_app.panel_grid.active_window()
+                            .and_then(|w| w.sub_panes.get(pane_index))
+                            .map(|p| p.instance_id);
+                        if let Some(id) = instance_id {
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                    sub_pane.hidden = !sub_pane.hidden;
+                                }
                             }
+                            self.indicator_manager.toggle_visibility(id);
+                            self.sidebar_data_dirty = true;
                         }
-                        self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
