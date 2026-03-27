@@ -479,12 +479,15 @@ impl ExtendedFrameLayout {
         let available_height = chart_panel.height - time_scale_height;
 
         let (main_chart_height, actual_available_for_subs, scaled_heights) = if maximized_pane {
-            // Maximized: single pane takes all available space.  Keep main chart
-            // at 1px (not 0) to avoid triggering viewport/scale dirty loops.
-            let main_h = 1.0;
-            let afs = (available_height - main_h).max(0.0);
-            let pane_h = (afs - separator_height).max(0.0);
-            (main_h, afs, vec![pane_h])
+            // Maximized: main chart keeps its normal height (rendered underneath).
+            // The single maximized pane is drawn as an overlay covering the full
+            // available area.  No separator, no scaling.
+            let min_main_chart = available_height * 0.15;
+            let total_sub_panes_height: f64 =
+                pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
+            let mch = (available_height - total_sub_panes_height).max(min_main_chart);
+            // The pane gets the full available_height as overlay.
+            (mch, available_height, vec![available_height])
         } else {
             // Calculate total height needed for sub-panes
             let total_sub_panes_height: f64 =
@@ -574,39 +577,52 @@ impl ExtendedFrameLayout {
         for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
             let pane_h = scaled_heights[i];
 
-            // Separator
-            let separator = LayoutRect::new(
-                chart_panel.x,
-                current_y,
-                chart_panel.width, // Full width including price scale
-                separator_height,
-            );
-            current_y += separator_height;
+            if maximized_pane {
+                // Maximized: overlay from chart_y, no separator, full available height.
+                let separator = LayoutRect::new(chart_panel.x, chart_y, chart_panel.width, 0.0);
+                let content = LayoutRect::new(chart_x, chart_y, chart_width, pane_h);
+                let pane_price_scale = LayoutRect::new(price_scale_x, chart_y, price_scale_width, pane_h);
+                sub_panes.push(SubPaneLayout {
+                    instance_id,
+                    separator,
+                    content,
+                    price_scale: pane_price_scale,
+                });
+            } else {
+                // Separator
+                let separator = LayoutRect::new(
+                    chart_panel.x,
+                    current_y,
+                    chart_panel.width,
+                    separator_height,
+                );
+                current_y += separator_height;
 
-            // Content area (respects chart X position)
-            let content = LayoutRect::new(
-                chart_x,
-                current_y,
-                chart_width, // Same width as main chart
-                pane_h,
-            );
+                // Content area (respects chart X position)
+                let content = LayoutRect::new(
+                    chart_x,
+                    current_y,
+                    chart_width,
+                    pane_h,
+                );
 
-            // Price scale for this pane (respects price scale X position)
-            let pane_price_scale = LayoutRect::new(
-                price_scale_x,
-                current_y,
-                price_scale_width,
-                pane_h,
-            );
+                // Price scale for this pane (respects price scale X position)
+                let pane_price_scale = LayoutRect::new(
+                    price_scale_x,
+                    current_y,
+                    price_scale_width,
+                    pane_h,
+                );
 
-            sub_panes.push(SubPaneLayout {
-                instance_id,
-                separator,
-                content,
-                price_scale: pane_price_scale,
-            });
+                sub_panes.push(SubPaneLayout {
+                    instance_id,
+                    separator,
+                    content,
+                    price_scale: pane_price_scale,
+                });
 
-            current_y += pane_h;
+                current_y += pane_h;
+            }
         }
 
         Self {
