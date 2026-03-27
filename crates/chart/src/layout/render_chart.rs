@@ -2718,8 +2718,15 @@ pub fn render_full_chart_panel(
     let panel_layout = crate::panel_app::ChartPanelLayout::compute(window_rect, data.toolbar_config);
     let content_rect = &panel_layout.content_rect;
 
+    let has_maximized = data.sub_panes
+        .map(|panes| panes.iter().any(|p| p.maximized && !p.hidden))
+        .unwrap_or(false);
+
     // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
-    let sub_pane_heights: Vec<f64> = if let Some(panes) = data.sub_panes {
+    let sub_pane_heights: Vec<f64> = if has_maximized {
+        // Maximized pane takes the full content height.
+        vec![content_rect.height]
+    } else if let Some(panes) = data.sub_panes {
         sub_pane_ids.iter().map(|&id| {
             let ratio = panes.iter()
                 .find(|p| p.instance_id == id)
@@ -2730,10 +2737,6 @@ pub fn render_full_chart_panel(
     } else {
         crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
     };
-
-    let has_maximized = data.sub_panes
-        .map(|panes| panes.iter().any(|p| p.maximized && !p.hidden))
-        .unwrap_or(false);
     let extended_layout = crate::layout::ExtendedFrameLayout::compute_from_chart_panel(
         content_rect,
         &sub_pane_ids,

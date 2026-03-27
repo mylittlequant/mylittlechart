@@ -6879,28 +6879,32 @@ impl ChartApp {
             })
             .unwrap_or_default();
 
-        // Build per-pane heights from the active window's SubPane list so that
-        // hit-testing coordinates exactly match what render_full_chart_panel produced.
-        // Build heights matching sub_pane_ids order (filtered by hidden/maximized).
-        let sub_pane_heights: Vec<f64> = self.panel_app.panel_grid
-            .active_window()
-            .map(|win| {
-                sub_pane_ids.iter().map(|&id| {
-                    let ratio = win.sub_panes.iter()
-                        .find(|p| p.instance_id == id)
-                        .map(|p| p.height_ratio)
-                        .unwrap_or(0.0);
-                    if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
-                }).collect()
-            })
-            .unwrap_or_else(|| {
-                zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
-            });
-
         let has_maximized = self.panel_app.panel_grid
             .active_window()
             .map(|win| win.sub_panes.iter().any(|p| p.maximized && !p.hidden))
             .unwrap_or(false);
+
+        // Build per-pane heights from the active window's SubPane list so that
+        // hit-testing coordinates exactly match what render_full_chart_panel produced.
+        let sub_pane_heights: Vec<f64> = if has_maximized {
+            // Maximized pane takes the full content height.
+            vec![content_rect.height]
+        } else {
+            self.panel_app.panel_grid
+                .active_window()
+                .map(|win| {
+                    sub_pane_ids.iter().map(|&id| {
+                        let ratio = win.sub_panes.iter()
+                            .find(|p| p.instance_id == id)
+                            .map(|p| p.height_ratio)
+                            .unwrap_or(0.0);
+                        if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
+                    }).collect()
+                })
+                .unwrap_or_else(|| {
+                    zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
+                })
+        };
         ExtendedFrameLayout::compute_from_chart_panel(
             &content_rect,
             &sub_pane_ids,
@@ -6935,16 +6939,21 @@ impl ChartApp {
                 .collect()
         };
 
-        // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
-        let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
-            let ratio = window.sub_panes.iter()
-                .find(|p| p.instance_id == id)
-                .map(|p| p.height_ratio)
-                .unwrap_or(0.0);
-            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
-        }).collect();
-
         let has_maximized = window.sub_panes.iter().any(|p| p.maximized && !p.hidden);
+
+        // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
+        let sub_pane_heights: Vec<f64> = if has_maximized {
+            // Maximized pane takes the full leaf height.
+            vec![leaf_rect.height]
+        } else {
+            sub_pane_ids.iter().map(|&id| {
+                let ratio = window.sub_panes.iter()
+                    .find(|p| p.instance_id == id)
+                    .map(|p| p.height_ratio)
+                    .unwrap_or(0.0);
+                if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
+            }).collect()
+        };
         Some(ExtendedFrameLayout::compute_from_chart_panel(
             leaf_rect,
             &sub_pane_ids,
