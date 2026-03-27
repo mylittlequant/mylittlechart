@@ -3842,6 +3842,70 @@ impl ChartApp {
                     self.hide_all_split_crosshairs();
                 }
             }
+
+            // --- Update sub-pane overlay visibility for split mode ---
+            // Determine which leaf the cursor is in and update its overlay states.
+            {
+                let hovered_leaf = match self.panel_app.panel_grid.resolve_input(
+                    x, y, self.content_rect.x, self.content_rect.y,
+                ) {
+                    ChartInputTarget::Chart { leaf_id }
+                    | ChartInputTarget::PriceScale { leaf_id }
+                    | ChartInputTarget::TimeScale { leaf_id }
+                    | ChartInputTarget::ScaleCorner { leaf_id, .. } => Some(leaf_id),
+                    _ => None,
+                };
+                if let Some(leaf_id) = hovered_leaf {
+                    let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
+                    let extended_opt = leaf_rect_opt.and_then(|lr| self.build_extended_layout_for_leaf(leaf_id, &lr));
+                    let overlay_results_split = self.panel_app.panel_grid
+                        .window_for_leaf(leaf_id)
+                        .map(|w| w.sub_pane_overlay_results.clone())
+                        .unwrap_or_default();
+                    if let (Some(extended), Some(window)) = (extended_opt, self.panel_app.panel_grid.window_for_leaf_mut(leaf_id)) {
+                        for state in window.sub_pane_overlay_states.iter_mut() {
+                            state.visible = false;
+                            state.hovered_button = None;
+                        }
+                        for (idx, pane_layout) in extended.sub_panes.iter().enumerate() {
+                            if pane_layout.content.contains(x, y) {
+                                while window.sub_pane_overlay_states.len() <= idx {
+                                    window.sub_pane_overlay_states.push(Default::default());
+                                }
+                                window.sub_pane_overlay_states[idx].visible = true;
+                                if idx < overlay_results_split.len() {
+                                    use zengeld_chart::ui::modal_settings::SubPaneButton;
+                                    let overlay = &overlay_results_split[idx];
+                                    let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::Delete)
+                                    } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::Hide)
+                                    } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::MoveUp)
+                                    } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::Expand)
+                                    } else {
+                                        None
+                                    };
+                                    window.sub_pane_overlay_states[idx].hovered_button = hovered;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // Cursor not over any leaf — hide all overlays on all windows.
+                    for leaf_id in self.panel_app.panel_grid.panel_rects().keys().copied().collect::<Vec<_>>() {
+                        if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                            for state in window.sub_pane_overlay_states.iter_mut() {
+                                state.visible = false;
+                                state.hovered_button = None;
+                            }
+                        }
+                    }
+                }
+            }
+
             return;
         }
 
