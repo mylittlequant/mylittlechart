@@ -475,33 +475,40 @@ impl ExtendedFrameLayout {
             })
             .collect();
 
-        // Calculate total height needed for sub-panes
-        let total_sub_panes_height: f64 =
-            pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
-
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
-        // When a pane is maximized, main chart may shrink to zero; otherwise keep at least 15%.
-        let min_main_chart = if maximized_pane { 0.0 } else { available_height * 0.15 };
-        let main_chart_height = (available_height - total_sub_panes_height).max(min_main_chart);
 
-        // Actual space available for sub-pane content (after clamping main chart).
-        let actual_available_for_subs = (available_height - main_chart_height).max(0.0);
-        // Scale all pane heights proportionally if they exceed available space.
-        let raw_content_total: f64 = pane_heights.iter().sum::<f64>();
-        let content_budget =
-            (actual_available_for_subs - separator_height * sub_pane_count as f64).max(0.0);
-        let scale_factor = if raw_content_total > 0.0 {
-            (content_budget / raw_content_total).min(1.0)
+        let (main_chart_height, actual_available_for_subs, scaled_heights) = if maximized_pane {
+            // Maximized: single pane takes all available space, main chart = 0.
+            let pane_h = (available_height - separator_height).max(0.0);
+            (0.0, available_height, vec![pane_h])
         } else {
-            1.0
+            // Calculate total height needed for sub-panes
+            let total_sub_panes_height: f64 =
+                pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
+
+            let min_main_chart = available_height * 0.15;
+            let mch = (available_height - total_sub_panes_height).max(min_main_chart);
+
+            // Actual space available for sub-pane content (after clamping main chart).
+            let afs = (available_height - mch).max(0.0);
+            // Scale all pane heights proportionally if they exceed available space.
+            let raw_content_total: f64 = pane_heights.iter().sum::<f64>();
+            let content_budget =
+                (afs - separator_height * sub_pane_count as f64).max(0.0);
+            let scale_factor = if raw_content_total > 0.0 {
+                (content_budget / raw_content_total).min(1.0)
+            } else {
+                1.0
+            };
+            // Scale sub-pane heights, minimum 15% of available each
+            let min_sub_pane = available_height * 0.15;
+            let sh: Vec<f64> = pane_heights
+                .iter()
+                .map(|&h| (h * scale_factor).max(min_sub_pane))
+                .collect();
+            (mch, afs, sh)
         };
-        // Scale sub-pane heights, minimum 15% of available each
-        let min_sub_pane = available_height * 0.15;
-        let scaled_heights: Vec<f64> = pane_heights
-            .iter()
-            .map(|&h| (h * scale_factor).max(min_sub_pane))
-            .collect();
 
         // Calculate chart and scale positions based on scale settings
         let (chart_x, price_scale_x) = match scale_settings.price_scale_position {

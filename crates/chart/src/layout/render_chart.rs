@@ -2723,10 +2723,8 @@ pub fn render_full_chart_panel(
         .unwrap_or(false);
 
     // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
-    let sub_pane_heights: Vec<f64> = if has_maximized {
-        // Maximized pane takes the full content height.
-        vec![content_rect.height]
-    } else if let Some(panes) = data.sub_panes {
+    // When maximized, compute_from_chart_panel ignores these and uses full available height.
+    let sub_pane_heights: Vec<f64> = if let Some(panes) = data.sub_panes {
         sub_pane_ids.iter().map(|&id| {
             let ratio = panes.iter()
                 .find(|p| p.instance_id == id)
