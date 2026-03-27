@@ -1890,13 +1890,6 @@ impl ChartApp {
                         bars.first().map(|b| b.timestamp).unwrap_or(0),
                         bars.last().map(|b| b.timestamp).unwrap_or(0));
 
-                    // Merge into BarService so it tracks all REST-loaded bars.
-                    {
-                        let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
-                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
-                    }
-
                     // Obtain/update TrackedSeriesHandle for matched windows.
                     {
                         let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
@@ -2043,12 +2036,6 @@ impl ChartApp {
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     eprintln!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
-                    // Merge into BarService.
-                    {
-                        let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
-                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
-                    }
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
@@ -2089,13 +2076,6 @@ impl ChartApp {
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     eprintln!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
                         exchange_id.as_str(), symbol, tf_name, bars.len(), prepend_count);
-
-                    // Merge into BarService.
-                    {
-                        let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
-                        let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
-                    }
 
                     let at_label = account_type.short_label();
                     let mut any_matched = false;
