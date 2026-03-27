@@ -310,6 +310,12 @@ pub fn draw_time_scale(
 
     let label_y = origin_y + config.time_scale_height / 2.0;
 
+    // Clip tick labels so they slide off smoothly at left/right edges
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(origin_x, origin_y, viewport.chart_width, config.time_scale_height);
+    ctx.clip();
+
     ctx.set_font(&format!("{}px sans-serif", config.font_size));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -326,6 +332,8 @@ pub fn draw_time_scale(
         ctx.set_fill_color(color);
         ctx.fill_text(&tick.label, origin_x + tick.x, label_y);
     }
+
+    ctx.restore();
 
     // Draw crosshair time indicator.
     // Works for both in-data and future (extrapolated) positions.
