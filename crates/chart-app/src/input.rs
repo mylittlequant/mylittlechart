@@ -3935,6 +3935,11 @@ impl ChartApp {
             // locked to the originating pane during drag (clips to sub-pane
             // boundary, not main chart boundary).
             let is_dragging = self.input_handler.state.drag_mode != zengeld_chart::engine::input::DragMode::None;
+            // Hide crosshair during separator drag — the resize cursor is sufficient feedback.
+            if matches!(self.input_handler.state.drag_mode, DragMode::PaneSeparator { .. }) {
+                self.hide_crosshair();
+                return;
+            }
             // For Primitive/ControlPoint drag modes, look up the primitive's pane_id
             // so the crosshair locks to the correct sub-pane rather than always the
             // main chart.
@@ -3992,7 +3997,14 @@ impl ChartApp {
             } else {
                 None
             };
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+            // Hide crosshair when hovering over a pane separator — show resize cursor only.
+            let is_over_separator = matches!(
+                ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
+                zengeld_chart::engine::input::HitResult::PaneSeparator { .. }
+            );
+            if is_over_separator {
+                self.hide_crosshair();
+            } else if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 window.update_crosshair_from_global(x, y, &extended, drag_pane);
             }
             // Propagate crosshair to sync group peers (non-split path).
