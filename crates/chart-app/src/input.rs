@@ -3788,9 +3788,20 @@ impl ChartApp {
                     if let Some(leaf_rect) = leaf_rect_opt {
                         let extended_opt = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect);
                         if let Some(extended) = extended_opt {
-                            // Update crosshair on hovered leaf.
-                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                                window.update_crosshair_from_global(x, y, &extended, None);
+                            // Hide crosshair when hovering over a sub-pane separator.
+                            let is_over_sub_separator = matches!(
+                                ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
+                                zengeld_chart::engine::input::HitResult::PaneSeparator { .. }
+                            );
+                            if is_over_sub_separator {
+                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                                    window.crosshair.visible = false;
+                                }
+                            } else {
+                                // Update crosshair on hovered leaf.
+                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                                    window.update_crosshair_from_global(x, y, &extended, None);
+                                }
                             }
                         }
                     }
