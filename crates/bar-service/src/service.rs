@@ -1,7 +1,35 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
-use bar_store::{Bar, BarStoreHandle};
+use bar_store::BarStoreHandle;
+use zengeld_chart::Bar;
 use crate::{BarSeries, BarSeriesKey};
+
+/// Convert chart Bar to bar_store Bar for disk persistence.
+fn to_store_bar(b: &Bar) -> bar_store::Bar {
+    bar_store::Bar {
+        timestamp: b.timestamp,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.volume,
+    }
+}
+
+/// Convert bar_store Bar to chart Bar after disk load.
+fn from_store_bar(b: bar_store::Bar) -> Bar {
+    Bar {
+        timestamp: b.timestamp,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.volume,
+    }
+}
+
+/// Shared series registry — cloneable handle for async bridge tasks.
+pub type SharedSeriesMap = Arc<std::sync::RwLock<HashMap<BarSeriesKey, Arc<RwLock<BarSeries>>>>>;
 
 /// Event emitted by `BarService` so callers can react without polling.
 #[derive(Debug, Clone)]
@@ -30,7 +58,7 @@ pub enum BarServiceEvent {
 /// the GPU render thread for read access.
 pub struct BarService {
     /// All known series, keyed by `BarSeriesKey`.
-    series: HashMap<BarSeriesKey, Arc<RwLock<BarSeries>>>,
+    series: SharedSeriesMap,
 
     /// Disk persistence handle.
     /// `BarService` takes ownership so `App` no longer touches the store directly.
@@ -43,10 +71,27 @@ pub struct BarService {
 impl BarService {
     pub fn new(bar_store: BarStoreHandle, default_capacity: usize) -> Self {
         Self {
-            series: HashMap::new(),
+            series: Arc::new(std::sync::RwLock::new(HashMap::new())),
             bar_store,
             default_capacity,
         }
+    }
+
+    /// Create a `BarService` that shares an existing `SharedSeriesMap`.
+    ///
+    /// Use this when `DataBridge` already holds a clone of the same map — both
+    /// sides will read and write the same underlying `HashMap` via `Arc`.
+    pub fn with_map(series: SharedSeriesMap, bar_store: BarStoreHandle, default_capacity: usize) -> Self {
+        Self {
+            series,
+            bar_store,
+            default_capacity,
+        }
+    }
+
+    /// Get a clone of the shared series map for use in async bridge tasks.
+    pub fn shared_series(&self) -> SharedSeriesMap {
+        self.series.clone()
     }
 
     /// Expose the underlying bars directory for cleanup tasks.
@@ -57,6 +102,12 @@ impl BarService {
     /// Delegate to the underlying store's bulk disk load.
     pub fn load_many(&self, keys: &[(&str, &str, &str, &str)]) -> Vec<(String, String, String, String, Vec<Bar>)> {
         self.bar_store.load_many(keys)
+            .into_iter()
+            .map(|(e, s, t, a, bars)| {
+                let chart_bars: Vec<Bar> = bars.into_iter().map(from_store_bar).collect();
+                (e, s, t, a, chart_bars)
+            })
+            .collect()
     }
 
     /// Get or create a series handle. Cheap after first call — just a
@@ -67,8 +118,8 @@ impl BarService {
         period_secs: i64,
     ) -> Arc<RwLock<BarSeries>> {
         let default_capacity = self.default_capacity;
-        self.series
-            .entry(key)
+        let mut map = self.series.write().unwrap_or_else(|e| e.into_inner());
+        map.entry(key)
             .or_insert_with(|| {
                 Arc::new(RwLock::new(BarSeries::new(default_capacity, period_secs)))
             })
@@ -77,7 +128,7 @@ impl BarService {
 
     /// Returns `None` if the series does not exist yet.
     pub fn get(&self, key: &BarSeriesKey) -> Option<Arc<RwLock<BarSeries>>> {
-        self.series.get(key).cloned()
+        self.series.read().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
     }
 
     /// Apply a trade to the matching series.
@@ -93,7 +144,7 @@ impl BarService {
         quantity: f64,
         timestamp_ms: i64,
     ) -> Option<BarServiceEvent> {
-        let handle = self.series.get(key)?.clone();
+        let handle = self.series.read().unwrap_or_else(|e| e.into_inner()).get(key).cloned()?;
         let mut series = handle.write().ok()?;
 
         let trade_ts_secs = timestamp_ms / 1000;
@@ -170,13 +221,14 @@ impl BarService {
         period_secs: i64,
     ) -> BarServiceEvent {
         let default_capacity = self.default_capacity;
-        let handle = self
-            .series
-            .entry(key.clone())
-            .or_insert_with(|| {
-                Arc::new(RwLock::new(BarSeries::new(default_capacity, period_secs)))
-            })
-            .clone();
+        let handle = {
+            let mut map = self.series.write().unwrap_or_else(|e| e.into_inner());
+            map.entry(key.clone())
+                .or_insert_with(|| {
+                    Arc::new(RwLock::new(BarSeries::new(default_capacity, period_secs)))
+                })
+                .clone()
+        };
 
         let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
         let count = source_bars.len();
@@ -208,10 +260,13 @@ impl BarService {
     ///
     /// Non-blocking: sends to `BarStoreHandle`'s internal channel.
     pub fn flush_dirty(&mut self) {
-        for (key, handle) in &self.series {
+        let map = self.series.read().unwrap_or_else(|e| e.into_inner());
+        for (key, handle) in map.iter() {
             if let Ok(mut series) = handle.write() {
                 if series.dirty {
-                    let bars_vec: Arc<Vec<Bar>> = Arc::new(series.to_vec());
+                    let bars_vec: Arc<Vec<bar_store::Bar>> = Arc::new(
+                        series.bars.iter().map(to_store_bar).collect()
+                    );
                     self.bar_store.write_async(
                         key.exchange_str(),
                         &key.symbol,
@@ -233,22 +288,23 @@ impl BarService {
     /// Returns true if any series has been mutated since the last flush.
     /// Used by App to decide whether an event-driven disk write is needed.
     pub fn has_any_dirty(&self) -> bool {
-        self.series.values().any(|h| {
+        let map = self.series.read().unwrap_or_else(|e| e.into_inner());
+        map.values().any(|h| {
             h.read().map(|s| s.dirty).unwrap_or(false)
         })
     }
 
     /// Number of tracked series.
     pub fn series_count(&self) -> usize {
-        self.series.len()
+        self.series.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Snapshot all series for disk persistence.
     ///
     /// Returns `(exchange, symbol, timeframe, account_type, bars)` tuples.
     pub fn dump_snapshot(&self) -> Vec<(String, String, String, String, Vec<Bar>)> {
-        self.series
-            .iter()
+        let map = self.series.read().unwrap_or_else(|e| e.into_inner());
+        map.iter()
             .map(|(key, handle)| {
                 let bars = handle.read().map(|s| s.to_vec()).unwrap_or_default();
                 (
@@ -265,7 +321,7 @@ impl BarService {
     /// Returns true when the trade timestamp skipped more than one candle
     /// past the last known bar (gap detected).
     pub fn has_gap(&self, key: &BarSeriesKey, trade_ts_ms: i64) -> bool {
-        let handle = match self.series.get(key) {
+        let handle = match self.series.read().unwrap_or_else(|e| e.into_inner()).get(key).cloned() {
             Some(h) => h,
             None => return false,
         };
@@ -296,7 +352,9 @@ impl BarService {
         }
         // Write the whole (trimmed) series to disk on rotation.
         // Phase 3 will replace this with an append-only archive write.
-        let bars_vec: Arc<Vec<Bar>> = Arc::new(series.bars.iter().copied().collect());
+        let bars_vec: Arc<Vec<bar_store::Bar>> = Arc::new(
+            series.bars.iter().map(to_store_bar).collect()
+        );
         bar_store.write_async(
             key.exchange_str(),
             &key.symbol,

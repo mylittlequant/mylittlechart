@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 bar-store = { path = "../bar-store" }
+zengeld-chart = { path = "../chart" }
 digdigdig3 = "0.1.8"
 
 [dev-dependencies]

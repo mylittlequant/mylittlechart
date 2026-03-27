@@ -4,8 +4,10 @@
 //! on the runtime's threads; results are sent back via an unbounded channel
 //! that the sync chart thread can drain each frame.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex, RwLock};
+
+use bar_service::{BarSeries, BarSeriesKey, SharedSeriesMap};
 
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
@@ -130,7 +132,7 @@ pub enum LiveUpdate {
 /// # Usage
 ///
 /// ```ignore
-/// let (bridge, mut rx) = DataBridge::new();
+/// let (bridge, mut rx, _ready_rx) = DataBridge::new(shared_series);
 /// let bridge = Arc::new(bridge);
 ///
 /// bridge.ensure_connector(ExchangeId::Binance);
@@ -156,12 +158,11 @@ pub struct DataBridge {
     ws_actors: Mutex<WsActorMap>,
     /// Session-level bar cache.
     ///
-    /// Key: `(exchange_id, account_type, symbol, timeframe_name)`. Stores bars from previous
-    /// requests so that switching back to an already-visited exchange+symbol+TF
-    /// is instant. On each new `request_bars`, the cache is sent immediately
-    /// and then a background fetch retrieves only the *newer* bars (after the
-    /// last cached timestamp).
-    bar_cache: Arc<Mutex<HashMap<(ExchangeId, AccountType, String, String), Vec<Bar>>>>,
+    /// Key: `BarSeriesKey`. Stores bars from previous requests so that switching
+    /// back to an already-visited exchange+symbol+TF is instant. On each new
+    /// `request_bars`, the cache is sent immediately and then a background fetch
+    /// retrieves only the *newer* bars (after the last cached timestamp).
+    bar_cache: SharedSeriesMap,
     /// Session-level symbol cache.
     ///
     /// Key: `ExchangeId`. Stores the full list of trading symbols so that
@@ -170,21 +171,22 @@ pub struct DataBridge {
     /// In-flight bar fetch keys.
     ///
     /// Prevents duplicate concurrent fetches for the same `(exchange, account_type, symbol,
-    /// timeframe)` tuple. A key is inserted before the task is spawned and
-    /// removed at every exit point of the task.
-    active_fetches: Arc<Mutex<HashSet<(ExchangeId, AccountType, String, String)>>>,
+    /// timeframe)` combination. A key is inserted before the task is spawned and
+    /// removed at every exit point of the task. The symbol field is prefixed with
+    /// `"backfill:"` or `"scroll:"` for those fetch roles.
+    active_fetches: Arc<Mutex<HashSet<BarSeriesKey>>>,
     /// Live WS ping RTT handles, keyed by exchange.
     ///
     /// Populated when a WebSocket task creates a connector that exposes a
     /// shared RTT arc (currently OKX only). `collect_metrics` reads from
     /// these handles via `try_lock` so it never blocks.
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
-    /// Oldest bar timestamp fetched per `(exchange_id, account_type, symbol, timeframe)`.
+    /// Oldest bar timestamp fetched per `BarSeriesKey`.
     ///
     /// Tracks how far back in history the bridge has already fetched so that
     /// scroll-left requests can request the correct older window without
     /// re-fetching data that is already cached.
-    oldest_fetched_ts: Arc<Mutex<HashMap<(ExchangeId, AccountType, String, String), i64>>>,
+    oldest_fetched_ts: Arc<Mutex<HashMap<BarSeriesKey, i64>>>,
 }
 
 impl DataBridge {
@@ -202,7 +204,7 @@ impl DataBridge {
     /// Additional broadcast receivers can be created with [`add_listener`]. The channel
     /// capacity is 4096 messages; if a slow receiver falls behind, old messages are
     /// dropped for that receiver only.
-    pub fn new() -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
+    pub fn new(bar_cache: SharedSeriesMap) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("live-data")
@@ -220,7 +222,7 @@ impl DataBridge {
             tx,
             connector_ready_tx,
             ws_actors: Mutex::new(WsActorMap::new()),
-            bar_cache: Arc::new(Mutex::new(HashMap::new())),
+            bar_cache,
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
@@ -256,7 +258,7 @@ impl DataBridge {
         ts: i64,
     ) {
         if let Ok(mut map) = self.oldest_fetched_ts.lock() {
-            let key = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+            let key = make_series_key(exchange_id, account_type, symbol, timeframe);
             let entry = map.entry(key).or_insert(i64::MAX);
             if ts < *entry {
                 *entry = ts;
@@ -273,7 +275,7 @@ impl DataBridge {
         symbol: &str,
         timeframe: &str,
     ) -> Option<i64> {
-        let key = (exchange_id, account_type, symbol.to_string(), timeframe.to_string());
+        let key = make_series_key(exchange_id, account_type, symbol, timeframe);
         self.oldest_fetched_ts.lock().ok()?.get(&key).copied()
     }
 
@@ -348,7 +350,7 @@ impl DataBridge {
         let cache = self.bar_cache.clone();
         let active_fetches = self.active_fetches.clone();
 
-        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
 
         // ── Deduplication guard: skip if a fetch for this key is already running ──
         {
@@ -361,8 +363,10 @@ impl DataBridge {
         }
 
         // Snapshot the disk/session cache BEFORE Phase A so we can detect a gap.
-        let cached_bars: Option<Vec<Bar>> = self.bar_cache.lock().ok()
-            .and_then(|c| c.get(&cache_key).cloned());
+        let cached_bars: Option<Vec<Bar>> = {
+            let bars = read_series_bars(&self.bar_cache, &cache_key);
+            if bars.is_empty() { None } else { Some(bars) }
+        };
 
         // If cache exists, send it immediately (Level 1 — instant render while
         // the network fetch is in flight).
@@ -468,22 +472,17 @@ impl DataBridge {
             }
 
             // Merge fresh_300 into any existing session cache.
+            let period_secs = tf_period_secs(&tf_name);
             let merged_a = {
-                let current_cache = cache.lock().ok()
-                    .and_then(|c| c.get(&cache_key).cloned());
-                match current_cache {
-                    Some(old) => {
-                        eprintln!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
-                        merge_bars(old, fresh_300.clone())
-                    }
-                    None => fresh_300.clone(),
+                let old = read_series_bars(&cache, &cache_key);
+                if old.is_empty() {
+                    set_series_bars(&cache, &cache_key, fresh_300.clone(), period_secs);
+                    fresh_300.clone()
+                } else {
+                    eprintln!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
+                    merge_into_series(&cache, &cache_key, fresh_300.clone(), period_secs)
                 }
             };
-
-            // Update cache with Phase A result.
-            if let Ok(mut c) = cache.lock() {
-                c.insert(cache_key.clone(), merged_a.clone());
-            }
 
             // Send Phase A BarsLoaded (Level 2 — viewport goes to Follow mode).
             let _ = tx.send(LiveUpdate::BarsLoaded {
@@ -594,17 +593,8 @@ impl DataBridge {
             eprintln!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
 
             // Merge heal bars into current cache (which already has Phase A result).
-            let merged_b = {
-                let current = cache.lock().ok()
-                    .and_then(|c| c.get(&cache_key).cloned())
-                    .unwrap_or(merged_a);
-                merge_bars(heal_bars, current)
-            };
-
-            // Update cache with healed result.
-            if let Ok(mut c) = cache.lock() {
-                c.insert(cache_key.clone(), merged_b.clone());
-            }
+            // heal_bars goes as "old" so that the already-cached Phase A data wins on conflicts.
+            let merged_b = merge_into_series(&cache, &cache_key, heal_bars, period_secs);
 
             eprintln!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
 
@@ -875,7 +865,7 @@ impl DataBridge {
 
     /// Get cached bars for a specific (exchange, account_type, symbol, timeframe) key.
     ///
-    /// Returns `None` if the key is not in the cache or the lock is poisoned.
+    /// Returns `None` if the key is not in the cache.
     pub fn get_cached_bars(
         &self,
         exchange_id: &ExchangeId,
@@ -883,89 +873,18 @@ impl DataBridge {
         symbol: &str,
         timeframe: &str,
     ) -> Option<Vec<Bar>> {
-        let cache = self.bar_cache.lock().ok()?;
-        cache
-            .get(&(*exchange_id, account_type, symbol.to_string(), timeframe.to_string()))
-            .cloned()
+        let key = make_series_key(*exchange_id, account_type, symbol, timeframe);
+        let bars = read_series_bars(&self.bar_cache, &key);
+        if bars.is_empty() { None } else { Some(bars) }
     }
 
     /// Return all keys currently stored in the bar cache.
     pub fn cached_bar_keys(&self) -> Vec<(ExchangeId, AccountType, String, String)> {
-        self.bar_cache
-            .lock()
-            .map(|c| c.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// Snapshot the entire bar cache for disk persistence.
-    ///
-    /// Returns `(exchange_str, symbol, timeframe, account_type_label, bars)` tuples
-    /// for all cached entries. The `account_type_label` is the short label string
-    /// (e.g. `"S"` for Spot, `"F"` for FuturesCross).
-    pub fn dump_cache_snapshot(&self) -> Vec<(String, String, String, String, Vec<bar_store::Bar>)> {
-        let Ok(cache) = self.bar_cache.lock() else {
-            return vec![];
-        };
-        cache
-            .iter()
-            .map(|((ex, account_type, sym, tf), bars)| {
-                let store_bars: Vec<bar_store::Bar> = bars
-                    .iter()
-                    .map(|b| bar_store::Bar {
-                        timestamp: b.timestamp,
-                        open: b.open,
-                        high: b.high,
-                        low: b.low,
-                        close: b.close,
-                        volume: b.volume,
-                    })
-                    .collect();
-                (
-                    ex.as_str().to_string(),
-                    sym.clone(),
-                    tf.clone(),
-                    account_type.short_label().to_string(),
-                    store_bars,
-                )
-            })
+        let guard = self.bar_cache.read().unwrap_or_else(|e| e.into_inner());
+        guard
+            .keys()
+            .map(|k| (k.exchange_id, k.account_type, k.symbol.clone(), k.timeframe.clone()))
             .collect()
-    }
-
-    /// Pre-populate the bar cache from disk-loaded bars.
-    ///
-    /// Called at startup before the first `request_bars()` so that switching to a
-    /// previously-visited symbol is instant without a network round-trip.
-    /// Entries that already exist in the cache (e.g. from a very fast initial request)
-    /// are left untouched (`or_insert` semantics).
-    pub fn seed_bar_cache(
-        &self,
-        entries: Vec<(String, String, String, String, Vec<bar_store::Bar>)>,
-    ) {
-        let Ok(mut cache) = self.bar_cache.lock() else {
-            return;
-        };
-        for (exchange_str, symbol, timeframe, account_type_label, store_bars) in entries {
-            if store_bars.is_empty() {
-                continue;
-            }
-            let Some(exchange_id) = digdigdig3::ExchangeId::from_str(&exchange_str) else {
-                continue;
-            };
-            let account_type = account_type_from_short_label(&account_type_label);
-            let bars: Vec<Bar> = store_bars
-                .iter()
-                .map(|b| Bar {
-                    timestamp: b.timestamp,
-                    open: b.open,
-                    high: b.high,
-                    low: b.low,
-                    close: b.close,
-                    volume: b.volume,
-                })
-                .collect();
-            let key = (exchange_id, account_type, symbol, timeframe);
-            cache.entry(key).or_insert(bars);
-        }
     }
 
     /// Request background backfill of historical bars for a symbol/timeframe.
@@ -997,16 +916,16 @@ impl DataBridge {
         let active_fetches = self.active_fetches.clone();
         let oldest_fetched_ts = self.oldest_fetched_ts.clone();
 
-        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
 
         // Backfill dedup key: encode the "backfill" role by prefixing the symbol.
         // This avoids colliding with the regular request_bars fetch key while
         // reusing the same HashSet type.
-        let backfill_fetch_key = (
+        let backfill_fetch_key = make_series_key(
             exchange_id,
             account_type,
-            format!("backfill:{}", symbol_str),
-            tf_name.clone(),
+            &format!("backfill:{}", symbol_str),
+            &tf_name,
         );
 
         // ── Deduplication guard ───────────────────────────────────────────────
@@ -1023,11 +942,7 @@ impl DataBridge {
         }
 
         // ── Early-exit if cache is already satisfied ─────────────────────────
-        let cached_len = cache
-            .lock()
-            .ok()
-            .and_then(|c| c.get(&cache_key).map(|b| b.len()))
-            .unwrap_or(0);
+        let cached_len = read_series_len(&cache, &cache_key);
 
         if cached_len >= target_bars as usize {
             eprintln!(
@@ -1081,24 +996,21 @@ impl DataBridge {
             // Re-check cache length after connector wait — another task may have
             // already satisfied the target while we were waiting.
             let (still_need, end_time_cursor_init) = {
-                let guard = cache.lock().ok();
-                let cached = guard.as_ref().and_then(|c| c.get(&cache_key).cloned());
-                match cached {
-                    Some(ref bars) if bars.len() >= target_bars as usize => {
-                        eprintln!(
-                            "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
-                            exchange_id, symbol_str, tf_name, bars.len()
-                        );
-                        finish_backfill!();
-                        return;
-                    }
-                    Some(ref bars) => {
-                        let need = target_bars as usize - bars.len();
-                        // Cursor: just before the oldest cached bar (in ms).
-                        let oldest_ms = bars.first().map(|b| b.timestamp * 1000 - 1);
-                        (need, oldest_ms)
-                    }
-                    None => (target_bars as usize, None),
+                let bars = read_series_bars(&cache, &cache_key);
+                if bars.len() >= target_bars as usize {
+                    eprintln!(
+                        "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
+                        exchange_id, symbol_str, tf_name, bars.len()
+                    );
+                    finish_backfill!();
+                    return;
+                } else if bars.is_empty() {
+                    (target_bars as usize, None)
+                } else {
+                    let need = target_bars as usize - bars.len();
+                    // Cursor: just before the oldest cached bar (in ms).
+                    let oldest_ms = bars.first().map(|b| b.timestamp * 1000 - 1);
+                    (need, oldest_ms)
                 }
             };
 
@@ -1128,13 +1040,7 @@ impl DataBridge {
                             eprintln!("[Bridge] backfill: empty page at page {}, stopping", pages);
                             if let Some(oldest_so_far) = accumulated.first().map(|b| b.timestamp) {
                                 if let Ok(mut map) = oldest_fetched_ts.lock() {
-                                    let key = (
-                                        exchange_id,
-                                        account_type,
-                                        symbol_str.clone(),
-                                        tf_name.clone(),
-                                    );
-                                    let entry = map.entry(key).or_insert(i64::MAX);
+                                    let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
                                     if oldest_so_far < *entry {
                                         *entry = oldest_so_far;
                                     }
@@ -1161,13 +1067,7 @@ impl DataBridge {
                         // incorrectly block future fetches.
                         if page_len < effective_limit as usize && oldest_bar_ts > 0 {
                             if let Ok(mut map) = oldest_fetched_ts.lock() {
-                                let key = (
-                                    exchange_id,
-                                    account_type,
-                                    symbol_str.clone(),
-                                    tf_name.clone(),
-                                );
-                                let entry = map.entry(key).or_insert(i64::MAX);
+                                let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
                                 if oldest_bar_ts < *entry {
                                     *entry = oldest_bar_ts;
                                 }
@@ -1220,16 +1120,8 @@ impl DataBridge {
 
             // Merge accumulated into current cache — hold the lock across the entire
             // read-merge-write to prevent a race with concurrent tasks.
-            let merged = if let Ok(mut c) = cache.lock() {
-                let current = c.get(&cache_key).cloned().unwrap_or_default();
-                let merged = merge_bars(current, accumulated);
-                c.insert(cache_key.clone(), merged.clone());
-                merged
-            } else {
-                eprintln!("[Bridge] backfill: cache lock poisoned, skipping cache update");
-                finish_backfill!();
-                return;
-            };
+            let period_secs = tf_period_secs(&tf_name);
+            let merged = merge_into_series(&cache, &cache_key, accumulated, period_secs);
 
             eprintln!(
                 "[Bridge] backfill done: sending BackfillComplete with {} bars",
@@ -1293,15 +1185,15 @@ impl DataBridge {
         let active_fetches = self.active_fetches.clone();
         let oldest_fetched_ts = self.oldest_fetched_ts.clone();
 
-        let cache_key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+        let cache_key = make_series_key(exchange_id, account_type, &symbol_str, &tf_name);
 
         // Scroll dedup key: encode "scroll:" role by prefixing the symbol,
         // matching the pattern used by "backfill:" in request_background_backfill.
-        let scroll_fetch_key = (
+        let scroll_fetch_key = make_series_key(
             exchange_id,
             account_type,
-            format!("scroll:{}", symbol_str),
-            tf_name.clone(),
+            &format!("scroll:{}", symbol_str),
+            &tf_name,
         );
 
         // ── Deduplication guard ───────────────────────────────────────────────
@@ -1318,24 +1210,24 @@ impl DataBridge {
         }
 
         // ── Cache check: do we already have bars older than before_ts? ────────
-        let cached_older: Option<Vec<Bar>> = cache.lock().ok().and_then(|c| {
-            c.get(&cache_key).map(|bars| {
-                bars.iter()
+        let all_cached_bars = read_series_bars(&cache, &cache_key);
+        let cached_older: Option<Vec<Bar>> = if all_cached_bars.is_empty() {
+            None
+        } else {
+            Some(
+                all_cached_bars
+                    .iter()
                     .filter(|b| b.timestamp < before_ts)
-                    .cloned()
-                    .collect::<Vec<Bar>>()
-            })
-        });
+                    .copied()
+                    .collect::<Vec<Bar>>(),
+            )
+        };
 
         if let Some(ref older_bars) = cached_older {
             if !older_bars.is_empty() {
                 let prepend_count = older_bars.len().min(batch_size);
                 // Full merged set is whatever is in cache (already sorted).
-                let full_bars: Vec<Bar> = cache
-                    .lock()
-                    .ok()
-                    .and_then(|c| c.get(&cache_key).cloned())
-                    .unwrap_or_default();
+                let full_bars: Vec<Bar> = all_cached_bars;
 
                 eprintln!(
                     "[Bridge] scroll {:?} sym={} tf={}: {} cached bars older than {}, serving {} from cache",
@@ -1446,8 +1338,7 @@ impl DataBridge {
                     );
                     // Record before_ts as the oldest known — exchange has nothing older.
                     if let Ok(mut map) = oldest_fetched_ts.lock() {
-                        let key = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-                        let entry = map.entry(key).or_insert(i64::MAX);
+                        let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
                         if before_ts < *entry {
                             *entry = before_ts;
                         }
@@ -1471,31 +1362,16 @@ impl DataBridge {
                     let oldest_bar_ts = new_page.first().map(|b| b.timestamp).unwrap_or(0);
                     if oldest_bar_ts > 0 && page_len < limit as usize {
                         if let Ok(mut map) = oldest_fetched_ts.lock() {
-                            let key = (
-                                exchange_id,
-                                account_type,
-                                symbol_str.clone(),
-                                tf_name.clone(),
-                            );
-                            let entry = map.entry(key).or_insert(i64::MAX);
+                            let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
                             if oldest_bar_ts < *entry {
                                 *entry = oldest_bar_ts;
                             }
                         }
                     }
 
-                    // Merge new page into bar cache — hold the lock across the entire
-                    // read-merge-write to prevent a race with concurrent tasks.
-                    let merged = if let Ok(mut c) = cache.lock() {
-                        let current = c.get(&cache_key).cloned().unwrap_or_default();
-                        let merged = merge_bars(current, new_page);
-                        c.insert(cache_key.clone(), merged.clone());
-                        merged
-                    } else {
-                        eprintln!("[Bridge] scroll: cache lock poisoned, skipping cache update");
-                        finish_scroll!();
-                        return;
-                    };
+                    // Merge new page into bar cache atomically.
+                    let period_secs = tf_period_secs(&tf_name);
+                    let merged = merge_into_series(&cache, &cache_key, new_page, period_secs);
 
                     let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
                         exchange_id,
@@ -1587,6 +1463,90 @@ fn interval_to_seconds(interval: &str) -> i64 {
         'w' => num * 604_800,
         _ => num * 60,
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED SERIES HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a `BarSeriesKey` from the bridge's internal key components.
+fn make_series_key(exchange_id: ExchangeId, account_type: AccountType, symbol: &str, timeframe: &str) -> BarSeriesKey {
+    BarSeriesKey::new(exchange_id, account_type, symbol, timeframe)
+}
+
+/// Parse a timeframe name string (e.g. "1m", "4h", "1d") to period in seconds.
+fn tf_period_secs(tf_name: &str) -> i64 {
+    let name = tf_name.trim();
+    if let Some(n) = name.strip_suffix('m') {
+        n.parse::<i64>().unwrap_or(1) * 60
+    } else if let Some(n) = name.strip_suffix('h') {
+        n.parse::<i64>().unwrap_or(1) * 3_600
+    } else if let Some(n) = name.strip_suffix('d') {
+        n.parse::<i64>().unwrap_or(1) * 86_400
+    } else if let Some(n) = name.strip_suffix('w') {
+        n.parse::<i64>().unwrap_or(1) * 604_800
+    } else {
+        60 // default to 1m
+    }
+}
+
+/// Get or create a `BarSeries` entry in the shared map, returning a clone of
+/// its `Arc<RwLock<BarSeries>>`.
+fn get_or_create_series(map: &SharedSeriesMap, key: &BarSeriesKey, period_secs: i64) -> Arc<RwLock<BarSeries>> {
+    // Try a read-only path first to avoid write-lock contention.
+    {
+        let guard = map.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(handle) = guard.get(key) {
+            return handle.clone();
+        }
+    }
+    // Not found — grab a write lock and insert.
+    let mut guard = map.write().unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(key.clone())
+        .or_insert_with(|| Arc::new(RwLock::new(BarSeries::new(10_000, period_secs))))
+        .clone()
+}
+
+/// Read all bars from a series as a `Vec<Bar>`. Returns an empty `Vec` if the
+/// key is not present in the map.
+fn read_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey) -> Vec<Bar> {
+    let guard = map.read().unwrap_or_else(|e| e.into_inner());
+    match guard.get(key) {
+        Some(handle) => handle.read().unwrap_or_else(|e| e.into_inner()).to_vec(),
+        None => Vec::new(),
+    }
+}
+
+/// Return the bar count for a series. Returns 0 if the key is not present.
+fn read_series_len(map: &SharedSeriesMap, key: &BarSeriesKey) -> usize {
+    let guard = map.read().unwrap_or_else(|e| e.into_inner());
+    match guard.get(key) {
+        Some(handle) => handle.read().unwrap_or_else(|e| e.into_inner()).len(),
+        None => 0,
+    }
+}
+
+/// Replace the bars in a series (creating it if needed). Bumps version and
+/// marks the series dirty.
+fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, bars: Vec<Bar>, period_secs: i64) {
+    let handle = get_or_create_series(map, key, period_secs);
+    let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
+    series.bars = VecDeque::from(bars);
+    series.version += 1;
+    series.dirty = true;
+}
+
+/// Atomically read–merge–write bars in a series. Returns the merged result.
+fn merge_into_series(map: &SharedSeriesMap, key: &BarSeriesKey, new_bars: Vec<Bar>, period_secs: i64) -> Vec<Bar> {
+    let handle = get_or_create_series(map, key, period_secs);
+    let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
+    let existing = series.to_vec();
+    let merged = merge_bars(existing, new_bars);
+    series.bars = VecDeque::from(merged.clone());
+    series.version += 1;
+    series.dirty = true;
+    merged
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1891,6 +1891,7 @@ impl App<'_> {
     fn new(
         symbol: &str,
         bridge: std::sync::Arc<live_data::DataBridge>,
+        shared_series: bar_service::SharedSeriesMap,
         saved_windows: Vec<zengeld_chart::WindowState>,
         profile: zengeld_chart::UserProfile,
         profile_manager: zengeld_chart::ProfileManager,
@@ -2188,12 +2189,14 @@ impl App<'_> {
         }
 
         // ── Bar cache persistence ─────────────────────────────────────────────
-        // Create the BarStoreHandle, load persisted bars, and seed the DataBridge
-        // cache so that the first symbol switch is instant without a network round-trip.
+        // Create the BarStoreHandle, load persisted bars, and seed the shared series
+        // map so that the first symbol switch is instant without a network round-trip.
+        // `BarService::with_map` attaches to the same `SharedSeriesMap` that
+        // `DataBridge` already holds, so persistence and live-fetch share one map.
         let mut bar_service = {
             let bars_dir = zengeld_chart::app_data_dir().join("bars");
             let bar_store_handle = bar_store::BarStoreHandle::new(bars_dir, bridge.runtime());
-            bar_service::BarService::new(bar_store_handle, bar_service::DEFAULT_CAPACITY)
+            bar_service::BarService::with_map(shared_series, bar_store_handle, bar_service::DEFAULT_CAPACITY)
         };
 
         // Collect bar keys from presets and load them from disk.
@@ -2216,8 +2219,7 @@ impl App<'_> {
                         bar_service.seed_from_disk(key, bars.clone(), period_secs);
                     }
                 }
-                // Also seed bridge cache (still needed for Level 1 instant loads).
-                bridge.seed_bar_cache(loaded);
+                // Bridge shares the same SharedSeriesMap — no separate seed needed.
             }
         }
 
@@ -7843,13 +7845,19 @@ fn main() {
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 
+    // Create the shared series map BEFORE the bridge so both share the same
+    // Arc-backed registry.  DataBridge holds a clone for its async fetch tasks;
+    // App::new passes it to BarService so persistence + live data share one map.
+    let shared_series: bar_service::SharedSeriesMap =
+        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
     // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
     // The broadcast receiver (`_live_rx`) is dropped here: we no longer subscribe
     // to it at the app level.  Per-window ChartApp instances each subscribe via
     // `bridge.add_listener()`.  The mpsc `connector_ready_rx` is the lightweight
     // channel used by `tick_app_state` to handle ConnectorReady without touching
     // the broadcast buffer.
-    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new();
+    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new(shared_series.clone());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.
@@ -7896,6 +7904,6 @@ fn main() {
     let saved_windows = profile.windows.clone();
 
     let symbol = std::env::args().nth(1).unwrap_or_else(|| "BTCUSDT".to_string());
-    let mut app = App::new(&symbol, bridge, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    let mut app = App::new(&symbol, bridge, shared_series, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
     event_loop.run_app(&mut app).expect("Event loop error");
 }

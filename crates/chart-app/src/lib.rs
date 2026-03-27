@@ -694,7 +694,9 @@ impl ChartApp {
         // The third value is a ConnectorReady mpsc receiver used by the
         // chart-app-vello App struct; here it is dropped since ChartApp::tick()
         // receives ConnectorReady via the broadcast channel directly.
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new();
+        let shared_series: bar_service::SharedSeriesMap =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series);
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -1892,15 +1894,7 @@ impl ChartApp {
                     {
                         let period_secs = loaded_tf.as_ref().map_or(60, |tf| tf.minutes as i64) * 60;
                         let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
-                            timestamp: b.timestamp,
-                            open: b.open,
-                            high: b.high,
-                            low: b.low,
-                            close: b.close,
-                            volume: b.volume,
-                        }).collect();
-                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
                     }
 
                     // Obtain/update TrackedSeriesHandle for matched windows.
@@ -2053,15 +2047,7 @@ impl ChartApp {
                     {
                         let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
                         let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
-                            timestamp: b.timestamp,
-                            open: b.open,
-                            high: b.high,
-                            low: b.low,
-                            close: b.close,
-                            volume: b.volume,
-                        }).collect();
-                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
                     }
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
@@ -2108,15 +2094,7 @@ impl ChartApp {
                     {
                         let period_secs = parse_timeframe_name(&tf_name).map_or(60, |tf| tf.minutes as i64) * 60;
                         let key = bar_service::BarSeriesKey::new(exchange_id, account_type, symbol.clone(), tf_name.clone());
-                        let svc_bars: Vec<bar_service::Bar> = bars.iter().map(|b| bar_service::Bar {
-                            timestamp: b.timestamp,
-                            open: b.open,
-                            high: b.high,
-                            low: b.low,
-                            close: b.close,
-                            volume: b.volume,
-                        }).collect();
-                        bar_svc.merge_rest_batch(&key, svc_bars, period_secs);
+                        bar_svc.merge_rest_batch(&key, bars.clone(), period_secs);
                     }
 
                     let at_label = account_type.short_label();

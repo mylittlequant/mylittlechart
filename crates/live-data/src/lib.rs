@@ -21,7 +21,8 @@
 //! use std::sync::Arc;
 //!
 //! // Create the bridge (one per application)
-//! let (bridge, mut rx) = DataBridge::new();
+//! let shared_series = bar_service::SharedSeriesMap::default();
+//! let (bridge, mut rx, _ready_rx) = DataBridge::new(shared_series);
 //! let bridge = Arc::new(bridge);
 //!
 //! // Start a connector (non-blocking)

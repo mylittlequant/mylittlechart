@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use bar_store::Bar;
+use zengeld_chart::Bar;
 
 /// Default maximum bars held in memory per series.
 pub const DEFAULT_CAPACITY: usize = 10_000;
