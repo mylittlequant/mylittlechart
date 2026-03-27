@@ -1999,6 +1999,7 @@ pub fn render_sub_pane_overlay(
         move_up_rect: None,
         move_down_rect: None,
         expand_rect: None,
+        restore_rect: None,
     };
 
     for (idx, icon, button_type) in &buttons {
@@ -2039,7 +2040,8 @@ pub fn render_sub_pane_overlay(
             SubPaneButton::Hide => result.hide_rect = Some(rect),
             SubPaneButton::MoveUp => result.move_up_rect = Some(rect),
             SubPaneButton::MoveDown => result.move_down_rect = Some(rect),
-            SubPaneButton::Expand | SubPaneButton::Restore => result.expand_rect = Some(rect),
+            SubPaneButton::Expand => result.expand_rect = Some(rect),
+            SubPaneButton::Restore => result.restore_rect = Some(rect),
         }
     }
 

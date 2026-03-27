@@ -322,8 +322,10 @@ pub struct SubPaneOverlayResult {
     pub move_up_rect: Option<LayoutRect>,
     /// Rect for the move-down button.
     pub move_down_rect: Option<LayoutRect>,
-    /// Rect for the expand/restore button.
+    /// Rect for the expand button (shown when not maximized).
     pub expand_rect: Option<LayoutRect>,
+    /// Rect for the restore button (shown when maximized).
+    pub restore_rect: Option<LayoutRect>,
 }
 
 // =============================================================================

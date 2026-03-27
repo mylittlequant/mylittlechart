@@ -126,6 +126,14 @@ impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
                         };
                     }
                 }
+                if let Some(ref rect) = overlay.restore_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::Restore,
+                        };
+                    }
+                }
             }
         }
 

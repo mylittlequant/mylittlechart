@@ -3886,6 +3886,8 @@ impl ChartApp {
                                         Some(SubPaneButton::MoveDown)
                                     } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::Expand)
+                                    } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::Restore)
                                     } else {
                                         None
                                     };
@@ -4158,6 +4160,8 @@ impl ChartApp {
                             Some(SubPaneButton::MoveDown)
                         } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::Expand)
+                        } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::Restore)
                         } else {
                             None
                         };
