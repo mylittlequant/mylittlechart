@@ -3995,12 +3995,14 @@ impl ChartApp {
                         leaf_rect.height,
                         100.0,
                     );
+                    let has_maximized = window.sub_panes.iter().any(|p| p.maximized && !p.hidden);
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &leaf_rect,
                         &sub_pane_ids,
                         &window.scale_settings,
                         &sub_pane_heights,
                         1.0,
+                        has_maximized,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -4436,12 +4438,14 @@ impl ChartApp {
                         chart_render_rect.height,
                         100.0,
                     );
+                    let has_maximized = window.sub_panes.iter().any(|p| p.maximized && !p.hidden);
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &chart_render_rect,
                         &sub_pane_ids,
                         &window.scale_settings,
                         &sub_pane_heights,
                         1.0,
+                        has_maximized,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {

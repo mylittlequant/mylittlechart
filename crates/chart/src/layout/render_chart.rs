@@ -2731,12 +2731,16 @@ pub fn render_full_chart_panel(
         crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
     };
 
+    let has_maximized = data.sub_panes
+        .map(|panes| panes.iter().any(|p| p.maximized && !p.hidden))
+        .unwrap_or(false);
     let extended_layout = crate::layout::ExtendedFrameLayout::compute_from_chart_panel(
         content_rect,
         &sub_pane_ids,
         data.scale_settings,
         &sub_pane_heights,
         1.0, // separator_height
+        has_maximized,
     );
     let main_chart = &extended_layout.main_chart;
 

@@ -437,12 +437,15 @@ impl ExtendedFrameLayout {
     ///   `sub_pane_instance_ids` length). Use [`default_sub_pane_heights`] to build a
     ///   uniform slice when per-pane sizes are not available.
     /// * `separator_height` - Height of separator between panes (typically 1.0)
+    /// * `maximized_pane` - When true, the single visible sub-pane is allowed to
+    ///   consume 100% of available height (main chart shrinks to zero).
     pub fn compute_from_chart_panel(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
         scale_settings: &ScaleSettings,
         sub_pane_heights: &[f64],
         separator_height: f64,
+        maximized_pane: bool,
     ) -> Self {
         let price_scale_width = scale_settings.effective_price_scale_width();
         let time_scale_height = scale_settings.effective_time_scale_height();
@@ -478,8 +481,8 @@ impl ExtendedFrameLayout {
 
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
-        // Main chart gets at least 15% of available height
-        let min_main_chart = available_height * 0.15;
+        // When a pane is maximized, main chart may shrink to zero; otherwise keep at least 15%.
+        let min_main_chart = if maximized_pane { 0.0 } else { available_height * 0.15 };
         let main_chart_height = (available_height - total_sub_panes_height).max(min_main_chart);
 
         // Actual space available for sub-pane content (after clamping main chart).

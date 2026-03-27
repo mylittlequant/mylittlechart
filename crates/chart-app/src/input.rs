@@ -6897,12 +6897,17 @@ impl ChartApp {
                 zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
             });
 
+        let has_maximized = self.panel_app.panel_grid
+            .active_window()
+            .map(|win| win.sub_panes.iter().any(|p| p.maximized && !p.hidden))
+            .unwrap_or(false);
         ExtendedFrameLayout::compute_from_chart_panel(
             &content_rect,
             &sub_pane_ids,
             &scale_settings,
             &sub_pane_heights,
             1.0, // separator_height
+            has_maximized,
         )
     }
 
@@ -6939,12 +6944,14 @@ impl ChartApp {
             if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
         }).collect();
 
+        let has_maximized = window.sub_panes.iter().any(|p| p.maximized && !p.hidden);
         Some(ExtendedFrameLayout::compute_from_chart_panel(
             leaf_rect,
             &sub_pane_ids,
             scale_settings,
             &sub_pane_heights,
             1.0, // separator_height
+            has_maximized,
         ))
     }
 
@@ -14711,10 +14718,17 @@ impl ChartApp {
                         }
                     }
                     SubPaneButton::Hide => {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.hidden = !sub_pane.hidden;
+                        let instance_id = self.panel_app.panel_grid.active_window()
+                            .and_then(|w| w.sub_panes.get(pane_index))
+                            .map(|p| p.instance_id);
+                        if let Some(id) = instance_id {
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                    sub_pane.hidden = !sub_pane.hidden;
+                                }
                             }
+                            self.indicator_manager.toggle_visibility(id);
+                            self.sidebar_data_dirty = true;
                         }
                         self.autosave_snapshot();
                     }
