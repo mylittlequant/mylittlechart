@@ -3825,11 +3825,28 @@ impl ChartApp {
 
                     // Collect crosshair state for sync propagation before any
                     // further mutable borrows.
-                    let (bar_f64, crosshair_price, crosshair_visible, crosshair_pane_index) = self.panel_app
+                    let (crosshair_timestamp, crosshair_price, crosshair_visible, crosshair_pane_index) = self.panel_app
                         .panel_grid
                         .window_for_leaf(leaf_id)
-                        .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
-                        .unwrap_or((0.0, 0.0, false, None));
+                        .map(|w| {
+                            let bar_f64 = w.crosshair.bar_f64;
+                            let bar_idx = bar_f64 as usize;
+                            let timestamp = if bar_idx < w.bars.len() {
+                                w.bars[bar_idx].timestamp
+                            } else if w.bars.len() >= 2 {
+                                let last = w.bars[w.bars.len() - 1].timestamp;
+                                let prev = w.bars[w.bars.len() - 2].timestamp;
+                                let interval = last - prev;
+                                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                                last + (bars_past * interval as f64).round() as i64
+                            } else if !w.bars.is_empty() {
+                                w.bars[0].timestamp
+                            } else {
+                                0
+                            };
+                            (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+                        })
+                        .unwrap_or((0, 0.0, false, None));
 
                     // Determine which leaves are in the same sync group as the
                     // hovered leaf so they receive crosshair sync instead of hiding.
@@ -3856,7 +3873,7 @@ impl ChartApp {
                         if in_sync_group && crosshair_sync_enabled {
                             // Sync group peer — mirror crosshair bar position.
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
-                                window.set_crosshair_from_bar(bar_f64, crosshair_price, crosshair_visible, crosshair_pane_index);
+                                window.set_crosshair_from_timestamp(crosshair_timestamp, crosshair_price, crosshair_visible, crosshair_pane_index);
                             }
                         } else {
                             // Not in sync group or crosshair sync disabled — hide crosshair.

@@ -310,6 +310,11 @@ pub fn draw_time_scale(
 
     let label_y = origin_y + config.time_scale_height / 2.0;
 
+    // DEBUG: draw clip rect outline to visualize
+    ctx.set_stroke_color("#ff0000");
+    ctx.set_stroke_width(2.0);
+    ctx.stroke_rect(origin_x, origin_y, viewport.chart_width, config.time_scale_height);
+
     // Clip tick labels so they slide off smoothly at left/right edges
     ctx.save();
     ctx.begin_path();
