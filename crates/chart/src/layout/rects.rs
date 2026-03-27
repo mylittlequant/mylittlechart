@@ -479,9 +479,12 @@ impl ExtendedFrameLayout {
         let available_height = chart_panel.height - time_scale_height;
 
         let (main_chart_height, actual_available_for_subs, scaled_heights) = if maximized_pane {
-            // Maximized: single pane takes all available space, main chart = 0.
-            let pane_h = (available_height - separator_height).max(0.0);
-            (0.0, available_height, vec![pane_h])
+            // Maximized: single pane takes all available space.  Keep main chart
+            // at 1px (not 0) to avoid triggering viewport/scale dirty loops.
+            let main_h = 1.0;
+            let afs = (available_height - main_h).max(0.0);
+            let pane_h = (afs - separator_height).max(0.0);
+            (main_h, afs, vec![pane_h])
         } else {
             // Calculate total height needed for sub-panes
             let total_sub_panes_height: f64 =
