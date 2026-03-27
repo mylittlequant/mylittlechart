@@ -2765,12 +2765,29 @@ impl ChartApp {
         // Propagate crosshair to sync group peers during drag.
         let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
         if let Some(active_leaf) = active_leaf_opt {
-            let (bar_f64, price, crosshair_visible, pane_index) = self.panel_app
+            let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                 .panel_grid
                 .active_window()
-                .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
-                .unwrap_or((0.0, 0.0, false, None));
-            self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+                .map(|w| {
+                    let bar_f64 = w.crosshair.bar_f64;
+                    let bar_idx = bar_f64 as usize;
+                    let timestamp = if bar_idx < w.bars.len() {
+                        w.bars[bar_idx].timestamp
+                    } else if w.bars.len() >= 2 {
+                        let last = w.bars[w.bars.len() - 1].timestamp;
+                        let prev = w.bars[w.bars.len() - 2].timestamp;
+                        let interval = last - prev;
+                        let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                        last + (bars_past * interval as f64).round() as i64
+                    } else if !w.bars.is_empty() {
+                        w.bars[0].timestamp
+                    } else {
+                        0
+                    };
+                    (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+                })
+                .unwrap_or((0, 0.0, false, None));
+            self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
         }
     }
 
@@ -4018,12 +4035,29 @@ impl ChartApp {
             // preview rubber-band line follows on peer windows.
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
-                let (bar_f64, price, crosshair_visible, pane_index) = self.panel_app
+                let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                     .panel_grid
                     .active_window()
-                    .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
-                    .unwrap_or((0.0, 0.0, false, None));
-                self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+                    .map(|w| {
+                        let bar_f64 = w.crosshair.bar_f64;
+                        let bar_idx = bar_f64 as usize;
+                        let timestamp = if bar_idx < w.bars.len() {
+                            w.bars[bar_idx].timestamp
+                        } else if w.bars.len() >= 2 {
+                            let last = w.bars[w.bars.len() - 1].timestamp;
+                            let prev = w.bars[w.bars.len() - 2].timestamp;
+                            let interval = last - prev;
+                            let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                            last + (bars_past * interval as f64).round() as i64
+                        } else if !w.bars.is_empty() {
+                            w.bars[0].timestamp
+                        } else {
+                            0
+                        };
+                        (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+                    })
+                    .unwrap_or((0, 0.0, false, None));
+                self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
             }
         } else {
             // Compute drag_pane from current drag mode so the crosshair stays
@@ -4105,12 +4139,29 @@ impl ChartApp {
             // Propagate crosshair to sync group peers (non-split path).
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
-                let (bar_f64, price, crosshair_visible, pane_index) = self.panel_app
+                let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                     .panel_grid
                     .active_window()
-                    .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
-                    .unwrap_or((0.0, 0.0, false, None));
-                self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+                    .map(|w| {
+                        let bar_f64 = w.crosshair.bar_f64;
+                        let bar_idx = bar_f64 as usize;
+                        let timestamp = if bar_idx < w.bars.len() {
+                            w.bars[bar_idx].timestamp
+                        } else if w.bars.len() >= 2 {
+                            let last = w.bars[w.bars.len() - 1].timestamp;
+                            let prev = w.bars[w.bars.len() - 2].timestamp;
+                            let interval = last - prev;
+                            let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                            last + (bars_past * interval as f64).round() as i64
+                        } else if !w.bars.is_empty() {
+                            w.bars[0].timestamp
+                        } else {
+                            0
+                        };
+                        (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+                    })
+                    .unwrap_or((0, 0.0, false, None));
+                self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
             }
         }
 
@@ -4205,7 +4256,7 @@ impl ChartApp {
         }
         // Propagate hide to sync group peers.
         if let Some(active_leaf) = active_leaf_opt {
-            self.propagate_crosshair_to_sync_group(active_leaf, 0.0, 0.0, false, None);
+            self.propagate_crosshair_to_sync_group(active_leaf, 0, 0.0, false, None);
         }
     }
 
@@ -16997,12 +17048,29 @@ impl ChartApp {
                 // so that peer price ranges are re-synced and the horizontal line becomes visible.
                 if newly_enabled {
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let (bar_f64, price, crosshair_visible, pane_index) = self.panel_app
+                        let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
                             .panel_grid
                             .active_window()
-                            .map(|w| (w.crosshair.bar_f64, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index))
-                            .unwrap_or((0.0, 0.0, false, None));
-                        self.propagate_crosshair_to_sync_group(active_leaf, bar_f64, price, crosshair_visible, pane_index);
+                            .map(|w| {
+                                let bar_f64 = w.crosshair.bar_f64;
+                                let bar_idx = bar_f64 as usize;
+                                let timestamp = if bar_idx < w.bars.len() {
+                                    w.bars[bar_idx].timestamp
+                                } else if w.bars.len() >= 2 {
+                                    let last = w.bars[w.bars.len() - 1].timestamp;
+                                    let prev = w.bars[w.bars.len() - 2].timestamp;
+                                    let interval = last - prev;
+                                    let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                                    last + (bars_past * interval as f64).round() as i64
+                                } else if !w.bars.is_empty() {
+                                    w.bars[0].timestamp
+                                } else {
+                                    0
+                                };
+                                (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+                            })
+                            .unwrap_or((0, 0.0, false, None));
+                        self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
                     }
                 }
                 state_mutated = true;
@@ -18345,20 +18413,37 @@ impl ChartApp {
         }
         let source_leaf = new_leaves[0];
         // Read crosshair + viewport state from source window.
-        let (bar_f64, price, visible, pane_index, view_start, bar_spacing) =
+        let (timestamp, price, visible, pane_index, view_start, bar_spacing) =
             match self.panel_app.panel_grid.window_for_leaf(source_leaf) {
-                Some(w) => (
-                    w.crosshair.bar_f64,
-                    w.crosshair.price,
-                    w.crosshair.visible,
-                    w.crosshair.pane_index,
-                    w.viewport.view_start,
-                    w.viewport.bar_spacing,
-                ),
+                Some(w) => {
+                    let bar_f64 = w.crosshair.bar_f64;
+                    let bar_idx = bar_f64 as usize;
+                    let timestamp = if bar_idx < w.bars.len() {
+                        w.bars[bar_idx].timestamp
+                    } else if w.bars.len() >= 2 {
+                        let last = w.bars[w.bars.len() - 1].timestamp;
+                        let prev = w.bars[w.bars.len() - 2].timestamp;
+                        let interval = last - prev;
+                        let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                        last + (bars_past * interval as f64).round() as i64
+                    } else if !w.bars.is_empty() {
+                        w.bars[0].timestamp
+                    } else {
+                        0
+                    };
+                    (
+                        timestamp,
+                        w.crosshair.price,
+                        w.crosshair.visible,
+                        w.crosshair.pane_index,
+                        w.viewport.view_start,
+                        w.viewport.bar_spacing,
+                    )
+                }
                 None => return,
             };
         // Propagate crosshair to all sync peers.
-        self.propagate_crosshair_to_sync_group(source_leaf, bar_f64, price, visible, pane_index);
+        self.propagate_crosshair_to_sync_group(source_leaf, timestamp, price, visible, pane_index);
         // Propagate viewport to all sync peers.
         self.propagate_viewport_to_sync_group(source_leaf, view_start, bar_spacing, None);
     }
@@ -18616,12 +18701,13 @@ impl ChartApp {
     /// Propagate crosshair position to all leaves in the same sync color group.
     ///
     /// `source_leaf` is the leaf whose crosshair was just updated.
-    /// All other leaves sharing the same color tag receive a matching bar
-    /// position via [`ChartWindow::set_crosshair_from_bar`].
+    /// All other leaves sharing the same color tag receive a matching position
+    /// via [`ChartWindow::set_crosshair_from_timestamp`], which converts the
+    /// universal timestamp to each peer's local fractional bar index.
     fn propagate_crosshair_to_sync_group(
         &mut self,
         source_leaf: zengeld_chart::LeafId,
-        bar_f64: f64,
+        timestamp: i64,
         price: f64,
         visible: bool,
         pane_index: Option<usize>,
@@ -18643,7 +18729,7 @@ impl ChartApp {
             .collect();
         for leaf_id in sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                window.set_crosshair_from_bar(bar_f64, price, visible, pane_index);
+                window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index);
             }
         }
     }

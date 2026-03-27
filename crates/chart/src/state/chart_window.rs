@@ -1374,6 +1374,72 @@ impl ChartWindow {
         }
     }
 
+    /// Set crosshair from a synced timestamp and price.
+    ///
+    /// Converts the timestamp to a fractional bar index in this window's local
+    /// bar array, then delegates to [`set_crosshair_from_bar`].  This is the
+    /// correct way to propagate crosshairs across windows that may have
+    /// different instruments or different bar counts — the bar index in the
+    /// source window is meaningless on peers, but the timestamp is universal.
+    pub fn set_crosshair_from_timestamp(&mut self, timestamp: i64, price: f64, visible: bool, pane_index: Option<usize>) {
+        let bar_f64 = self.timestamp_to_bar_f64(timestamp);
+        self.set_crosshair_from_bar(bar_f64, price, visible, pane_index);
+    }
+
+    /// Convert a UTC timestamp (unix seconds) to a fractional bar index using
+    /// binary search.  Interpolates between bars and extrapolates beyond the
+    /// edges of the loaded bar array.
+    fn timestamp_to_bar_f64(&self, timestamp: i64) -> f64 {
+        if self.bars.is_empty() {
+            return 0.0;
+        }
+        if self.bars.len() == 1 {
+            return 0.0;
+        }
+
+        let first_ts = self.bars[0].timestamp;
+        let last_ts = self.bars[self.bars.len() - 1].timestamp;
+
+        // Before first bar — extrapolate backwards.
+        if timestamp <= first_ts {
+            let interval = self.bars[1].timestamp - first_ts;
+            if interval > 0 {
+                return (timestamp - first_ts) as f64 / interval as f64;
+            }
+            return 0.0;
+        }
+
+        // After last bar — extrapolate forwards.
+        if timestamp >= last_ts {
+            let interval = last_ts - self.bars[self.bars.len() - 2].timestamp;
+            if interval > 0 {
+                return (self.bars.len() - 1) as f64
+                    + (timestamp - last_ts) as f64 / interval as f64;
+            }
+            return (self.bars.len() - 1) as f64;
+        }
+
+        // Binary search for an exact match or interpolation point.
+        match self.bars.binary_search_by_key(&timestamp, |b| b.timestamp) {
+            Ok(idx) => idx as f64,
+            Err(idx) => {
+                // Between bars[idx-1] and bars[idx] — interpolate.
+                if idx > 0 && idx < self.bars.len() {
+                    let lo_ts = self.bars[idx - 1].timestamp;
+                    let hi_ts = self.bars[idx].timestamp;
+                    let frac = if hi_ts > lo_ts {
+                        (timestamp - lo_ts) as f64 / (hi_ts - lo_ts) as f64
+                    } else {
+                        0.0
+                    };
+                    (idx - 1) as f64 + frac
+                } else {
+                    idx as f64
+                }
+            }
+        }
+    }
+
     // =========================================================================
     // Compare Overlay Management
     // =========================================================================
