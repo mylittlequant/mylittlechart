@@ -437,15 +437,15 @@ impl ExtendedFrameLayout {
     ///   `sub_pane_instance_ids` length). Use [`default_sub_pane_heights`] to build a
     ///   uniform slice when per-pane sizes are not available.
     /// * `separator_height` - Height of separator between panes (typically 1.0)
-    /// * `maximized_pane` - When true, the single visible sub-pane is allowed to
-    ///   consume 100% of available height (main chart shrinks to zero).
+    /// * `maximized_instance_id` - When `Some(id)`, that sub-pane is drawn as a
+    ///   full-height overlay.  Other panes get zero height.
     pub fn compute_from_chart_panel(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
         scale_settings: &ScaleSettings,
         sub_pane_heights: &[f64],
         separator_height: f64,
-        maximized_pane: bool,
+        maximized_instance_id: Option<u64>,
     ) -> Self {
         let price_scale_width = scale_settings.effective_price_scale_width();
         let time_scale_height = scale_settings.effective_time_scale_height();
@@ -478,16 +478,19 @@ impl ExtendedFrameLayout {
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
 
-        let (main_chart_height, actual_available_for_subs, scaled_heights) = if maximized_pane {
+        let (main_chart_height, actual_available_for_subs, scaled_heights) = if let Some(max_id) = maximized_instance_id {
             // Maximized: main chart keeps its normal height (rendered underneath).
-            // The single maximized pane is drawn as an overlay covering the full
-            // available area.  No separator, no scaling.
+            // The maximized pane is drawn as an overlay covering the full
+            // available area.  Other panes get zero height (invisible).
             let min_main_chart = available_height * 0.15;
             let total_sub_panes_height: f64 =
                 pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
             let mch = (available_height - total_sub_panes_height).max(min_main_chart);
-            // The pane gets the full available_height as overlay.
-            (mch, available_height, vec![available_height])
+            // Maximized pane = full overlay, rest = 0 (won't be visible).
+            let sh: Vec<f64> = sub_pane_instance_ids.iter().map(|&id| {
+                if id == max_id { available_height } else { 0.0 }
+            }).collect();
+            (mch, available_height, sh)
         } else {
             // Calculate total height needed for sub-panes
             let total_sub_panes_height: f64 =
@@ -577,11 +580,22 @@ impl ExtendedFrameLayout {
         for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
             let pane_h = scaled_heights[i];
 
-            if maximized_pane {
-                // Maximized: overlay from chart_y, no separator, full available height.
+            if maximized_instance_id == Some(instance_id) {
+                // This is the maximized pane: overlay from chart_y, full available height.
                 let separator = LayoutRect::new(chart_panel.x, chart_y, chart_panel.width, 0.0);
                 let content = LayoutRect::new(chart_x, chart_y, chart_width, pane_h);
                 let pane_price_scale = LayoutRect::new(price_scale_x, chart_y, price_scale_width, pane_h);
+                sub_panes.push(SubPaneLayout {
+                    instance_id,
+                    separator,
+                    content,
+                    price_scale: pane_price_scale,
+                });
+            } else if maximized_instance_id.is_some() {
+                // Non-maximized panes when one is maximized: zero-height, invisible.
+                let separator = LayoutRect::new(chart_panel.x, current_y, chart_panel.width, 0.0);
+                let content = LayoutRect::new(chart_x, current_y, chart_width, 0.0);
+                let pane_price_scale = LayoutRect::new(price_scale_x, current_y, price_scale_width, 0.0);
                 sub_panes.push(SubPaneLayout {
                     instance_id,
                     separator,

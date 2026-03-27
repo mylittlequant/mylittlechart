@@ -6879,10 +6879,10 @@ impl ChartApp {
             })
             .unwrap_or_default();
 
-        let has_maximized = self.panel_app.panel_grid
+        let maximized_instance_id: Option<u64> = self.panel_app.panel_grid
             .active_window()
-            .map(|win| win.sub_panes.iter().any(|p| p.maximized && !p.hidden))
-            .unwrap_or(false);
+            .and_then(|win| win.sub_panes.iter().find(|p| p.maximized && !p.hidden))
+            .map(|p| p.instance_id);
 
         // Build per-pane heights from the active window's SubPane list so that
         // hit-testing coordinates exactly match what render_full_chart_panel produced.
@@ -6907,7 +6907,7 @@ impl ChartApp {
             &scale_settings,
             &sub_pane_heights,
             1.0, // separator_height
-            has_maximized,
+            maximized_instance_id,
         )
     }
 
@@ -6935,7 +6935,9 @@ impl ChartApp {
                 .collect()
         };
 
-        let has_maximized = window.sub_panes.iter().any(|p| p.maximized && !p.hidden);
+        let maximized_instance_id: Option<u64> = window.sub_panes.iter()
+            .find(|p| p.maximized && !p.hidden)
+            .map(|p| p.instance_id);
 
         // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
         // When maximized, compute_from_chart_panel ignores these and uses full available height.
@@ -6952,7 +6954,7 @@ impl ChartApp {
             scale_settings,
             &sub_pane_heights,
             1.0, // separator_height
-            has_maximized,
+            maximized_instance_id,
         ))
     }
 
@@ -14699,6 +14701,10 @@ impl ChartApp {
 
         // 2. Sub-pane overlay button check — clicks on delete/hide/move-up/expand
         //    buttons are handled here before any other canvas logic.
+        //
+        //    IMPORTANT: `pane_index` from hit_test is the index in overlay_results
+        //    (which may be filtered, e.g. only the maximized pane).  We resolve
+        //    the actual sub-pane via `instance_id` from the overlay result.
         {
             let overlay_results_btn = self.panel_app.panel_grid.active_window()
                 .map(|w| w.sub_pane_overlay_results.clone())
@@ -14708,48 +14714,54 @@ impl ChartApp {
                 .with_overlays(&overlay_results_btn);
             use zengeld_chart::input::ChartHitTester;
             if let zengeld_chart::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } = tester_btn.hit_test(x, y) {
+                // Resolve instance_id from overlay results (correct even when maximized).
+                let instance_id = overlay_results_btn.get(pane_index)
+                    .map(|o| o.instance_id)
+                    .unwrap_or(0);
+                if instance_id == 0 { return; }
+
+                // Find the real index in window.sub_panes by instance_id.
+                let real_index = self.panel_app.panel_grid.active_window()
+                    .and_then(|w| w.sub_panes.iter().position(|p| p.instance_id == instance_id));
+
                 use zengeld_chart::ui::modal_settings::SubPaneButton;
                 match button {
                     SubPaneButton::Delete => {
-                        let instance_id_opt = self.panel_app.panel_grid.active_window()
-                            .and_then(|w| w.sub_panes.get(pane_index))
-                            .map(|sp| sp.instance_id);
-                        if let Some(instance_id) = instance_id_opt {
-                            self.delete_indicator_instance(instance_id);
-                        }
+                        self.delete_indicator_instance(instance_id);
                     }
                     SubPaneButton::Hide => {
-                        let instance_id = self.panel_app.panel_grid.active_window()
-                            .and_then(|w| w.sub_panes.get(pane_index))
-                            .map(|p| p.instance_id);
-                        if let Some(id) = instance_id {
+                        if let Some(idx) = real_index {
                             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
+                                if let Some(sub_pane) = window.sub_panes.get_mut(idx) {
                                     sub_pane.hidden = !sub_pane.hidden;
                                 }
                             }
-                            self.indicator_manager.toggle_visibility(id);
-                            self.sidebar_data_dirty = true;
                         }
+                        self.indicator_manager.toggle_visibility(instance_id);
+                        self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveUp => {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if pane_index > 0 && pane_index < window.sub_panes.len() {
-                                window.sub_panes.swap(pane_index, pane_index - 1);
-                                for (i, pane) in window.sub_panes.iter_mut().enumerate() {
-                                    pane.index = i;
+                        if let Some(idx) = real_index {
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                if idx > 0 && idx < window.sub_panes.len() {
+                                    window.sub_panes.swap(idx, idx - 1);
+                                    for (i, pane) in window.sub_panes.iter_mut().enumerate() {
+                                        pane.index = i;
+                                    }
                                 }
                             }
                         }
                         self.autosave_snapshot();
                     }
                     SubPaneButton::MoveDown => {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if pane_index + 1 < window.sub_panes.len() {
-                                window.sub_panes.swap(pane_index, pane_index + 1);
-                                for (i, pane) in window.sub_panes.iter_mut().enumerate() {
-                                    pane.index = i;
+                        if let Some(idx) = real_index {
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                if idx + 1 < window.sub_panes.len() {
+                                    window.sub_panes.swap(idx, idx + 1);
+                                    for (i, pane) in window.sub_panes.iter_mut().enumerate() {
+                                        pane.index = i;
+                                    }
                                 }
                             }
                         }
@@ -14757,12 +14769,11 @@ impl ChartApp {
                     }
                     SubPaneButton::Expand => {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.pre_maximize_height_ratio = sub_pane.height_ratio;
-                                sub_pane.maximized = true;
-                            }
-                            for (i, pane) in window.sub_panes.iter_mut().enumerate() {
-                                if i != pane_index {
+                            for pane in window.sub_panes.iter_mut() {
+                                if pane.instance_id == instance_id {
+                                    pane.pre_maximize_height_ratio = pane.height_ratio;
+                                    pane.maximized = true;
+                                } else {
                                     pane.maximized = false;
                                 }
                             }
@@ -14770,10 +14781,12 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                     SubPaneButton::Restore => {
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            if let Some(sub_pane) = window.sub_panes.get_mut(pane_index) {
-                                sub_pane.maximized = false;
-                                sub_pane.height_ratio = sub_pane.pre_maximize_height_ratio;
+                        if let Some(idx) = real_index {
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                if let Some(sub_pane) = window.sub_panes.get_mut(idx) {
+                                    sub_pane.maximized = false;
+                                    sub_pane.height_ratio = sub_pane.pre_maximize_height_ratio;
+                                }
                             }
                         }
                         self.autosave_snapshot();
