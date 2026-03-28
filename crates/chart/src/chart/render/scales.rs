@@ -109,6 +109,12 @@ pub fn draw_price_scale(
     // Generate price ticks
     let ticks = price_scale.generate_ticks_for_mode(viewport.chart_height);
 
+    // Clip tick labels to price scale bounds
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+    ctx.clip();
+
     ctx.set_font(&format!("{}px sans-serif", config.font_size));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -119,6 +125,8 @@ pub fn draw_price_scale(
         let label = price_scale.format_label(*price, viewport.chart_height);
         ctx.fill_text(&label, text_x, origin_y + y);
     }
+
+    ctx.restore();
 
     // Draw last price label (always visible, not just on hover)
     if let Some(last_bar) = state.bars.last() {
@@ -302,6 +310,12 @@ pub fn draw_time_scale(
 
     let label_y = origin_y + config.time_scale_height / 2.0;
 
+    // Clip tick labels to time scale bounds
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(origin_x, origin_y, viewport.chart_width, config.time_scale_height);
+    ctx.clip();
+
     ctx.set_font(&format!("{}px sans-serif", config.font_size));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -318,6 +332,8 @@ pub fn draw_time_scale(
         ctx.set_fill_color(color);
         ctx.fill_text(&tick.label, origin_x + tick.x, label_y);
     }
+
+    ctx.restore();
 
     // Draw crosshair time indicator.
     // Works for both in-data and future (extrapolated) positions.

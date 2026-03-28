@@ -14,6 +14,12 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let viewport = state.viewport;
     let price_scale = state.price_scale;
 
+    // Clip grid to chart rect
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(rect.x, rect.y, rect.width, rect.height);
+    ctx.clip();
+
     // Draw horizontal grid lines (price levels)
     if grid.horz_lines.visible {
         ctx.set_stroke_color(&theme.grid_line);
@@ -84,6 +90,8 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             );
         }
     }
+
+    ctx.restore();
 }
 
 /// Draw chart grid extended to custom bounds (for Glass styles)
