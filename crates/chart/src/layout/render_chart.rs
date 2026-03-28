@@ -2995,7 +2995,8 @@ pub fn render_full_chart_panel(
         } else {
             chart.x + chart.width
         };
-        let vert_top = chart.y.min(time_scale.y);
+        // Vertical line spans from topmost content (including above-main) to bottom.
+        let vert_top = total_chart_top.min(time_scale.y);
         let vert_bottom = if time_scale.y + time_scale.height > 0.0 {
             time_scale.y + time_scale.height
         } else {
@@ -3003,16 +3004,22 @@ pub fn render_full_chart_panel(
         };
         ctx.fill_rect(vert_x, vert_top, 1.0, vert_bottom - vert_top);
 
-        // Horizontal separator between chart content (+ sub-panes) and time scale.
-        // Sits at the bottom of all chart content, spanning full width.
-        let horz_y = total_chart_bottom;
+        // Horizontal separators spanning full width (chart + price scale).
         let horz_x = chart.x.min(price_scale.x);
         let horz_w = chart.width + price_scale.width;
-        ctx.fill_rect(horz_x, horz_y, horz_w, 1.0);
+        // Top border (visible when above-main panes exist).
+        ctx.fill_rect(horz_x, total_chart_top, horz_w, 1.0);
+        // Bottom border between chart content and time scale.
+        ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
 
-        // Sub-pane separator lines (between each sub-pane and its price scale).
+        // Sub-pane separator lines across the price scale area.
         for sub_pane in &extended_layout.sub_panes {
+            // Separator rect (between pane and main chart or adjacent pane).
             ctx.fill_rect(vert_x, sub_pane.separator.y, 1.0, sub_pane.separator.height);
+            // For above-main panes, separator is at bottom — also draw top border.
+            if sub_pane.content.y < chart.y {
+                ctx.fill_rect(horz_x, sub_pane.content.y, horz_w, 1.0);
+            }
         }
     }
 
