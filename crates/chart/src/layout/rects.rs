@@ -439,6 +439,10 @@ impl ExtendedFrameLayout {
     /// * `separator_height` - Height of separator between panes (typically 1.0)
     /// * `maximized_instance_id` - When `Some(id)`, that sub-pane is drawn as a
     ///   full-height overlay.  Other panes get zero height.
+    /// * `above_main_flags` - Parallel to `sub_pane_instance_ids`: when `true`,
+    ///   the pane is placed ABOVE the main chart instead of below.  An empty
+    ///   slice (or a slice shorter than `sub_pane_instance_ids`) is treated as
+    ///   all-false, preserving backward compatibility.
     pub fn compute_from_chart_panel(
         chart_panel: &LayoutRect,
         sub_pane_instance_ids: &[u64],
@@ -446,6 +450,7 @@ impl ExtendedFrameLayout {
         sub_pane_heights: &[f64],
         separator_height: f64,
         maximized_instance_id: Option<u64>,
+        above_main_flags: &[bool],
     ) -> Self {
         let price_scale_width = scale_settings.effective_price_scale_width();
         let time_scale_height = scale_settings.effective_time_scale_height();
@@ -475,6 +480,27 @@ impl ExtendedFrameLayout {
             })
             .collect();
 
+        // Resolve above_main per pane (missing entries default to false).
+        let above_flags: Vec<bool> = (0..sub_pane_count)
+            .map(|i| above_main_flags.get(i).copied().unwrap_or(false))
+            .collect();
+
+        // Count panes in each group.
+        let above_count = above_flags.iter().filter(|&&f| f).count();
+        let below_count = sub_pane_count - above_count;
+
+        // Total heights consumed by above and below groups (separators + content).
+        let above_raw_h: f64 = above_flags.iter().zip(pane_heights.iter())
+            .filter(|(&f, _)| f)
+            .map(|(_, &h)| h)
+            .sum::<f64>()
+            + separator_height * above_count as f64;
+        let below_raw_h: f64 = above_flags.iter().zip(pane_heights.iter())
+            .filter(|(&f, _)| !f)
+            .map(|(_, &h)| h)
+            .sum::<f64>()
+            + separator_height * below_count as f64;
+
         // Main chart height is reduced by sub-panes total (also exclude time scale)
         let available_height = chart_panel.height - time_scale_height;
 
@@ -484,8 +510,7 @@ impl ExtendedFrameLayout {
             // available area.  Other panes get zero height (invisible).
             // actual_available_for_subs stays normal so time_scale_y doesn't shift.
             let min_main_chart = available_height * 0.15;
-            let total_sub_panes_height: f64 =
-                pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
+            let total_sub_panes_height = above_raw_h + below_raw_h;
             let mch = (available_height - total_sub_panes_height).max(min_main_chart);
             let afs = (available_height - mch).max(0.0);
             // Maximized pane = full overlay (available_height), rest = 0.
@@ -494,10 +519,7 @@ impl ExtendedFrameLayout {
             }).collect();
             (mch, afs, sh)
         } else {
-            // Calculate total height needed for sub-panes
-            let total_sub_panes_height: f64 =
-                pane_heights.iter().sum::<f64>() + separator_height * sub_pane_count as f64;
-
+            let total_sub_panes_height = above_raw_h + below_raw_h;
             let min_main_chart = available_height * 0.15;
             let mch = (available_height - total_sub_panes_height).max(min_main_chart);
 
@@ -533,14 +555,26 @@ impl ExtendedFrameLayout {
             }
         };
 
+        // Compute total height consumed by above panes at their scaled sizes.
+        let above_total_scaled: f64 = above_flags.iter().zip(scaled_heights.iter())
+            .filter(|(&f, _)| f)
+            .map(|(_, &h)| h + separator_height)
+            .sum();
+
         let (chart_y, time_scale_y) = match scale_settings.time_scale_position {
             TimeScalePosition::Top => {
-                // Time scale on top: [time_scale][chart][sub_panes]
-                (chart_panel.y + time_scale_height, chart_panel.y)
+                // Time scale on top: [time_scale][above_panes][chart][below_panes]
+                (
+                    chart_panel.y + time_scale_height + above_total_scaled,
+                    chart_panel.y,
+                )
             }
             TimeScalePosition::Bottom | TimeScalePosition::Hidden => {
-                // Time scale on bottom or hidden: [chart][sub_panes][time_scale?]
-                (chart_panel.y, chart_panel.y + main_chart_height + actual_available_for_subs)
+                // Time scale on bottom or hidden: [above_panes][chart][below_panes][time_scale?]
+                (
+                    chart_panel.y + above_total_scaled,
+                    chart_panel.y + main_chart_height + actual_available_for_subs,
+                )
             }
         };
 
@@ -575,12 +609,22 @@ impl ExtendedFrameLayout {
         // Total chart height for positioning
         let total_chart_height = main_chart_height + actual_available_for_subs;
 
-        // Compute sub-pane layouts (sub-panes appear after main chart)
+        // Compute sub-pane layouts.
+        // Above panes are placed from chart_panel.y downward (before the main chart).
+        // Below panes are placed from chart_y + main_chart_height downward.
         let mut sub_panes = Vec::with_capacity(sub_pane_count);
-        let mut current_y = chart_y + main_chart_height;
+
+        // Separate y-cursors for above and below groups.
+        let above_start_y = match scale_settings.time_scale_position {
+            TimeScalePosition::Top => chart_panel.y + time_scale_height,
+            TimeScalePosition::Bottom | TimeScalePosition::Hidden => chart_panel.y,
+        };
+        let mut above_y = above_start_y;
+        let mut below_y = chart_y + main_chart_height;
 
         for (i, &instance_id) in sub_pane_instance_ids.iter().enumerate() {
             let pane_h = scaled_heights[i];
+            let is_above = above_flags[i];
 
             if maximized_instance_id == Some(instance_id) {
                 // This is the maximized pane: overlay from chart_y, full available height.
@@ -595,40 +639,28 @@ impl ExtendedFrameLayout {
                 });
             } else if maximized_instance_id.is_some() {
                 // Non-maximized panes when one is maximized: zero-height, invisible.
-                let separator = LayoutRect::new(chart_panel.x, current_y, chart_panel.width, 0.0);
-                let content = LayoutRect::new(chart_x, current_y, chart_width, 0.0);
-                let pane_price_scale = LayoutRect::new(price_scale_x, current_y, price_scale_width, 0.0);
+                let ref_y = if is_above { above_y } else { below_y };
+                let separator = LayoutRect::new(chart_panel.x, ref_y, chart_panel.width, 0.0);
+                let content = LayoutRect::new(chart_x, ref_y, chart_width, 0.0);
+                let pane_price_scale = LayoutRect::new(price_scale_x, ref_y, price_scale_width, 0.0);
                 sub_panes.push(SubPaneLayout {
                     instance_id,
                     separator,
                     content,
                     price_scale: pane_price_scale,
                 });
-            } else {
-                // Separator
+            } else if is_above {
+                // Above-main pane: placed before the main chart.
                 let separator = LayoutRect::new(
                     chart_panel.x,
-                    current_y,
+                    above_y,
                     chart_panel.width,
                     separator_height,
                 );
-                current_y += separator_height;
+                above_y += separator_height;
 
-                // Content area (respects chart X position)
-                let content = LayoutRect::new(
-                    chart_x,
-                    current_y,
-                    chart_width,
-                    pane_h,
-                );
-
-                // Price scale for this pane (respects price scale X position)
-                let pane_price_scale = LayoutRect::new(
-                    price_scale_x,
-                    current_y,
-                    price_scale_width,
-                    pane_h,
-                );
+                let content = LayoutRect::new(chart_x, above_y, chart_width, pane_h);
+                let pane_price_scale = LayoutRect::new(price_scale_x, above_y, price_scale_width, pane_h);
 
                 sub_panes.push(SubPaneLayout {
                     instance_id,
@@ -637,7 +669,28 @@ impl ExtendedFrameLayout {
                     price_scale: pane_price_scale,
                 });
 
-                current_y += pane_h;
+                above_y += pane_h;
+            } else {
+                // Below-main pane: placed after the main chart.
+                let separator = LayoutRect::new(
+                    chart_panel.x,
+                    below_y,
+                    chart_panel.width,
+                    separator_height,
+                );
+                below_y += separator_height;
+
+                let content = LayoutRect::new(chart_x, below_y, chart_width, pane_h);
+                let pane_price_scale = LayoutRect::new(price_scale_x, below_y, price_scale_width, pane_h);
+
+                sub_panes.push(SubPaneLayout {
+                    instance_id,
+                    separator,
+                    content,
+                    price_scale: pane_price_scale,
+                });
+
+                below_y += pane_h;
             }
         }
 

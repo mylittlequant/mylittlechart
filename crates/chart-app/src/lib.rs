@@ -3998,6 +3998,12 @@ impl ChartApp {
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
                         .find(|p| p.maximized && !p.hidden)
                         .map(|p| p.instance_id);
+                    let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
+                        window.sub_panes.iter()
+                            .find(|p| p.instance_id == id)
+                            .map(|p| p.above_main)
+                            .unwrap_or(false)
+                    }).collect();
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &leaf_rect,
                         &sub_pane_ids,
@@ -4005,6 +4011,7 @@ impl ChartApp {
                         &sub_pane_heights,
                         1.0,
                         maximized_instance_id,
+                        &above_main_flags_sub,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
@@ -4443,6 +4450,12 @@ impl ChartApp {
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
                         .find(|p| p.maximized && !p.hidden)
                         .map(|p| p.instance_id);
+                    let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
+                        window.sub_panes.iter()
+                            .find(|p| p.instance_id == id)
+                            .map(|p| p.above_main)
+                            .unwrap_or(false)
+                    }).collect();
                     let extended = zengeld_chart::ExtendedFrameLayout::compute_from_chart_panel(
                         &chart_render_rect,
                         &sub_pane_ids,
@@ -4450,6 +4463,7 @@ impl ChartApp {
                         &sub_pane_heights,
                         1.0,
                         maximized_instance_id,
+                        &above_main_flags_sub,
                     );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {

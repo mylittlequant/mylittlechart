@@ -280,6 +280,7 @@ pub fn compute_chart_internal_layout(
     sub_pane_heights: &[f64],
     separator_height: f64,
     maximized_instance_id: Option<u64>,
+    above_main_flags: &[bool],
 ) -> ChartInternalLayout {
     let panel_layout = ChartPanelLayout::compute(full_panel_rect, toolbar_config);
     let extended = ExtendedFrameLayout::compute_from_chart_panel(
@@ -289,6 +290,7 @@ pub fn compute_chart_internal_layout(
         sub_pane_heights,
         separator_height,
         maximized_instance_id,
+        above_main_flags,
     );
     ChartInternalLayout {
         panel_layout,

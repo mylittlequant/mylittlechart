@@ -2732,6 +2732,17 @@ pub fn render_full_chart_panel(
     } else {
         crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
     };
+    // Build above_main flags parallel to sub_pane_ids.
+    let above_main_flags: Vec<bool> = if let Some(panes) = data.sub_panes {
+        sub_pane_ids.iter().map(|&id| {
+            panes.iter()
+                .find(|p| p.instance_id == id)
+                .map(|p| p.above_main)
+                .unwrap_or(false)
+        }).collect()
+    } else {
+        vec![false; sub_pane_ids.len()]
+    };
     let extended_layout = crate::layout::ExtendedFrameLayout::compute_from_chart_panel(
         content_rect,
         &sub_pane_ids,
@@ -2739,6 +2750,7 @@ pub fn render_full_chart_panel(
         &sub_pane_heights,
         1.0, // separator_height
         maximized_instance_id,
+        &above_main_flags,
     );
     let main_chart = &extended_layout.main_chart;
 

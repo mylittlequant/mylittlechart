@@ -6984,6 +6984,17 @@ impl ChartApp {
             .unwrap_or_else(|| {
                 zengeld_chart::default_sub_pane_heights(sub_pane_ids.len(), 100.0)
             });
+        let above_main_flags: Vec<bool> = self.panel_app.panel_grid
+            .active_window()
+            .map(|win| {
+                sub_pane_ids.iter().map(|&id| {
+                    win.sub_panes.iter()
+                        .find(|p| p.instance_id == id)
+                        .map(|p| p.above_main)
+                        .unwrap_or(false)
+                }).collect()
+            })
+            .unwrap_or_else(|| vec![false; sub_pane_ids.len()]);
         ExtendedFrameLayout::compute_from_chart_panel(
             &content_rect,
             &sub_pane_ids,
@@ -6991,6 +7002,7 @@ impl ChartApp {
             &sub_pane_heights,
             1.0, // separator_height
             maximized_instance_id,
+            &above_main_flags,
         )
     }
 
@@ -7031,6 +7043,12 @@ impl ChartApp {
                 .unwrap_or(0.0);
             if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
         }).collect();
+        let above_main_flags: Vec<bool> = sub_pane_ids.iter().map(|&id| {
+            window.sub_panes.iter()
+                .find(|p| p.instance_id == id)
+                .map(|p| p.above_main)
+                .unwrap_or(false)
+        }).collect();
         Some(ExtendedFrameLayout::compute_from_chart_panel(
             leaf_rect,
             &sub_pane_ids,
@@ -7038,6 +7056,7 @@ impl ChartApp {
             &sub_pane_heights,
             1.0, // separator_height
             maximized_instance_id,
+            &above_main_flags,
         ))
     }
 
@@ -14827,8 +14846,37 @@ impl ChartApp {
                     SubPaneButton::MoveUp => {
                         if let Some(idx) = real_index {
                             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                if idx > 0 && idx < window.sub_panes.len() {
-                                    window.sub_panes.swap(idx, idx - 1);
+                                let len = window.sub_panes.len();
+                                if idx < len {
+                                    let is_above = window.sub_panes[idx].above_main;
+                                    if is_above {
+                                        // Already above main — swap within above group if possible.
+                                        if idx > 0 {
+                                            window.sub_panes.swap(idx, idx - 1);
+                                        }
+                                    } else {
+                                        // Below main: check if this is the first below-main pane.
+                                        let first_below = window.sub_panes[..idx]
+                                            .iter()
+                                            .all(|p| p.above_main);
+                                        if first_below {
+                                            // Promote to above-main: set flag and move to end of
+                                            // above group (last above = closest to main chart).
+                                            window.sub_panes[idx].above_main = true;
+                                            let above_end = window.sub_panes[..idx]
+                                                .iter()
+                                                .filter(|p| p.above_main)
+                                                .count();
+                                            // above_end is the count of above panes before idx;
+                                            // since we just set [idx].above_main = true the pane
+                                            // should sit at position above_end (end of the above
+                                            // group).  Rotate it from idx down to above_end.
+                                            window.sub_panes[above_end..=idx].rotate_right(1);
+                                        } else {
+                                            // Normal swap within below group.
+                                            window.sub_panes.swap(idx, idx - 1);
+                                        }
+                                    }
                                     for (i, pane) in window.sub_panes.iter_mut().enumerate() {
                                         pane.index = i;
                                     }
@@ -14840,8 +14888,39 @@ impl ChartApp {
                     SubPaneButton::MoveDown => {
                         if let Some(idx) = real_index {
                             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                if idx + 1 < window.sub_panes.len() {
-                                    window.sub_panes.swap(idx, idx + 1);
+                                let len = window.sub_panes.len();
+                                if idx < len {
+                                    let is_above = window.sub_panes[idx].above_main;
+                                    if !is_above {
+                                        // Already below main — swap within below group if possible.
+                                        if idx + 1 < len {
+                                            window.sub_panes.swap(idx, idx + 1);
+                                        }
+                                    } else {
+                                        // Above main: check if this is the last above-main pane.
+                                        let last_above = window.sub_panes[idx + 1..]
+                                            .iter()
+                                            .all(|p| !p.above_main);
+                                        if last_above {
+                                            // Demote to below-main: set flag and move to position 0
+                                            // in the below group (first below = closest to main
+                                            // chart).
+                                            window.sub_panes[idx].above_main = false;
+                                            // Count how many above-main panes are at positions
+                                            // 0..idx (they stay in place).  The pane should move
+                                            // to position idx (first below slot) — it's already
+                                            // there since all after idx are below-main, so a
+                                            // rotate_left on [idx..] places it at the start of the
+                                            // below group.
+                                            // Actually: positions [idx+1..] are all below_main,
+                                            // so rotating [idx..] left by 1 moves idx to end.
+                                            // We want it at position idx (start of below group),
+                                            // so no rotate needed — it's already at the boundary.
+                                        } else {
+                                            // Normal swap within above group.
+                                            window.sub_panes.swap(idx, idx + 1);
+                                        }
+                                    }
                                     for (i, pane) in window.sub_panes.iter_mut().enumerate() {
                                         pane.index = i;
                                     }
