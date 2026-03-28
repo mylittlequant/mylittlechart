@@ -3912,22 +3912,15 @@ impl ChartApp {
                             state.visible = false;
                             state.hovered_button = None;
                         }
-                        for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
+                        for (idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                             if pane_layout.content.contains(x, y) {
-                                // Find the real position in window.sub_panes by instance_id.
-                                // During maximized mode, extended.sub_panes has only 1 entry
-                                // but window.sub_panes may have the pane at a different index.
-                                let real_idx = window.sub_panes
-                                    .iter()
-                                    .position(|p| p.instance_id == pane_layout.instance_id)
-                                    .unwrap_or(layout_idx);
-                                while window.sub_pane_overlay_states.len() <= real_idx {
+                                while window.sub_pane_overlay_states.len() <= idx {
                                     window.sub_pane_overlay_states.push(Default::default());
                                 }
-                                window.sub_pane_overlay_states[real_idx].visible = true;
-                                if layout_idx < overlay_results_split.len() {
+                                window.sub_pane_overlay_states[idx].visible = true;
+                                if idx < overlay_results_split.len() {
                                     use zengeld_chart::ui::modal_settings::SubPaneButton;
-                                    let overlay = &overlay_results_split[layout_idx];
+                                    let overlay = &overlay_results_split[idx];
                                     let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::Delete)
                                     } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
@@ -3943,7 +3936,7 @@ impl ChartApp {
                                     } else {
                                         None
                                     };
-                                    window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                                    window.sub_pane_overlay_states[idx].hovered_button = hovered;
                                 }
                                 break;
                             }
@@ -4226,24 +4219,16 @@ impl ChartApp {
                 state.hovered_button = None;
             }
             // Show overlay for the pane the cursor is inside.
-            for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
+            for (idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                 if pane_layout.content.contains(x, y) {
-                    // Find the real position in window.sub_panes by instance_id.
-                    // During maximized mode, extended.sub_panes has only 1 entry
-                    // but window.sub_panes may have the pane at a different index.
-                    let real_idx = window.sub_panes
-                        .iter()
-                        .position(|p| p.instance_id == pane_layout.instance_id)
-                        .unwrap_or(layout_idx);
-                    while window.sub_pane_overlay_states.len() <= real_idx {
+                    while window.sub_pane_overlay_states.len() <= idx {
                         window.sub_pane_overlay_states.push(Default::default());
                     }
-                    window.sub_pane_overlay_states[real_idx].visible = true;
+                    window.sub_pane_overlay_states[idx].visible = true;
                     // Determine which button (if any) is hovered.
-                    // overlay_results_mm is indexed by layout position (not window.sub_panes position).
-                    if layout_idx < overlay_results_mm.len() {
+                    if idx < overlay_results_mm.len() {
                         use zengeld_chart::ui::modal_settings::SubPaneButton;
-                        let overlay = &overlay_results_mm[layout_idx];
+                        let overlay = &overlay_results_mm[idx];
                         let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::Delete)
                         } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
@@ -4259,7 +4244,7 @@ impl ChartApp {
                         } else {
                             None
                         };
-                        window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                        window.sub_pane_overlay_states[idx].hovered_button = hovered;
                     }
                     break; // cursor can only be in one pane
                 }

@@ -5584,20 +5584,11 @@ impl ChartApp {
                         );
                         new_sub_panes.push(pane);
                         used_ids.insert(iid);
-                    } else if existing_map.get(&iid).map_or(false, |p| p.hidden) {
-                        // Preserve hidden panes even when indicator is not visible.
-                        // The indicator_manager marks invisible when hidden via the
-                        // overlay Hide button; we must not drop the SubPane struct
-                        // because it carries above_main, height_ratio, and other
-                        // user-configured state that must survive an unhide.
-                        let pane = existing_map[&iid].clone();
-                        new_sub_panes.push(pane);
-                        used_ids.insert(iid);
                     }
                 }
             } else {
                 // No saved order: keep existing Vec order for panes that are
-                // still present in sub_pane_data, or are hidden.
+                // still present in sub_pane_data.
                 for existing in &window.sub_panes {
                     if range_map.contains_key(&existing.instance_id) {
                         let pane = build_pane(
@@ -5608,14 +5599,6 @@ impl ChartApp {
                             &range_map,
                         );
                         new_sub_panes.push(pane);
-                        used_ids.insert(existing.instance_id);
-                    } else if existing.hidden {
-                        // Preserve hidden panes even when indicator is not visible.
-                        // The indicator_manager marks invisible when hidden via the
-                        // overlay Hide button; we must not drop the SubPane struct
-                        // because it carries above_main, height_ratio, and other
-                        // user-configured state that must survive an unhide.
-                        new_sub_panes.push(existing.clone());
                         used_ids.insert(existing.instance_id);
                     }
                 }

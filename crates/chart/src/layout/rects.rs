@@ -534,10 +534,8 @@ impl ExtendedFrameLayout {
             } else {
                 1.0
             };
-            // Scale sub-pane heights, minimum 30px each (a small usable floor).
-            // Using a percentage-based floor (e.g. 15%) caused total heights to
-            // exceed the available budget when multiple panes are present.
-            let min_sub_pane = 30.0_f64;
+            // Scale sub-pane heights, minimum 15% of available each
+            let min_sub_pane = available_height * 0.15;
             let sh: Vec<f64> = pane_heights
                 .iter()
                 .map(|&h| (h * scale_factor).max(min_sub_pane))
