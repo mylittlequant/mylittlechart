@@ -3039,8 +3039,6 @@ impl ChartApp {
             self.sidebar_state.object_tree_items.clear();
 
             let active_cid = self.panel_app.panel_grid.active_chart_id();
-            let active_symbol: Option<String> = self.panel_app.panel_grid.active_window()
-                .map(|w| w.symbol.clone());
 
             // Determine whether the active window is in a real (non-auto_created) tag group.
             let tagged_group = active_cid
@@ -3057,6 +3055,12 @@ impl ChartApp {
                 _ => zengeld_chart::ObjectCategory::Drawing,
             };
 
+            // Collect active window key fields before any borrows.
+            let (active_window_sym, active_window_exchange, active_window_account_type) =
+                self.panel_app.panel_grid.active_window()
+                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
+                    .unwrap_or_default();
+
             if let Some(group) = tagged_group {
                 // ----------------------------------------------------------------
                 // TAGGED window: two sections — "Group" and (optionally) "Window"
@@ -3064,22 +3068,29 @@ impl ChartApp {
 
                 // --- Section "Group": primitives from group.primitives ---
                 if group.sync_flags.sync_drawings {
-                    for p in group.primitives.iter().filter(|p| {
-                        active_symbol.as_deref()
-                            .map(|sym| p.data().symbol == sym)
-                            .unwrap_or(true)
-                    }) {
+                    for p in group.primitives.iter() {
                         let data = p.data();
                         let kind = p.kind();
                         let display = p.display_name().to_string();
                         let name = if display.is_empty() { data.type_id.as_str() } else { display.as_str() };
+                        // Group primitives inherit the window's exchange/account_type since
+                        // PrimitiveData has no exchange/account_type fields. If multi-exchange
+                        // groups are added in the future, PrimitiveData would need those fields.
+                        let prim_sym = data.symbol.clone();
+                        let item_state = if prim_sym == active_window_sym {
+                            sidebar_content::types::ObjectItemState::Active
+                        } else {
+                            sidebar_content::types::ObjectItemState::Memory
+                        };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             data.id, name, prim_category(kind), &data.type_id,
                         )
                         .with_visible(data.visible)
                         .with_locked(data.locked)
                         .with_color(Some(data.color.stroke.clone()))
-                        .with_section("Group");
+                        .with_section("Group")
+                        .with_key(&prim_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(item_state);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -3087,11 +3098,7 @@ impl ChartApp {
                 // --- Section "Group": indicators from group.indicator_configs ---
                 if group.sync_flags.sync_indicators {
                     let active_window_id = active_cid.map(|cid| cid.0);
-                    for cfg in group.indicator_configs.iter().filter(|cfg| {
-                        active_symbol.as_deref()
-                            .map(|sym| cfg.symbol == sym)
-                            .unwrap_or(true)
-                    }) {
+                    for cfg in group.indicator_configs.iter() {
                         // Resolve to the active window's own instance so that widget
                         // actions (visibility, delete, settings) use the correct ID.
                         let local = active_window_id.and_then(|wid| {
@@ -3102,12 +3109,20 @@ impl ChartApp {
                             Some(inst) => (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked),
                             None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
                         };
+                        let cfg_sym = cfg.symbol.clone();
+                        let item_state = if cfg_sym == active_window_sym {
+                            sidebar_content::types::ObjectItemState::Active
+                        } else {
+                            sidebar_content::types::ObjectItemState::Memory
+                        };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             id, &name, zengeld_chart::ObjectCategory::Indicator, &type_id,
                         )
                         .with_visible(visible)
                         .with_locked(locked)
-                        .with_section("Group");
+                        .with_section("Group")
+                        .with_key(&cfg_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(item_state);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -3115,27 +3130,18 @@ impl ChartApp {
                 // --- Section "Window": window-local stashed primitives ---
                 // Collect stashed primitive data first so we don't hold an active_window borrow
                 // while also needing indicator_manager (which is not behind the same ref).
-                // When sync_drawings is ON, stashed_primitives are already represented by
-                // group.primitives in the "Group" section above — hide them here to avoid duplicates.
-                let stashed_prim_data: Vec<_> = if !group.sync_flags.sync_drawings {
-                    self.panel_app.panel_grid.active_window()
-                        .map(|w| w.stashed_primitives.iter()
-                            .filter(|p| {
-                                active_symbol.as_deref()
-                                    .map(|sym| p.data().symbol == sym)
-                                    .unwrap_or(true)
-                            })
-                            .map(|p| {
-                                let data = p.data();
-                                let kind = p.kind();
-                                let display = p.display_name().to_string();
-                                (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                            })
-                            .collect())
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
+                // Stashed primitives are always shown regardless of sync_drawings state —
+                // they represent objects that were on the window before joining the tag group.
+                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_window()
+                    .map(|w| w.stashed_primitives.iter()
+                        .map(|p| {
+                            let data = p.data();
+                            let kind = p.kind();
+                            let display = p.display_name().to_string();
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                        })
+                        .collect())
+                    .unwrap_or_default();
 
                 // Collect window-local indicator IDs before releasing the window borrow.
                 let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_window()
@@ -3153,7 +3159,9 @@ impl ChartApp {
                         .with_visible(*visible)
                         .with_locked(*locked)
                         .with_color(Some(stroke.clone()))
-                        .with_section("Window");
+                        .with_section("Window")
+                        .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(sidebar_content::types::ObjectItemState::Stashed);
                         self.sidebar_state.object_tree_items.push(item);
                     }
 
@@ -3169,7 +3177,9 @@ impl ChartApp {
                             )
                             .with_visible(inst.visible)
                             .with_locked(inst.locked)
-                            .with_section("Window");
+                            .with_section("Window")
+                            .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                            .with_item_state(sidebar_content::types::ObjectItemState::Stashed);
                             self.sidebar_state.object_tree_items.push(item);
                         }
                     }
@@ -3179,52 +3189,78 @@ impl ChartApp {
                 // UNTAGGED window (auto_created group): flat list, no section headers
                 // ----------------------------------------------------------------
 
-                // Primitives from window-local drawing_manager.
+                // Primitives from window-local drawing_manager — all symbols, annotated by state.
                 let local_prims: Vec<_> = self.panel_app.panel_grid.active_window()
                     .map(|w| w.drawing_manager.primitives().iter()
-                        .filter(|p| {
-                            active_symbol.as_deref()
-                                .map(|sym| p.data().symbol == sym)
-                                .unwrap_or(true)
-                        })
                         .map(|p| {
                             let data = p.data();
                             let kind = p.kind();
                             let display = p.display_name().to_string();
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
                         })
                         .collect())
                     .unwrap_or_default();
 
-                for (id, display, type_id, kind, visible, locked, stroke) in &local_prims {
+                for (id, display, type_id, kind, visible, locked, stroke, prim_sym) in &local_prims {
                     let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
+                    let item_state = if *prim_sym == active_window_sym {
+                        sidebar_content::types::ObjectItemState::Active
+                    } else {
+                        sidebar_content::types::ObjectItemState::Memory
+                    };
                     let item = sidebar_content::types::ObjectTreeItem::new(
                         *id, name, prim_category(*kind), type_id,
                     )
                     .with_visible(*visible)
                     .with_locked(*locked)
-                    .with_color(Some(stroke.clone()));
+                    .with_color(Some(stroke.clone()))
+                    .with_key(prim_sym, &active_window_exchange, &active_window_account_type)
+                    .with_item_state(item_state);
                     self.sidebar_state.object_tree_items.push(item);
                 }
 
-                // Indicators from indicator_manager for this window + symbol.
+                // Indicators from indicator_manager for this window — all symbols, annotated by state.
                 let window_id = active_cid.map(|cid| cid.0);
-                if let (Some(wid), Some(sym)) = (window_id, active_symbol.as_ref()) {
-                    for inst in self.indicator_manager
-                        .get_instances_for_symbol_in_window(sym, wid)
-                    {
+                if let Some(wid) = window_id {
+                    let insts: Vec<_> = self.indicator_manager.instances_iter()
+                        .filter(|i| i.window_id == Some(wid))
+                        .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked, i.symbol.clone()))
+                        .collect();
+                    for (id, name, type_id, visible, locked, inst_sym) in &insts {
+                        let item_state = if *inst_sym == active_window_sym {
+                            sidebar_content::types::ObjectItemState::Active
+                        } else {
+                            sidebar_content::types::ObjectItemState::Memory
+                        };
                         let item = sidebar_content::types::ObjectTreeItem::new(
-                            inst.id,
-                            &inst.name,
+                            *id,
+                            name,
                             zengeld_chart::ObjectCategory::Indicator,
-                            &inst.type_id,
+                            type_id,
                         )
-                        .with_visible(inst.visible)
-                        .with_locked(inst.locked);
+                        .with_visible(*visible)
+                        .with_locked(*locked)
+                        .with_key(inst_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(item_state);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
             }
+
+            // Sort within sections: Active first, then Stashed, then Memory (stable to preserve sub-order).
+            self.sidebar_state.object_tree_items.sort_by_key(|item| {
+                let section_order: u8 = match item.section.as_deref() {
+                    Some("Group") => 0,
+                    Some("Window") => 1,
+                    _ => 2,
+                };
+                let state_order: u8 = match item.item_state {
+                    sidebar_content::types::ObjectItemState::Active => 0,
+                    sidebar_content::types::ObjectItemState::Stashed => 1,
+                    sidebar_content::types::ObjectItemState::Memory => 2,
+                };
+                (section_order, state_order)
+            });
 
             // --- ObjectTree: compare overlay series ---
             if let Some(window) = self.panel_app.panel_grid.active_window() {

@@ -10,6 +10,20 @@ use crate::state::MetricsSnapshot;
 // Object Tree
 // =============================================================================
 
+/// Describes the lifecycle state of an object tree item for visual distinction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ObjectItemState {
+    /// Object is active on the current symbol:exchange:account_type key.
+    #[default]
+    Active,
+    /// Object exists in the group/window but is stashed (parked pre-tag primitives).
+    /// Shown greyed-out with "(stashed)" suffix; not interactive.
+    Stashed,
+    /// Object belongs to a different symbol:exchange:account_type key (memory).
+    /// Shown dimmed with key label; not interactive.
+    Memory,
+}
+
 /// An item rendered in the Object Tree sidebar panel.
 ///
 /// Mirrors `ObjectTreeItem` from `zengeld-terminal-core::ui::definitions::sidebar`.
@@ -42,6 +56,26 @@ pub struct ObjectTreeItem {
     /// `"Window"` (local to the active window only).  `None` means no
     /// section header is rendered above this item.
     pub section: Option<String>,
+
+    // --- Key binding fields ---
+
+    /// Symbol this object belongs to (e.g. "BTCUSDT").
+    /// Empty string means "unknown / global".
+    #[serde(default)]
+    pub symbol: String,
+
+    /// Exchange this object belongs to (e.g. "binance").
+    #[serde(default)]
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "M").
+    /// Empty string means Spot.
+    #[serde(default)]
+    pub account_type: String,
+
+    /// Lifecycle state of this item (active / stashed / memory).
+    #[serde(default)]
+    pub item_state: ObjectItemState,
 }
 
 impl ObjectTreeItem {
@@ -58,6 +92,10 @@ impl ObjectTreeItem {
             color: None,
             has_alert: false,
             section: None,
+            symbol: String::new(),
+            exchange: String::new(),
+            account_type: String::new(),
+            item_state: ObjectItemState::Active,
         }
     }
 
@@ -67,6 +105,36 @@ impl ObjectTreeItem {
     pub fn with_color(mut self, c: Option<String>) -> Self { self.color = c; self }
     pub fn with_has_alert(mut self, v: bool) -> Self { self.has_alert = v; self }
     pub fn with_section(mut self, s: &str) -> Self { self.section = Some(s.to_string()); self }
+
+    /// Set the symbol/exchange/account_type key for this item.
+    pub fn with_key(mut self, symbol: &str, exchange: &str, account_type: &str) -> Self {
+        self.symbol = symbol.to_string();
+        self.exchange = exchange.to_string();
+        self.account_type = account_type.to_string();
+        self
+    }
+
+    /// Set the lifecycle state of this item.
+    pub fn with_item_state(mut self, state: ObjectItemState) -> Self {
+        self.item_state = state;
+        self
+    }
+
+    /// Formatted key for display: "BTCUSDT:binance:S", "BTCUSDT:binance", or "BTCUSDT".
+    pub fn key_label(&self) -> String {
+        if self.exchange.is_empty() {
+            self.symbol.clone()
+        } else if self.account_type.is_empty() {
+            format!("{}:{}", self.symbol, self.exchange)
+        } else {
+            format!("{}:{}:{}", self.symbol, self.exchange, self.account_type)
+        }
+    }
+
+    /// Returns true when the item should respond to hover/click.
+    pub fn is_interactive(&self) -> bool {
+        self.item_state == ObjectItemState::Active
+    }
 }
 
 // =============================================================================
