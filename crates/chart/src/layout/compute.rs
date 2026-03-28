@@ -363,20 +363,20 @@ impl ExtendedFrameLayout {
     }
 
     /// Check if Y coordinate is on a separator between panes.
-    /// Returns the sub-pane index whose separator was hit.  The hit zone is
-    /// expanded to ±6 px around the separator centre so a 1-px separator line
-    /// is reliably clickable.  Zero-height separators (maximized overlay) are
-    /// skipped.
-    pub fn find_separator_at_y(&self, y: f64) -> Option<usize> {
+    /// Returns the instance ID of the sub-pane whose separator was hit.  The
+    /// hit zone is expanded to ±6 px around the separator centre so a 1-px
+    /// separator line is reliably clickable.  Zero-height separators
+    /// (maximized overlay) are skipped.
+    pub fn find_separator_at_y(&self, y: f64) -> Option<u64> {
         const HIT_TOLERANCE: f64 = 6.0;
-        for (idx, pane) in self.sub_panes.iter().enumerate() {
+        for pane in &self.sub_panes {
             // Maximized panes have separator.height == 0 — no interactive separator.
             if pane.separator.height == 0.0 {
                 continue;
             }
             let sep_center = pane.separator.y + pane.separator.height * 0.5;
             if (y - sep_center).abs() <= HIT_TOLERANCE {
-                return Some(idx);
+                return Some(pane.instance_id);
             }
         }
         None

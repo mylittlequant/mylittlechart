@@ -2681,8 +2681,8 @@ impl ChartApp {
         // Handle pane separator drag: resize the sub-pane above and below the
         // separator by the vertical delta.  This updates height_ratio on the
         // sub-pane so that compute_from_chart_panel picks it up next frame.
-        if let zengeld_chart::engine::input::DragMode::PaneSeparator { pane_index } = drag_mode {
-            self.handle_pane_separator_drag(pane_index, dy);
+        if let zengeld_chart::engine::input::DragMode::PaneSeparator { instance_id } = drag_mode {
+            self.handle_pane_separator_drag(instance_id, dy);
             return;
         }
 
@@ -7141,14 +7141,14 @@ impl ChartApp {
 
     /// Adjust sub-pane heights when the user drags a pane separator.
     ///
-    /// `pane_index` is the index of the sub-pane *below* the separator (the
-    /// separator sits between pane `pane_index - 1` and pane `pane_index`,
-    /// matching the convention used by `HitResult::PaneSeparator`).
+    /// `instance_id` identifies the sub-pane whose separator is being dragged.
+    /// The separator sits at the top edge of that pane (between the previous
+    /// pane or the main chart and this pane).
     ///
     /// The delta is distributed by shrinking the pane above and growing the
     /// pane below (or vice-versa when dragging up).  Both panes are clamped to
     /// a minimum of 15% of the available leaf height (absolute floor: 20 px).
-    fn handle_pane_separator_drag(&mut self, pane_index: usize, delta_y: f64) {
+    fn handle_pane_separator_drag(&mut self, instance_id: u64, delta_y: f64) {
         const DEFAULT_H: f64 = 100.0;
 
         // Get the active leaf and its absolute rect first (immutable borrows).
@@ -7168,13 +7168,13 @@ impl ChartApp {
         // Build the extended layout to get ACTUAL rendered heights (after scale_factor
         // clamping inside compute_from_chart_panel).  This prevents the mismatch where
         // height_ratio * available_h diverges from what the renderer actually drew.
-        // We extract the per-pane pixel heights into a plain Vec before taking &mut self.
-        let rendered_heights: Vec<f64> = {
+        // We build a HashMap<instance_id → rendered_height> before taking &mut self.
+        let rendered_heights: std::collections::HashMap<u64, f64> = {
             match self.build_extended_layout_for_leaf(active_leaf, &leaf_rect) {
                 Some(ext) => ext.sub_panes.iter()
-                    .map(|sp| sp.content.height)
+                    .map(|sp| (sp.instance_id, sp.content.height))
                     .collect(),
-                None => Vec::new(),
+                None => std::collections::HashMap::new(),
             }
         };
 
@@ -7185,71 +7185,91 @@ impl ChartApp {
             None => return,
         };
 
-        let pane_count = window.sub_panes.len();
-        if pane_index >= pane_count {
-            return;
-        }
+        // Find the storage index of the pane identified by instance_id.
+        let pane_idx = match window.sub_panes.iter().position(|p| p.instance_id == instance_id) {
+            Some(i) => i,
+            None => return,
+        };
 
-        // Helper: resolve the actual rendered height for a pane, falling back to
-        // height_ratio or DEFAULT_H when the layout hasn't been computed yet.
-        let actual_h = |idx: usize| -> f64 {
-            rendered_heights.get(idx)
+        let pane_count = window.sub_panes.len();
+
+        // Helper: resolve the actual rendered height for a pane by instance_id,
+        // falling back to height_ratio or DEFAULT_H when the layout hasn't been
+        // computed yet.
+        let actual_h = |id: u64| -> f64 {
+            rendered_heights.get(&id)
                 .copied()
                 .filter(|&h| h > 0.0)
                 .unwrap_or_else(|| {
-                    let ratio = window.sub_panes[idx].height_ratio as f64;
+                    let ratio = window.sub_panes.iter()
+                        .find(|p| p.instance_id == id)
+                        .map(|p| p.height_ratio as f64)
+                        .unwrap_or(0.0);
                     if ratio > 0.0 { (ratio * available_h).max(min_h) } else { DEFAULT_H }
                 })
         };
 
-        // Check if the pane at pane_index is an above-main pane.
+        // Check if the pane at pane_idx is an above-main pane.
         // For above-main panes the separator is at the BOTTOM of the pane (between the
         // above-pane and the main chart), so dragging it resizes only this single pane.
-        if window.sub_panes[pane_index].above_main {
+        if window.sub_panes[pane_idx].above_main {
             // delta_y > 0 → dragging DOWN → above pane grows.
             // delta_y < 0 → dragging UP   → above pane shrinks.
-            let current_h = actual_h(pane_index);
-            let other_panes_h: f64 = (0..pane_count)
-                .filter(|&i| i != pane_index)
-                .map(|i| actual_h(i))
+            let current_h = actual_h(instance_id);
+            let other_panes_h: f64 = window.sub_panes.iter()
+                .filter(|p| p.instance_id != instance_id)
+                .map(|p| actual_h(p.instance_id))
                 .sum();
             let max_h = (available_h - min_h - other_panes_h).max(min_h);
             let new_h = (current_h + delta_y).clamp(min_h, max_h);
-            window.sub_panes[pane_index].height_ratio = (new_h / available_h) as f32;
+            window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
             return;
         }
 
-        if pane_index == 0 {
-            // Separator between the main chart (above) and sub-pane 0 (below).
-            // delta_y > 0 → dragging DOWN → sub-pane 0 shrinks.
-            // delta_y < 0 → dragging UP   → sub-pane 0 grows.
-            let current_h = actual_h(0);
+        // Below-main pane: find the previous below-main pane in storage order.
+        // The separator is between this pane and either:
+        //   a) a previous below-main pane  → resize both
+        //   b) the main chart              → resize only this pane (like old pane_index==0)
+        let prev_below_idx = window.sub_panes[..pane_idx]
+            .iter()
+            .rposition(|p| !p.above_main);
 
-            // Upper bound: leave at least min_h for the main chart and every OTHER sub-pane.
-            let other_panes_h: f64 = (1..pane_count).map(|i| actual_h(i)).sum();
-            let max_h = (available_h - min_h - other_panes_h).max(min_h);
-            let new_h = (current_h - delta_y).clamp(min_h, max_h);
+        match prev_below_idx {
+            None => {
+                // This is the first below-main pane — separator is between main chart and this pane.
+                // delta_y > 0 → dragging DOWN → this pane shrinks.
+                // delta_y < 0 → dragging UP   → this pane grows.
+                let current_h = actual_h(instance_id);
 
-            window.sub_panes[0].height_ratio = (new_h / available_h) as f32;
-            return;
+                // Upper bound: leave at least min_h for the main chart and every OTHER sub-pane.
+                let other_panes_h: f64 = (0..pane_count)
+                    .filter(|&i| i != pane_idx)
+                    .map(|i| actual_h(window.sub_panes[i].instance_id))
+                    .sum();
+                let max_h = (available_h - min_h - other_panes_h).max(min_h);
+                let new_h = (current_h - delta_y).clamp(min_h, max_h);
+
+                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+            }
+            Some(above_idx) => {
+                // General case: separator between sub-panes at above_idx and pane_idx.
+                let id_above = window.sub_panes[above_idx].instance_id;
+                let id_below = instance_id;
+
+                let h_above = actual_h(id_above);
+                let h_below = actual_h(id_below);
+
+                // Apply delta while preserving the combined height so neither pane
+                // can steal space from the total.  Each pane is clamped to [min_h,
+                // total - min_h] so the sibling always retains at least min_h.
+                let total = h_above + h_below;
+                let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
+                let new_below = total - new_above;
+
+                window.sub_panes[above_idx].height_ratio = (new_above / available_h) as f32;
+                window.sub_panes[pane_idx].height_ratio = (new_below / available_h) as f32;
+            }
         }
-
-        let above = pane_index - 1;
-        let below = pane_index;
-
-        // Use actual rendered heights so the drag tracks what the renderer drew.
-        let h_above = actual_h(above);
-        let h_below = actual_h(below);
-
-        // Apply delta while preserving the combined height so neither pane
-        // can steal space from the total.  Each pane is clamped to [min_h,
-        // total - min_h] so the sibling always retains at least min_h.
-        let total = h_above + h_below;
-        let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
-        let new_below = total - new_above;
-
-        window.sub_panes[above].height_ratio = (new_above / available_h) as f32;
-        window.sub_panes[below].height_ratio = (new_below / available_h) as f32;
     }
 
     /// Hide the crosshair on all split leaves.

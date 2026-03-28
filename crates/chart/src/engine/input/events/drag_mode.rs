@@ -86,8 +86,8 @@ pub enum DragMode {
     /// Separators are the horizontal dividers between panes that can
     /// be dragged to adjust relative pane heights.
     PaneSeparator {
-        /// Index of the pane above the separator being dragged.
-        pane_index: usize,
+        /// Instance ID of the pane whose separator is being dragged.
+        instance_id: u64,
     },
 
     /// Creating a selection rectangle.
@@ -296,7 +296,7 @@ mod tests {
         .is_dragging());
         assert!(DragMode::SubPaneChart { pane_index: 0 }.is_dragging());
         assert!(DragMode::SubPanePriceScale { pane_index: 0 }.is_dragging());
-        assert!(DragMode::PaneSeparator { pane_index: 0 }.is_dragging());
+        assert!(DragMode::PaneSeparator { instance_id: 0 }.is_dragging());
         assert!(DragMode::Selection.is_dragging());
     }
 
@@ -317,7 +317,7 @@ mod tests {
             point_index: 0
         }
         .affects_view());
-        assert!(!DragMode::PaneSeparator { pane_index: 0 }.affects_view());
+        assert!(!DragMode::PaneSeparator { instance_id: 0 }.affects_view());
         assert!(!DragMode::Selection.affects_view());
     }
 
@@ -339,7 +339,7 @@ mod tests {
         assert!(!DragMode::TimeScale.allows_crosshair_update());
         assert!(!DragMode::SubPaneChart { pane_index: 0 }.allows_crosshair_update());
         assert!(!DragMode::SubPanePriceScale { pane_index: 0 }.allows_crosshair_update());
-        assert!(!DragMode::PaneSeparator { pane_index: 0 }.allows_crosshair_update());
+        assert!(!DragMode::PaneSeparator { instance_id: 0 }.allows_crosshair_update());
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
 
         assert!(!DragMode::None.is_sub_pane_drag());
         assert!(!DragMode::Chart.is_sub_pane_drag());
-        assert!(!DragMode::PaneSeparator { pane_index: 0 }.is_sub_pane_drag());
+        assert!(!DragMode::PaneSeparator { instance_id: 0 }.is_sub_pane_drag());
     }
 
     #[test]

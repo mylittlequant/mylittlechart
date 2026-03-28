@@ -668,7 +668,7 @@ impl DefaultChartInputHandler {
             HitResult::TimeScale => DragMode::TimeScale,
             HitResult::SubPaneChart { pane_index } => DragMode::SubPaneChart { pane_index },
             HitResult::SubPanePriceScale { pane_index } => DragMode::SubPanePriceScale { pane_index },
-            HitResult::PaneSeparator { pane_index } => DragMode::PaneSeparator { pane_index },
+            HitResult::PaneSeparator { instance_id } => DragMode::PaneSeparator { instance_id },
             HitResult::Primitive { id } => DragMode::Primitive { id },
             HitResult::ControlPoint { primitive_id, point_index } => {
                 DragMode::ControlPoint { primitive_id, point_index }
@@ -779,7 +779,7 @@ impl DefaultChartInputHandler {
                 });
             }
 
-            DragMode::PaneSeparator { pane_index: _ } => {
+            DragMode::PaneSeparator { .. } => {
                 // Pane resize is handled by platform
             }
 

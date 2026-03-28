@@ -70,8 +70,8 @@ pub enum HitResult {
     ///
     /// The draggable divider between panes used to resize them.
     PaneSeparator {
-        /// Index of the pane above the separator.
-        pane_index: usize,
+        /// Instance ID of the pane whose separator was hit.
+        instance_id: u64,
     },
 
     /// Drawing primitive (trend line, rectangle, etc.).
@@ -313,7 +313,7 @@ mod tests {
     fn test_hit_result_is_interactive() {
         assert!(HitResult::Chart.is_interactive());
         assert!(HitResult::Primitive { id: 1 }.is_interactive());
-        assert!(HitResult::PaneSeparator { pane_index: 0 }.is_interactive());
+        assert!(HitResult::PaneSeparator { instance_id: 0 }.is_interactive());
 
         assert!(!HitResult::None.is_interactive());
         assert!(!HitResult::Toolbar.is_interactive());

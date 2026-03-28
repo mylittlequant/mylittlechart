@@ -60,7 +60,7 @@ impl<'a> ChartHitTester for LayoutHitTester<'a> {
 /// - Main chart area
 /// - Sub-pane chart areas (returns `SubPaneChart { pane_index }`)
 /// - Sub-pane price scales (returns `SubPanePriceScale { pane_index }`)
-/// - Pane separators (returns `PaneSeparator { pane_index }`)
+/// - Pane separators (returns `PaneSeparator { instance_id }`)
 pub struct ExtendedLayoutHitTester<'a> {
     /// The extended frame layout with sub-pane information
     pub layout: &'a ExtendedFrameLayout,
@@ -138,12 +138,12 @@ impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
         }
 
         // 1. Check sub-pane separators first (small targets, highest priority)
-        if let Some(pane_index) = self.layout.find_separator_at_y(y) {
+        if let Some(instance_id) = self.layout.find_separator_at_y(y) {
             // Check if X is within the chart+scale area
             if x >= self.layout.main_chart.chart.x
                 && x <= self.layout.main_chart.chart.x + self.layout.main_chart.chart.width + self.layout.main_chart.price_scale.width
             {
-                return HitResult::PaneSeparator { pane_index };
+                return HitResult::PaneSeparator { instance_id };
             }
         }
 
