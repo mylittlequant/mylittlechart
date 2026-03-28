@@ -447,8 +447,10 @@ impl ChartWindow {
 
     /// Snapshot current drawings into the per-symbol cache for the given symbol.
     ///
-    /// If there are no drawings, any existing cache entry for the symbol is removed.
-    pub fn snapshot_drawings_for_symbol(&mut self, symbol: &str) {
+    /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
+    /// If there are no drawings, any existing cache entry for the key is removed.
+    pub fn snapshot_drawings_for_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
+        let key = format!("{}:{}:{}", symbol, exchange, account_type);
         let snapshots: Vec<crate::preset::snapshots::PrimitiveSnapshot> = self
             .drawing_manager
             .primitives()
@@ -456,17 +458,19 @@ impl ChartWindow {
             .map(|p| crate::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
         if !snapshots.is_empty() {
-            self.symbol_drawings.insert(symbol.to_string(), snapshots);
+            self.symbol_drawings.insert(key, snapshots);
         } else {
-            self.symbol_drawings.remove(symbol);
+            self.symbol_drawings.remove(&key);
         }
     }
 
     /// Restore drawings from the per-symbol cache for the given symbol.
     ///
+    /// The cache key is `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`).
     /// Returns `true` if drawings were restored, `false` if no cache entry exists.
-    pub fn restore_drawings_for_symbol(&mut self, symbol: &str) -> bool {
-        if let Some(snapshots) = self.symbol_drawings.get(symbol).cloned() {
+    pub fn restore_drawings_for_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        let key = format!("{}:{}:{}", symbol, exchange, account_type);
+        if let Some(snapshots) = self.symbol_drawings.get(&key).cloned() {
             if let Ok(reg) = crate::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                 for snap in &snapshots {
                     if let Some(prim) = reg.from_json(&snap.type_id, &snap.json) {

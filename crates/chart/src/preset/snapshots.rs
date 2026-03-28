@@ -159,8 +159,9 @@ pub struct ChartWindowSnapshot {
     pub compare_overlay: CompareOverlay,
     /// Per-symbol drawing cache so drawings survive symbol switches.
     ///
-    /// Keyed by symbol string (e.g. `"BTCUSDT"`), each entry is the list of
-    /// primitive snapshots that were active on this window for that symbol.
+    /// Keyed by `"symbol:exchange:account_type"` (e.g. `"BTCUSDT:binance:S"`), each
+    /// entry is the list of primitive snapshots that were active on this window for
+    /// that symbol+exchange+account_type combination.
     #[serde(default)]
     pub symbol_drawings_snapshots: std::collections::HashMap<String, Vec<PrimitiveSnapshot>>,
     /// Bars are never serialized to preset JSON — they come from bar-store

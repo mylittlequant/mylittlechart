@@ -226,10 +226,9 @@ impl WatchlistList {
         out
     }
 
-    /// Check if a (symbol, exchange) pair is in this list.
-    pub fn contains(&self, symbol: &str, exchange: &str) -> bool {
-        self.ungrouped.iter().any(|s| s.symbol == symbol && s.exchange == exchange)
-            || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol && s.exchange == exchange))
+    /// Check if a (symbol, exchange, account_type) triple is in this list.
+    pub fn contains(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.contains_with_type(symbol, exchange, account_type)
     }
 
     /// Check if a (symbol, exchange, account_type) triple is in this list.
@@ -244,11 +243,9 @@ impl WatchlistList {
             || self.groups.iter().any(|g| g.symbols.iter().any(|s| s.symbol == symbol))
     }
 
-    /// Add a symbol to the ungrouped section. No-op if the same (symbol, exchange) pair already present.
-    pub fn add_symbol(&mut self, symbol: String, exchange: String) {
-        if !self.contains(&symbol, &exchange) {
-            self.ungrouped.push(WatchlistSymbol::new(symbol, exchange));
-        }
+    /// Add a symbol to the ungrouped section. No-op if the same (symbol, exchange, account_type) triple already present.
+    pub fn add_symbol(&mut self, symbol: String, exchange: String, account_type: String) {
+        self.add_symbol_with_type(symbol, exchange, account_type);
     }
 
     /// Add a symbol with an explicit account_type. No-op if the same (symbol, exchange, account_type) triple already present.
@@ -267,14 +264,16 @@ impl WatchlistList {
     }
 
     /// Move a symbol into a specific group. Removes from previous location first.
-    pub fn move_to_group(&mut self, symbol: &str, group_id: u64) {
+    ///
+    /// Matches on the full (symbol, exchange, account_type) triple.
+    pub fn move_to_group(&mut self, symbol: &str, exchange: &str, account_type: &str, group_id: u64) {
         // Find and remove from current location, keeping the WatchlistSymbol.
         let mut found: Option<WatchlistSymbol> = None;
-        if let Some(pos) = self.ungrouped.iter().position(|s| s.symbol == symbol) {
+        if let Some(pos) = self.ungrouped.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
             found = Some(self.ungrouped.remove(pos));
         } else {
             for g in &mut self.groups {
-                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol) {
+                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
                     found = Some(g.symbols.remove(pos));
                     break;
                 }
@@ -363,9 +362,9 @@ impl WatchlistManager {
         self.lists.iter_mut().find(|l| l.id == self.active_list_id)
     }
 
-    /// Check if a (symbol, exchange) pair is in the active watchlist.
-    pub fn contains(&self, symbol: &str, exchange: &str) -> bool {
-        self.active_list().map(|l| l.contains(symbol, exchange)).unwrap_or(false)
+    /// Check if a (symbol, exchange, account_type) triple is in the active watchlist.
+    pub fn contains(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
+        self.active_list().map(|l| l.contains(symbol, exchange, account_type)).unwrap_or(false)
     }
 
     /// Check if a (symbol, exchange, account_type) triple is in the active watchlist.
@@ -379,9 +378,9 @@ impl WatchlistManager {
     }
 
     /// Add symbol to active watchlist.
-    pub fn add_symbol(&mut self, symbol: String, exchange: String) {
+    pub fn add_symbol(&mut self, symbol: String, exchange: String, account_type: String) {
         if let Some(list) = self.active_list_mut() {
-            list.add_symbol(symbol, exchange);
+            list.add_symbol(symbol, exchange, account_type);
         }
     }
 
@@ -514,17 +513,17 @@ mod tests {
     #[test]
     fn test_same_symbol_different_exchanges() {
         let mut mgr = WatchlistManager::default();
-        mgr.add_symbol("BTCUSDT".to_string(), "Binance".to_string());
-        mgr.add_symbol("BTCUSDT".to_string(), "OKX".to_string());
+        mgr.add_symbol("BTCUSDT".to_string(), "Binance".to_string(), String::new());
+        mgr.add_symbol("BTCUSDT".to_string(), "OKX".to_string(), String::new());
         let list = mgr.active_list().unwrap();
         assert_eq!(list.ungrouped.len(), 2);
-        assert!(mgr.contains("BTCUSDT", "Binance"));
-        assert!(mgr.contains("BTCUSDT", "OKX"));
-        assert!(!mgr.contains("BTCUSDT", "KuCoin"));
+        assert!(mgr.contains("BTCUSDT", "Binance", ""));
+        assert!(mgr.contains("BTCUSDT", "OKX", ""));
+        assert!(!mgr.contains("BTCUSDT", "KuCoin", ""));
         // Remove only the OKX one
         mgr.remove_symbol("BTCUSDT", "OKX", "");
-        assert!(mgr.contains("BTCUSDT", "Binance"));
-        assert!(!mgr.contains("BTCUSDT", "OKX"));
+        assert!(mgr.contains("BTCUSDT", "Binance", ""));
+        assert!(!mgr.contains("BTCUSDT", "OKX", ""));
     }
 
     #[test]
@@ -548,8 +547,8 @@ mod tests {
     #[test]
     fn test_add_symbol_no_duplicates() {
         let mut mgr = WatchlistManager::default();
-        mgr.add_symbol("AAPL".to_string(), "Binance".to_string());
-        mgr.add_symbol("AAPL".to_string(), "Binance".to_string());
+        mgr.add_symbol("AAPL".to_string(), "Binance".to_string(), String::new());
+        mgr.add_symbol("AAPL".to_string(), "Binance".to_string(), String::new());
         let list = mgr.active_list().unwrap();
         assert_eq!(
             list.ungrouped.iter().filter(|s| s.symbol == "AAPL").count(),
@@ -560,11 +559,11 @@ mod tests {
     #[test]
     fn test_group_operations() {
         let mut mgr = WatchlistManager::default();
-        mgr.add_symbol("BTC".to_string(), "Binance".to_string());
+        mgr.add_symbol("BTC".to_string(), "Binance".to_string(), String::new());
         {
             let list = mgr.active_list_mut().unwrap();
             list.add_group(10, "Crypto".to_string(), "#f59e0b".to_string());
-            list.move_to_group("BTC", 10);
+            list.move_to_group("BTC", "Binance", "", 10);
             assert!(list.ungrouped.is_empty());
             assert_eq!(
                 list.groups[0].symbols,

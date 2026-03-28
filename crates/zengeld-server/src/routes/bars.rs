@@ -15,7 +15,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use live_data::{AccountType, ExchangeId};
+use live_data::{account_type_from_short_label, ExchangeId};
 
 use crate::AgentState;
 
@@ -30,6 +30,13 @@ struct BarsQuery {
     timeframe: String,
     /// Optional cap on the number of bars returned (most-recent bars are kept).
     limit: Option<usize>,
+    /// "S" = Spot (default), "FC" = FuturesCross, "M" = Margin, etc.
+    #[serde(default = "default_account_type")]
+    account_type: String,
+}
+
+fn default_account_type() -> String {
+    "S".to_string()
 }
 
 #[derive(Serialize)]
@@ -76,9 +83,10 @@ async fn get_bars(
     })?;
 
     // Look up bars in the bridge cache.
+    let acct_type = account_type_from_short_label(&q.account_type);
     let bars = state
         .bridge
-        .get_cached_bars(&exchange_id, AccountType::default(), &q.symbol, &q.timeframe)
+        .get_cached_bars(&exchange_id, acct_type, &q.symbol, &q.timeframe)
         .unwrap_or_default();
 
     // Apply optional limit (keep the most-recent `limit` bars).

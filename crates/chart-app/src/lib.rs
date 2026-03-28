@@ -520,9 +520,9 @@ pub enum WatchlistAction {
     /// Set a color flag on a symbol.
     SetColorFlag { symbol: String, exchange: String, account_type: String, color: Option<String> },
     /// Move symbol into a group.
-    MoveToGroup { symbol: String, exchange: String, group_name: String },
+    MoveToGroup { symbol: String, exchange: String, account_type: String, group_name: String },
     /// Remove symbol from its group (back to ungrouped).
-    RemoveFromGroup { symbol: String, exchange: String },
+    RemoveFromGroup { symbol: String, exchange: String, account_type: String },
     /// Set column separator offsets.
     SetSeparatorOffsets { offsets: Vec<f64> },
     /// Reset column separator offsets to equal widths.

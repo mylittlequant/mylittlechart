@@ -3423,11 +3423,11 @@ impl App<'_> {
                 }
 
                 zengeld_server::state::AgentCommand::SwitchSymbol {
-                    window_id, chart_id, symbol, exchange, timeframe,
+                    window_id, chart_id, symbol, exchange, timeframe, account_type,
                 } => {
                     eprintln!(
-                        "[AgentCommand] SwitchSymbol: window={}, chart={}, symbol={}/{}/{}",
-                        window_id, chart_id, exchange, symbol, timeframe,
+                        "[AgentCommand] SwitchSymbol: window={}, chart={}, symbol={}/{}/{} acct={}",
+                        window_id, chart_id, exchange, symbol, timeframe, account_type,
                     );
                     // TODO: implement actual symbol switch via DataBridge request
                 }
@@ -4006,11 +4006,27 @@ impl ApplicationHandler for App<'_> {
                             list.set_color_flag(&symbol, &exchange, &account_type, color_str);
                         }
                     }
-                    chart_app::WatchlistAction::MoveToGroup { .. } => {
-                        // TODO: implement group move when group support is needed
+                    chart_app::WatchlistAction::MoveToGroup { symbol, exchange, account_type, group_name } => {
+                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
+                            if let Some(group) = list.groups.iter().find(|g| g.name == group_name) {
+                                let group_id = group.id;
+                                list.move_to_group(&symbol, &exchange, &account_type, group_id);
+                            }
+                        }
                     }
-                    chart_app::WatchlistAction::RemoveFromGroup { .. } => {
-                        // TODO: implement remove from group when group support is needed
+                    chart_app::WatchlistAction::RemoveFromGroup { symbol, exchange, account_type } => {
+                        if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
+                            let mut found: Option<sidebar_content::watchlist::WatchlistSymbol> = None;
+                            for g in &mut list.groups {
+                                if let Some(pos) = g.symbols.iter().position(|s| s.symbol == symbol && s.exchange == exchange && s.account_type == account_type) {
+                                    found = Some(g.symbols.remove(pos));
+                                    break;
+                                }
+                            }
+                            if let Some(ws) = found {
+                                list.ungrouped.push(ws);
+                            }
+                        }
                     }
                     chart_app::WatchlistAction::SetSeparatorOffsets { offsets } => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {

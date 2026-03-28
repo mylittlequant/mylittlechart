@@ -421,6 +421,7 @@ pub enum AgentCommand {
         symbol: String,
         exchange: String,
         timeframe: String,
+        account_type: String,
     },
 
     // -- Indicator CRUD (Phase 3) --

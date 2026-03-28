@@ -97,6 +97,13 @@ struct SwitchSymbolRequest {
     symbol: String,
     exchange: String,
     timeframe: String,
+    /// "S" = Spot (default), "FC" = FuturesCross, "M" = Margin, etc.
+    #[serde(default = "default_account_type")]
+    account_type: String,
+}
+
+fn default_account_type() -> String {
+    "S".to_string()
 }
 
 async fn switch_symbol(
@@ -114,6 +121,7 @@ async fn switch_symbol(
         symbol: body.symbol,
         exchange: body.exchange,
         timeframe: body.timeframe,
+        account_type: body.account_type,
     });
 
     Ok((StatusCode::ACCEPTED, Json(AcceptedResponse { queued: true })))

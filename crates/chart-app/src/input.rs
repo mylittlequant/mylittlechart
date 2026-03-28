@@ -7569,7 +7569,9 @@ impl ChartApp {
                         let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             let old_sym = window.symbol.clone();
-                            window.snapshot_drawings_for_symbol(&old_sym);
+                            let old_exchange = window.exchange.clone();
+                            let old_account_type = window.account_type.clone();
+                            window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
                             window.symbol = symbol.clone();
                             window.exchange = item_exchange.clone();
                             window.account_type = item_account_type.clone();
@@ -7579,7 +7581,7 @@ impl ChartApp {
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
-                            window.restore_drawings_for_symbol(&symbol);
+                            window.restore_drawings_for_symbol(&symbol, &item_exchange, &item_account_type);
                         }
                         self.active_exchange = resolved_exchange;
                         // Unsubscribe only the old symbol's trade stream, leaving other
@@ -14301,7 +14303,9 @@ impl ChartApp {
                     .unwrap_or_default();
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     let old_sym = window.symbol.clone();
-                    window.snapshot_drawings_for_symbol(&old_sym);
+                    let old_exchange = window.exchange.clone();
+                    let old_account_type = window.account_type.clone();
+                    window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
                     window.symbol = sym_part.to_string();
                     window.exchange = exchange_part.to_string();
                     window.account_type = wl_at_label.clone();
@@ -14310,7 +14314,7 @@ impl ChartApp {
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
                     window.drawing_manager.clear_all_primitives();
-                    window.restore_drawings_for_symbol(sym_part);
+                    window.restore_drawings_for_symbol(sym_part, exchange_part, &wl_at_label);
                 }
                 self.active_exchange = resolved_exchange;
                 // Unsubscribe only the old symbol's trade stream, leaving other
@@ -14725,7 +14729,9 @@ impl ChartApp {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             // Snapshot current drawings before switching symbol
                             let old_sym = window.symbol.clone();
-                            window.snapshot_drawings_for_symbol(&old_sym);
+                            let old_exchange = window.exchange.clone();
+                            let old_account_type = window.account_type.clone();
+                            window.snapshot_drawings_for_symbol(&old_sym, &old_exchange, &old_account_type);
                             window.symbol = symbol_part.to_string();
                             window.exchange = resolved_exchange.as_str().to_string();
                             window.account_type = search_at_label.clone();
@@ -14735,7 +14741,7 @@ impl ChartApp {
                             window.viewport.view_start = 0.0;
                             window.pending_symbol_load = true;
                             window.drawing_manager.clear_all_primitives();
-                            window.restore_drawings_for_symbol(symbol_part);
+                            window.restore_drawings_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
                         }
                         // Switch to the exchange that owns this symbol and request bars.
                         self.active_exchange = resolved_exchange;
@@ -18746,16 +18752,16 @@ impl ChartApp {
 
         // Apply the symbol change to each peer window directly, bypassing
         // change_symbol() which uses NullDataProvider and always fails.
-        for (leaf_id, (_, old_symbol, _, _)) in sync_leaves.iter().zip(peer_requests.iter()) {
+        for (leaf_id, (old_exchange, old_symbol, _, old_account_type)) in sync_leaves.iter().zip(peer_requests.iter()) {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
-                window.snapshot_drawings_for_symbol(old_symbol);
+                window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type);
                 window.symbol = symbol_owned.clone();
                 window.bars.clear();
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
                 window.pending_symbol_load = true;
                 window.drawing_manager.clear_all_primitives();
-                window.restore_drawings_for_symbol(&symbol_owned);
+                window.restore_drawings_for_symbol(&symbol_owned, old_exchange, old_account_type);
                 window.update_title();
             }
         }
