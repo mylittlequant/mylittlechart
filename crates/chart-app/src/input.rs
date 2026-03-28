@@ -6899,6 +6899,15 @@ impl ChartApp {
                         inst.window_id = Some(chart_id_val.0);
                     }
                     self.indicator_manager.calculate(*instance_id, &bars_snapshot);
+                    // Re-add to pre_tag_indicator_ids for Object Tree visibility.
+                    // indicator_manager borrows are released before this block.
+                    if let Some(window) = self.panel_app.panel_grid.windows_mut().values_mut()
+                        .find(|w| w.id == chart_id_val)
+                    {
+                        if !window.pre_tag_indicator_ids.contains(instance_id) {
+                            window.pre_tag_indicator_ids.push(*instance_id);
+                        }
+                    }
                     self.sync_sub_panes_from_manager();
                     eprintln!("[Undo/Redo] Re-created indicator {} (id={}) window_id={}", type_id, instance_id, chart_id_val.0);
                 } else {
