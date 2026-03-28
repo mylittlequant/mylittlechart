@@ -6907,6 +6907,11 @@ impl ChartApp {
             }
             Command::RemoveIndicator { instance_id, .. } => {
                 if self.indicator_manager.remove_instance(*instance_id).is_some() {
+                    // Remove stale entries so the Object Tree does not show phantom items.
+                    let removed_id = *instance_id;
+                    for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+                        window.pre_tag_indicator_ids.retain(|iid| *iid != removed_id);
+                    }
                     self.sync_sub_panes_from_manager();
                     eprintln!("[Undo/Redo] Removed indicator instance {}", instance_id);
                 } else {
@@ -13922,6 +13927,19 @@ impl ChartApp {
             }
         }
 
+        // Collect the full set of removed IDs for orphan cleanup.
+        let removed_ids: Vec<u64> = if instances_to_remove.is_empty() {
+            vec![id]
+        } else {
+            instances_to_remove.clone()
+        };
+
+        // Remove stale entries from every window's pre_tag_indicator_ids so the
+        // Object Tree does not show phantom items for deleted indicators.
+        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            window.pre_tag_indicator_ids.retain(|iid| !removed_ids.contains(iid));
+        }
+
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
@@ -14471,6 +14489,11 @@ impl ChartApp {
             .collect();
         for id in &existing_ids {
             self.indicator_manager.remove_instance(*id);
+        }
+        // Clear orphan pre_tag_indicator_ids for every window so the Object Tree
+        // does not show phantom items after a bulk indicator replace.
+        for window in self.panel_app.panel_grid.windows_mut().values_mut() {
+            window.pre_tag_indicator_ids.retain(|iid| !existing_ids.contains(iid));
         }
         // Clear stale overlay states
         self.panel_app.indicator_overlay_states.clear();
