@@ -2933,13 +2933,13 @@ pub fn render_full_chart_panel(
     }
 
     // 13. Crosshair — spans all chart content (main + sub-panes) but not time scale.
-    let total_chart_top = main_chart.chart.y;
-    let total_chart_bottom = if extended_layout.sub_panes.is_empty() {
-        main_chart.chart.y + main_chart.chart.height
-    } else {
-        let last_pane = extended_layout.sub_panes.last().unwrap();
-        last_pane.content.y + last_pane.content.height
-    };
+    //     Use min/max across main chart and ALL sub-panes (including above-main).
+    let total_chart_top = extended_layout.sub_panes.iter()
+        .map(|p| p.content.y)
+        .fold(main_chart.chart.y, f64::min);
+    let total_chart_bottom = extended_layout.sub_panes.iter()
+        .map(|p| p.content.y + p.content.height)
+        .fold(main_chart.chart.y + main_chart.chart.height, f64::max);
     draw_crosshair(
         ctx,
         &corrected_state,
