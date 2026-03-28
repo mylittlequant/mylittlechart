@@ -3179,7 +3179,7 @@ impl ChartApp {
                             .with_locked(inst.locked)
                             .with_section("Window")
                             .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                            .with_item_state(sidebar_content::types::ObjectItemState::Stashed);
+                            .with_item_state(sidebar_content::types::ObjectItemState::Active);
                             self.sidebar_state.object_tree_items.push(item);
                         }
                     }
