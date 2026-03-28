@@ -520,8 +520,8 @@ impl TimeScale {
                 let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
                 let x = viewport.bar_to_x_f64(bar_idx as f64);
 
-                // Skip if outside visible area (with margin)
-                if x < 25.0 || x > viewport.chart_width - 25.0 { continue; }
+                // Skip if far outside visible area
+                if x < -50.0 || x > viewport.chart_width + 50.0 { continue; }
 
                 // 1st of month gets Month weight, others get Day weight
                 let weight = if day == 1 {
@@ -609,8 +609,8 @@ impl TimeScale {
         let mut used_positions: Vec<(f64, f64)> = Vec::new(); // (x, half_width)
 
         for (bar_idx, x, weight, ts) in candidates {
-            // Edge margin check
-            if x < 25.0 || x > viewport.chart_width - 25.0 {
+            // Skip if far outside visible area
+            if x < -50.0 || x > viewport.chart_width + 50.0 {
                 continue;
             }
 

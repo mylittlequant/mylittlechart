@@ -23,16 +23,22 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         // Calculate price ticks
         let step = price_scale.calc_step(rect.height);
         if step > 0.0 {
+            // Extend range by 50px worth of price in each direction
+            let range = price_scale.price_max - price_scale.price_min;
+            let margin = if rect.height > 0.0 { 50.0 * range / rect.height } else { 0.0 };
+            let gen_min = price_scale.price_min - margin;
+            let gen_max = price_scale.price_max + margin;
+
             // Use index-based iteration to avoid floating point accumulation errors
             // At extreme zoom, `price += step` accumulates errors causing uneven grid spacing
-            let start_price = (price_scale.price_min / step).floor() * step;
-            let num_ticks = ((price_scale.price_max - start_price) / step).ceil() as i32 + 1;
+            let start_price = (gen_min / step).floor() * step;
+            let num_ticks = ((gen_max - start_price) / step).ceil() as i32 + 1;
 
             for i in 0..num_ticks {
                 // Calculate price fresh each iteration from index to avoid accumulation
                 let price = start_price + (i as f64) * step;
 
-                if price > price_scale.price_max {
+                if price > gen_max {
                     break;
                 }
 

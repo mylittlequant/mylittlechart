@@ -426,15 +426,22 @@ impl PriceScale {
     /// Generate price tick values for the grid
     pub fn generate_ticks(&self, chart_height: f64) -> Vec<f64> {
         let step = self.calc_step(chart_height);
-        let first = (self.price_min / step).ceil() * step;
+
+        // Extend range by 50px worth of price in each direction
+        let range = self.price_max - self.price_min;
+        let margin = if chart_height > 0.0 { 50.0 * range / chart_height } else { 0.0 };
+        let gen_min = self.price_min - margin;
+        let gen_max = self.price_max + margin;
+
+        let first = (gen_min / step).ceil() * step;
 
         // Use index-based iteration to avoid floating point accumulation errors
-        let num_ticks = ((self.price_max - first) / step).ceil() as i32 + 1;
+        let num_ticks = ((gen_max - first) / step).ceil() as i32 + 1;
         let mut ticks = Vec::with_capacity(num_ticks.max(0) as usize);
 
         for i in 0..num_ticks {
             let price = first + (i as f64) * step;
-            if price >= self.price_max {
+            if price >= gen_max {
                 break;
             }
             ticks.push(price);
@@ -587,14 +594,19 @@ impl PriceScale {
                 let target_ticks = (chart_height / 30.0).max(4.0).min(20.0);
                 let step = nice_price_step(pct_range, target_ticks);
 
+                // Extend range by 50px worth of percent in each direction
+                let margin = if chart_height > 0.0 { 50.0 * pct_range / chart_height } else { 0.0 };
+                let gen_min = pct_min - margin;
+                let gen_max = pct_max + margin;
+
                 // Use index-based iteration to avoid FP accumulation
-                let first = (pct_min / step).ceil() * step;
-                let num_ticks = ((pct_max - first) / step).ceil() as i32 + 1;
+                let first = (gen_min / step).ceil() * step;
+                let num_ticks = ((gen_max - first) / step).ceil() as i32 + 1;
                 let mut ticks = Vec::with_capacity(num_ticks.max(0) as usize);
 
                 for i in 0..num_ticks {
                     let pct = first + (i as f64) * step;
-                    if pct >= pct_max {
+                    if pct >= gen_max {
                         break;
                     }
                     ticks.push(self.percent_to_price(pct));
@@ -613,14 +625,19 @@ impl PriceScale {
                 let target_ticks = (chart_height / 30.0).max(4.0).min(20.0);
                 let log_step = nice_price_step(log_range, target_ticks);
 
+                // Extend range by 50px worth of log-space in each direction
+                let margin = if chart_height > 0.0 { 50.0 * log_range / chart_height } else { 0.0 };
+                let gen_min = log_min - margin;
+                let gen_max = log_max + margin;
+
                 // Use index-based iteration to avoid FP accumulation
-                let first = (log_min / log_step).ceil() * log_step;
-                let num_ticks = ((log_max - first) / log_step).ceil() as i32 + 1;
+                let first = (gen_min / log_step).ceil() * log_step;
+                let num_ticks = ((gen_max - first) / log_step).ceil() as i32 + 1;
                 let mut ticks = Vec::with_capacity(num_ticks.max(0) as usize);
 
                 for i in 0..num_ticks {
                     let log_val = first + (i as f64) * log_step;
-                    if log_val >= log_max {
+                    if log_val >= gen_max {
                         break;
                     }
                     ticks.push(10.0_f64.powf(log_val));
