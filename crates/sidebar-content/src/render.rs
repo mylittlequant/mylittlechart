@@ -1069,7 +1069,7 @@ fn render_watchlist_items(
 
         // Color flag — 10px wide rect at the left edge, full row height.
         let color_flag = state.watchlist_manager.active_list()
-            .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange))
+            .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
             .unwrap_or("");
         // Flag click zone (first 10 px of row) — register BEFORE drawing so
         // is_hovered works on the same frame.

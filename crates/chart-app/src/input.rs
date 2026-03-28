@@ -6178,7 +6178,7 @@ impl ChartApp {
                         OpenModal::SymbolSearch | OpenModal::CompareSearch => {
                             self.modal_state.symbol_search_results
                                 .first()
-                                .map(|r| format!("{}:{}", r.symbol, r.exchange_id))
+                                .map(|r| format!("{}:{}:{}", r.symbol, r.exchange_id, r.account_type))
                         }
                         OpenModal::IndicatorSearch => {
                             // Use hovered item or first result from IndicatorManager.
@@ -7389,10 +7389,10 @@ impl ChartApp {
                         ];
                         let mut symbols = base;
                         symbols.sort_by(|a, b| {
-                            let a_idx = list.get_color_flag(&a.symbol, &a.exchange)
+                            let a_idx = list.get_color_flag(&a.symbol, &a.exchange, &a.account_type)
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
-                            let b_idx = list.get_color_flag(&b.symbol, &b.exchange)
+                            let b_idx = list.get_color_flag(&b.symbol, &b.exchange, &b.account_type)
                                 .and_then(|f| color_order.iter().position(|c| *c == f))
                                 .unwrap_or(99);
                             if mode == 1 {
@@ -7476,14 +7476,15 @@ impl ChartApp {
                         if let Some(item) = self.sidebar_state.watchlist_items.get(row_idx) {
                             let symbol = item.symbol.clone();
                             let exchange = item.exchange.clone();
+                            let account_type = item.account_type.clone();
                             if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {
                                 let color = colors.get(color_idx).copied().unwrap_or("");
-                                list.set_color_flag(&symbol, &exchange, color);
+                                list.set_color_flag(&symbol, &exchange, &account_type, color);
                                 let color_opt = if color.is_empty() { None } else { Some(color.to_string()) };
-                                self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag { symbol: symbol.clone(), exchange: exchange.clone(), color: color_opt });
+                                self.watchlist_actions.push(crate::WatchlistAction::SetColorFlag { symbol: symbol.clone(), exchange: exchange.clone(), account_type: account_type.clone(), color: color_opt });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
-                                eprintln!("[Sidebar] Color flag set: {}:{} = {:?}", symbol, exchange, color);
+                                eprintln!("[Sidebar] Color flag set: {}:{}:{} = {:?}", symbol, exchange, account_type, color);
                             }
                         }
                         self.sidebar_state.watchlist_color_picker_open = None;
@@ -14227,26 +14228,38 @@ impl ChartApp {
             }
             _ if rest.starts_with("item:") => {
                 let composite = &rest["item:".len()..];
-                // Parse composite key "SYMBOL:exchange"
-                let (sym_part, exchange_part) = if let Some(colon_pos) = composite.rfind(':') {
-                    (&composite[..colon_pos], &composite[colon_pos + 1..])
-                } else {
-                    (composite, self.active_exchange.as_str())
-                };
+                // Parse composite key "SYMBOL:exchange:account_type" — split from the
+                // right twice so that symbols containing ':' are handled correctly.
+                let (sym_part, exchange_part, wl_at_label) =
+                    if let Some(at_pos) = composite.rfind(':') {
+                        let at_part = &composite[at_pos + 1..];
+                        let remainder = &composite[..at_pos];
+                        if let Some(ex_pos) = remainder.rfind(':') {
+                            (
+                                &remainder[..ex_pos],
+                                &remainder[ex_pos + 1..],
+                                at_part.to_string(),
+                            )
+                        } else {
+                            // Only one colon — treat as "SYMBOL:exchange", look up account_type.
+                            let at = self.sidebar_state.watchlist_manager.active_list()
+                                .and_then(|list| {
+                                    list.all_symbols().iter()
+                                        .find(|ws| ws.symbol == remainder && ws.exchange == at_part)
+                                        .map(|ws| ws.account_type.clone())
+                                })
+                                .unwrap_or_else(|| "S".to_string());
+                            (remainder, at_part, at)
+                        }
+                    } else {
+                        (composite, self.active_exchange.as_str(), "S".to_string())
+                    };
                 // Resolve ExchangeId from string.
                 let resolved_exchange = self.exchange_symbols
                     .keys()
                     .find(|eid| eid.as_str() == exchange_part)
                     .copied()
                     .unwrap_or(self.active_exchange);
-                // Look up account_type from watchlist manager for this symbol+exchange.
-                let wl_at_label = self.sidebar_state.watchlist_manager.active_list()
-                    .and_then(|list| {
-                        list.all_symbols().iter()
-                            .find(|ws| ws.symbol == sym_part && ws.exchange == exchange_part)
-                            .map(|ws| ws.account_type.clone())
-                    })
-                    .unwrap_or_else(|| "S".to_string());
                 // Switch the active chart to this symbol+exchange.
                 // Capture old trade-stream identity BEFORE mutating window state.
                 let old_trade_exchange = self.active_exchange;
@@ -14292,21 +14305,36 @@ impl ChartApp {
             }
             _ if rest.starts_with("delete:") => {
                 let key = &rest["delete:".len()..];
-                // Parse composite key "SYMBOL:exchange" or plain symbol
-                let (symbol, exchange_owned): (&str, String) = if let Some(colon_pos) = key.rfind(':') {
-                    (&key[..colon_pos], key[colon_pos + 1..].to_string())
-                } else {
-                    // Fallback: look up exchange from watchlist
-                    let ex = self.sidebar_state.watchlist_manager.active_list()
-                        .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
-                        .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                    (key, ex)
-                };
+                // Parse composite key "SYMBOL:exchange:account_type" — split from the
+                // right twice so that symbols containing ':' are handled correctly.
+                let (symbol, exchange_owned, account_type_owned): (&str, String, String) =
+                    if let Some(at_pos) = key.rfind(':') {
+                        let at_part = &key[at_pos + 1..];
+                        let remainder = &key[..at_pos];
+                        if let Some(ex_pos) = remainder.rfind(':') {
+                            (
+                                &remainder[..ex_pos],
+                                remainder[ex_pos + 1..].to_string(),
+                                at_part.to_string(),
+                            )
+                        } else {
+                            // Only one colon — "SYMBOL:exchange", look up account_type.
+                            let at = self.sidebar_state.watchlist_manager.active_list()
+                                .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == remainder && ws.exchange == at_part).map(|ws| ws.account_type.clone()))
+                                .unwrap_or_default();
+                            (remainder, at_part.to_string(), at)
+                        }
+                    } else {
+                        // No colon — plain symbol, look up exchange + account_type.
+                        let ex = self.sidebar_state.watchlist_manager.active_list()
+                            .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.exchange.clone()))
+                            .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                        let at = self.sidebar_state.watchlist_manager.active_list()
+                            .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == key).map(|ws| ws.account_type.clone()))
+                            .unwrap_or_default();
+                        (key, ex, at)
+                    };
                 let exchange = exchange_owned.as_str();
-                // Look up account_type from watchlist for this symbol+exchange.
-                let account_type_owned = self.sidebar_state.watchlist_manager.active_list()
-                    .and_then(|l| l.all_symbols().iter().find(|ws| ws.symbol == symbol && ws.exchange == exchange).map(|ws| ws.account_type.clone()))
-                    .unwrap_or_default();
                 let account_type = account_type_owned.as_str();
                 // Remove symbol from snapshot (if active) before removing from list.
                 if let Some(list) = self.sidebar_state.watchlist_manager.active_list_mut() {

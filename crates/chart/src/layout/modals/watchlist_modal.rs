@@ -64,6 +64,10 @@ pub struct WatchlistEntry {
     pub volume_24h: f64,
     /// Color flag hex string (e.g. "#ef5350"), empty if no flag.
     pub color_flag: String,
+    /// Account type short label (e.g. "FC" for FuturesCross, "M" for Margin).
+    ///
+    /// Empty string for Spot (the common case).
+    pub account_type: String,
 }
 
 // =============================================================================
@@ -593,7 +597,7 @@ fn render_overview_tab(
 
         // Only draw visible rows
         if current_y + item_h >= list_top && current_y <= list_top + list_h {
-            let entry_key = format!("{}:{}", entry.symbol, entry.exchange);
+            let entry_key = format!("{}:{}:{}", entry.symbol, entry.exchange, entry.account_type);
             let is_hovered = state.hovered_item_id.as_deref() == Some(entry_key.as_str());
             let row_mid_y = current_y + item_h / 2.0;
 
@@ -660,7 +664,7 @@ fn render_overview_tab(
 
             // Delete icon — only on hover, after all column text
             if is_hovered {
-                let delete_widget_id = format!("wl_modal:delete:{}:{}", entry.symbol, entry.exchange);
+                let delete_widget_id = format!("wl_modal:delete:{}:{}:{}", entry.symbol, entry.exchange, entry.account_type);
                 let is_delete_hovered = state.hovered_widget.as_deref() == Some(delete_widget_id.as_str());
                 let icon_inner = 14.0;
                 let icon_off_x = delete_x + (icon_btn_size - icon_inner) / 2.0;
@@ -688,7 +692,7 @@ fn render_overview_tab(
             ctx.stroke();
         }
 
-        let composite_key = format!("{}:{}", entry.symbol, entry.exchange);
+        let composite_key = format!("{}:{}:{}", entry.symbol, entry.exchange, entry.account_type);
         result.item_rects.push((composite_key.clone(), item_rect));
         result.delete_btn_rects.push((composite_key, delete_rect));
 

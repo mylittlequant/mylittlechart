@@ -4000,10 +4000,10 @@ impl ApplicationHandler for App<'_> {
                     chart_app::WatchlistAction::SetActiveList { id } => {
                         self.app_state.watchlist_manager.active_list_id = id;
                     }
-                    chart_app::WatchlistAction::SetColorFlag { symbol, exchange, color } => {
+                    chart_app::WatchlistAction::SetColorFlag { symbol, exchange, account_type, color } => {
                         if let Some(list) = self.app_state.watchlist_manager.active_list_mut() {
                             let color_str = color.as_deref().unwrap_or("");
-                            list.set_color_flag(&symbol, &exchange, color_str);
+                            list.set_color_flag(&symbol, &exchange, &account_type, color_str);
                         }
                     }
                     chart_app::WatchlistAction::MoveToGroup { .. } => {

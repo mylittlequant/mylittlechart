@@ -518,7 +518,7 @@ pub enum WatchlistAction {
     /// Clear the order snapshot on the active list.
     ClearOrderSnapshot,
     /// Set a color flag on a symbol.
-    SetColorFlag { symbol: String, exchange: String, color: Option<String> },
+    SetColorFlag { symbol: String, exchange: String, account_type: String, color: Option<String> },
     /// Move symbol into a group.
     MoveToGroup { symbol: String, exchange: String, group_name: String },
     /// Remove symbol from its group (back to ungrouped).
@@ -2019,7 +2019,7 @@ impl ChartApp {
                     // can serve bars synchronously via get_bars().
                     if any_matched {
                         if let Some(w) = self.panel_app.panel_grid.windows().values()
-                            .find(|w| w.symbol == symbol && w.exchange == exchange_id.as_str() && w.timeframe.name == tf_name)
+                            .find(|w| w.symbol == symbol && w.exchange == exchange_id.as_str() && w.timeframe.name == tf_name && w.account_type == account_type.short_label())
                         {
                             w.data_provider.insert_bars(&symbol, &tf_name, bars.clone());
                         }
@@ -2039,6 +2039,7 @@ impl ChartApp {
                             w.symbol == symbol
                                 && w.exchange == exchange_id.as_str()
                                 && w.timeframe.name == tf_name
+                                && w.account_type == account_type.short_label()
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -2087,6 +2088,7 @@ impl ChartApp {
                             w.symbol == symbol
                                 && w.exchange == exchange_id.as_str()
                                 && w.timeframe.name == tf_name
+                                && w.account_type == account_type.short_label()
                         })
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
@@ -2387,13 +2389,14 @@ impl ChartApp {
         // ── Alert checker: detect price crossings for every visible symbol ────
         // Skip entirely when no trade arrived this tick — nothing changed.
         if had_trade_update {
-            // Collect one entry per unique (symbol, exchange) pair across all windows.
-            // Multiple windows on the same pair share the same bar data, so one check
-            // per pair is sufficient.
-            let mut seen_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+            // Collect one entry per unique (symbol, exchange, account_type) triple across all windows.
+            // Multiple windows on the same triple share the same bar data, so one check
+            // per triple is sufficient.
+            let mut seen_pairs: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
             struct WindowAlertData {
                 symbol: String,
                 exchange: String,
+                account_type: String,
                 current_price: f64,
                 current_bar: f64,
                 drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)>,
@@ -2401,11 +2404,11 @@ impl ChartApp {
             let window_data: Vec<WindowAlertData> = self.panel_app.panel_grid.windows()
                 .values()
                 .filter_map(|window| {
-                    let pair = (window.symbol.clone(), window.exchange.clone());
-                    if seen_pairs.contains(&pair) {
+                    let triple = (window.symbol.clone(), window.exchange.clone(), window.account_type.clone());
+                    if seen_pairs.contains(&triple) {
                         return None;
                     }
-                    seen_pairs.insert(pair);
+                    seen_pairs.insert(triple);
                     let current_price = window.bars.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = window.bars.len().saturating_sub(1) as f64;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
@@ -2417,6 +2420,7 @@ impl ChartApp {
                     Some(WindowAlertData {
                         symbol: window.symbol.clone(),
                         exchange: window.exchange.clone(),
+                        account_type: window.account_type.clone(),
                         current_price,
                         current_bar,
                         drawing_points,
@@ -2436,6 +2440,7 @@ impl ChartApp {
                     wd.current_bar,
                     &wd.symbol,
                     &wd.exchange,
+                    &wd.account_type,
                     &wd.drawing_points,
                     &indicator_values,
                 );
@@ -2676,6 +2681,7 @@ impl ChartApp {
         window_id: Option<u64>,
         symbol: &str,
         exchange: &str,
+        account_type: &str,
     ) -> Vec<(String, f64, f64, f64)> {
         use zengeld_chart::indicator_source::IndicatorSource;
 
@@ -2703,7 +2709,7 @@ impl ChartApp {
             if alert.status != alerts::AlertStatus::Active {
                 continue;
             }
-            if !alert.matches_window(symbol, exchange) {
+            if !alert.matches_window(symbol, exchange, account_type) {
                 continue;
             }
 
@@ -3286,7 +3292,7 @@ impl ChartApp {
 
                 for (sym_name, sym_exchange, sym_account_type) in &watchlist_entries {
                     let price_data = self.panel_app.panel_grid.iter_windows()
-                        .find(|(_, w)| w.symbol == *sym_name && w.exchange == *sym_exchange)
+                        .find(|(_, w)| w.symbol == *sym_name && w.exchange == *sym_exchange && w.account_type == *sym_account_type)
                         .and_then(|(_, w)| w.bars.last())
                         .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
 
@@ -3949,7 +3955,7 @@ impl ChartApp {
                     .iter()
                     .filter(|a| a.status == alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, alerts::AlertSource::Price { .. }))
-                    .filter(|a| a.matches_window(&window.symbol, &window.exchange))
+                    .filter(|a| a.matches_window(&window.symbol, &window.exchange, &window.account_type))
                     .filter_map(|alert| {
                         let price = alerts::AlertManager::resolve_price_static(
                             alert,
@@ -4061,6 +4067,7 @@ impl ChartApp {
                         window_id,
                         &window.symbol,
                         &window.exchange,
+                        &window.account_type,
                     );
                     for (widget_id, bx, by, bsize) in bells {
                         use uzor::input::Sense;
@@ -4367,15 +4374,15 @@ impl ChartApp {
             );
             let single_alert_render_data: Vec<AlertRenderData> = {
                 // single_window_info = (symbol, timeframe, exchange, account_type) captured above.
-                let (single_sym, _, single_exch) = single_window_info
+                let (single_sym, _, single_exch, single_at) = single_window_info
                     .as_ref()
-                    .map(|(s, tf, e, _at)| (s.as_str(), tf.as_str(), e.as_str()))
-                    .unwrap_or(("", "", ""));
+                    .map(|(s, tf, e, at)| (s.as_str(), tf.as_str(), e.as_str(), at.as_str()))
+                    .unwrap_or(("", "", "", ""));
                 self.alert_manager.items()
                     .iter()
                     .filter(|a| a.status == alerts::AlertStatus::Active)
                     .filter(|a| matches!(a.source, alerts::AlertSource::Price { .. }))
-                    .filter(|a| a.matches_window(single_sym, single_exch))
+                    .filter(|a| a.matches_window(single_sym, single_exch, single_at))
                     .filter_map(|alert| {
                         let price = alerts::AlertManager::resolve_price_static(
                             alert,
@@ -4517,6 +4524,7 @@ impl ChartApp {
                         window_id,
                         &window.symbol,
                         &window.exchange,
+                        &window.account_type,
                     );
                     // Register bell click zones.
                     for (widget_id, bx, by, bsize) in bells {
@@ -5159,7 +5167,7 @@ impl ChartApp {
             let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
                 .map(|item| {
                     self.sidebar_state.watchlist_manager.active_list()
-                        .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange))
+                        .and_then(|l| l.get_color_flag(&item.symbol, &item.exchange, &item.account_type))
                         .unwrap_or("")
                         .to_string()
                 })
@@ -5176,6 +5184,7 @@ impl ChartApp {
                     low_24h: item.low_24h,
                     volume_24h: item.volume_24h,
                     color_flag: flag.clone(),
+                    account_type: item.account_type.clone(),
                 })
                 .collect();
 

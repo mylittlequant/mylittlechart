@@ -15,7 +15,7 @@ pub struct AlertManager {
     items: Vec<AlertItem>,
     next_id: u64,
     /// Per-symbol previous price for crossing detection.
-    /// Key: `"exchange:symbol"` (or just `"symbol"` for old alerts without exchange).
+    /// Key: `"exchange:symbol:account_type"` (or just `"symbol"` for old alerts without exchange).
     /// Not serialized — rebuilt from live ticks.
     last_prices: HashMap<String, f64>,
 }
@@ -292,8 +292,8 @@ impl AlertManager {
     /// Drawing alerts respect `DrawingExtendMode` — they will not fire outside
     /// the allowed extent of the primitive.
     ///
-    /// Only alerts that `matches_window(symbol, exchange)` are processed —
-    /// alerts bound to a different symbol or exchange are skipped entirely.
+    /// Only alerts that `matches_window(symbol, exchange, account_type)` are processed —
+    /// alerts bound to a different symbol, exchange, or account type are skipped entirely.
     ///
     /// The `drawing_points` tuple is `(primitive_id, points, extend_mode)`.
     ///
@@ -304,6 +304,7 @@ impl AlertManager {
         current_bar: f64,
         symbol: &str,
         exchange: &str,
+        account_type: &str,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
@@ -314,7 +315,7 @@ impl AlertManager {
                 continue;
             }
 
-            if !alert.matches_window(symbol, exchange) {
+            if !alert.matches_window(symbol, exchange, account_type) {
                 continue;
             }
 
@@ -328,12 +329,12 @@ impl AlertManager {
                 None => continue,
             };
 
-            // Use the tick's symbol:exchange as the lookup key — not the alert's
+            // Use the tick's symbol:exchange:account_type as the lookup key — not the alert's
             // routing_key, which may be empty for legacy alerts without symbol.
             let tick_key = if exchange.is_empty() {
                 symbol.to_string()
             } else {
-                format!("{}:{}", exchange, symbol)
+                format!("{}:{}:{}", exchange, symbol, account_type)
             };
             let prev_level = alert.prev_dynamic_price;
             let prev_price = self.last_prices.get(&tick_key).copied().unwrap_or(0.0);
@@ -385,7 +386,7 @@ impl AlertManager {
         let routing_key = if exchange.is_empty() {
             symbol.to_string()
         } else {
-            format!("{}:{}", exchange, symbol)
+            format!("{}:{}:{}", exchange, symbol, account_type)
         };
         self.last_prices.insert(routing_key, current_price);
         triggered_ids

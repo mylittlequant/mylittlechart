@@ -324,6 +324,10 @@ fn default_transports() -> Vec<AlertTransport> {
     AlertTransport::all_default()
 }
 
+fn default_account_type() -> String {
+    "S".to_string()
+}
+
 // =============================================================================
 // AlertItem
 // =============================================================================
@@ -396,6 +400,11 @@ pub struct AlertItem {
     /// Indicator alerts need this for display — price alerts are TF-agnostic.
     #[serde(default)]
     pub timeframe: String,
+
+    /// Account type of the window when this alert was created (e.g. `"S"` for spot,
+    /// `"F"` for futures). Defaults to `"S"` for backward compat with old presets.
+    #[serde(default = "default_account_type")]
+    pub account_type: String,
 }
 
 impl AlertItem {
@@ -431,6 +440,7 @@ impl AlertItem {
             exchange: String::new(),
             window_id_hint: None,
             timeframe: String::new(),
+            account_type: default_account_type(),
         }
     }
 
@@ -511,24 +521,25 @@ impl AlertItem {
         self.status == AlertStatus::Triggered
     }
 
-    /// Returns `"exchange:symbol"` routing key for per-symbol crossing detection.
+    /// Returns `"exchange:symbol:account_type"` routing key for per-symbol crossing detection.
     /// Falls back to just `symbol()` when exchange is empty (old presets).
     pub fn routing_key(&self) -> String {
         let sym = self.symbol();
         if self.exchange.is_empty() {
             sym.to_string()
         } else {
-            format!("{}:{}", self.exchange, sym)
+            format!("{}:{}:{}", self.exchange, sym, self.account_type)
         }
     }
 
     /// Returns true when this alert should be shown on a window with
-    /// the given `symbol` and `exchange`. Empty fields (legacy presets
-    /// without symbol/exchange) are treated as "match any".
-    pub fn matches_window(&self, symbol: &str, exchange: &str) -> bool {
+    /// the given `symbol`, `exchange`, and `account_type`. Empty fields (legacy
+    /// presets without symbol/exchange/account_type) are treated as "match any".
+    pub fn matches_window(&self, symbol: &str, exchange: &str, account_type: &str) -> bool {
         let self_sym = self.symbol();
         let sym_match = self_sym.is_empty() || self_sym == symbol;
         let exch_match = self.exchange.is_empty() || self.exchange == exchange;
-        sym_match && exch_match
+        let at_match = self.account_type.is_empty() || self.account_type == account_type;
+        sym_match && exch_match && at_match
     }
 }
