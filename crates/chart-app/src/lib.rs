@@ -3115,21 +3115,27 @@ impl ChartApp {
                 // --- Section "Window": window-local stashed primitives ---
                 // Collect stashed primitive data first so we don't hold an active_window borrow
                 // while also needing indicator_manager (which is not behind the same ref).
-                let stashed_prim_data: Vec<_> = self.panel_app.panel_grid.active_window()
-                    .map(|w| w.stashed_primitives.iter()
-                        .filter(|p| {
-                            active_symbol.as_deref()
-                                .map(|sym| p.data().symbol == sym)
-                                .unwrap_or(true)
-                        })
-                        .map(|p| {
-                            let data = p.data();
-                            let kind = p.kind();
-                            let display = p.display_name().to_string();
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
-                        })
-                        .collect())
-                    .unwrap_or_default();
+                // When sync_drawings is ON, stashed_primitives are already represented by
+                // group.primitives in the "Group" section above — hide them here to avoid duplicates.
+                let stashed_prim_data: Vec<_> = if !group.sync_flags.sync_drawings {
+                    self.panel_app.panel_grid.active_window()
+                        .map(|w| w.stashed_primitives.iter()
+                            .filter(|p| {
+                                active_symbol.as_deref()
+                                    .map(|sym| p.data().symbol == sym)
+                                    .unwrap_or(true)
+                            })
+                            .map(|p| {
+                                let data = p.data();
+                                let kind = p.kind();
+                                let display = p.display_name().to_string();
+                                (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                            })
+                            .collect())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
                 // Collect window-local indicator IDs before releasing the window borrow.
                 let pre_tag_ids: Vec<u64> = self.panel_app.panel_grid.active_window()
