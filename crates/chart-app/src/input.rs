@@ -7776,6 +7776,17 @@ impl ChartApp {
         if widget_id.starts_with("ind_vis_") {
             if let Some(id) = widget_id.strip_prefix("ind_vis_").and_then(|s| s.parse::<u64>().ok()) {
                 self.indicator_manager.toggle_visibility(id);
+                // If indicator became visible, clear sub_pane.hidden so overlay-hidden
+                // panes reappear (overlay Hide sets both hidden + !visible).
+                let now_visible = self.indicator_manager.get_instance(id)
+                    .map_or(false, |i| i.visible);
+                if now_visible {
+                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        if let Some(sp) = window.sub_panes.iter_mut().find(|p| p.instance_id == id) {
+                            sp.hidden = false;
+                        }
+                    }
+                }
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
