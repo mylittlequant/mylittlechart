@@ -6961,16 +6961,42 @@ impl ChartApp {
             .map(|win| win.scale_settings.clone())
             .unwrap_or_default();
 
-        // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
-        // so that hidden/maximized flags and user-defined order are respected.
+        // Build the set of visible sub-pane instance IDs from indicator_manager
+        // (single source of truth for visibility).  Collect before borrowing
+        // active_window() again so the borrow checker stays happy.
+        let visible_set: std::collections::HashSet<u64> = {
+            let symbol = self.panel_app.panel_grid.active_window()
+                .map(|w| w.symbol.clone())
+                .unwrap_or_default();
+            let chart_id = self.panel_app.panel_grid.active_chart_id()
+                .map(|cid| cid.0);
+            if let Some(cid) = chart_id {
+                self.indicator_manager
+                    .get_instances_for_symbol_in_window(&symbol, cid)
+                    .into_iter()
+                    .filter(|i| i.visible && i.pane > 0)
+                    .map(|i| i.id)
+                    .collect()
+            } else {
+                self.indicator_manager
+                    .get_instances_for_symbol(&symbol)
+                    .into_iter()
+                    .filter(|i| i.visible && i.pane > 0)
+                    .map(|i| i.id)
+                    .collect()
+            }
+        };
+
+        // Collect sub-pane instance IDs from the window's SubPane list,
+        // filtering by indicator_manager visibility (the single source of truth).
         let sub_pane_ids: Vec<u64> = self.panel_app.panel_grid
             .active_window()
             .map(|win| {
-                if let Some(maximized) = win.sub_panes.iter().find(|p| p.maximized && !p.hidden) {
+                if let Some(maximized) = win.sub_panes.iter().find(|p| p.maximized && visible_set.contains(&p.instance_id)) {
                     vec![maximized.instance_id]
                 } else {
                     win.sub_panes.iter()
-                        .filter(|p| !p.hidden)
+                        .filter(|p| visible_set.contains(&p.instance_id))
                         .map(|p| p.instance_id)
                         .collect()
                 }
@@ -6979,7 +7005,7 @@ impl ChartApp {
 
         let maximized_instance_id: Option<u64> = self.panel_app.panel_grid
             .active_window()
-            .and_then(|win| win.sub_panes.iter().find(|p| p.maximized && !p.hidden))
+            .and_then(|win| win.sub_panes.iter().find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id)))
             .map(|p| p.instance_id);
 
         // Build per-pane heights from the active window's SubPane list so that
@@ -7034,19 +7060,38 @@ impl ChartApp {
         let window = self.panel_app.panel_grid.window_for_leaf(leaf_id)?;
         let scale_settings = &window.scale_settings;
 
-        // Collect sub-pane IDs from the window's SubPane list (not indicator_manager)
-        // so that hidden/maximized flags and user-defined order are respected.
-        let sub_pane_ids: Vec<u64> = if let Some(maximized) = window.sub_panes.iter().find(|p| p.maximized && !p.hidden) {
+        // Build visible set from indicator_manager (single source of truth).
+        let visible_set: std::collections::HashSet<u64> = {
+            let chart_id = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id);
+            if let Some(cid) = chart_id {
+                self.indicator_manager
+                    .get_instances_for_symbol_in_window(&window.symbol, cid.0)
+                    .into_iter()
+                    .filter(|i| i.visible && i.pane > 0)
+                    .map(|i| i.id)
+                    .collect()
+            } else {
+                self.indicator_manager
+                    .get_instances_for_symbol(&window.symbol)
+                    .into_iter()
+                    .filter(|i| i.visible && i.pane > 0)
+                    .map(|i| i.id)
+                    .collect()
+            }
+        };
+
+        // Collect sub-pane IDs filtered by indicator_manager visibility.
+        let sub_pane_ids: Vec<u64> = if let Some(maximized) = window.sub_panes.iter().find(|p| p.maximized && visible_set.contains(&p.instance_id)) {
             vec![maximized.instance_id]
         } else {
             window.sub_panes.iter()
-                .filter(|p| !p.hidden)
+                .filter(|p| visible_set.contains(&p.instance_id))
                 .map(|p| p.instance_id)
                 .collect()
         };
 
         let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-            .find(|p| p.maximized && !p.hidden)
+            .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
             .map(|p| p.instance_id);
 
         // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
@@ -7776,17 +7821,6 @@ impl ChartApp {
         if widget_id.starts_with("ind_vis_") {
             if let Some(id) = widget_id.strip_prefix("ind_vis_").and_then(|s| s.parse::<u64>().ok()) {
                 self.indicator_manager.toggle_visibility(id);
-                // If indicator became visible, clear sub_pane.hidden so overlay-hidden
-                // panes reappear (overlay Hide sets both hidden + !visible).
-                let now_visible = self.indicator_manager.get_instance(id)
-                    .map_or(false, |i| i.visible);
-                if now_visible {
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        if let Some(sp) = window.sub_panes.iter_mut().find(|p| p.instance_id == id) {
-                            sp.hidden = false;
-                        }
-                    }
-                }
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
@@ -14875,13 +14909,9 @@ impl ChartApp {
                         self.delete_indicator_instance(instance_id);
                     }
                     SubPaneButton::Hide => {
-                        if let Some(idx) = real_index {
-                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                if let Some(sub_pane) = window.sub_panes.get_mut(idx) {
-                                    sub_pane.hidden = !sub_pane.hidden;
-                                }
-                            }
-                        }
+                        // Single source of truth: instance.visible controls
+                        // both overlay and sub-pane indicator visibility.
+                        // sub_pane.hidden is not used — render filters by instance.visible.
                         self.indicator_manager.toggle_visibility(instance_id);
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();

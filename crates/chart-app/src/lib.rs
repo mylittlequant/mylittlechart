@@ -4008,13 +4008,16 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
-                        &window.sub_panes,
-                        leaf_rect.height,
-                        100.0,
-                    );
+                    // Build heights matching sub_pane_ids (visible only), not all sub_panes.
+                    let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
+                        let ratio = window.sub_panes.iter()
+                            .find(|p| p.instance_id == id)
+                            .map(|p| p.height_ratio)
+                            .unwrap_or(0.0);
+                        if ratio > 0.0 { (ratio as f64 * leaf_rect.height).max(20.0) } else { 100.0 }
+                    }).collect();
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-                        .find(|p| p.maximized && !p.hidden)
+                        .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
                         .map(|p| p.instance_id);
                     let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
                         window.sub_panes.iter()
@@ -4460,13 +4463,16 @@ impl ChartApp {
                             .map(|i| i.id)
                             .collect()
                     };
-                    let sub_pane_heights = zengeld_chart::sub_pane_heights_from_panes(
-                        &window.sub_panes,
-                        chart_render_rect.height,
-                        100.0,
-                    );
+                    // Build heights matching sub_pane_ids (visible only), not all sub_panes.
+                    let sub_pane_heights: Vec<f64> = sub_pane_ids.iter().map(|&id| {
+                        let ratio = window.sub_panes.iter()
+                            .find(|p| p.instance_id == id)
+                            .map(|p| p.height_ratio)
+                            .unwrap_or(0.0);
+                        if ratio > 0.0 { (ratio as f64 * chart_render_rect.height).max(20.0) } else { 100.0 }
+                    }).collect();
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
-                        .find(|p| p.maximized && !p.hidden)
+                        .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
                         .map(|p| p.instance_id);
                     let above_main_flags_sub: Vec<bool> = sub_pane_ids.iter().map(|&id| {
                         window.sub_panes.iter()
@@ -5496,11 +5502,14 @@ impl ChartApp {
         // chart_id so we only get the indicator instances belonging to this window.
         for (leaf_id, chart_id_val, symbol, visible_start, visible_end) in &window_data {
             // `pane > 0` means it lives in a separate sub-pane (not the main chart).
+            // Collect ALL pane>0 instances regardless of visible — hidden panes
+            // must keep their SubPane struct (position, height_ratio, above_main).
+            // Visibility filtering happens in the render pipeline, not here.
             let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self
                 .indicator_manager
                 .get_instances_for_symbol_in_window(&symbol, *chart_id_val)
                 .into_iter()
-                .filter(|i| i.visible && i.pane > 0)
+                .filter(|i| i.pane > 0)
                 .map(|i| {
                     let range = self.indicator_manager.calculate_pane_range(
                         i.id,
@@ -5584,15 +5593,6 @@ impl ChartApp {
                         );
                         new_sub_panes.push(pane);
                         used_ids.insert(iid);
-                    } else if existing_map.get(&iid).map_or(false, |p| p.hidden) {
-                        // Preserve hidden panes even when indicator is not visible.
-                        // The indicator_manager marks invisible when hidden via the
-                        // overlay Hide button; we must not drop the SubPane struct
-                        // because it carries above_main, height_ratio, and other
-                        // user-configured state that must survive an unhide.
-                        let pane = existing_map[&iid].clone();
-                        new_sub_panes.push(pane);
-                        used_ids.insert(iid);
                     }
                 }
             } else {
@@ -5608,14 +5608,6 @@ impl ChartApp {
                             &range_map,
                         );
                         new_sub_panes.push(pane);
-                        used_ids.insert(existing.instance_id);
-                    } else if existing.hidden {
-                        // Preserve hidden panes even when indicator is not visible.
-                        // The indicator_manager marks invisible when hidden via the
-                        // overlay Hide button; we must not drop the SubPane struct
-                        // because it carries above_main, height_ratio, and other
-                        // user-configured state that must survive an unhide.
-                        new_sub_panes.push(existing.clone());
                         used_ids.insert(existing.instance_id);
                     }
                 }

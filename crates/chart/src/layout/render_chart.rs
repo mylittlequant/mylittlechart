@@ -2687,26 +2687,32 @@ pub fn render_full_chart_panel(
         return ChartPanelRenderResult::empty();
     }
 
-    // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
-    // so that hidden/maximized flags and user-defined order are respected.
-    let sub_pane_ids: Vec<u64> = if let Some(panes) = data.sub_panes {
-        // Check for a maximized pane first — only show that one.
-        if let Some(maximized) = panes.iter().find(|p| p.maximized && !p.hidden) {
-            vec![maximized.instance_id]
-        } else {
-            panes.iter()
-                .filter(|p| !p.hidden)
-                .map(|p| p.instance_id)
-                .collect()
-        }
-    } else if let (Some(im), Some(symbol)) = (data.indicator_source, data.symbol) {
+    // Build a set of visible instance IDs from indicator_source (single source of truth).
+    let visible_ids: std::collections::HashSet<u64> = if let (Some(im), Some(symbol)) = (data.indicator_source, data.symbol) {
         im.get_instances_for_symbol(symbol)
             .into_iter()
             .filter(|i| i.visible && i.pane_index > 0)
             .map(|i| i.id)
             .collect()
     } else {
-        Vec::new()
+        std::collections::HashSet::new()
+    };
+
+    // Collect sub-pane instance IDs from the window's SubPane list (not indicator_manager)
+    // so that user-defined order and maximized state are respected.
+    // Visibility is determined by instance.visible (via visible_ids), not sub_pane.hidden.
+    let sub_pane_ids: Vec<u64> = if let Some(panes) = data.sub_panes {
+        // Check for a maximized pane first — only show that one.
+        if let Some(maximized) = panes.iter().find(|p| p.maximized && visible_ids.contains(&p.instance_id)) {
+            vec![maximized.instance_id]
+        } else {
+            panes.iter()
+                .filter(|p| visible_ids.contains(&p.instance_id))
+                .map(|p| p.instance_id)
+                .collect()
+        }
+    } else {
+        visible_ids.iter().copied().collect()
     };
 
     // Compute the panel layout by carving toolbar rects from window_rect.
@@ -2717,7 +2723,7 @@ pub fn render_full_chart_panel(
     let content_rect = &panel_layout.content_rect;
 
     let maximized_instance_id: Option<u64> = data.sub_panes
-        .and_then(|panes| panes.iter().find(|p| p.maximized && !p.hidden))
+        .and_then(|panes| panes.iter().find(|p| p.maximized && visible_ids.contains(&p.instance_id)))
         .map(|p| p.instance_id);
 
     // Build per-pane heights matching sub_pane_ids order (filtered by hidden/maximized).
@@ -2909,16 +2915,15 @@ pub fn render_full_chart_panel(
                 .get(overlay_state_idx)
                 .cloned()
                 .unwrap_or_default();
-            let (is_hidden, is_maximized) = match sub_pane_state {
-                Some(sp) => (sp.hidden, sp.maximized),
-                None => (false, false),
-            };
+            // is_hidden is always false here — hidden panes are filtered out of
+            // sub_pane_ids via instance.visible check, so only visible panes render.
+            let is_maximized = sub_pane_state.map_or(false, |sp| sp.maximized);
             let overlay_result = render_sub_pane_overlay(
                 ctx,
                 &pane_layout.content,
                 pane_layout.instance_id,
                 &overlay_state,
-                is_hidden,
+                false, // is_hidden: always false — hidden panes don't reach render
                 is_maximized,
                 data.frame_theme,
                 &data.state.theme.text,
