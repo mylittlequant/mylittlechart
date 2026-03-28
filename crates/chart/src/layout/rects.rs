@@ -627,10 +627,15 @@ impl ExtendedFrameLayout {
             let is_above = above_flags[i];
 
             if maximized_instance_id == Some(instance_id) {
-                // This is the maximized pane: overlay from chart_y, full available height.
-                let separator = LayoutRect::new(chart_panel.x, chart_y, chart_panel.width, 0.0);
-                let content = LayoutRect::new(chart_x, chart_y, chart_width, pane_h);
-                let pane_price_scale = LayoutRect::new(price_scale_x, chart_y, price_scale_width, pane_h);
+                // This is the maximized pane: overlay from the top of the content area,
+                // spanning the full available height regardless of above/below placement.
+                let overlay_y = match scale_settings.time_scale_position {
+                    TimeScalePosition::Top => chart_panel.y + time_scale_height,
+                    TimeScalePosition::Bottom | TimeScalePosition::Hidden => chart_panel.y,
+                };
+                let separator = LayoutRect::new(chart_panel.x, overlay_y, chart_panel.width, 0.0);
+                let content = LayoutRect::new(chart_x, overlay_y, chart_width, available_height);
+                let pane_price_scale = LayoutRect::new(price_scale_x, overlay_y, price_scale_width, available_height);
                 sub_panes.push(SubPaneLayout {
                     instance_id,
                     separator,
@@ -651,6 +656,12 @@ impl ExtendedFrameLayout {
                 });
             } else if is_above {
                 // Above-main pane: placed before the main chart.
+                // Content comes first, separator at the bottom (between pane and main chart).
+                let content = LayoutRect::new(chart_x, above_y, chart_width, pane_h);
+                let pane_price_scale = LayoutRect::new(price_scale_x, above_y, price_scale_width, pane_h);
+
+                above_y += pane_h;
+
                 let separator = LayoutRect::new(
                     chart_panel.x,
                     above_y,
@@ -659,17 +670,12 @@ impl ExtendedFrameLayout {
                 );
                 above_y += separator_height;
 
-                let content = LayoutRect::new(chart_x, above_y, chart_width, pane_h);
-                let pane_price_scale = LayoutRect::new(price_scale_x, above_y, price_scale_width, pane_h);
-
                 sub_panes.push(SubPaneLayout {
                     instance_id,
                     separator,
                     content,
                     price_scale: pane_price_scale,
                 });
-
-                above_y += pane_h;
             } else {
                 // Below-main pane: placed after the main chart.
                 let separator = LayoutRect::new(

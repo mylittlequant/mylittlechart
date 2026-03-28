@@ -7142,6 +7142,23 @@ impl ChartApp {
                 })
         };
 
+        // Check if the pane at pane_index is an above-main pane.
+        // For above-main panes the separator is at the BOTTOM of the pane (between the
+        // above-pane and the main chart), so dragging it resizes only this single pane.
+        if window.sub_panes[pane_index].above_main {
+            // delta_y > 0 → dragging DOWN → above pane grows.
+            // delta_y < 0 → dragging UP   → above pane shrinks.
+            let current_h = actual_h(pane_index);
+            let other_panes_h: f64 = (0..pane_count)
+                .filter(|&i| i != pane_index)
+                .map(|i| actual_h(i))
+                .sum();
+            let max_h = (available_h - min_h - other_panes_h).max(min_h);
+            let new_h = (current_h + delta_y).clamp(min_h, max_h);
+            window.sub_panes[pane_index].height_ratio = (new_h / available_h) as f32;
+            return;
+        }
+
         if pane_index == 0 {
             // Separator between the main chart (above) and sub-pane 0 (below).
             // delta_y > 0 → dragging DOWN → sub-pane 0 shrinks.

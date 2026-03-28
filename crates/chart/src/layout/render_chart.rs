@@ -1927,7 +1927,8 @@ pub fn render_sub_pane_overlay(
     use crate::render::draw_svg_icon;
 
     // Don't render if pane is too small or overlay not visible.
-    if content.height < 50.0 || !state.visible {
+    // 20px is enough for a single row of buttons.
+    if content.height < 20.0 || !state.visible {
         return SubPaneOverlayResult {
             instance_id,
             ..Default::default()
