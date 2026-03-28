@@ -109,15 +109,17 @@ pub fn draw_price_scale(
     // Generate price ticks
     let ticks = price_scale.generate_ticks_for_mode(viewport.chart_height);
 
+    // Set text styles before save so they persist after restore for boxes
+    ctx.set_font(&format!("{}px sans-serif", config.font_size));
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
     // Clip tick labels to price scale bounds
     ctx.save();
     ctx.begin_path();
     ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
     ctx.clip();
 
-    ctx.set_font(&format!("{}px sans-serif", config.font_size));
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
     ctx.set_fill_color(&scale_theme.scale_text);
 
     for price in &ticks {
@@ -310,15 +312,16 @@ pub fn draw_time_scale(
 
     let label_y = origin_y + config.time_scale_height / 2.0;
 
+    // Set text styles before save so they persist after restore for crosshair box
+    ctx.set_font(&format!("{}px sans-serif", config.font_size));
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
     // Clip tick labels to time scale bounds
     ctx.save();
     ctx.begin_path();
     ctx.rect(origin_x, origin_y, viewport.chart_width, config.time_scale_height);
     ctx.clip();
-
-    ctx.set_font(&format!("{}px sans-serif", config.font_size));
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
 
     for tick in ticks {
         // Choose color based on tick weight
