@@ -16779,14 +16779,25 @@ impl ChartApp {
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
 
                     // ----------------------------------------------------------------
-                    // Step 6c: Stage sub-pane height ratios for application on the
-                    // next sync_sub_panes_from_manager() call.
+                    // Step 6c: Stage sub-pane height ratios, above_main flags, and
+                    // ordering for application on the next
+                    // sync_sub_panes_from_manager() call.
                     // ----------------------------------------------------------------
                     self.pending_sub_pane_ratios.clear();
+                    self.pending_sub_pane_above_main.clear();
+                    self.pending_sub_pane_order.clear();
                     for snap in &preset.windows {
                         if !snap.sub_pane_height_ratios.is_empty() {
                             self.pending_sub_pane_ratios
                                 .insert(snap.window_id, snap.sub_pane_height_ratios.clone());
+                        }
+                        if !snap.sub_pane_above_main.is_empty() {
+                            self.pending_sub_pane_above_main
+                                .insert(snap.window_id, snap.sub_pane_above_main.clone());
+                        }
+                        if !snap.sub_pane_order.is_empty() {
+                            self.pending_sub_pane_order
+                                .insert(snap.window_id, snap.sub_pane_order.clone());
                         }
                     }
                     if !self.pending_sub_pane_ratios.is_empty() {

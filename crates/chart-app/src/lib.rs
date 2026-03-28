@@ -483,6 +483,18 @@ pub struct ChartApp {
     /// Format: `window_id → (instance_id → height_ratio)`.  Cleared after the
     /// ratios are applied.
     pub(crate) pending_sub_pane_ratios: std::collections::HashMap<u64, std::collections::HashMap<u64, f32>>,
+    /// Per-window set of sub-pane instance_ids that should have `above_main = true`
+    /// after the next `sync_sub_panes_from_manager` call.  Populated during
+    /// `LoadPreset` from `ChartWindowSnapshot::sub_pane_above_main`.
+    ///
+    /// Format: `window_id → HashSet<instance_id>`.  Cleared after applied.
+    pub(crate) pending_sub_pane_above_main: std::collections::HashMap<u64, std::collections::HashSet<u64>>,
+    /// Per-window ordered list of sub-pane instance_ids to restore the saved
+    /// Vec order (above-main first, then below-main).  Populated during
+    /// `LoadPreset` from `ChartWindowSnapshot::sub_pane_order`.
+    ///
+    /// Format: `window_id → Vec<instance_id>`.  Cleared after applied.
+    pub(crate) pending_sub_pane_order: std::collections::HashMap<u64, Vec<u64>>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -795,6 +807,8 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            pending_sub_pane_above_main: std::collections::HashMap::new(),
+            pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
         };
 
@@ -1061,6 +1075,8 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            pending_sub_pane_above_main: std::collections::HashMap::new(),
+            pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
         };
 
@@ -1223,6 +1239,8 @@ impl ChartApp {
             launch_banner_text: String::new(),
             launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
+            pending_sub_pane_above_main: std::collections::HashMap::new(),
+            pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
         };
 
@@ -5499,43 +5517,105 @@ impl ChartApp {
                 None => continue,
             };
 
-            // Grab any pending height ratios for this window (from a preset restore).
+            // Grab any pending restore data for this window (from a preset restore).
             let pending_ratios = self.pending_sub_pane_ratios.get(&window.id.0).cloned();
+            let pending_above_main = self.pending_sub_pane_above_main.get(&window.id.0).cloned();
+            let pending_order = self.pending_sub_pane_order.get(&window.id.0).cloned();
 
-            // Build new_sub_panes preserving existing order from window.sub_panes.
-            // Existing panes keep their position; new panes are appended at the end.
-            let mut new_sub_panes: Vec<zengeld_chart::state::SubPane> = Vec::with_capacity(sub_pane_data.len());
+            // Build a lookup from instance_id → price range for new panes.
+            let range_map: std::collections::HashMap<u64, Option<(f64, f64)>> =
+                sub_pane_data.iter().map(|(id, r)| (*id, *r)).collect();
+
+            // Build new_sub_panes.
+            //
+            // When a saved order exists, honour it: iterate saved order first,
+            // then append any new instance_ids not present in the saved order.
+            // When no saved order exists, preserve current Vec order for existing
+            // panes and append newly-appeared panes at the end (original logic).
+            let mut new_sub_panes: Vec<zengeld_chart::state::SubPane> =
+                Vec::with_capacity(sub_pane_data.len());
             let mut used_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
-            // First pass: keep existing panes in their current order (if still present in sub_pane_data).
-            for existing in &window.sub_panes {
-                if sub_pane_data.iter().any(|(id, _)| *id == existing.instance_id) {
-                    let mut pane = existing.clone();
-                    if let Some(ref ratios) = pending_ratios {
-                        if let Some(&ratio) = ratios.get(&existing.instance_id) {
-                            pane.height_ratio = ratio;
-                        }
-                    }
-                    new_sub_panes.push(pane);
-                    used_ids.insert(existing.instance_id);
-                }
-            }
+            // Helper: build / update a single SubPane.
+            let build_pane = |instance_id: u64,
+                              existing: Option<&zengeld_chart::state::SubPane>,
+                              pending_ratios: &Option<std::collections::HashMap<u64, f32>>,
+                              pending_above_main: &Option<std::collections::HashSet<u64>>,
+                              range_map: &std::collections::HashMap<u64, Option<(f64, f64)>>|
+             -> zengeld_chart::state::SubPane {
+                let mut pane = existing
+                    .cloned()
+                    .unwrap_or_else(|| zengeld_chart::state::SubPane::new(instance_id));
 
-            // Second pass: append new panes (not in existing order).
-            for (instance_id, range) in &sub_pane_data {
-                if used_ids.contains(instance_id) {
-                    continue;
+                // Apply saved price range when creating a brand-new pane.
+                if existing.is_none() {
+                    if let Some(Some((p_min, p_max))) = range_map.get(&instance_id) {
+                        pane.price_min = *p_min;
+                        pane.price_max = *p_max;
+                    }
                 }
-                let mut pane = zengeld_chart::state::SubPane::new(*instance_id);
-                if let Some((p_min, p_max)) = range {
-                    pane.price_min = *p_min;
-                    pane.price_max = *p_max;
-                }
+                // Apply saved height ratio.
                 if let Some(ref ratios) = pending_ratios {
-                    if let Some(&ratio) = ratios.get(instance_id) {
+                    if let Some(&ratio) = ratios.get(&instance_id) {
                         pane.height_ratio = ratio;
                     }
                 }
+                // Apply saved above_main flag.
+                if let Some(ref above_set) = pending_above_main {
+                    pane.above_main = above_set.contains(&instance_id);
+                }
+                pane
+            };
+
+            // Build a quick lookup for existing sub_panes.
+            let existing_map: std::collections::HashMap<u64, &zengeld_chart::state::SubPane> =
+                window.sub_panes.iter().map(|p| (p.instance_id, p)).collect();
+
+            if let Some(ref order) = pending_order {
+                // Restore saved order first.
+                for &iid in order {
+                    if range_map.contains_key(&iid) {
+                        let pane = build_pane(
+                            iid,
+                            existing_map.get(&iid).copied(),
+                            &pending_ratios,
+                            &pending_above_main,
+                            &range_map,
+                        );
+                        new_sub_panes.push(pane);
+                        used_ids.insert(iid);
+                    }
+                }
+            } else {
+                // No saved order: keep existing Vec order for panes that are
+                // still present in sub_pane_data.
+                for existing in &window.sub_panes {
+                    if range_map.contains_key(&existing.instance_id) {
+                        let pane = build_pane(
+                            existing.instance_id,
+                            Some(existing),
+                            &pending_ratios,
+                            &pending_above_main,
+                            &range_map,
+                        );
+                        new_sub_panes.push(pane);
+                        used_ids.insert(existing.instance_id);
+                    }
+                }
+            }
+
+            // Append any new panes not covered by the ordering pass.
+            for (instance_id, _) in &sub_pane_data {
+                if used_ids.contains(instance_id) {
+                    continue;
+                }
+                let pane = build_pane(
+                    *instance_id,
+                    existing_map.get(instance_id).copied(),
+                    &pending_ratios,
+                    &pending_above_main,
+                    &range_map,
+                );
                 new_sub_panes.push(pane);
             }
 
@@ -5546,8 +5626,10 @@ impl ChartApp {
             window.sub_panes = new_sub_panes;
         }
 
-        // Clear pending ratios once they have been applied (one-shot).
+        // Clear all pending restore state once applied (one-shot).
         self.pending_sub_pane_ratios.clear();
+        self.pending_sub_pane_above_main.clear();
+        self.pending_sub_pane_order.clear();
     }
 
     /// Sync sub-pane pixel geometry (height, y_offset, chart_width) from the

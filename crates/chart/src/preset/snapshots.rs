@@ -4,7 +4,7 @@
 //! derive `Serialize` directly because they contain trait objects
 //! (`Box<dyn Primitive>`, `Box<dyn IndicatorSource>`, etc.).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -184,6 +184,15 @@ pub struct ChartWindowSnapshot {
     /// `0.0` (absent) means use the default 100 px height.
     #[serde(default)]
     pub sub_pane_height_ratios: HashMap<u64, f32>,
+    /// Set of sub-pane instance_ids that have `above_main == true`.
+    /// Empty means all panes are below the main chart (default).
+    #[serde(default)]
+    pub sub_pane_above_main: HashSet<u64>,
+    /// Ordered list of sub-pane instance_ids capturing the Vec order at save
+    /// time.  Used on restore to re-establish the correct display order
+    /// (above-main panes are stored first, then below-main panes).
+    #[serde(default)]
+    pub sub_pane_order: Vec<u64>,
 }
 
 impl ChartWindowSnapshot {
@@ -252,6 +261,17 @@ impl ChartWindowSnapshot {
                 .iter()
                 .filter(|p| p.height_ratio > 0.0)
                 .map(|p| (p.instance_id, p.height_ratio))
+                .collect(),
+            sub_pane_above_main: window
+                .sub_panes
+                .iter()
+                .filter(|p| p.above_main)
+                .map(|p| p.instance_id)
+                .collect(),
+            sub_pane_order: window
+                .sub_panes
+                .iter()
+                .map(|p| p.instance_id)
                 .collect(),
         }
     }
