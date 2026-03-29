@@ -14074,55 +14074,57 @@ impl ChartApp {
             .map(|g| g.members.iter().map(|cid| cid.0).collect())
             .unwrap_or_default();
 
-        // Remove ALL indicator_configs with matching type_id from the group.
+        // Remove at most ONE indicator_config with this type_id from the group.
+        // Using retain-all would incorrectly delete configs for duplicate indicators
+        // of the same type (e.g. two "ac" indicators on the same window).
         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
             if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
                 if let Some(group_id) = self.panel_app.tag_manager.group_for_window(chart_id) {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
-                        let before = group.indicator_configs.len();
-                        group.indicator_configs.retain(|c| c.type_id != type_id);
-                        eprintln!(
-                            "[TagManager] Removed {} indicator config(s) with type_id={} from group {:?}",
-                            before - group.indicator_configs.len(),
-                            type_id,
-                            group_id,
-                        );
+                        if let Some(pos) = group.indicator_configs.iter().position(|c| c.type_id == type_id) {
+                            group.indicator_configs.remove(pos);
+                            eprintln!(
+                                "[TagManager] Removed 1 indicator config with type_id={} from group {:?}",
+                                type_id,
+                                group_id,
+                            );
+                        }
                     }
                 }
             }
         }
 
-        // Find ALL instances with matching type_id on any group member window.
-        let instances_to_remove: Vec<u64> = self.indicator_manager.instances_iter()
+        // Find the window that owns the specific instance being deleted.
+        let origin_window_id = self.indicator_manager.instances_iter()
+            .find(|inst| inst.id == id)
+            .and_then(|inst| inst.window_id);
+
+        // Sweep only PEER windows (same type_id, same group, but NOT the originating window).
+        // This prevents deleting a second "ac" indicator on the same window when only one
+        // was requested to be removed.
+        let peer_instances: Vec<u64> = self.indicator_manager.instances_iter()
             .filter(|inst| {
                 inst.type_id == type_id
+                    && inst.id != id
                     && inst.window_id.map(|wid| group_members.contains(&wid)).unwrap_or(false)
+                    && inst.window_id != origin_window_id
             })
             .map(|inst| inst.id)
             .collect();
 
-        if instances_to_remove.is_empty() {
-            // No group members matched — fall back to removing just the original instance.
-            self.indicator_manager.remove_instance(id);
-            self.alert_manager.remove_alerts_for_indicator(id);
-        } else {
-            for inst_id in &instances_to_remove {
-                self.indicator_manager.remove_instance(*inst_id);
-                self.alert_manager.remove_alerts_for_indicator(*inst_id);
-            }
-        }
+        // Build the full removal list: the specific instance + its peers on other windows.
+        let mut all_to_remove = vec![id];
+        all_to_remove.extend(peer_instances);
 
-        // Collect the full set of removed IDs for orphan cleanup.
-        let removed_ids: Vec<u64> = if instances_to_remove.is_empty() {
-            vec![id]
-        } else {
-            instances_to_remove.clone()
-        };
+        for inst_id in &all_to_remove {
+            self.indicator_manager.remove_instance(*inst_id);
+            self.alert_manager.remove_alerts_for_indicator(*inst_id);
+        }
 
         // Remove stale entries from every window's pre_tag_indicator_ids so the
         // Object Tree does not show phantom items for deleted indicators.
         for window in self.panel_app.panel_grid.windows_mut().values_mut() {
-            window.pre_tag_indicator_ids.retain(|iid| !removed_ids.contains(iid));
+            window.pre_tag_indicator_ids.retain(|iid| !all_to_remove.contains(iid));
         }
 
         self.sync_sub_panes_from_manager();
@@ -14132,7 +14134,7 @@ impl ChartApp {
             "[ChartApp] indicator {} deleted (type={}, removed {} instance(s))",
             id,
             type_id,
-            instances_to_remove.len().max(1),
+            all_to_remove.len(),
         );
     }
 
