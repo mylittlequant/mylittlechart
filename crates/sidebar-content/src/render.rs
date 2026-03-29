@@ -1807,13 +1807,23 @@ fn render_object_tree_items(
                 // collision when a stash primitive and its group counterpart share the
                 // same numeric ID from legacy autosave data).
                 let section_tag = match (&item.item_state, item.section.as_deref()) {
+                    (ObjectItemState::Memory, Some("Group")) => "grpmem",
+                    (ObjectItemState::Memory, Some("Window")) => "winmem",
                     (ObjectItemState::Memory, _) => "mem",
                     (_, Some("Group")) => "grp",
                     (_, Some("Window")) => "win",
                     _ => "flt",
                 };
+                // Include key_label in prefix for Memory items so different keys
+                // (e.g. SOLUSDT vs BTCUSDT) never collide on the same numeric ID.
+                let key_slug = if item.item_state == ObjectItemState::Memory {
+                    let kl = item.key_label().replace(':', "_");
+                    format!("{}_{}", kl, prefix)
+                } else {
+                    prefix.to_string()
+                };
                 // widget_prefix replaces bare `prefix` for all widget ID construction.
-                let widget_prefix = format!("{}_{}", section_tag, prefix);
+                let widget_prefix = format!("{}_{}", section_tag, key_slug);
                 let item_id = format!("{}_{}", widget_prefix, item.id);
                 let is_drawing = item.category != ObjectCategory::Indicator
                     && item.category != ObjectCategory::Compare;
