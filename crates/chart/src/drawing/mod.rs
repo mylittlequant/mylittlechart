@@ -32,6 +32,53 @@
 //! drawing.end_drag();
 //! ```
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-global primitive ID counter.
+/// Initialized to 1. Seeded at startup from persisted state.
+/// Use [`alloc_primitive_id`] to obtain a fresh ID.
+static NEXT_PRIMITIVE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Allocate the next globally-unique primitive ID.
+///
+/// This is the only place new IDs should originate. The counter is
+/// monotonically increasing across the entire process lifetime, so IDs
+/// allocated after a group join will never collide with IDs held in the
+/// stash or any other store.
+pub fn alloc_primitive_id() -> u64 {
+    NEXT_PRIMITIVE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Seed the global counter so it starts above all existing IDs.
+///
+/// Call once during app startup after loading persisted primitives.
+/// Safe to call multiple times — it only advances the counter, never
+/// decreases it.
+pub fn seed_primitive_id_counter(max_existing: u64) {
+    let target = max_existing.saturating_add(1);
+    let mut current = NEXT_PRIMITIVE_ID.load(Ordering::Relaxed);
+    while current < target {
+        match NEXT_PRIMITIVE_ID.compare_exchange_weak(
+            current,
+            target,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+/// Re-assign a fresh globally-unique ID to a primitive.
+///
+/// Use after cloning a primitive into a new owning store (e.g. seeding
+/// `group.primitives` from stash) so that the clone and the original have
+/// distinct IDs across all stores.
+pub fn reassign_primitive_id(prim: &mut Box<dyn primitives_v2::Primitive>) {
+    prim.data_mut().id = alloc_primitive_id();
+}
+
 mod manager;
 mod signal_manager;
 mod trades;

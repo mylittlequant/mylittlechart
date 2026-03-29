@@ -102,8 +102,6 @@ pub struct DrawingManager {
     drag_type: DragType,
     /// Drag start position (bar, price)
     drag_start: Option<(f64, f64)>,
-    /// Next primitive ID
-    next_id: u64,
     /// Lock drawings (prevent editing/dragging)
     locked: bool,
     /// Drawings visible
@@ -137,7 +135,6 @@ impl Clone for DrawingManager {
             dragging: None,    // Reset drag state
             drag_type: DragType::Move,
             drag_start: None,
-            next_id: self.next_id,
             locked: self.locked,
             visible: self.visible,
             current_pane_id: self.current_pane_id,
@@ -159,7 +156,6 @@ impl DrawingManager {
             dragging: None,
             drag_type: DragType::Move,
             drag_start: None,
-            next_id: 1,
             locked: false,
             visible: true,
             current_pane_id: None,
@@ -461,10 +457,9 @@ impl DrawingManager {
                         let color = meta.default_color;
                         if let Some(mut prim) = registry.create(&tool_id_clone, points, Some(color)) {
                             drop(registry); // Release lock before mutable borrow
-                            prim.data_mut().id = self.next_id;
+                            prim.data_mut().id = crate::drawing::alloc_primitive_id();
                             prim.data_mut().pane_id = self.current_pane_id;
                             prim.data_mut().window_id = self.current_window_id;
-                            self.next_id += 1;
                             self.primitives.push(prim);
                             self.selected = Some(self.primitives.len() - 1);
                             // Reset to ready state for continuous drawing
@@ -565,7 +560,7 @@ impl DrawingManager {
             ClickBehavior::SingleClick => {
                 // Create immediately with single point
                 if let Some(mut prim) = registry.create(&tool_id, &[(bar, price)], Some(&self.default_color)) {
-                    prim.data_mut().id = self.next_id;
+                    prim.data_mut().id = crate::drawing::alloc_primitive_id();
                     prim.data_mut().pane_id = self.current_pane_id;
                     prim.data_mut().window_id = self.current_window_id;
 
@@ -574,7 +569,6 @@ impl DrawingManager {
                         self.apply_variant_to_primitive(&mut prim, &tool_id, variant);
                     }
 
-                    self.next_id += 1;
                     self.primitives.push(prim);
                     self.selected = Some(self.primitives.len() - 1);
                     self.current_tool = None; // Reset tool after creation
@@ -596,7 +590,7 @@ impl DrawingManager {
                         // Second click - create primitive
                         points.push((bar, price));
                         if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
-                            prim.data_mut().id = self.next_id;
+                            prim.data_mut().id = crate::drawing::alloc_primitive_id();
                             prim.data_mut().pane_id = self.current_pane_id;
                             prim.data_mut().window_id = self.current_window_id;
 
@@ -605,7 +599,6 @@ impl DrawingManager {
                                 self.apply_variant_to_primitive(&mut prim, &tool_id, variant);
                             }
 
-                            self.next_id += 1;
                             self.primitives.push(prim);
                             self.selected = Some(self.primitives.len() - 1);
                             self.state = DrawingState::Idle;
@@ -637,10 +630,9 @@ impl DrawingManager {
                         points.push((bar, price));
                         if points.len() >= 3 {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
-                                prim.data_mut().id = self.next_id;
+                                prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
                                 prim.data_mut().window_id = self.current_window_id;
-                                self.next_id += 1;
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -671,9 +663,8 @@ impl DrawingManager {
                         points.push((bar, price));
                         if points.len() >= 4 {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
-                                prim.data_mut().id = self.next_id;
+                                prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
-                                self.next_id += 1;
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -707,9 +698,8 @@ impl DrawingManager {
                         // Auto-finish when we have enough points
                         if points.len() >= min_points as usize {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
-                                prim.data_mut().id = self.next_id;
+                                prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
-                                self.next_id += 1;
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -745,9 +735,8 @@ impl DrawingManager {
             if let Some(ClickBehavior::MultiPoint(min)) = registry.click_behavior(tool_id) {
                 if points.len() >= min as usize {
                     if let Some(mut prim) = registry.create(tool_id, points, Some(&self.default_color)) {
-                        prim.data_mut().id = self.next_id;
+                        prim.data_mut().id = crate::drawing::alloc_primitive_id();
                         prim.data_mut().pane_id = self.current_pane_id;
-                        self.next_id += 1;
                         self.primitives.push(prim);
                         self.selected = Some(self.primitives.len() - 1);
                         self.state = DrawingState::Idle;
@@ -808,10 +797,9 @@ impl DrawingManager {
     /// Add an externally-created primitive with proper ID assignment
     /// Use this when creating primitives outside the normal on_click flow
     pub fn add_external_primitive(&mut self, mut prim: Box<dyn Primitive>) {
-        prim.data_mut().id = self.next_id;
+        prim.data_mut().id = crate::drawing::alloc_primitive_id();
         prim.data_mut().pane_id = self.current_pane_id;
         prim.data_mut().window_id = self.current_window_id;
-        self.next_id += 1;
         self.primitives.push(prim);
         self.selected = Some(self.primitives.len() - 1);
     }
@@ -1017,8 +1005,7 @@ impl DrawingManager {
 
         let mut cloned = self.primitives[index].clone();
         // Assign a fresh unique ID so the clone is independent of the original.
-        cloned.data_mut().id = self.next_id;
-        self.next_id += 1;
+        cloned.data_mut().id = crate::drawing::alloc_primitive_id();
         let new_idx = self.primitives.len();
         self.primitives.push(cloned);
         Some(new_idx)
@@ -1719,8 +1706,7 @@ impl DrawingManager {
         if let Some(prim) = self.selected_primitive() {
             let mut cloned = prim.clone_box();
             // Assign new ID
-            cloned.data_mut().id = self.next_id;
-            self.next_id += 1;
+            cloned.data_mut().id = crate::drawing::alloc_primitive_id();
             // Offset position slightly
             cloned.translate(5.0, 0.0);
             let idx = self.primitives.len();

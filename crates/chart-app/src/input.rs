@@ -17011,6 +17011,24 @@ impl ChartApp {
                         zengeld_chart::tag_manager::SyncGroupId::bump_past(sg_snap.id);
                     }
 
+                    // Seed the global primitive ID counter so future allocations
+                    // never collide with any ID loaded from disk.
+                    {
+                        let max_id = self.panel_app.panel_grid.windows().values()
+                            .flat_map(|w| {
+                                w.drawing_manager.primitives().iter()
+                                    .chain(w.stashed_primitives.iter())
+                            })
+                            .chain(
+                                self.panel_app.tag_manager.groups()
+                                    .flat_map(|g| g.primitives.iter())
+                            )
+                            .map(|p| p.data().id)
+                            .max()
+                            .unwrap_or(0);
+                        zengeld_chart::drawing::seed_primitive_id_counter(max_id);
+                    }
+
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
                     if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
@@ -18465,6 +18483,11 @@ impl ChartApp {
                 for p in &mut source_prims {
                     p.data_mut().symbol = prim_symbol.clone();
                 }
+                // Re-ID the group copies so they are globally unique.
+                // The stash retains the original IDs for restoration on leave.
+                for p in &mut source_prims {
+                    p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
+                }
                 if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
                     group.primitives = source_prims;
                 }
@@ -18773,6 +18796,11 @@ impl ChartApp {
                         .unwrap_or_default();
                 for p in &mut source_prims {
                     p.data_mut().symbol = prim_sym.clone();
+                }
+                // Re-ID the group copies so they are globally unique.
+                // The source window's drawing_manager keeps the original IDs.
+                for p in &mut source_prims {
+                    p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
                 }
                 if !source_prims.is_empty() {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
