@@ -2734,7 +2734,7 @@ pub fn render_full_chart_panel(
                 .find(|p| p.instance_id == id)
                 .map(|p| p.height_ratio)
                 .unwrap_or(0.0);
-            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
+            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(30.0) }
         }).collect()
     } else {
         crate::layout::default_sub_pane_heights(sub_pane_ids.len(), 100.0)

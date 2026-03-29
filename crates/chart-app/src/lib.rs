@@ -4068,6 +4068,7 @@ impl ChartApp {
 
                 // Post-render: draw bell icons for alerts bound to drawing
                 // primitives and overlay indicators in this leaf.
+                let main_chart_y;
                 {
                     let sub_pane_ids: Vec<u64> = if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
                         self.indicator_manager
@@ -4148,6 +4149,7 @@ impl ChartApp {
                             Sense::CLICK,
                         );
                     }
+                    main_chart_y = extended.main_chart.chart.y;
                 }
 
                 // Reset render scope after this leaf is done.
@@ -4165,7 +4167,7 @@ impl ChartApp {
                 let hit_zones = zengeld_chart::render_leaf_tab(
                     ctx,
                     leaf_rect.x + 2.0,
-                    leaf_rect.y + 2.0,
+                    main_chart_y + 2.0,
                     leaf_rect.width - 4.0,
                     &window.symbol,
                     &window.timeframe.name,
@@ -4470,6 +4472,7 @@ impl ChartApp {
 
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
             let mut single_sub_pane_overlays: Vec<zengeld_chart::SubPaneOverlayResult> = Vec::new();
+            let main_chart_y;
 
             let window_opt = self.panel_app.panel_grid.active_window();
             let corner_zones_single = if let Some(window) = window_opt {
@@ -4522,6 +4525,7 @@ impl ChartApp {
 
                 // Post-render: draw bell icons for alerts bound to this window's
                 // drawing primitives and overlay indicators.
+                // main_chart_y is updated once ExtendedFrameLayout is computed.
                 {
                     // Compute the corrected chart area rect (same logic as
                     // render_full_chart_panel's internal ExtendedFrameLayout).
@@ -4606,10 +4610,12 @@ impl ChartApp {
                             Sense::CLICK,
                         );
                     }
+                    main_chart_y = extended.main_chart.chart.y;
                 }
 
                 corner_zones_ret
             } else {
+                main_chart_y = content_rect.y;
                 ScaleCornerHitZones::default()
             };
 
@@ -4648,7 +4654,7 @@ impl ChartApp {
                 let hit_zones = zengeld_chart::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
-                    content_rect.y + 2.0,
+                    main_chart_y + 2.0,
                     content_rect.width - 4.0,
                     &symbol,
                     &timeframe,

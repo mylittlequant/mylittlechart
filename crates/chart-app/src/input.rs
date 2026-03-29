@@ -7248,16 +7248,7 @@ impl ChartApp {
             Some(r) => r,
             None => return,
         };
-        // Subtract time_scale_height so ratios are stored against the actual
-        // drawable area, matching the base used by compute_from_chart_panel.
-        let time_scale_h = self.panel_app.panel_grid
-            .active_window()
-            .map(|w| w.scale_settings.effective_time_scale_height())
-            .unwrap_or(0.0);
-        let available_h = (leaf_rect.height - time_scale_h).max(1.0);
-        if available_h <= 0.0 {
-            return;
-        }
+        let available_h = leaf_rect.height.max(1.0);
 
         // Build the extended layout to get ACTUAL rendered heights (after scale_factor
         // clamping inside compute_from_chart_panel).  This prevents the mismatch where
