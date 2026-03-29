@@ -7867,14 +7867,20 @@ impl ChartApp {
         }
 
         // === Object tree panel clicks ===
-        // Widget IDs use "drw_" prefix for drawings, "ind_" for indicators.
-        // Buttons: {prefix}_delete_{id}, {prefix}_settings_{id},
-        //          {prefix}_vis_{id}, {prefix}_lock_{id}
-        // Row:     {prefix}_{id}
+        // Widget IDs use namespaced format: "{section_tag}_{prefix}_{action}_{id}"
+        // where section_tag is one of: grp, win, mem, flt (flat/untagged).
+        // Legacy (non-namespaced) format "drw_{action}_{id}" is also matched for
+        // backwards compatibility with in-flight autosave data.
+        //
+        // All handlers extract the trailing numeric ID via rsplit('_').next() so
+        // they work regardless of how many namespace prefixes are prepended.
+        //
+        // Buttons: *_drw_delete_{id}, *_drw_settings_{id}, *_drw_vis_{id}, etc.
+        // Row:     *_drw_{id}  (where suffix after last underscore is a pure number)
 
         // --- Drawing delete ---
-        if widget_id.starts_with("drw_delete_") {
-            if let Some(id) = widget_id.strip_prefix("drw_delete_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_drw_delete_") || widget_id.starts_with("drw_delete_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
                 let removed_from_dm = self.panel_app.panel_grid
                     .active_window_mut()
@@ -7933,8 +7939,8 @@ impl ChartApp {
             return;
         }
         // --- Indicator delete ---
-        if widget_id.starts_with("ind_delete_") {
-            if let Some(id) = widget_id.strip_prefix("ind_delete_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_ind_delete_") || widget_id.starts_with("ind_delete_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 // Try live indicator_manager first (Active + WindowOtherKey).
                 if self.indicator_manager.get_instance(id).is_some() {
                     self.delete_indicator_instance(id);
@@ -7960,8 +7966,8 @@ impl ChartApp {
             return;
         }
         // --- Drawing settings ---
-        if widget_id.starts_with("drw_settings_") {
-            if let Some(id) = widget_id.strip_prefix("drw_settings_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_drw_settings_") || widget_id.starts_with("drw_settings_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         self.panel_app.primitive_settings_state.open(idx);
@@ -7972,16 +7978,16 @@ impl ChartApp {
             return;
         }
         // --- Indicator settings ---
-        if widget_id.starts_with("ind_settings_") {
-            if let Some(id) = widget_id.strip_prefix("ind_settings_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_ind_settings_") || widget_id.starts_with("ind_settings_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 self.panel_app.indicator_settings_state.open(id);
                 eprintln!("[Sidebar] Indicator settings opened: {}", id);
             }
             return;
         }
         // --- Drawing visibility ---
-        if widget_id.starts_with("drw_vis_") {
-            if let Some(id) = widget_id.strip_prefix("drw_vis_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_drw_vis_") || widget_id.starts_with("drw_vis_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let v = window.drawing_manager.primitives_mut()[idx].data().visible;
@@ -7994,8 +8000,8 @@ impl ChartApp {
             return;
         }
         // --- Indicator visibility ---
-        if widget_id.starts_with("ind_vis_") {
-            if let Some(id) = widget_id.strip_prefix("ind_vis_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_ind_vis_") || widget_id.starts_with("ind_vis_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 self.indicator_manager.toggle_visibility(id);
                 self.sidebar_data_dirty = true;
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
@@ -8003,8 +8009,8 @@ impl ChartApp {
             return;
         }
         // --- Drawing lock ---
-        if widget_id.starts_with("drw_lock_") {
-            if let Some(id) = widget_id.strip_prefix("drw_lock_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_drw_lock_") || widget_id.starts_with("drw_lock_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let l = window.drawing_manager.primitives_mut()[idx].data().locked;
@@ -8017,7 +8023,7 @@ impl ChartApp {
             return;
         }
         // --- Indicator lock (no-op for now, indicators don't have lock) ---
-        if widget_id.starts_with("ind_lock_") {
+        if widget_id.contains("_ind_lock_") || widget_id.starts_with("ind_lock_") {
             return;
         }
 
@@ -8068,8 +8074,8 @@ impl ChartApp {
         }
 
         // --- Drawing alert button ---
-        if widget_id.starts_with("drw_alert_") {
-            if let Some(id) = widget_id.strip_prefix("drw_alert_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_drw_alert_") || widget_id.starts_with("drw_alert_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let mut price = self.panel_app.panel_grid.active_window()
                     .and_then(|w| w.bars.last())
                     .map(|b| b.close)
@@ -8098,8 +8104,8 @@ impl ChartApp {
             return;
         }
         // --- Indicator alert button ---
-        if widget_id.starts_with("ind_alert_") {
-            if let Some(id) = widget_id.strip_prefix("ind_alert_").and_then(|s| s.parse::<u64>().ok()) {
+        if widget_id.contains("_ind_alert_") || widget_id.starts_with("ind_alert_") {
+            if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 let price = self.panel_app.panel_grid.active_window()
                     .and_then(|w| w.bars.last())
                     .map(|b| b.close)
@@ -8162,14 +8168,21 @@ impl ChartApp {
             }
             return;
         }
-        // --- Row selection (drw_{id} or ind_{id}) ---
-        // Only match if suffix after prefix is a pure number (avoids catching
-        // "ind_overlay:toggle" and similar unrelated widget IDs).
+        // --- Row selection ({section_tag}_drw_{id} or {section_tag}_ind_{id}) ---
+        // Also matches legacy bare "drw_{id}" / "ind_{id}" for backwards compatibility.
+        // The widget ID contains "_drw_" or "_ind_" (or starts with one of those), and
+        // the trailing component after the last underscore is a pure numeric ID.
+        // We guard with contains("_drw_") / contains("_ind_") plus a starts_with check
+        // to avoid catching "ind_overlay:toggle" and similar unrelated widget IDs.
         {
-            let row_id = widget_id
-                .strip_prefix("drw_")
-                .or_else(|| widget_id.strip_prefix("ind_"))
-                .and_then(|s| s.parse::<u64>().ok());
+            let is_drw_row = widget_id.contains("_drw_") || widget_id.starts_with("drw_");
+            let is_ind_row = widget_id.contains("_ind_") || widget_id.starts_with("ind_");
+            // Extra guard: the widget_id must not contain ':' (rules out "ind_overlay:toggle").
+            let row_id = if (is_drw_row || is_ind_row) && !widget_id.contains(':') {
+                widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok())
+            } else {
+                None
+            };
             if let Some(id) = row_id {
                 if self.sidebar_state.object_tree_items.iter().any(|item| item.id == id) {
                     for item in &mut self.sidebar_state.object_tree_items {
@@ -8179,7 +8192,7 @@ impl ChartApp {
 
                     // Click-to-center: if a drawing row was clicked, scroll the
                     // viewport so the drawing's midpoint is horizontally centred.
-                    if widget_id.starts_with("drw_") {
+                    if is_drw_row {
                         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                             let center_bar = window.drawing_manager.primitives()
                                 .iter()
@@ -17027,6 +17040,48 @@ impl ChartApp {
                             .max()
                             .unwrap_or(0);
                         zengeld_chart::drawing::seed_primitive_id_counter(max_id);
+                    }
+
+                    // Re-ID stashed primitives that collide with group primitives.
+                    // Legacy autosave files may have saved both a stash primitive and
+                    // its group counterpart with the same numeric ID, causing widget
+                    // ID collisions in the Object Tree sidebar.  Assign fresh IDs to
+                    // any stash primitive whose ID already exists in group.primitives.
+                    {
+                        // Phase 1: collect (window_key, group_id, set_of_group_prim_ids)
+                        // using immutable borrows only.
+                        let collision_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId, std::collections::HashSet<u64>)> =
+                            self.panel_app.panel_grid.windows().values()
+                                .filter_map(|w| {
+                                    let gid = w.group_id?;
+                                    let group_ids: std::collections::HashSet<u64> =
+                                        self.panel_app.tag_manager.group(gid)
+                                            .map(|g| g.primitives.iter().map(|p| p.data().id).collect())
+                                            .unwrap_or_default();
+                                    Some((w.id, gid, group_ids))
+                                })
+                                .collect();
+
+                        // Phase 2: mutably iterate windows and re-ID colliding stash entries.
+                        for (chart_id, _gid, group_ids) in &collision_info {
+                            if let Some(window) = self.panel_app.panel_grid.windows_mut().values_mut()
+                                .find(|w| &w.id == chart_id)
+                            {
+                                let mut reid_count = 0u32;
+                                for p in &mut window.stashed_primitives {
+                                    if group_ids.contains(&p.data().id) {
+                                        p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
+                                        reid_count += 1;
+                                    }
+                                }
+                                if reid_count > 0 {
+                                    eprintln!(
+                                        "[ChartApp] Re-IDed {} stash primitive(s) in window {:?} (legacy autosave collision fix)",
+                                        reid_count, chart_id
+                                    );
+                                }
+                            }
+                        }
                     }
 
                     // Step 5b: If no sync groups exist but windows do, auto-create

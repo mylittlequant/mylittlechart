@@ -15,6 +15,7 @@ use uzor::input::InputCoordinator;
 use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
+use crate::types::ObjectItemState;
 
 // =============================================================================
 // Result type — mirrors zengeld_chart::layout::render_frame::RightSidebarResult
@@ -1801,7 +1802,19 @@ fn render_object_tree_items(
                     ObjectCategory::Compare => "cmp",
                     _ => "drw",
                 };
-                let item_id = format!("{}_{}", prefix, item.id);
+                // Namespace by section so "Group" section drw_5 and "Window" section
+                // drw_5 never produce the same widget ID string (fixes InputCoordinator
+                // collision when a stash primitive and its group counterpart share the
+                // same numeric ID from legacy autosave data).
+                let section_tag = match (&item.item_state, item.section.as_deref()) {
+                    (ObjectItemState::Memory, _) => "mem",
+                    (_, Some("Group")) => "grp",
+                    (_, Some("Window")) => "win",
+                    _ => "flt",
+                };
+                // widget_prefix replaces bare `prefix` for all widget ID construction.
+                let widget_prefix = format!("{}_{}", section_tag, prefix);
+                let item_id = format!("{}_{}", widget_prefix, item.id);
                 let is_drawing = item.category != ObjectCategory::Indicator
                     && item.category != ObjectCategory::Compare;
 
@@ -1824,10 +1837,10 @@ fn render_object_tree_items(
                 if item.is_interactive() {
                     // --- Active item: full interactivity with all buttons ---
 
-                    let del_id = format!("{}_delete_{}", prefix, item.id);
-                    let set_id = format!("{}_settings_{}", prefix, item.id);
-                    let alert_id = format!("{}_alert_{}", prefix, item.id);
-                    let vis_id = format!("{}_vis_{}", prefix, item.id);
+                    let del_id = format!("{}_delete_{}", widget_prefix, item.id);
+                    let set_id = format!("{}_settings_{}", widget_prefix, item.id);
+                    let alert_id = format!("{}_alert_{}", widget_prefix, item.id);
+                    let vis_id = format!("{}_vis_{}", widget_prefix, item.id);
 
                     // Register row FIRST, then buttons (buttons win hit-test for clicks).
                     input_coordinator.register(item_id.as_str(), item_rect.clone(), uzor::input::Sense::CLICK);
@@ -1841,7 +1854,7 @@ fn render_object_tree_items(
                     input_coordinator.register(vis_id.as_str(), vis_rect, uzor::input::Sense::CLICK);
                     // Lock button — drawings only.
                     let lock_id = if is_drawing {
-                        Some(format!("{}_lock_{}", prefix, item.id))
+                        Some(format!("{}_lock_{}", widget_prefix, item.id))
                     } else {
                         None
                     };
@@ -1944,7 +1957,7 @@ fn render_object_tree_items(
 
                     // Delete button — only for deletable items.
                     if item.is_deletable() {
-                        let del_id = format!("{}_delete_{}", prefix, item.id);
+                        let del_id = format!("{}_delete_{}", widget_prefix, item.id);
                         let del_hovered = input_coordinator
                             .is_hovered(&uzor::types::WidgetId::new(&del_id));
                         let delete_color = if del_hovered {
