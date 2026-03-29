@@ -3077,10 +3077,16 @@ impl ChartApp {
                         // PrimitiveData has no exchange/account_type fields. If multi-exchange
                         // groups are added in the future, PrimitiveData would need those fields.
                         let prim_sym = data.symbol.clone();
-                        let item_state = if prim_sym == active_window_sym {
+                        let is_active_sym = prim_sym == active_window_sym;
+                        let item_state = if is_active_sym {
                             sidebar_content::types::ObjectItemState::Active
                         } else {
                             sidebar_content::types::ObjectItemState::Memory
+                        };
+                        let memory_kind = if is_active_sym {
+                            sidebar_content::types::MemoryKind::None
+                        } else {
+                            sidebar_content::types::MemoryKind::GroupOtherKey
                         };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             data.id, name, prim_category(kind), &data.type_id,
@@ -3090,7 +3096,8 @@ impl ChartApp {
                         .with_color(Some(data.color.stroke.clone()))
                         .with_section("Group")
                         .with_key(&prim_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(item_state);
+                        .with_item_state(item_state)
+                        .with_memory_kind(memory_kind);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -3110,10 +3117,16 @@ impl ChartApp {
                             None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
                         };
                         let cfg_sym = cfg.symbol.clone();
-                        let item_state = if cfg_sym == active_window_sym {
+                        let is_active_sym = cfg_sym == active_window_sym;
+                        let item_state = if is_active_sym {
                             sidebar_content::types::ObjectItemState::Active
                         } else {
                             sidebar_content::types::ObjectItemState::Memory
+                        };
+                        let memory_kind = if is_active_sym {
+                            sidebar_content::types::MemoryKind::None
+                        } else {
+                            sidebar_content::types::MemoryKind::GroupIndicatorOtherKey
                         };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             id, &name, zengeld_chart::ObjectCategory::Indicator, &type_id,
@@ -3122,7 +3135,8 @@ impl ChartApp {
                         .with_locked(locked)
                         .with_section("Group")
                         .with_key(&cfg_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(item_state);
+                        .with_item_state(item_state)
+                        .with_memory_kind(memory_kind);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -3161,7 +3175,8 @@ impl ChartApp {
                         .with_color(Some(stroke.clone()))
                         .with_section("Window")
                         .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(sidebar_content::types::ObjectItemState::Stashed);
+                        .with_item_state(sidebar_content::types::ObjectItemState::Memory)
+                        .with_memory_kind(sidebar_content::types::MemoryKind::WindowStash);
                         self.sidebar_state.object_tree_items.push(item);
                     }
 
@@ -3203,10 +3218,16 @@ impl ChartApp {
 
                 for (id, display, type_id, kind, visible, locked, stroke, prim_sym) in &local_prims {
                     let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
-                    let item_state = if *prim_sym == active_window_sym {
+                    let is_active_sym = *prim_sym == active_window_sym;
+                    let item_state = if is_active_sym {
                         sidebar_content::types::ObjectItemState::Active
                     } else {
                         sidebar_content::types::ObjectItemState::Memory
+                    };
+                    let memory_kind = if is_active_sym {
+                        sidebar_content::types::MemoryKind::None
+                    } else {
+                        sidebar_content::types::MemoryKind::WindowOtherKey
                     };
                     let item = sidebar_content::types::ObjectTreeItem::new(
                         *id, name, prim_category(*kind), type_id,
@@ -3215,7 +3236,8 @@ impl ChartApp {
                     .with_locked(*locked)
                     .with_color(Some(stroke.clone()))
                     .with_key(prim_sym, &active_window_exchange, &active_window_account_type)
-                    .with_item_state(item_state);
+                    .with_item_state(item_state)
+                    .with_memory_kind(memory_kind);
                     self.sidebar_state.object_tree_items.push(item);
                 }
 
@@ -3227,10 +3249,16 @@ impl ChartApp {
                         .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked, i.symbol.clone()))
                         .collect();
                     for (id, name, type_id, visible, locked, inst_sym) in &insts {
-                        let item_state = if *inst_sym == active_window_sym {
+                        let is_active_sym = *inst_sym == active_window_sym;
+                        let item_state = if is_active_sym {
                             sidebar_content::types::ObjectItemState::Active
                         } else {
                             sidebar_content::types::ObjectItemState::Memory
+                        };
+                        let memory_kind = if is_active_sym {
+                            sidebar_content::types::MemoryKind::None
+                        } else {
+                            sidebar_content::types::MemoryKind::WindowOtherKey
                         };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             *id,
@@ -3241,13 +3269,14 @@ impl ChartApp {
                         .with_visible(*visible)
                         .with_locked(*locked)
                         .with_key(inst_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(item_state);
+                        .with_item_state(item_state)
+                        .with_memory_kind(memory_kind);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
             }
 
-            // Sort within sections: Active first, then Stashed, then Memory (stable to preserve sub-order).
+            // Sort within sections: Active first, then Memory (stable to preserve sub-order).
             self.sidebar_state.object_tree_items.sort_by_key(|item| {
                 let section_order: u8 = match item.section.as_deref() {
                     Some("Group") => 0,
@@ -3256,8 +3285,7 @@ impl ChartApp {
                 };
                 let state_order: u8 = match item.item_state {
                     sidebar_content::types::ObjectItemState::Active => 0,
-                    sidebar_content::types::ObjectItemState::Stashed => 1,
-                    sidebar_content::types::ObjectItemState::Memory => 2,
+                    sidebar_content::types::ObjectItemState::Memory => 1,
                 };
                 (section_order, state_order)
             });

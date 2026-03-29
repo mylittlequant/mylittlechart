@@ -15,7 +15,6 @@ use uzor::input::InputCoordinator;
 use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
-use crate::types::ObjectItemState;
 
 // =============================================================================
 // Result type — mirrors zengeld_chart::layout::render_frame::RightSidebarResult
@@ -1770,18 +1769,18 @@ fn render_object_tree_items(
             ctx.fill_text(key_label, rect.x + key_indent, current_y + key_header_height / 2.0);
             current_y += key_header_height;
 
-            // Render items in sorted order (Active first, then Stashed, then Memory).
+            // Render items in sorted order (Active first, then Memory).
             // Track state transitions so we can insert a separator before the first
             // non-Active item, keeping the visual grouping clear without re-bucketing
             // by category (which would destroy the state ordering).
-            let mut stashed_separator_shown = false;
+            let mut memory_separator_shown = false;
 
             for &idx in &key_indices {
                 let item = &state.object_tree_items[idx];
 
-                // Insert "— Stashed —" separator on first non-Active item.
-                if !item.is_interactive() && !stashed_separator_shown {
-                    stashed_separator_shown = true;
+                // Insert "— Memory —" separator on first non-Active item.
+                if !item.is_interactive() && !memory_separator_shown {
+                    memory_separator_shown = true;
                     // Thin rule + label.
                     let sep_indent = item_padding + 4.0;
                     let sep_y = current_y + 8.0;
@@ -1791,7 +1790,7 @@ fn render_object_tree_items(
                     ctx.set_fill_color(&theme.item_text_muted);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("\u{2014} Stashed \u{2014}", rect.x + sep_indent, current_y + 16.0);
+                    ctx.fill_text("\u{2014} Memory \u{2014}", rect.x + sep_indent, current_y + 16.0);
                     current_y += 26.0;
                 }
 
@@ -1920,9 +1919,9 @@ fn render_object_tree_items(
                         draw_svg_icon(ctx, lock_icon.svg(), lock_x, icon_y, icon_size, icon_size, lock_color);
                     }
                 } else {
-                    // --- Non-interactive item: Stashed or Memory ---
-                    // No widget registration — no hover/click events will fire.
-                    // Show only the colour swatch and a muted name with "(stashed)" suffix.
+                    // --- Memory item: colour swatch + muted name + delete button only ---
+                    // The row itself is NOT registered with input_coordinator — only the
+                    // delete button is interactive, and only when the item is deletable.
 
                     // Colour swatch — shown so the user can still identify the object.
                     if let Some(ref color) = item.color {
@@ -1930,28 +1929,37 @@ fn render_object_tree_items(
                         ctx.fill_rect(rect.x + item_padding, current_y + 8.0, 16.0, 16.0);
                     }
 
-                    // Name label with "(stashed)" suffix, using muted colour.
+                    // Name label — no suffix needed, Memory concept is shown by separator.
                     let name_x = if item.color.is_some() {
                         rect.x + item_padding + 24.0
                     } else {
                         rect.x + item_padding
                     };
 
-                    let display_name = if item.item_state == ObjectItemState::Stashed {
-                        format!("{} (stashed)", item.name)
-                    } else {
-                        item.name.clone()
-                    };
-
                     ctx.set_font("12px sans-serif");
                     ctx.set_fill_color(&theme.item_text_muted);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text(&display_name, name_x, current_y + item_height / 2.0);
+                    ctx.fill_text(&item.name, name_x, current_y + item_height / 2.0);
+
+                    // Delete button — only for deletable items.
+                    if item.is_deletable() {
+                        let del_id = format!("{}_delete_{}", prefix, item.id);
+                        let del_hovered = input_coordinator
+                            .is_hovered(&uzor::types::WidgetId::new(&del_id));
+                        let delete_color = if del_hovered {
+                            "#ff5252"
+                        } else {
+                            theme.item_text_muted.as_str()
+                        };
+                        draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
+                        let delete_rect = WidgetRect::new(del_x, icon_y, icon_size, icon_size);
+                        input_coordinator.register(del_id.as_str(), delete_rect.clone(), uzor::input::Sense::CLICK);
+                        result.delete_button_rects.push((del_id, delete_rect));
+                    }
 
                     // Non-interactive rows are still tracked in item_rects so the
-                    // agent API can enumerate all objects in the tree, but they are
-                    // not registered with input_coordinator so no events fire.
+                    // agent API can enumerate all objects in the tree.
                     result.item_rects.push((item_id, item_rect));
                 }
 

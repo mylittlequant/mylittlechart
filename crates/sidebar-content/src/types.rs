@@ -10,16 +10,35 @@ use crate::state::MetricsSnapshot;
 // Object Tree
 // =============================================================================
 
+/// Sub-kind for Memory items — distinguishes where non-active objects originate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MemoryKind {
+    /// Default / unknown (guards against old serialised data).
+    #[default]
+    None,
+    /// Stashed pre-tag drawings: primitives that were on this window before
+    /// it joined a sync group.  Stored in `window.stashed_primitives`.
+    WindowStash,
+    /// Drawings or indicators on other symbol keys for an untagged window.
+    /// Source: `window.drawing_manager` or `window.indicator_manager` where
+    /// `data.symbol != active_window_sym`.
+    WindowOtherKey,
+    /// Drawings belonging to the sync group but on a different symbol key.
+    /// Source: `group.primitives` where `prim.data().symbol != active_window_sym`.
+    GroupOtherKey,
+    /// Indicator configs in the sync group for a different symbol key.
+    /// Source: `group.indicator_configs` where `cfg.symbol != active_window_sym`.
+    GroupIndicatorOtherKey,
+}
+
 /// Describes the lifecycle state of an object tree item for visual distinction.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ObjectItemState {
     /// Object is active on the current symbol:exchange:account_type key.
     #[default]
     Active,
-    /// Object exists in the group/window but is stashed (parked pre-tag primitives).
-    /// Shown greyed-out with "(stashed)" suffix; not interactive.
-    Stashed,
-    /// Object belongs to a different symbol:exchange:account_type key (memory).
+    /// Object belongs to a non-active symbol key, or is a stashed pre-tag primitive.
+    /// The `memory_kind` field on `ObjectTreeItem` disambiguates the exact bucket.
     /// Shown dimmed with key label; not interactive.
     Memory,
 }
@@ -73,9 +92,14 @@ pub struct ObjectTreeItem {
     #[serde(default)]
     pub account_type: String,
 
-    /// Lifecycle state of this item (active / stashed / memory).
+    /// Lifecycle state of this item (active / memory).
     #[serde(default)]
     pub item_state: ObjectItemState,
+
+    /// Sub-kind for Memory items — distinguishes which bucket this item came from.
+    /// Only meaningful when `item_state == ObjectItemState::Memory`.
+    #[serde(default)]
+    pub memory_kind: MemoryKind,
 }
 
 impl ObjectTreeItem {
@@ -96,6 +120,7 @@ impl ObjectTreeItem {
             exchange: String::new(),
             account_type: String::new(),
             item_state: ObjectItemState::Active,
+            memory_kind: MemoryKind::None,
         }
     }
 
@@ -120,6 +145,30 @@ impl ObjectTreeItem {
         self
     }
 
+    /// Set the memory sub-kind for this item.
+    pub fn with_memory_kind(mut self, kind: MemoryKind) -> Self {
+        self.memory_kind = kind;
+        self
+    }
+
+    /// Returns `true` when this item can be deleted from the sidebar.
+    ///
+    /// Active items are always deletable.  Memory items are deletable when they
+    /// originate from a window-owned bucket (stash or other-key drawings/indicators)
+    /// or from a group bucket — all of these can be removed by direct `retain()`.
+    pub fn is_deletable(&self) -> bool {
+        match self.item_state {
+            ObjectItemState::Active => true,
+            ObjectItemState::Memory => matches!(
+                self.memory_kind,
+                MemoryKind::WindowStash
+                    | MemoryKind::WindowOtherKey
+                    | MemoryKind::GroupOtherKey
+                    | MemoryKind::GroupIndicatorOtherKey
+            ),
+        }
+    }
+
     /// Formatted key for display: "BTCUSDT:binance:S", "BTCUSDT:binance", or "BTCUSDT".
     pub fn key_label(&self) -> String {
         if self.exchange.is_empty() {
@@ -131,7 +180,10 @@ impl ObjectTreeItem {
         }
     }
 
-    /// Returns true when the item should respond to hover/click.
+    /// Returns `true` when the item should respond to hover/click events.
+    ///
+    /// Only `Active` items are interactive; Memory items are display-only
+    /// (a delete button may still be registered for them separately).
     pub fn is_interactive(&self) -> bool {
         self.item_state == ObjectItemState::Active
     }

@@ -7875,22 +7875,87 @@ impl ChartApp {
         // --- Drawing delete ---
         if widget_id.starts_with("drw_delete_") {
             if let Some(id) = widget_id.strip_prefix("drw_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
-                        window.drawing_manager.remove(idx);
+                // 1. Try active drawing_manager first (handles Active + WindowOtherKey).
+                let removed_from_dm = self.panel_app.panel_grid
+                    .active_window_mut()
+                    .and_then(|w| {
+                        w.drawing_manager.find_index_by_id(id).map(|idx| {
+                            w.drawing_manager.remove(idx);
+                            true
+                        })
+                    })
+                    .unwrap_or(false);
+
+                if removed_from_dm {
+                    self.sync_drawing_back_to_group();
+                    self.autosave_snapshot();
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Sidebar] Drawing deleted from drawing_manager: {}", id);
+                    return;
+                }
+
+                // 2. Try stashed_primitives (WindowStash).
+                let removed_from_stash = self.panel_app.panel_grid
+                    .active_window_mut()
+                    .map(|w| {
+                        let before = w.stashed_primitives.len();
+                        w.stashed_primitives.retain(|p| p.data().id != id);
+                        w.stashed_primitives.len() < before
+                    })
+                    .unwrap_or(false);
+
+                if removed_from_stash {
+                    self.autosave_snapshot();
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Sidebar] Drawing deleted from stashed_primitives: {}", id);
+                    return;
+                }
+
+                // 3. Try group.primitives (GroupOtherKey).
+                let group_id = self.panel_app.panel_grid
+                    .active_window()
+                    .and_then(|w| w.group_id);
+                if let Some(gid) = group_id {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        let before = group.primitives.len();
+                        group.primitives.retain(|p| p.data().id != id);
+                        if group.primitives.len() < before {
+                            self.autosave_snapshot();
+                            self.sidebar_data_dirty = true;
+                            eprintln!("[Sidebar] Drawing deleted from group.primitives: {}", id);
+                            return;
+                        }
                     }
                 }
-                self.sync_drawing_back_to_group();
-                self.autosave_snapshot();
-                self.sidebar_data_dirty = true;
-                eprintln!("[Sidebar] Drawing deleted: {}", id);
+
+                eprintln!("[Sidebar] drw_delete_{}: not found in any store", id);
             }
             return;
         }
         // --- Indicator delete ---
         if widget_id.starts_with("ind_delete_") {
             if let Some(id) = widget_id.strip_prefix("ind_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                self.delete_indicator_instance(id);
+                // Try live indicator_manager first (Active + WindowOtherKey).
+                if self.indicator_manager.get_instance(id).is_some() {
+                    self.delete_indicator_instance(id);
+                    return;
+                }
+
+                // Fall through: try group.indicator_configs (GroupIndicatorOtherKey).
+                let group_id = self.panel_app.panel_grid
+                    .active_window()
+                    .and_then(|w| w.group_id);
+                if let Some(gid) = group_id {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        let before = group.indicator_configs.len();
+                        group.indicator_configs.retain(|cfg| cfg.id != id);
+                        if group.indicator_configs.len() < before {
+                            self.autosave_snapshot();
+                            self.sidebar_data_dirty = true;
+                            eprintln!("[Sidebar] Group indicator config deleted: {}", id);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -8111,6 +8176,31 @@ impl ChartApp {
                         item.selected = item.id == id;
                     }
                     eprintln!("[Sidebar] Object selected: {}", id);
+
+                    // Click-to-center: if a drawing row was clicked, scroll the
+                    // viewport so the drawing's midpoint is horizontally centred.
+                    if widget_id.starts_with("drw_") {
+                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                            let center_bar = window.drawing_manager.primitives()
+                                .iter()
+                                .find(|p| p.data().id == id)
+                                .and_then(|prim| {
+                                    let pts = prim.points();
+                                    if pts.is_empty() {
+                                        None
+                                    } else {
+                                        Some(pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64)
+                                    }
+                                });
+                            if let Some(mid_bar) = center_bar {
+                                let visible_bars = window.viewport.chart_width / window.viewport.bar_spacing;
+                                window.viewport.view_start = (mid_bar - visible_bars / 2.0).max(0.0);
+                                if window.price_scale.scale_mode.is_auto_y() {
+                                    window.calc_auto_scale();
+                                }
+                            }
+                        }
+                    }
                 }
                 return;
             }
