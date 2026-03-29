@@ -4090,7 +4090,7 @@ impl ChartApp {
                             .find(|p| p.instance_id == id)
                             .map(|p| p.height_ratio)
                             .unwrap_or(0.0);
-                        if ratio > 0.0 { (ratio as f64 * leaf_rect.height).max(20.0) } else { 100.0 }
+                        if ratio > 0.0 { (ratio as f64 * leaf_rect.height).max(30.0) } else { 100.0 }
                     }).collect();
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
                         .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))
@@ -4546,7 +4546,7 @@ impl ChartApp {
                             .find(|p| p.instance_id == id)
                             .map(|p| p.height_ratio)
                             .unwrap_or(0.0);
-                        if ratio > 0.0 { (ratio as f64 * chart_render_rect.height).max(20.0) } else { 100.0 }
+                        if ratio > 0.0 { (ratio as f64 * chart_render_rect.height).max(30.0) } else { 100.0 }
                     }).collect();
                     let maximized_instance_id: Option<u64> = window.sub_panes.iter()
                         .find(|p| p.maximized && sub_pane_ids.contains(&p.instance_id))

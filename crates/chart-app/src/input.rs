@@ -7107,7 +7107,7 @@ impl ChartApp {
                         .find(|p| p.instance_id == id)
                         .map(|p| p.height_ratio)
                         .unwrap_or(0.0);
-                    if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(40.0) }
+                    if ratio <= 0.0 { 100.0 } else { (ratio as f64 * content_rect.height).max(30.0) }
                 }).collect()
             })
             .unwrap_or_else(|| {
@@ -7189,7 +7189,7 @@ impl ChartApp {
                 .find(|p| p.instance_id == id)
                 .map(|p| p.height_ratio)
                 .unwrap_or(0.0);
-            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(40.0) }
+            if ratio <= 0.0 { 100.0 } else { (ratio as f64 * leaf_rect.height).max(30.0) }
         }).collect();
         let above_main_flags: Vec<bool> = sub_pane_ids.iter().map(|&id| {
             window.sub_panes.iter()
@@ -7248,7 +7248,13 @@ impl ChartApp {
             Some(r) => r,
             None => return,
         };
-        let available_h = leaf_rect.height;
+        // Subtract time_scale_height so ratios are stored against the actual
+        // drawable area, matching the base used by compute_from_chart_panel.
+        let time_scale_h = self.panel_app.panel_grid
+            .active_window()
+            .map(|w| w.scale_settings.effective_time_scale_height())
+            .unwrap_or(0.0);
+        let available_h = (leaf_rect.height - time_scale_h).max(1.0);
         if available_h <= 0.0 {
             return;
         }
@@ -7266,7 +7272,7 @@ impl ChartApp {
             }
         };
 
-        let min_h = available_h * 0.15;
+        let min_h = 30.0_f64;
 
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,

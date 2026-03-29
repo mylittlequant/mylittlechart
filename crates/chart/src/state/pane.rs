@@ -386,7 +386,7 @@ impl SubPane {
             auto_scale: true,
             drag_start_price_min: 0.0,
             drag_start_price_max: 0.0,
-            height_ratio: 0.0,
+            height_ratio: 0.15,
             hidden: false,
             above_main: false,
             maximized: false,
