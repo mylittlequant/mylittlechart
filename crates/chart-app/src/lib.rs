@@ -3922,6 +3922,9 @@ impl ChartApp {
         let _rt1 = std::time::Instant::now(); // checkpoint: before chart render
         let frame_theme = self.panel_app.frame_theme_for_render();
         let leaf_tab_toolbar_theme = self.panel_app.toolbar_theme_for_render();
+        // main_chart_y is set in the single-window branch below; used by the
+        // indicator overlay chevron rendered after the chart block.
+        let mut main_chart_y_single = content_rect.y;
         let corner_zones = if self.panel_app.panel_grid.is_split() {
             // Compute sub-chart rectangles.
             // Use origin (0, 0) so that panel_rects() returns rects relative
@@ -4252,7 +4255,7 @@ impl ChartApp {
                             let toolbar_theme_for_overlay = self.panel_app.toolbar_theme_for_render();
                             let overlay_rect = uzor::types::Rect::new(
                                 leaf_rect.x,
-                                leaf_rect.y,
+                                main_chart_y,
                                 leaf_rect.width,
                                 leaf_rect.height,
                             );
@@ -4472,7 +4475,6 @@ impl ChartApp {
 
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
             let mut single_sub_pane_overlays: Vec<zengeld_chart::SubPaneOverlayResult> = Vec::new();
-            let main_chart_y;
 
             let window_opt = self.panel_app.panel_grid.active_window();
             let corner_zones_single = if let Some(window) = window_opt {
@@ -4610,12 +4612,12 @@ impl ChartApp {
                             Sense::CLICK,
                         );
                     }
-                    main_chart_y = extended.main_chart.chart.y;
+                    main_chart_y_single = extended.main_chart.chart.y;
                 }
 
                 corner_zones_ret
             } else {
-                main_chart_y = content_rect.y;
+                main_chart_y_single = content_rect.y;
                 ScaleCornerHitZones::default()
             };
 
@@ -4654,7 +4656,7 @@ impl ChartApp {
                 let hit_zones = zengeld_chart::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
-                    main_chart_y + 2.0,
+                    main_chart_y_single + 2.0,
                     content_rect.width - 4.0,
                     &symbol,
                     &timeframe,
@@ -4776,7 +4778,7 @@ impl ChartApp {
                 if !indicators.is_empty() {
                     let chart_rect = uzor::types::Rect::new(
                         content_rect.x,
-                        content_rect.y,
+                        main_chart_y_single,
                         content_rect.width,
                         content_rect.height,
                     );
