@@ -16,8 +16,11 @@ use crate::render::{TextAlign, TextBaseline};
 use crate::tag_manager::TagManager;
 use crate::theme::ThemeManager;
 use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSidebar, TagsTabsTagsTab};
+use crate::ui::scroll_state::ScrollState;
+use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
@@ -43,6 +46,16 @@ pub struct TagsTabsResult {
     pub sub_tab_rects: Vec<(String, WidgetRect)>,
     /// Content item rects: (widget_id, rect).
     pub content_items: Vec<(String, WidgetRect)>,
+    /// Viewport rect of the scrollable content area (for wheel hit-test).
+    pub scroll_viewport_rect: Option<WidgetRect>,
+    /// Total rendered content height (for scroll range).
+    pub scroll_content_height: f64,
+    /// Scrollbar handle rect (for drag detection).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect (for drag calculation).
+    pub scrollbar_track_rect: Option<WidgetRect>,
+    /// Viewport height used for scroll clamping.
+    pub scroll_viewport_height: f64,
 }
 
 // =============================================================================
@@ -238,6 +251,25 @@ pub fn render_tags_tabs_modal(
     let content_width  = MODAL_WIDTH - SIDEBAR_WIDTH;
     let content_height = MODAL_HEIGHT - HEADER_HEIGHT;
 
+    // WidgetTheme used for scrollbar rendering in TABS and TAGS sections
+    let scroll_widget_theme = WidgetTheme {
+        bg_normal:      toolbar_theme.item_bg_hover.clone(),
+        bg_hover:       toolbar_theme.item_bg_hover.clone(),
+        bg_pressed:     toolbar_theme.item_bg_active.clone(),
+        bg_disabled:    toolbar_theme.item_bg_hover.clone(),
+        text_normal:    toolbar_theme.item_text.clone(),
+        text_hover:     toolbar_theme.item_text_active.clone(),
+        text_disabled:  toolbar_theme.item_text_muted.clone(),
+        border_normal:  toolbar_theme.separator.clone(),
+        border_hover:   toolbar_theme.separator.clone(),
+        border_focused: toolbar_theme.accent.clone(),
+        accent:         toolbar_theme.accent.clone(),
+        accent_hover:   toolbar_theme.accent.clone(),
+        success:        "#26a69a".to_string(),
+        warning:        "#ff9800".to_string(),
+        danger:         "#ef5350".to_string(),
+    };
+
     match state.sidebar {
         // =====================================================================
         // TABS sidebar
@@ -257,6 +289,8 @@ pub fn render_tags_tabs_modal(
                 content_y,
                 content_width,
                 content_height,
+                &state.tabs_scroll,
+                &scroll_widget_theme,
                 &layer_id,
                 input_coordinator,
                 &mut result,
@@ -267,6 +301,10 @@ pub fn render_tags_tabs_modal(
         // TAGS sidebar
         // =====================================================================
         TagsTabsSidebar::Tags => {
+            let tags_scroll = match state.tags_tab {
+                TagsTabsTagsTab::Groups  => &state.tags_groups_scroll,
+                TagsTabsTagsTab::Details => &state.tags_details_scroll,
+            };
             render_tags_section(
                 ctx,
                 state,
@@ -279,6 +317,8 @@ pub fn render_tags_tabs_modal(
                 content_y,
                 content_width,
                 content_height,
+                tags_scroll,
+                &scroll_widget_theme,
                 &layer_id,
                 input_coordinator,
                 &mut result,
@@ -527,13 +567,15 @@ fn render_tabs_section(
     toolbar_theme: &ToolbarTheme,
     theme_manager: &ThemeManager,
     panel_grid: &ChartPanelGrid,
-    chart_area_w: f64,
-    chart_area_h: f64,
+    _chart_area_w: f64,
+    _chart_area_h: f64,
     modal_x: f64,
     content_x: f64,
     content_y: f64,
     content_width: f64,
-    _content_height: f64,
+    content_height: f64,
+    tabs_scroll: &ScrollState,
+    scroll_widget_theme: &WidgetTheme,
     layer_id: &uzor::input::coordinator::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut TagsTabsResult,
@@ -615,22 +657,24 @@ fn render_tabs_section(
 
     let root = tree.root();
     let tree_node_count = count_nodes(&root.children).max(1);
+    let _ = tree_node_count; // used implicitly by count_nodes above
 
     // Content area begins below the sub-tab bar
-    let content_top  = content_y + SUB_TAB_HEIGHT;
+    let content_top = content_y + SUB_TAB_HEIGHT;
+
+    // Scrollable viewport covers the area below the sub-tab bar
+    let scroll_viewport_h = content_height - SUB_TAB_HEIGHT;
+    let viewport_rect = WidgetRect::new(content_x, content_top, content_width, scroll_viewport_h);
+
+    let container = ScrollableContainer::new(viewport_rect, tabs_scroll, None);
+    container.begin(ctx);
     let content_left = content_x + MODAL_PADDING;
-    let mut row_y    = content_top + MODAL_PADDING;
+    let mut row_y    = container.content_y() + MODAL_PADDING;
 
     // Set default text style
     ctx.set_font("12px sans-serif");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-
-    // =========================================================================
-    // Dynamic content height info (used for _ suppression — actual layout is
-    // constrained by MODAL_HEIGHT so we don't resize the modal here)
-    // =========================================================================
-    let _ = tree_node_count; // used implicitly by count_nodes above
 
     match overlay_state.active_tab {
         // =================================================================
@@ -812,6 +856,16 @@ fn render_tabs_section(
             // Minimap moved to standalone MAP sidebar section
         }
     }
+
+    // Close the scrollable container and write scroll results
+    let content_y_start = container.content_y();
+    let total_content_h = row_y - content_y_start;
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect    = Some(viewport_rect);
+    result.scroll_content_height   = scroll_result.content_height;
+    result.scrollbar_handle_rect   = scroll_result.handle_rect;
+    result.scrollbar_track_rect    = scroll_result.track_rect;
+    result.scroll_viewport_height  = scroll_result.viewport_height;
 }
 
 // =============================================================================
@@ -1355,7 +1409,9 @@ fn render_tags_section(
     content_x: f64,
     content_y: f64,
     content_width: f64,
-    _content_height: f64,
+    content_height: f64,
+    tags_scroll: &ScrollState,
+    scroll_widget_theme: &WidgetTheme,
     layer_id: &uzor::input::coordinator::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut TagsTabsResult,
@@ -1414,8 +1470,17 @@ fn render_tags_section(
     ctx.line_to(content_x + content_width, content_y + SUB_TAB_HEIGHT);
     ctx.stroke();
 
-    let inner_top  = content_y + SUB_TAB_HEIGHT;
+    let inner_top = content_y + SUB_TAB_HEIGHT;
     let inner_left = content_x + MODAL_PADDING;
+
+    // Scrollable viewport covers the area below the sub-tab bar
+    let scroll_viewport_h = content_height - SUB_TAB_HEIGHT;
+    let viewport_rect = WidgetRect::new(content_x, inner_top, content_width, scroll_viewport_h);
+
+    let container = ScrollableContainer::new(viewport_rect, tags_scroll, None);
+    container.begin(ctx);
+    let content_y_start = container.content_y();
+    let mut row_y = content_y_start + MODAL_PADDING;
 
     match state.tags_tab {
         // ------------------------------------------------------------------ //
@@ -1434,10 +1499,9 @@ fn render_tags_section(
                 ctx.fill_text(
                     "No sync groups",
                     inner_left,
-                    inner_top + ROW_HEIGHT / 2.0 + MODAL_PADDING,
+                    row_y + ROW_HEIGHT / 2.0,
                 );
             } else {
-                let mut row_y = inner_top + MODAL_PADDING;
 
                 for group in &groups {
                     let gid = group.id.0;
@@ -1561,7 +1625,6 @@ fn render_tags_section(
         TagsTabsTagsTab::Details => {
             if let Some(group_id) = state.selected_group_id {
                 if let Some(group) = tag_manager.group(group_id) {
-                    let mut row_y = inner_top + MODAL_PADDING;
 
                     // Group title + color swatch
                     let [r, g, b, a] = group.color;
@@ -1657,7 +1720,7 @@ fn render_tags_section(
                     ctx.fill_text(
                         "Group not found",
                         inner_left,
-                        inner_top + MODAL_PADDING + ROW_HEIGHT / 2.0,
+                        row_y + ROW_HEIGHT / 2.0,
                     );
                 }
             } else {
@@ -1668,9 +1731,18 @@ fn render_tags_section(
                 ctx.fill_text(
                     "Select a group from Groups tab",
                     inner_left,
-                    inner_top + MODAL_PADDING + ROW_HEIGHT / 2.0,
+                    row_y + ROW_HEIGHT / 2.0,
                 );
             }
         }
     }
+
+    // Close the scrollable container and write scroll results
+    let total_content_h = row_y - content_y_start;
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect    = Some(viewport_rect);
+    result.scroll_content_height   = scroll_result.content_height;
+    result.scrollbar_handle_rect   = scroll_result.handle_rect;
+    result.scrollbar_track_rect    = scroll_result.track_rect;
+    result.scroll_viewport_height  = scroll_result.viewport_height;
 }

@@ -1266,6 +1266,26 @@ impl ChartApp {
                     }
                 }
             }
+            // Tags & Tabs scrollbar drag start
+            if self.panel_app.tags_tabs_state.is_open {
+                if let Some(ref tt) = result.tags_tabs {
+                    use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
+                    let info = ScrollableInfo {
+                        handle_rect:     tt.scrollbar_handle_rect,
+                        track_rect:      tt.scrollbar_track_rect,
+                        content_height:  tt.scroll_content_height,
+                        viewport_height: tt.scroll_viewport_height,
+                        viewport_rect:   tt.scroll_viewport_rect,
+                    };
+                    let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                    if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
+                        return;
+                    }
+                    if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
+                        return;
+                    }
+                }
+            }
             // User settings scrollbar drag start
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
@@ -2528,6 +2548,25 @@ impl ChartApp {
             }
             return;
         }
+        // Tags & Tabs scrollbar drag move
+        {
+            use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref tt) = result.tags_tabs {
+                    let info = ScrollableInfo {
+                        handle_rect:     tt.scrollbar_handle_rect,
+                        track_rect:      tt.scrollbar_track_rect,
+                        content_height:  tt.scroll_content_height,
+                        viewport_height: tt.scroll_viewport_height,
+                        viewport_rect:   tt.scroll_viewport_rect,
+                    };
+                    let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                    if try_handle_scrollbar_drag(y, &mut [(&info, scroll_state)]) {
+                        return;
+                    }
+                }
+            }
+        }
         // User settings scrollbar drag move
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
@@ -3183,6 +3222,18 @@ impl ChartApp {
             self.panel_app.alert_settings_state.list_scroll.end_drag();
             eprintln!("[ChartApp] alert_settings scrollbar drag ended");
             return;
+        }
+        // Tags & Tabs scrollbar drag end
+        {
+            use crate::scroll_dispatch::try_end_scrollbar_drag;
+            let ended = try_end_scrollbar_drag(&mut [
+                &mut self.panel_app.tags_tabs_state.tabs_scroll,
+                &mut self.panel_app.tags_tabs_state.tags_groups_scroll,
+                &mut self.panel_app.tags_tabs_state.tags_details_scroll,
+            ]);
+            if ended {
+                return;
+            }
         }
         // User settings scrollbar drag end
         {
@@ -4922,6 +4973,29 @@ impl ChartApp {
                     }
                 }
                 return;
+            }
+
+            // Tags & Tabs modal — scroll the active content area.
+            if self.panel_app.tags_tabs_state.is_open {
+                if let Some(ref tt) = self.frame_result
+                    .as_ref()
+                    .and_then(|r| r.tags_tabs.as_ref())
+                    .cloned()
+                {
+                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
+                    let info = ScrollableInfo {
+                        handle_rect:     tt.scrollbar_handle_rect,
+                        track_rect:      tt.scrollbar_track_rect,
+                        content_height:  tt.scroll_content_height,
+                        viewport_height: tt.scroll_viewport_height,
+                        viewport_rect:   tt.scroll_viewport_rect,
+                    };
+                    let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                    if try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]) {
+                        return;
+                    }
+                }
+                return; // swallow scroll even if outside list area when modal is open
             }
 
             // User settings modal — scroll the active tab content.
@@ -19490,6 +19564,27 @@ fn hex_str_to_rgba(hex: &str) -> [f32; 4] {
         1.0
     };
     [r, g, b, a]
+}
+
+/// Return a mutable reference to the active `ScrollState` for the Tags & Tabs modal.
+///
+/// Dispatch depends on which sidebar section and sub-tab are currently active:
+/// - TABS sidebar → `tabs_scroll`
+/// - TAGS sidebar, Groups sub-tab → `tags_groups_scroll`
+/// - TAGS sidebar, Details sub-tab → `tags_details_scroll`
+/// - MAP sidebar → `tabs_scroll` (MAP section has no scrollable content)
+fn tags_tabs_active_scroll(
+    state: &mut zengeld_chart::ui::modal_settings::TagsTabsState,
+) -> &mut zengeld_chart::ui::scroll_state::ScrollState {
+    use zengeld_chart::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
+    match state.sidebar {
+        TagsTabsSidebar::Tabs => &mut state.tabs_scroll,
+        TagsTabsSidebar::Tags => match state.tags_tab {
+            TagsTabsTagsTab::Groups  => &mut state.tags_groups_scroll,
+            TagsTabsTagsTab::Details => &mut state.tags_details_scroll,
+        },
+        TagsTabsSidebar::Map => &mut state.tabs_scroll,
+    }
 }
 
 /// Build context menu items for empty chart background (right-click on chart).

@@ -2860,6 +2860,12 @@ pub struct TagsTabsState {
     pub is_dragging: bool,
     /// Offset from mouse to modal top-left when drag started.
     pub drag_offset: Option<(f64, f64)>,
+    /// Scroll state for TABS section (TreeView/Eliminate/Hidden sub-tabs).
+    pub tabs_scroll: ScrollState,
+    /// Scroll state for TAGS section — Groups sub-tab.
+    pub tags_groups_scroll: ScrollState,
+    /// Scroll state for TAGS section — Details sub-tab.
+    pub tags_details_scroll: ScrollState,
 }
 
 impl TagsTabsState {
