@@ -271,6 +271,11 @@ impl TagManager {
         self.groups.values()
     }
 
+    /// Iterate over all sync groups mutably.
+    pub fn groups_mut(&mut self) -> impl Iterator<Item = &mut SyncGroup> {
+        self.groups.values_mut()
+    }
+
     // =========================================================================
     // Membership
     // =========================================================================

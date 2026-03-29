@@ -17084,6 +17084,27 @@ impl ChartApp {
                         }
                     }
 
+                    // Deduplicate IDs within each group.primitives collection.
+                    // Old presets may have group primitives with identical IDs
+                    // (from historical clone paths that didn't re-ID).
+                    for group in self.panel_app.tag_manager.groups_mut() {
+                        let mut seen_ids = std::collections::HashSet::new();
+                        let mut reid_count = 0u32;
+                        for p in &mut group.primitives {
+                            let id = p.data().id;
+                            if !seen_ids.insert(id) {
+                                p.data_mut().id = zengeld_chart::drawing::alloc_primitive_id();
+                                reid_count += 1;
+                            }
+                        }
+                        if reid_count > 0 {
+                            eprintln!(
+                                "[ChartApp] Re-IDed {} duplicate primitive(s) within group {:?}",
+                                reid_count, group.id
+                            );
+                        }
+                    }
+
                     // Step 5b: If no sync groups exist but windows do, auto-create
                     // a default group so primitives always use the grouped path.
                     if preset.sync_groups.is_empty() && !self.panel_app.panel_grid.windows().is_empty() {
