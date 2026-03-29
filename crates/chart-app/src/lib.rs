@@ -3152,7 +3152,7 @@ impl ChartApp {
                             let data = p.data();
                             let kind = p.kind();
                             let display = p.display_name().to_string();
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone())
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
                         })
                         .collect())
                     .unwrap_or_default();
@@ -3165,7 +3165,7 @@ impl ChartApp {
                 let has_window_section = !stashed_prim_data.is_empty() || !pre_tag_ids.is_empty();
 
                 if has_window_section {
-                    for (id, display, type_id, kind, visible, locked, stroke) in &stashed_prim_data {
+                    for (id, display, type_id, kind, visible, locked, stroke, prim_symbol) in &stashed_prim_data {
                         let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             *id, name, prim_category(*kind), type_id,
@@ -3174,7 +3174,7 @@ impl ChartApp {
                         .with_locked(*locked)
                         .with_color(Some(stroke.clone()))
                         .with_section("Window")
-                        .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                        .with_key(prim_symbol, &active_window_exchange, &active_window_account_type)
                         .with_item_state(sidebar_content::types::ObjectItemState::Memory)
                         .with_memory_kind(sidebar_content::types::MemoryKind::WindowStash);
                         self.sidebar_state.object_tree_items.push(item);
