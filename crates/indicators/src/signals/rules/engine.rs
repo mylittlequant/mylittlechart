@@ -1,14 +1,15 @@
 //! Signal Engine - runtime for processing indicator values through configured detectors
 //!
 //! The SignalEngine takes a SignalProfile and processes IndicatorValue through
-//! the configured detectors to generate SignalEvents.
+//! the configured detectors to generate Signals.
 
 use crate::bar_indicators::bar_indicator_id::BarIndicatorId;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::signals::{
-    ChannelDetector, CrossoverDetector, HistogramDetector, SignalEvent, SignalKind,
+    ChannelDetector, CrossoverDetector, HistogramDetector, SignalKind,
     ThresholdMonitor, ZeroCrossDetector,
 };
+use crate::signals::signal::{Signal, Direction, BarConfirmation, SignalSource};
 
 use super::config::{DetectorConfig, DetectorParams, DetectorType, ValueSource};
 use super::profile::SignalProfile;
@@ -235,14 +236,33 @@ impl SignalEngine {
     /// # Arguments
     /// * `value` - The indicator value to process
     /// * `price` - Current price (needed for channel detectors)
-    pub fn process(&mut self, value: &IndicatorValue, price: f64) -> Vec<SignalEvent> {
+    /// * `timestamp` - Unix timestamp (ms) of the bar
+    /// * `indicator_name` - Name of the indicator emitting this signal
+    /// * `is_last_bar` - Whether this is the last (potentially unclosed) bar
+    pub fn process(
+        &mut self,
+        value: &IndicatorValue,
+        price: f64,
+        timestamp: i64,
+        indicator_name: &str,
+        is_last_bar: bool,
+    ) -> Vec<Signal> {
         let mut signals = Vec::new();
 
         for detector in &mut self.detectors {
             if let Some((_detector_id, signal_kind)) = detector.process(value, Some(price)) {
                 self.signal_counter += 1;
 
-                signals.push(SignalEvent::new(signal_kind, self.bar_index, price));
+                signals.push(Signal::new(
+                    self.signal_counter,
+                    self.bar_index,
+                    timestamp,
+                    price,
+                    signal_kind,
+                    Direction::from_i8(signal_kind.direction()),
+                    if is_last_bar { BarConfirmation::Pending } else { BarConfirmation::Closed },
+                    SignalSource::Indicator(indicator_name.to_string()),
+                ));
             }
         }
 
@@ -251,9 +271,21 @@ impl SignalEngine {
     }
 
     /// Process with just indicator value (no price, channel detectors won't work)
-    pub fn process_simple(&mut self, value: &IndicatorValue) -> Vec<SignalEvent> {
+    ///
+    /// # Arguments
+    /// * `value` - The indicator value to process
+    /// * `timestamp` - Unix timestamp (ms) of the bar
+    /// * `indicator_name` - Name of the indicator emitting this signal
+    /// * `is_last_bar` - Whether this is the last (potentially unclosed) bar
+    pub fn process_simple(
+        &mut self,
+        value: &IndicatorValue,
+        timestamp: i64,
+        indicator_name: &str,
+        is_last_bar: bool,
+    ) -> Vec<Signal> {
         let price = value.main();
-        self.process(value, price)
+        self.process(value, price, timestamp, indicator_name, is_last_bar)
     }
 
     /// Reset all detector states
@@ -327,7 +359,7 @@ mod tests {
 
         let mut all_signals = Vec::new();
         for &v in &values {
-            let signals = engine.process_simple(&IndicatorValue::Single(v));
+            let signals = engine.process_simple(&IndicatorValue::Single(v), 0, "Test", false);
             all_signals.extend(signals);
         }
 
@@ -364,7 +396,7 @@ mod tests {
 
         let mut all_signals = Vec::new();
         for v in &values {
-            let signals = engine.process_simple(v);
+            let signals = engine.process_simple(v, 0, "Test", false);
             all_signals.extend(signals);
         }
 
@@ -389,7 +421,7 @@ mod tests {
 
         let mut all_signals = Vec::new();
         for v in &values {
-            let signals = engine.process_simple(v);
+            let signals = engine.process_simple(v, 0, "Test", false);
             all_signals.extend(signals);
         }
 
@@ -406,8 +438,8 @@ mod tests {
         let mut engine = SignalEngine::from_profile(&profile);
 
         // Process some values
-        engine.process_simple(&IndicatorValue::Single(75.0));
-        engine.process_simple(&IndicatorValue::Single(80.0));
+        engine.process_simple(&IndicatorValue::Single(75.0), 0, "Test", false);
+        engine.process_simple(&IndicatorValue::Single(80.0), 0, "Test", false);
 
         assert!(engine.bar_index() > 0);
 
@@ -453,7 +485,7 @@ mod tests {
 
         let mut all_signals = Vec::new();
         for v in &values {
-            let signals = engine.process_simple(v);
+            let signals = engine.process_simple(v, 0, "Test", false);
             all_signals.extend(signals);
         }
 

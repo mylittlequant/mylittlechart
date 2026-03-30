@@ -10,7 +10,7 @@ use crate::{
 };
 use crate::bar_indicators::ohlcv_field::OhlcvField;
 use crate::catalog::{ValueAdapter, get_rendering};
-use crate::signals::{SignalEvent, rules::{SignalEngine, default_profile}};
+use crate::signals::{rules::{SignalEngine, default_profile}, signal::Signal};
 
 use crate::Bar;
 use super::indicator_manager::IndicatorValue;
@@ -20,7 +20,7 @@ pub struct CalculationResult {
     /// Output values by name
     pub values: HashMap<String, Vec<f64>>,
     /// Generated signals
-    pub signals: Vec<SignalEvent>,
+    pub signals: Vec<Signal>,
 }
 
 /// Calculator that computes indicator values using zengeld-chart-indicators
@@ -126,11 +126,14 @@ impl IndicatorCalculator {
             SignalEngine::from_profile(p)
         });
 
-        // Calculate values for each bar and collect signals
-        let mut all_values: Vec<ComputeValue> = Vec::with_capacity(bars.len());
-        let mut all_signals: Vec<SignalEvent> = Vec::new();
+        let indicator_name = format!("{:?}", indicator_id);
+        let bar_count = bars.len();
 
-        for bar in bars {
+        // Calculate values for each bar and collect signals
+        let mut all_values: Vec<ComputeValue> = Vec::with_capacity(bar_count);
+        let mut all_signals: Vec<Signal> = Vec::new();
+
+        for (bar_idx, bar) in bars.iter().enumerate() {
             let value = instance.update_bar(
                 bar.open,
                 bar.high,
@@ -142,7 +145,8 @@ impl IndicatorCalculator {
 
             // Generate signals if engine exists
             if let Some(ref mut engine) = signal_engine {
-                let signals = engine.process(&value, bar.close);
+                let is_last_bar = bar_idx + 1 == bar_count;
+                let signals = engine.process(&value, bar.close, bar.time, &indicator_name, is_last_bar);
                 all_signals.extend(signals);
             }
 

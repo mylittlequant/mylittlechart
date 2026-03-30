@@ -8113,7 +8113,13 @@ impl ChartApp {
                 let symbol = self.panel_app.panel_grid.active_window()
                     .map(|w| w.symbol.clone())
                     .unwrap_or_else(|| "BTCUSD".to_string());
-                let source = alerts::AlertSource::Indicator { indicator_id: id, output_index: 0, label: source_name.clone() };
+                let source = alerts::AlertSource::Signal {
+                    indicator_id: id,
+                    label: source_name.clone(),
+                    direction_filter: alerts::SignalDirection::Any,
+                    bar_state: alerts::SignalBarState::Forming,
+                    kind_filter: None,
+                };
                 self.panel_app.alert_settings_state.open_new(source, &symbol, price);
                 self.panel_app.alert_settings_state.pin_initial_position(
                     self.content_rect.width, self.content_rect.height,
@@ -8152,7 +8158,7 @@ impl ChartApp {
                     .iter()
                     .find(|a| matches!(
                         &a.source,
-                        alerts::AlertSource::Indicator { indicator_id, .. } if *indicator_id == ind_id
+                        alerts::AlertSource::Signal { indicator_id, .. } if *indicator_id == ind_id
                     ) && a.status == alerts::AlertStatus::Active)
                     .cloned();
                 if let Some(alert) = alert {
@@ -8160,7 +8166,7 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
                     );
-                    eprintln!("[ChartApp] Bell click: opened edit modal for indicator alert id={}", alert.id);
+                    eprintln!("[ChartApp] Bell click: opened edit modal for signal alert id={}", alert.id);
                 }
             }
             return;
@@ -13963,10 +13969,12 @@ impl ChartApp {
                         let symbol = self.panel_app.panel_grid.active_window()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_else(|| "BTCUSD".to_string());
-                        let source = alerts::AlertSource::Indicator {
+                        let source = alerts::AlertSource::Signal {
                             indicator_id: id,
-                            output_index: 0,
                             label: label.clone(),
+                            direction_filter: alerts::SignalDirection::Any,
+                            bar_state: alerts::SignalBarState::Forming,
+                            kind_filter: None,
                         };
                         self.panel_app.alert_settings_state.open_new(source, &symbol, price);
                         self.panel_app.alert_settings_state.pin_initial_position(
@@ -14025,10 +14033,12 @@ impl ChartApp {
                         let symbol = self.panel_app.panel_grid.active_window()
                             .map(|w| w.symbol.clone())
                             .unwrap_or_else(|| "BTCUSD".to_string());
-                        let source = alerts::AlertSource::Indicator {
+                        let source = alerts::AlertSource::Signal {
                             indicator_id: id,
-                            output_index: 0,
                             label: label.clone(),
+                            direction_filter: alerts::SignalDirection::Any,
+                            bar_state: alerts::SignalBarState::Forming,
+                            kind_filter: None,
                         };
                         self.panel_app.alert_settings_state.open_new(source, &symbol, price);
                         self.panel_app.alert_settings_state.pin_initial_position(

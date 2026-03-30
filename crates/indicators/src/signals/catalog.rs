@@ -755,46 +755,6 @@ impl SignalCategory {
     }
 }
 
-// ============================================================================
-// SIGNAL EVENT - Конкретное событие сигнала
-// ============================================================================
-
-/// Событие сигнала с контекстом
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignalEvent {
-    /// Тип сигнала
-    pub kind: SignalKind,
-    /// Индекс бара
-    pub bar_index: usize,
-    /// Цена срабатывания
-    pub price: f64,
-    /// Сила сигнала (0.0 - 1.0)
-    pub strength: f64,
-    /// Дополнительный контекст
-    pub context: Option<String>,
-}
-
-impl SignalEvent {
-    pub fn new(kind: SignalKind, bar_index: usize, price: f64) -> Self {
-        Self {
-            kind,
-            bar_index,
-            price,
-            strength: 1.0,
-            context: None,
-        }
-    }
-
-    pub fn with_strength(mut self, strength: f64) -> Self {
-        self.strength = strength.clamp(0.0, 1.0);
-        self
-    }
-
-    pub fn with_context(mut self, context: impl Into<String>) -> Self {
-        self.context = Some(context.into());
-        self
-    }
-}
 
 #[cfg(test)]
 mod tests {

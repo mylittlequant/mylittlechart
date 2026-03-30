@@ -187,6 +187,11 @@ pub enum AlertSource {
         direction_filter: SignalDirection,
         /// Whether to fire on forming (unclosed) or formed (closed) bar signals.
         bar_state: SignalBarState,
+        /// Optional: only fire for a specific SignalKind (by name). None = any kind.
+        /// Uses SignalKind::description() as the key string.
+        /// `#[serde(default)]` ensures old saved alerts without this field load fine.
+        #[serde(default)]
+        kind_filter: Option<String>,
     },
 }
 
@@ -216,7 +221,7 @@ impl AlertSource {
             AlertSource::CrossingPair { source_a, source_b } => {
                 format!("{} \u{00d7} {}", source_a.display_name(), source_b.display_name())
             }
-            AlertSource::Signal { label, direction_filter, bar_state, .. } => {
+            AlertSource::Signal { label, direction_filter, bar_state, kind_filter, .. } => {
                 let dir = match direction_filter {
                     SignalDirection::Any => "",
                     SignalDirection::Bullish => " Bullish",
@@ -226,10 +231,14 @@ impl AlertSource {
                     SignalBarState::Forming => "Forming",
                     SignalBarState::Formed => "Formed",
                 };
+                let kind_suffix = kind_filter
+                    .as_deref()
+                    .map(|k| format!(" [{}]", k))
+                    .unwrap_or_default();
                 if label.is_empty() {
-                    format!("Signal{} ({})", dir, state)
+                    format!("Signal{}{} ({})", dir, kind_suffix, state)
                 } else {
-                    format!("{}{} Signal ({})", label, dir, state)
+                    format!("{}{}{} Signal ({})", label, dir, kind_suffix, state)
                 }
             }
         }

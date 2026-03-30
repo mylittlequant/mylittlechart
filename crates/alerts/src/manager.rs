@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::types::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode};
+use crate::types::{AlertCondition, AlertItem, AlertSource, AlertStatus, AlertTriggerMode, DrawingExtendMode, SignalBarState, SignalDirection};
 
 /// Central alert manager. Owns all alert items and the ID counter.
 ///
@@ -389,6 +389,109 @@ impl AlertManager {
             format!("{}:{}:{}", exchange, symbol, account_type)
         };
         self.last_prices.insert(routing_key, current_price);
+        triggered_ids
+    }
+
+    // =========================================================================
+    // Signal alert checker
+    // =========================================================================
+
+    /// Check all active `AlertSource::Signal` alerts against a batch of newly-emitted signals.
+    ///
+    /// Each entry in `new_signals` is a tuple of:
+    /// - `indicator_id`: which indicator emitted the signal
+    /// - `bar_index`: bar index of the signal
+    /// - `direction`: signal direction as `i8` (-1 = bearish, 0 = neutral, +1 = bullish)
+    /// - `bar_confirmation`: 0 = Pending (forming), 1 = Closed (formed), 2 = WickOnly (formed)
+    /// - `kind_name`: `SignalKind::description()` string for optional kind filtering
+    ///
+    /// Only processes alerts that `matches_window(symbol, exchange, account_type)`.
+    /// Returns the list of triggered alert IDs.
+    pub fn check_signal_alerts(
+        &mut self,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+        new_signals: &[(u64, usize, i8, u8, String)],
+    ) -> Vec<u64> {
+        let mut triggered_ids = Vec::new();
+
+        for alert in &mut self.items {
+            if alert.status != AlertStatus::Active {
+                continue;
+            }
+
+            if !alert.matches_window(symbol, exchange, account_type) {
+                continue;
+            }
+
+            let (indicator_id, direction_filter, bar_state, kind_filter) =
+                match &alert.source {
+                    AlertSource::Signal {
+                        indicator_id,
+                        direction_filter,
+                        bar_state,
+                        kind_filter,
+                        ..
+                    } => (*indicator_id, *direction_filter, *bar_state, kind_filter.clone()),
+                    _ => continue,
+                };
+
+            // Check if any signal in the batch matches all filters.
+            let matched = new_signals.iter().any(|(sig_ind_id, _bar_idx, sig_dir, sig_conf, sig_kind)| {
+                // Indicator must match.
+                if *sig_ind_id != indicator_id {
+                    return false;
+                }
+
+                // Direction filter.
+                let dir_ok = match direction_filter {
+                    SignalDirection::Any => true,
+                    SignalDirection::Bullish => *sig_dir > 0,
+                    SignalDirection::Bearish => *sig_dir < 0,
+                };
+                if !dir_ok {
+                    return false;
+                }
+
+                // Bar state filter:
+                // Forming = accepts Pending (0), Closed (1), WickOnly (2) — any state
+                // Formed  = accepts only Closed (1) or WickOnly (2)
+                let bar_ok = match bar_state {
+                    SignalBarState::Forming => true,
+                    SignalBarState::Formed => *sig_conf >= 1,
+                };
+                if !bar_ok {
+                    return false;
+                }
+
+                // Kind filter: None = any kind; Some(k) = only matching kind name.
+                if let Some(ref filter_kind) = kind_filter {
+                    if sig_kind != filter_kind {
+                        return false;
+                    }
+                }
+
+                true
+            });
+
+            if matched {
+                alert.trigger_count += 1;
+                alert.last_triggered = Some("just now".to_string());
+                triggered_ids.push(alert.id);
+
+                match alert.trigger_mode {
+                    AlertTriggerMode::OneShot => {
+                        alert.status = AlertStatus::Triggered;
+                    }
+                    AlertTriggerMode::TimesN(n) if alert.trigger_count >= n => {
+                        alert.status = AlertStatus::Triggered;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         triggered_ids
     }
 

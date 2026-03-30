@@ -15,6 +15,8 @@ pub use types::{
     AlertTransport,
     AlertTriggerMode,
     DrawingExtendMode,
+    SignalBarState,
+    SignalDirection,
 };
 pub use manager::AlertManager;
 pub use crossing::check_crossings;

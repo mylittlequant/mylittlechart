@@ -2079,7 +2079,7 @@ impl CompareSettingsState {
 // Alert types — re-exported from the `alerts` crate
 // =============================================================================
 
-pub use alerts::{AlertStatus, AlertCondition, AlertItem, AlertSource, AlertTriggerMode, AlertTransport};
+pub use alerts::{AlertStatus, AlertCondition, AlertItem, AlertSource, AlertTriggerMode, AlertTransport, SignalBarState, SignalDirection};
 
 // =============================================================================
 // Alert Settings Modal State
@@ -2179,6 +2179,14 @@ pub struct AlertSettingsState {
     pub tg_detect_pending: bool,
     /// Dirty flag: notification settings changed and need to be persisted to disk.
     pub notification_settings_dirty: bool,
+    /// Direction filter for Signal alerts.
+    pub signal_direction: SignalDirection,
+    /// Bar state filter for Signal alerts.
+    pub signal_bar_state: SignalBarState,
+    /// Whether the signal direction dropdown is open.
+    pub signal_direction_dropdown_open: bool,
+    /// Whether the signal bar state dropdown is open.
+    pub signal_bar_state_dropdown_open: bool,
 }
 
 impl Default for AlertSettingsState {
@@ -2219,6 +2227,10 @@ impl Default for AlertSettingsState {
             tg_test_pending: false,
             tg_detect_pending: false,
             notification_settings_dirty: false,
+            signal_direction: SignalDirection::Any,
+            signal_bar_state: SignalBarState::Forming,
+            signal_direction_dropdown_open: false,
+            signal_bar_state_dropdown_open: false,
         }
     }
 }
@@ -2237,6 +2249,14 @@ impl AlertSettingsState {
         self.is_open = true;
         self.editing_alert_id = None;
         self.source_name = source.display_name();
+        // Initialize signal-specific fields from source if it's a Signal alert.
+        if let AlertSource::Signal { direction_filter, bar_state, .. } = &source {
+            self.signal_direction = *direction_filter;
+            self.signal_bar_state = *bar_state;
+        } else {
+            self.signal_direction = SignalDirection::Any;
+            self.signal_bar_state = SignalBarState::Forming;
+        }
         self.source = source;
         self.symbol = symbol.to_string();
         self.active_tab = AlertSettingsTab::Settings;
@@ -2252,6 +2272,8 @@ impl AlertSettingsState {
         self.webhook_enabled = false;
         self.webhook_url = String::new();
         self.trigger_mode_dropdown_open = false;
+        self.signal_direction_dropdown_open = false;
+        self.signal_bar_state_dropdown_open = false;
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
@@ -2286,6 +2308,16 @@ impl AlertSettingsState {
             _ => None,
         }).unwrap_or_default();
         self.trigger_mode_dropdown_open = false;
+        // Initialize signal-specific fields from the alert source.
+        if let AlertSource::Signal { direction_filter, bar_state, .. } = &alert.source {
+            self.signal_direction = *direction_filter;
+            self.signal_bar_state = *bar_state;
+        } else {
+            self.signal_direction = SignalDirection::Any;
+            self.signal_bar_state = SignalBarState::Forming;
+        }
+        self.signal_direction_dropdown_open = false;
+        self.signal_bar_state_dropdown_open = false;
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
@@ -2335,6 +2367,25 @@ impl AlertSettingsState {
         }
     }
 
+    /// Build an updated `AlertSource::Signal` from the current signal-specific modal state.
+    ///
+    /// Clones the indicator_id and label from the existing source, replacing
+    /// `direction_filter` and `bar_state` with the values currently selected in the modal.
+    /// Returns the source unchanged if it is not `AlertSource::Signal`.
+    pub fn build_signal_source(&self) -> AlertSource {
+        if let AlertSource::Signal { indicator_id, ref label, ref kind_filter, .. } = self.source {
+            AlertSource::Signal {
+                indicator_id,
+                label: label.clone(),
+                direction_filter: self.signal_direction,
+                bar_state: self.signal_bar_state,
+                kind_filter: kind_filter.clone(),
+            }
+        } else {
+            self.source.clone()
+        }
+    }
+
     /// Close the modal.
     pub fn close(&mut self) {
         self.is_open = false;
@@ -2344,6 +2395,8 @@ impl AlertSettingsState {
         self.editing_text = None;
         self.condition_dropdown_open = false;
         self.trigger_mode_dropdown_open = false;
+        self.signal_direction_dropdown_open = false;
+        self.signal_bar_state_dropdown_open = false;
     }
 
     /// Start dragging the modal.

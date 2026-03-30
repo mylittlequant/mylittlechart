@@ -14,7 +14,7 @@ use super::indicator_bridge::IndicatorBridge;
 // Re-export BarIndicatorId for use in IndicatorDefinition
 pub use crate::BarIndicatorId;
 // Signal system imports
-pub use crate::signals::SignalEvent;
+pub use crate::signals::signal::Signal;
 // IndicatorCategory comes from zengeld-chart
 pub use zengeld_chart::ui::modal_state::IndicatorCategory;
 
@@ -381,7 +381,7 @@ pub struct IndicatorInstance {
     pub origin_id: Option<u64>,
     /// Generated signals (populated by calculation) — runtime only, not persisted
     #[serde(skip)]
-    pub signals: Vec<SignalEvent>,
+    pub signals: Vec<Signal>,
     /// Whether signal generation is enabled for this instance
     pub signals_enabled: bool,
 }
@@ -915,7 +915,7 @@ impl IndicatorManager {
 
         // Parallel computation phase — no shared mutable state.
         // Each task produces an (id, values, signals) result.
-        type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::SignalEvent>);
+        type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::signal::Signal>);
         let results: Vec<TaskResult> = tasks
             .into_par_iter()
             .map(|(id, machine_id, signals_enabled, params)| {
@@ -1001,7 +1001,7 @@ impl IndicatorManager {
         }
 
         // Parallel computation phase.
-        type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::SignalEvent>);
+        type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::signal::Signal>);
         let results: Vec<TaskResult> = tasks
             .into_par_iter()
             .map(|(id, machine_id, signals_enabled, params)| {
@@ -1558,8 +1558,14 @@ impl IndicatorManager {
 
         let signals: Vec<SignalRenderData> = inst.signals.iter().map(|s| SignalRenderData {
             bar_index: s.bar_index,
-            direction: s.kind.direction() as i32,
+            direction: s.direction.as_i8() as i32,
             price: s.price,
+            confirmation: match s.confirmation {
+                crate::signals::signal::BarConfirmation::Pending => 0,
+                crate::signals::signal::BarConfirmation::Closed => 1,
+                crate::signals::signal::BarConfirmation::WickOnly => 2,
+            },
+            kind_name: s.kind.description().to_string(),
         }).collect();
 
         // Collect color_params and bool_params from indicator params

@@ -70,13 +70,14 @@ pub use types::{Bar, Tick, CalendarService, TimeService};
 
 // Signal system re-exports
 pub use signals::{
-    SignalKind, SignalCategory, SignalEvent,
+    SignalKind, SignalCategory,
     ThresholdCondition, CrossoverType, CompareCondition, TrendCondition,
     DivergenceType, ChannelPosition, PatternState, CandlePattern,
     VolatilityRegime, VolumeCharacter, LogicOp, ConfirmationRequirement,
     CrossoverDetector, ThresholdMonitor, ZeroCrossDetector, HistogramDetector,
     ChannelDetector, DivergenceDetector, TrendDetector, VolatilityDetector,
     VolumeDetector, SwingDetector, MultiSignalDetector,
+    Signal, Direction, BarConfirmation, SignalSource,
 };
 
 // Manager types: IndicatorManager, SignalManager, TradeManager + support types

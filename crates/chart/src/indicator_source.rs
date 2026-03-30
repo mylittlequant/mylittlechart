@@ -79,6 +79,11 @@ pub struct SignalRenderData {
     pub direction: i32,
     /// Price at which the signal occurred
     pub price: f64,
+    /// Bar confirmation status:
+    /// 0 = Pending (bar still forming), 1 = Closed (bar confirmed), 2 = WickOnly
+    pub confirmation: u8,
+    /// Signal kind name (from `SignalKind::description()`), used for alert filtering.
+    pub kind_name: String,
 }
 
 /// Full render data for one indicator instance

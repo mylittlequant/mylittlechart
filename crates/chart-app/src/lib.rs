@@ -2446,6 +2446,40 @@ impl ChartApp {
                 );
                 all_triggered_ids.extend(triggered);
             }
+
+            // ── Signal alert checker ───────────────────────────────────────────────
+            // Gather all signals from all indicator instances, then check signal alerts
+            // per window (symbol/exchange/account_type context).
+            {
+                use zengeld_terminal_indicators::signals::signal::BarConfirmation;
+
+                let signal_batch: Vec<(u64, usize, i8, u8, String)> = self
+                    .indicator_manager
+                    .instances_iter()
+                    .flat_map(|inst| {
+                        let ind_id = inst.id;
+                        inst.signals.iter().map(move |s| {
+                            let conf_u8 = match s.confirmation {
+                                BarConfirmation::Pending => 0u8,
+                                BarConfirmation::Closed => 1u8,
+                                BarConfirmation::WickOnly => 2u8,
+                            };
+                            (ind_id, s.bar_index, s.direction.as_i8(), conf_u8, s.kind.description().to_string())
+                        })
+                    })
+                    .collect();
+
+                for wd in &window_data {
+                    let triggered = self.alert_manager.check_signal_alerts(
+                        &wd.symbol,
+                        &wd.exchange,
+                        &wd.account_type,
+                        &signal_batch,
+                    );
+                    all_triggered_ids.extend(triggered);
+                }
+            }
+
             // Deduplicate in case the same alert matched multiple windows.
             all_triggered_ids.sort_unstable();
             all_triggered_ids.dedup();
@@ -2880,9 +2914,75 @@ impl ChartApp {
                     bells.push((widget_id, icon_cx, icon_cy, BELL_SIZE));
                 }
 
-                alerts::AlertSource::Signal { .. } => {
-                    // Signal alerts don't have a fixed price anchor.
-                    // Skip bell rendering for now — signals appear as chart markers.
+                alerts::AlertSource::Signal { indicator_id, .. } => {
+                    // Position the bell near the last visible signal marker for this indicator,
+                    // or fall back to the right edge of the first output line.
+                    let render_inst = indicator_manager.get_render_instance(*indicator_id);
+                    let render_inst = match render_inst {
+                        Some(ri) => ri,
+                        None => continue,
+                    };
+
+                    // Indicators on sub-panes (pane > 0) are not on the main chart — skip.
+                    if render_inst.pane > 0 {
+                        continue;
+                    }
+
+                    // Check that indicator belongs to this symbol and window.
+                    let symbol_instances = match window_id {
+                        Some(wid) => indicator_manager.get_instances_for_symbol_in_window(symbol, wid),
+                        None => indicator_manager.get_instances_for_symbol(symbol),
+                    };
+                    if !symbol_instances.iter().any(|i| i.id == *indicator_id) {
+                        continue;
+                    }
+
+                    // Try to find the last visible signal position for this indicator.
+                    let (vis_start, vis_end) = viewport.visible_range();
+
+                    let signal_pos = render_inst.signals.iter()
+                        .filter(|s| s.bar_index >= vis_start && s.bar_index < vis_end)
+                        .max_by_key(|s| s.bar_index)
+                        .map(|s| (s.bar_index, s.price));
+
+                    // Fall back to the last non-NaN value of the first output line.
+                    let anchor = signal_pos.or_else(|| {
+                        render_inst.output_defs.first().and_then(|def| {
+                            render_inst.values.get(&def.name).and_then(|vals| {
+                                let search_end = vis_end.min(vals.len());
+                                (vis_start..search_end)
+                                    .rev()
+                                    .find(|&i| !vals[i].is_nan())
+                                    .map(|i| (i, vals[i]))
+                            })
+                        })
+                    });
+
+                    let (bar_idx, price) = match anchor {
+                        Some(p) => p,
+                        None => continue,
+                    };
+
+                    if price < price_min || price > price_max {
+                        continue;
+                    }
+
+                    let rel_x = viewport.bar_to_x_f64(bar_idx as f64);
+                    let raw_bell_x = chart_x + rel_x;
+                    let rel_y = viewport.price_to_y(price, price_min, price_max);
+                    let raw_bell_y = chart_y + rel_y;
+
+                    let bell_x = clamp_bell_x(raw_bell_x);
+                    let bell_y = clamp_bell_y(raw_bell_y);
+
+                    let color = render_inst.output_defs
+                        .first()
+                        .map(|d| d.color.as_str())
+                        .unwrap_or("#FF9800");
+
+                    let widget_id = format!("alert_bell_ind_{}", indicator_id);
+                    let (icon_cx, icon_cy) = Self::draw_bell_icon(ctx, bell_x, bell_y, BELL_SIZE, color, false);
+                    bells.push((widget_id, icon_cx, icon_cy, BELL_SIZE));
                 }
 
                 _ => {}
@@ -3320,8 +3420,8 @@ impl ChartApp {
                             bar_index: ev.bar_index as i64,
                             signal_type: format!("{:?}", ev.kind),
                             price: ev.price,
-                            strength: ev.strength,
-                            direction: ev.kind.direction() as i32,
+                            strength: 0.0,
+                            direction: ev.direction.as_i8() as i32,
                         })
                         .collect();
                     rows.sort_by(|a, b| b.bar_index.cmp(&a.bar_index));
@@ -3611,6 +3711,9 @@ impl ChartApp {
                             *primitive_id == tree_item.id
                         }
                         alerts::AlertSource::Indicator { indicator_id, .. } => {
+                            *indicator_id == tree_item.id
+                        }
+                        alerts::AlertSource::Signal { indicator_id, .. } => {
                             *indicator_id == tree_item.id
                         }
                         _ => false,
