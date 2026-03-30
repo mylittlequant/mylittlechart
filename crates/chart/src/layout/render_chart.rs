@@ -2031,9 +2031,10 @@ pub fn render_sub_pane_overlay(
     let num_buttons: u32 = 5;
     let bar_width = num_buttons as f64 * (button_size + gap) - gap;
     let bar_height = button_size;
-    let margin = 6.0;
+    let margin = 4.0;
 
     // Position: top-right corner of content area.
+    // bar_y matches the title text Y (content.y + 4.0) and the left overlay bar_y.
     let bar_x = content.x + content.width - bar_width - margin;
     let bar_y = content.y + margin;
 

@@ -3958,10 +3958,12 @@ impl ChartApp {
                         .window_for_leaf(leaf_id)
                         .map(|w| w.sub_pane_overlay_results.clone())
                         .unwrap_or_default();
+                    let mut any_button_hovered_split = false;
                     if let (Some(extended), Some(window)) = (extended_opt, self.panel_app.panel_grid.window_for_leaf_mut(leaf_id)) {
                         for state in window.sub_pane_overlay_states.iter_mut() {
                             state.visible = false;
                             state.hovered_button = None;
+                            state.hovered_left_button = None;
                         }
                         for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                             if pane_layout.content.contains(x, y) {
@@ -3991,7 +3993,10 @@ impl ChartApp {
                                         Some(SubPaneButton::Expand)
                                     } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::Restore)
-                                    } else if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else {
+                                        None
+                                    };
+                                    let hovered_left = if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorEye)
                                     } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorAlert)
@@ -4002,11 +4007,17 @@ impl ChartApp {
                                     } else {
                                         None
                                     };
+                                    any_button_hovered_split = hovered.is_some() || hovered_left.is_some();
                                     window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                                    window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
                                 }
                                 break;
                             }
                         }
+                    }
+                    // Suppress crosshair when hovering over an overlay button (split mode).
+                    if any_button_hovered_split {
+                        self.hide_crosshair();
                     }
                 } else {
                     // Cursor not over any leaf — hide all overlays on all windows.
@@ -4015,6 +4026,7 @@ impl ChartApp {
                             for state in window.sub_pane_overlay_states.iter_mut() {
                                 state.visible = false;
                                 state.hovered_button = None;
+                                state.hovered_left_button = None;
                             }
                         }
                     }
@@ -4278,11 +4290,13 @@ impl ChartApp {
         let overlay_results_mm = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
+        let mut hide_crosshair_for_overlay = false;
         if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
             // Hide all overlays first.
             for state in window.sub_pane_overlay_states.iter_mut() {
                 state.visible = false;
                 state.hovered_button = None;
+                state.hovered_left_button = None;
             }
             // Show overlay for the pane the cursor is inside.
             for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
@@ -4315,7 +4329,10 @@ impl ChartApp {
                             Some(SubPaneButton::Expand)
                         } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::Restore)
-                        } else if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else {
+                            None
+                        };
+                        let hovered_left = if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorEye)
                         } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorAlert)
@@ -4326,11 +4343,17 @@ impl ChartApp {
                         } else {
                             None
                         };
+                        hide_crosshair_for_overlay = hovered.is_some() || hovered_left.is_some();
                         window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                        window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
                     }
                     break; // cursor can only be in one pane
                 }
             }
+        }
+        // Suppress crosshair when the cursor is over an overlay button.
+        if hide_crosshair_for_overlay {
+            self.hide_crosshair();
         }
     }
 
