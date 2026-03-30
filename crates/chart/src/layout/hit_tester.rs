@@ -134,6 +134,38 @@ impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
                         };
                     }
                 }
+                if let Some(ref rect) = overlay.left_eye_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::IndicatorEye,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.left_alert_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::IndicatorAlert,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.left_settings_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::IndicatorSettings,
+                        };
+                    }
+                }
+                if let Some(ref rect) = overlay.left_delete_rect {
+                    if rect.contains(x, y) {
+                        return HitResult::SubPaneOverlayButton {
+                            pane_index: idx,
+                            button: SubPaneButton::IndicatorDelete,
+                        };
+                    }
+                }
             }
         }
 
