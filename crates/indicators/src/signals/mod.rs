@@ -30,7 +30,9 @@ pub mod conditions;
 pub mod detectors;
 pub mod catalog;
 pub mod rules;
+pub mod signal;
 
 pub use conditions::*;
 pub use detectors::*;
 pub use catalog::*;
+pub use signal::{Signal, Direction, BarConfirmation, SignalSource};
