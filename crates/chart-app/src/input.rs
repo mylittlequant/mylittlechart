@@ -3991,6 +3991,14 @@ impl ChartApp {
                                         Some(SubPaneButton::Expand)
                                     } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                                         Some(SubPaneButton::Restore)
+                                    } else if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::IndicatorEye)
+                                    } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::IndicatorAlert)
+                                    } else if overlay.left_settings_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::IndicatorSettings)
+                                    } else if overlay.left_delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                        Some(SubPaneButton::IndicatorDelete)
                                     } else {
                                         None
                                     };
@@ -4307,6 +4315,14 @@ impl ChartApp {
                             Some(SubPaneButton::Expand)
                         } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
                             Some(SubPaneButton::Restore)
+                        } else if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::IndicatorEye)
+                        } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::IndicatorAlert)
+                        } else if overlay.left_settings_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::IndicatorSettings)
+                        } else if overlay.left_delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                            Some(SubPaneButton::IndicatorDelete)
                         } else {
                             None
                         };
@@ -15410,6 +15426,20 @@ impl ChartApp {
                             }
                         }
                         self.autosave_snapshot();
+                    }
+                    SubPaneButton::IndicatorEye => {
+                        self.indicator_manager.toggle_visibility(instance_id);
+                        self.sidebar_data_dirty = true;
+                        self.autosave_snapshot();
+                    }
+                    SubPaneButton::IndicatorAlert => {
+                        // TODO: open alert creation for this indicator
+                    }
+                    SubPaneButton::IndicatorSettings => {
+                        self.panel_app.indicator_settings_state.open(instance_id);
+                    }
+                    SubPaneButton::IndicatorDelete => {
+                        self.delete_indicator_instance(instance_id);
                     }
                 }
                 return;

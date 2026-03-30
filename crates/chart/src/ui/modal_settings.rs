@@ -1637,6 +1637,15 @@ pub enum SubPaneButton {
     Restore,
     /// Move this sub-pane down in the ordering.
     MoveDown,
+    // ── Left-side per-indicator buttons ──────────────────────────────────────
+    /// Toggle indicator visibility (left overlay).
+    IndicatorEye,
+    /// Open alert settings for this indicator (left overlay).
+    IndicatorAlert,
+    /// Open indicator settings modal (left overlay).
+    IndicatorSettings,
+    /// Delete this indicator (left overlay).
+    IndicatorDelete,
 }
 
 /// Per-sub-pane overlay button UI state (hover triggered visibility).
@@ -1646,8 +1655,10 @@ pub enum SubPaneButton {
 pub struct SubPaneOverlayState {
     /// Whether the button bar is visible (mouse inside sub-pane content area).
     pub visible: bool,
-    /// Which button (if any) is currently hovered.
+    /// Which right-side button (if any) is currently hovered.
     pub hovered_button: Option<SubPaneButton>,
+    /// Which left-side per-indicator button (if any) is currently hovered.
+    pub hovered_left_button: Option<SubPaneButton>,
 }
 
 // =============================================================================

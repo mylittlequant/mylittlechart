@@ -855,8 +855,6 @@ pub fn draw_indicator_signals(
     price_max: f64,
 ) {
     use crate::indicator_source::SignalShape;
-    use crate::ui::icons::{ICON_ARROW_UP, ICON_ARROW_DOWN};
-    use crate::render::draw_svg_icon;
 
     if signals.is_empty() {
         return;
@@ -918,8 +916,45 @@ pub fn draw_indicator_signals(
 
         match signal_display.shape {
             SignalShape::Arrow => {
-                let icon = if is_bullish { ICON_ARROW_UP } else { ICON_ARROW_DOWN };
-                draw_svg_icon(ctx, icon, x - icon_size / 2.0, icon_y, icon_size, icon_size, color);
+                // Real arrow with stem + triangular head
+                let half = icon_size / 2.0;
+                let stem_w = icon_size * 0.15; // stem thickness
+                let head_h = icon_size * 0.45; // arrowhead height
+                let head_w = half;             // arrowhead half-width
+                ctx.set_fill_color(color);
+                ctx.begin_path();
+                if is_bullish {
+                    // Arrow pointing UP: tip at top
+                    let tip_y = icon_y;
+                    let base_y = icon_y + icon_size;
+                    let head_base_y = tip_y + head_h;
+                    // Arrowhead
+                    ctx.move_to(x, tip_y);
+                    ctx.line_to(x + head_w, head_base_y);
+                    ctx.line_to(x + stem_w, head_base_y);
+                    // Stem
+                    ctx.line_to(x + stem_w, base_y);
+                    ctx.line_to(x - stem_w, base_y);
+                    ctx.line_to(x - stem_w, head_base_y);
+                    // Other side of arrowhead
+                    ctx.line_to(x - head_w, head_base_y);
+                } else {
+                    // Arrow pointing DOWN: tip at bottom
+                    let tip_y = icon_y + icon_size;
+                    let top_y = icon_y;
+                    let head_base_y = tip_y - head_h;
+                    // Stem top
+                    ctx.move_to(x - stem_w, top_y);
+                    ctx.line_to(x + stem_w, top_y);
+                    ctx.line_to(x + stem_w, head_base_y);
+                    // Arrowhead
+                    ctx.line_to(x + head_w, head_base_y);
+                    ctx.line_to(x, tip_y);
+                    ctx.line_to(x - head_w, head_base_y);
+                    ctx.line_to(x - stem_w, head_base_y);
+                }
+                ctx.close_path();
+                ctx.fill();
             }
             SignalShape::Triangle => {
                 ctx.set_fill_color(color);
@@ -2051,6 +2086,10 @@ pub fn render_sub_pane_overlay(
         move_down_rect: None,
         expand_rect: None,
         restore_rect: None,
+        left_eye_rect: None,
+        left_alert_rect: None,
+        left_settings_rect: None,
+        left_delete_rect: None,
     };
 
     for (idx, icon, button_type) in &buttons {
@@ -2093,10 +2132,152 @@ pub fn render_sub_pane_overlay(
             SubPaneButton::MoveDown => result.move_down_rect = Some(rect),
             SubPaneButton::Expand => result.expand_rect = Some(rect),
             SubPaneButton::Restore => result.restore_rect = Some(rect),
+            SubPaneButton::IndicatorEye => result.left_eye_rect = Some(rect),
+            SubPaneButton::IndicatorAlert => result.left_alert_rect = Some(rect),
+            SubPaneButton::IndicatorSettings => result.left_settings_rect = Some(rect),
+            SubPaneButton::IndicatorDelete => result.left_delete_rect = Some(rect),
         }
     }
 
     result
+}
+
+/// Render the LEFT-side per-indicator control buttons for a sub-pane.
+///
+/// Four buttons appear to the RIGHT of the indicator title text:
+/// Eye (visibility), Alert (bell), Settings (gear), Delete (trash).
+///
+/// Visibility is shared with the right-side overlay — both overlays appear and
+/// disappear together when the mouse enters/leaves the sub-pane.
+///
+/// # Returns
+///
+/// A tuple of four `Option<LayoutRect>` values:
+/// `(eye_rect, alert_rect, settings_rect, delete_rect)`
+pub fn render_sub_pane_left_overlay(
+    ctx: &mut dyn RenderContext,
+    content: &LayoutRect,
+    instance_id: u64,
+    state: &crate::ui::modal_settings::SubPaneOverlayState,
+    indicator_visible: bool,
+    indicator_title: &str,
+    frame_theme: &FrameTheme,
+    text_color: &str,
+) -> (Option<LayoutRect>, Option<LayoutRect>, Option<LayoutRect>, Option<LayoutRect>) {
+    use crate::ui::modal_settings::SubPaneButton;
+    use crate::render::draw_svg_icon;
+
+    // Don't render if pane is too small or overlay not visible.
+    if content.height < 20.0 || !state.visible {
+        return (None, None, None, None);
+    }
+
+    let icon_size = 14.0;
+    let button_size = 18.0;
+    let gap = 2.0;
+    let num_buttons: u32 = 4;
+    let bar_width = num_buttons as f64 * (button_size + gap) - gap;
+    let bar_height = button_size;
+    let margin_left = 8.0; // matches the title x-offset in render_sub_pane
+
+    // Measure the indicator title to position the button bar right after it.
+    ctx.set_font("10px sans-serif");
+    let title_width = ctx.measure_text(indicator_title);
+
+    // Position: top-left, right after the title text.
+    // Title is drawn at (content.x + 8, content.y + 4).
+    let title_gap = 6.0; // space between title end and first button
+    let bar_x = content.x + margin_left + title_width + title_gap;
+    let bar_y = content.y + 4.0; // aligned with title baseline
+
+    // Clip: don't draw if the bar would overlap the right-side overlay area.
+    // Right overlay sits within the last ~120px (5 buttons × 20px) of the pane.
+    let right_margin = 5.0 * (button_size + gap) + 10.0;
+    if bar_x + bar_width > content.x + content.width - right_margin {
+        return (None, None, None, None);
+    }
+
+    // Draw background pill.
+    let bg_color = apply_opacity(&frame_theme.toolbar_bg, 0.80);
+    ctx.set_fill_color(&bg_color);
+    ctx.fill_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+
+    // Draw border.
+    let border_color = apply_opacity(&frame_theme.toolbar_border, 0.6);
+    ctx.set_stroke_color(&border_color);
+    ctx.set_stroke_width(0.5);
+    ctx.stroke_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+
+    // Helper: compute button rect at index.
+    let button_rect = |idx: u32| -> LayoutRect {
+        LayoutRect::new(
+            bar_x + idx as f64 * (button_size + gap),
+            bar_y,
+            button_size,
+            button_size,
+        )
+    };
+
+    let icon_offset = (button_size - icon_size) / 2.0;
+
+    // Define 4 buttons: (index, icon, button_variant).
+    let buttons: [(u32, Icon, SubPaneButton); 4] = [
+        (
+            0,
+            if indicator_visible { Icon::Eye } else { Icon::EyeOff },
+            SubPaneButton::IndicatorEye,
+        ),
+        (1, Icon::Alert, SubPaneButton::IndicatorAlert),
+        (2, Icon::Settings, SubPaneButton::IndicatorSettings),
+        (3, Icon::Delete, SubPaneButton::IndicatorDelete),
+    ];
+
+    let _ = instance_id; // instance_id used by caller for hit-test resolution
+
+    let mut eye_rect: Option<LayoutRect> = None;
+    let mut alert_rect: Option<LayoutRect> = None;
+    let mut settings_rect: Option<LayoutRect> = None;
+    let mut delete_rect: Option<LayoutRect> = None;
+
+    for (idx, icon, button_type) in &buttons {
+        let rect = button_rect(*idx);
+        let is_hovered = state.hovered_left_button.as_ref() == Some(button_type);
+
+        let color = if is_hovered {
+            match button_type {
+                SubPaneButton::IndicatorDelete => "#f23645".to_string(),
+                _ => "#2962ff".to_string(),
+            }
+        } else {
+            apply_opacity(text_color, 0.6)
+        };
+
+        if is_hovered {
+            let hover_bg = apply_opacity(&frame_theme.toolbar_border, 0.4);
+            ctx.set_fill_color(&hover_bg);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 2.0);
+        }
+
+        draw_svg_icon(
+            ctx,
+            icon.svg(),
+            rect.x + icon_offset,
+            rect.y + icon_offset,
+            icon_size,
+            icon_size,
+            &color,
+        );
+
+        match button_type {
+            SubPaneButton::IndicatorEye => eye_rect = Some(rect),
+            SubPaneButton::IndicatorAlert => alert_rect = Some(rect),
+            SubPaneButton::IndicatorSettings => settings_rect = Some(rect),
+            SubPaneButton::IndicatorDelete => delete_rect = Some(rect),
+            _ => {}
+        }
+    }
+
+    (eye_rect, alert_rect, settings_rect, delete_rect)
 }
 
 /// Render drawing primitives for the main chart area (pane_id == None).
@@ -2983,6 +3164,28 @@ pub fn render_full_chart_panel(
                 data.frame_theme,
                 &data.state.theme.text,
             );
+            // Render the LEFT-side per-indicator control buttons.
+            let render_inst = im.get_render_instance(pane_layout.instance_id);
+            let ind_visible = render_inst.as_ref().map_or(true, |ri| ri.visible);
+            let ind_title = render_inst.as_ref().map_or("", |ri| ri.title.as_str());
+            let (left_eye, left_alert, left_settings, left_delete) =
+                render_sub_pane_left_overlay(
+                    ctx,
+                    &pane_layout.content,
+                    pane_layout.instance_id,
+                    &overlay_state,
+                    ind_visible,
+                    ind_title,
+                    data.frame_theme,
+                    &data.state.theme.text,
+                );
+            // Merge left overlay rects into the overlay result.
+            let mut overlay_result = overlay_result;
+            overlay_result.left_eye_rect = left_eye;
+            overlay_result.left_alert_rect = left_alert;
+            overlay_result.left_settings_rect = left_settings;
+            overlay_result.left_delete_rect = left_delete;
+
             sub_pane_overlay_results.push(overlay_result);
         }
     }

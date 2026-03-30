@@ -6,7 +6,6 @@
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
-use crate::ui::icons::ICON_ARROW_UP;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{IndicatorSettingsModalResult, SliderTrackInfo};
 use crate::ui::toolbar_render::ToolbarTheme;
@@ -804,17 +803,22 @@ pub fn render_indicator_settings_modal(
                     let cy = btn_y + shape_btn_size / 2.0;
                     match shape {
                         SignalShape::Arrow => {
-                            // Use the SVG arrow-up icon (upward arrow) scaled to fit the button
-                            let icon_margin = 4.0;
-                            draw_svg_icon(
-                                ctx,
-                                ICON_ARROW_UP,
-                                btn_x + icon_margin,
-                                btn_y + icon_margin,
-                                shape_btn_size - icon_margin * 2.0,
-                                shape_btn_size - icon_margin * 2.0,
-                                icon_color,
-                            );
+                            // Draw a proper arrow with stem + head pointing up
+                            let s = 5.0; // half-size
+                            let stem_w = 1.2;
+                            let head_h = s * 0.9;
+                            let head_w = s * 0.9;
+                            ctx.set_fill_color(icon_color);
+                            ctx.begin_path();
+                            ctx.move_to(cx, cy - s);                    // tip
+                            ctx.line_to(cx + head_w, cy - s + head_h);  // head right
+                            ctx.line_to(cx + stem_w, cy - s + head_h);  // stem top-right
+                            ctx.line_to(cx + stem_w, cy + s);           // stem bottom-right
+                            ctx.line_to(cx - stem_w, cy + s);           // stem bottom-left
+                            ctx.line_to(cx - stem_w, cy - s + head_h);  // stem top-left
+                            ctx.line_to(cx - head_w, cy - s + head_h);  // head left
+                            ctx.close_path();
+                            ctx.fill();
                         }
                         SignalShape::Triangle => {
                             ctx.set_fill_color(icon_color);
