@@ -6,6 +6,7 @@
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
+use crate::ui::icons::ICON_ARROW_UP;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{IndicatorSettingsModalResult, SliderTrackInfo};
 use crate::ui::toolbar_render::ToolbarTheme;
@@ -767,13 +768,13 @@ pub fn render_indicator_settings_modal(
                 let shape_btn_gap = 6.0;
                 let shapes_start_x = content_x + content_padding + 100.0;
                 let shapes = [
-                    (SignalShape::Arrow,    "ind_set:signal_shape:arrow",    "→"),
-                    (SignalShape::Triangle, "ind_set:signal_shape:triangle", "▲"),
-                    (SignalShape::Circle,   "ind_set:signal_shape:circle",   "●"),
-                    (SignalShape::Diamond,  "ind_set:signal_shape:diamond",  "◆"),
+                    (SignalShape::Arrow,    "ind_set:signal_shape:arrow"),
+                    (SignalShape::Triangle, "ind_set:signal_shape:triangle"),
+                    (SignalShape::Circle,   "ind_set:signal_shape:circle"),
+                    (SignalShape::Diamond,  "ind_set:signal_shape:diamond"),
                 ];
 
-                for (idx, (shape, shape_id, shape_glyph)) in shapes.iter().enumerate() {
+                for (idx, (shape, shape_id)) in shapes.iter().enumerate() {
                     let btn_x = shapes_start_x + idx as f64 * (shape_btn_size + shape_btn_gap);
                     let btn_y = row_y + (row_height - shape_btn_size) / 2.0;
                     let is_active = signal_display.shape == *shape;
@@ -797,12 +798,50 @@ pub fn render_indicator_settings_modal(
                     ctx.set_stroke_width(if is_active { 2.0 } else { 1.0 });
                     ctx.stroke_rounded_rect(btn_x, btn_y, shape_btn_size, shape_btn_size, 4.0);
 
-                    // Shape glyph centered in button
-                    ctx.set_font("11px sans-serif");
-                    ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { text_color });
-                    ctx.set_text_align(TextAlign::Center);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text(shape_glyph, btn_x + shape_btn_size / 2.0, btn_y + shape_btn_size / 2.0);
+                    // Draw shape programmatically, centered in button
+                    let icon_color = if is_active { &toolbar_theme.item_text_active } else { text_color };
+                    let cx = btn_x + shape_btn_size / 2.0;
+                    let cy = btn_y + shape_btn_size / 2.0;
+                    match shape {
+                        SignalShape::Arrow => {
+                            // Use the SVG arrow-up icon (upward arrow) scaled to fit the button
+                            let icon_margin = 4.0;
+                            draw_svg_icon(
+                                ctx,
+                                ICON_ARROW_UP,
+                                btn_x + icon_margin,
+                                btn_y + icon_margin,
+                                shape_btn_size - icon_margin * 2.0,
+                                shape_btn_size - icon_margin * 2.0,
+                                icon_color,
+                            );
+                        }
+                        SignalShape::Triangle => {
+                            ctx.set_fill_color(icon_color);
+                            ctx.begin_path();
+                            ctx.move_to(cx, cy - 5.0);
+                            ctx.line_to(cx - 5.0, cy + 5.0);
+                            ctx.line_to(cx + 5.0, cy + 5.0);
+                            ctx.close_path();
+                            ctx.fill();
+                        }
+                        SignalShape::Circle => {
+                            ctx.set_fill_color(icon_color);
+                            ctx.begin_path();
+                            ctx.arc(cx, cy, 5.0, 0.0, std::f64::consts::TAU);
+                            ctx.fill();
+                        }
+                        SignalShape::Diamond => {
+                            ctx.set_fill_color(icon_color);
+                            ctx.begin_path();
+                            ctx.move_to(cx, cy - 6.0);
+                            ctx.line_to(cx + 5.0, cy);
+                            ctx.line_to(cx, cy + 6.0);
+                            ctx.line_to(cx - 5.0, cy);
+                            ctx.close_path();
+                            ctx.fill();
+                        }
+                    }
 
                     // Store rect for hit testing
                     result.content_items.push((

@@ -3511,8 +3511,8 @@ impl ChartApp {
                 // Check if this is an inline dropdown item (style_option or width_option)
                 if item_id.starts_with("inline:style_option:") || item_id.starts_with("inline:width_option:") {
                     self.panel_app.toolbar_state.hovered_inline_dropdown_item = Some(item_id.to_string());
-                } else if item_id == "inline_dropdown:__bg__" {
-                    // background absorber — no highlight
+                } else if item_id == "inline_dropdown:__bg__" || item_id == "__bg__" {
+                    // background absorbers — no highlight
                 } else {
                     self.panel_app.toolbar_state.hovered_inline_id = Some(item_id.to_string());
                     // Clear inline dropdown hover when moving back to toolbar items
@@ -8339,6 +8339,12 @@ impl ChartApp {
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
+            // Bar background absorber — gap click between inline toolbar buttons.
+            // Absorb the click so the primitive stays selected; do nothing else.
+            if item_id == "__bg__" {
+                return;
+            }
+
             // inline:* actions come from the inline primitive toolbar embedded in
             // the control strip.  They must be intercepted here because
             // handle_toolbar_click_with_chart() does not know about them.
@@ -12621,6 +12627,101 @@ impl ChartApp {
             return;
         }
 
+        // ── Signal display config buttons ─────────────────────────────────────
+        if item_id.starts_with("ind_set:") {
+            use zengeld_chart::indicator_source::SignalShape;
+            if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
+                if item_id.starts_with("ind_set:signal_shape:") {
+                    let shape_str: &str = &item_id["ind_set:signal_shape:".len()..];
+                    let shape = match shape_str {
+                        "arrow"    => SignalShape::Arrow,
+                        "triangle" => SignalShape::Triangle,
+                        "circle"   => SignalShape::Circle,
+                        "diamond"  => SignalShape::Diamond,
+                        _ => {
+                            eprintln!("[ChartApp] ind_settings unknown signal shape: {}", shape_str);
+                            return;
+                        }
+                    };
+                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        inst.signal_display.shape = shape;
+                        eprintln!("[ChartApp] ind_settings signal_shape = {:?}", shape);
+                    }
+                    self.autosave_snapshot();
+                    self.snapshot_indicator_settings_to_user_manager();
+                } else if item_id == "ind_set:signal_bullish_color" {
+                    let screen_w = self.width as f64;
+                    let screen_h = self.height as f64;
+                    let current_color = self.indicator_manager
+                        .get_instance(ind_id)
+                        .map(|inst| inst.signal_display.bullish_color.clone());
+                    let widget_id_str = format!("ind_settings:item:{}", item_id);
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
+                        .map(|r| (r.x, r.y, r.width, r.height))
+                        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    self.panel_app.indicator_settings_state.open_color_picker_smart(
+                        "signal_bullish_color",
+                        anchor_x, anchor_y,
+                        anchor_w, anchor_h,
+                        screen_w, screen_h,
+                        current_color.as_deref(),
+                    );
+                    eprintln!("[ChartApp] ind_settings opened color picker for signal_bullish_color");
+                } else if item_id == "ind_set:signal_bearish_color" {
+                    let screen_w = self.width as f64;
+                    let screen_h = self.height as f64;
+                    let current_color = self.indicator_manager
+                        .get_instance(ind_id)
+                        .map(|inst| inst.signal_display.bearish_color.clone());
+                    let widget_id_str = format!("ind_settings:item:{}", item_id);
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
+                        .map(|r| (r.x, r.y, r.width, r.height))
+                        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    self.panel_app.indicator_settings_state.open_color_picker_smart(
+                        "signal_bearish_color",
+                        anchor_x, anchor_y,
+                        anchor_w, anchor_h,
+                        screen_w, screen_h,
+                        current_color.as_deref(),
+                    );
+                    eprintln!("[ChartApp] ind_settings opened color picker for signal_bearish_color");
+                } else if item_id == "ind_set:signal_size_inc" {
+                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        inst.signal_display.size = (inst.signal_display.size + 2.0).min(24.0);
+                        eprintln!("[ChartApp] ind_settings signal_size = {}", inst.signal_display.size);
+                    }
+                    self.autosave_snapshot();
+                    self.snapshot_indicator_settings_to_user_manager();
+                } else if item_id == "ind_set:signal_size_dec" {
+                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        inst.signal_display.size = (inst.signal_display.size - 2.0).max(8.0);
+                        eprintln!("[ChartApp] ind_settings signal_size = {}", inst.signal_display.size);
+                    }
+                    self.autosave_snapshot();
+                    self.snapshot_indicator_settings_to_user_manager();
+                } else if item_id == "ind_set:signal_offset_inc" {
+                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        inst.signal_display.offset = (inst.signal_display.offset + 2.0).min(16.0);
+                        eprintln!("[ChartApp] ind_settings signal_offset = {}", inst.signal_display.offset);
+                    }
+                    self.autosave_snapshot();
+                    self.snapshot_indicator_settings_to_user_manager();
+                } else if item_id == "ind_set:signal_offset_dec" {
+                    if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
+                        inst.signal_display.offset = (inst.signal_display.offset - 2.0).max(0.0);
+                        eprintln!("[ChartApp] ind_settings signal_offset = {}", inst.signal_display.offset);
+                    }
+                    self.autosave_snapshot();
+                    self.snapshot_indicator_settings_to_user_manager();
+                } else {
+                    eprintln!("[ChartApp] ind_settings item unhandled: {}", item_id);
+                }
+            }
+            return;
+        }
+
         eprintln!("[ChartApp] ind_settings item unhandled: {}", item_id);
     }
 
@@ -13218,9 +13319,21 @@ impl ChartApp {
     fn apply_indicator_color(&mut self, output_name: &str, color: &str) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
             if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
-                if let Some(output_cfg) = inst.outputs.get_mut(output_name) {
-                    output_cfg.color = Some(color.to_string());
-                    eprintln!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
+                match output_name {
+                    "signal_bullish_color" => {
+                        inst.signal_display.bullish_color = color.to_string();
+                        eprintln!("[ChartApp] applied indicator signal_bullish_color: {} = {}", ind_id, color);
+                    }
+                    "signal_bearish_color" => {
+                        inst.signal_display.bearish_color = color.to_string();
+                        eprintln!("[ChartApp] applied indicator signal_bearish_color: {} = {}", ind_id, color);
+                    }
+                    _ => {
+                        if let Some(output_cfg) = inst.outputs.get_mut(output_name) {
+                            output_cfg.color = Some(color.to_string());
+                            eprintln!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
+                        }
+                    }
                 }
             }
         }

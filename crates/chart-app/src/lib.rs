@@ -3408,10 +3408,17 @@ impl ChartApp {
             // --- Signals panel: collect per-instance SignalEvents ---
             use sidebar_content::types::{IndicatorsTabData, IndicatorSignalGroup, IndicatorSignalRow};
 
+            // Only show signals for indicator instances that belong to the active window.
+            let active_window_id_for_signals = active_cid.map(|cid| cid.0);
             let signal_groups: Vec<IndicatorSignalGroup> = self
                 .indicator_manager
                 .instances_iter()
-                .filter(|inst| !inst.signals.is_empty())
+                .filter(|inst| {
+                    !inst.signals.is_empty()
+                        && active_window_id_for_signals
+                            .map(|wid| inst.window_id == Some(wid))
+                            .unwrap_or(false)
+                })
                 .map(|inst| {
                     let mut rows: Vec<IndicatorSignalRow> = inst
                         .signals
@@ -5055,6 +5062,14 @@ impl ChartApp {
 
             // Floating inline config toolbar items
             if let Some(ref inline_cfg) = toolbar_result.inline_config {
+                // Register bar background first so gap clicks between buttons are absorbed
+                // and don't fall through to handle_canvas_click() which would deselect the primitive.
+                self.input_coordinator.borrow_mut().register_on_layer(
+                    "ilb:__bg__",
+                    uzor::Rect::new(inline_cfg.bar_rect.x, inline_cfg.bar_rect.y, inline_cfg.bar_rect.width, inline_cfg.bar_rect.height),
+                    Sense::CLICK,
+                    &tb_layer,
+                );
                 // Register individual button hit zones
                 for (id, rect) in &inline_cfg.item_rects {
                     self.input_coordinator.borrow_mut().register_on_layer(
