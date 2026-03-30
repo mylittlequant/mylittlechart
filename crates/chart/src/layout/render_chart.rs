@@ -1273,13 +1273,6 @@ pub fn render_sub_pane(
     ctx.set_fill_color(&state.theme.sub_pane_bg);
     ctx.fill_rect(content.x, content.y, content.width, content.height);
 
-    // 3. Draw pane title
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color(&state.theme.text);
-    ctx.set_text_align(crate::render::TextAlign::Left);
-    ctx.set_text_baseline(crate::render::TextBaseline::Top);
-    ctx.fill_text(&instance.title, content.x + 8.0, content.y + 4.0);
-
     let (visible_start, visible_end_raw) = state.viewport.visible_range();
     let visible_end = visible_end_raw.min(state.bars.len());
 
@@ -1706,7 +1699,7 @@ pub fn render_sub_pane_base(
     state: &ChartRenderState,
     pane_min: f64,
     pane_max: f64,
-    title: &str,
+    _title: &str,
     scale_theme: &ScaleTheme,
     scale_config: &ScaleConfig,
     crosshair_config: &CrosshairConfig,
@@ -1725,13 +1718,6 @@ pub fn render_sub_pane_base(
     ctx.draw_blur_background(content.x, content.y, content.width, content.height);
     ctx.set_fill_color(&state.theme.sub_pane_bg);
     ctx.fill_rect(content.x, content.y, content.width, content.height);
-
-    // 3. Draw pane title
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color(&state.theme.text);
-    ctx.set_text_align(crate::render::TextAlign::Left);
-    ctx.set_text_baseline(crate::render::TextBaseline::Top);
-    ctx.fill_text(title, content.x + 8.0, content.y + 4.0);
 
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);
@@ -2168,51 +2154,80 @@ pub fn render_sub_pane_left_overlay(
     use crate::ui::modal_settings::SubPaneButton;
     use crate::render::draw_svg_icon;
 
-    // Don't render if pane is too small or overlay not visible.
-    if content.height < 20.0 || !state.visible {
+    // Don't render if pane is too small.
+    if content.height < 20.0 {
         return (None, None, None, None);
     }
 
     let icon_size = 14.0;
     let button_size = 18.0;
     let gap = 2.0;
-    let num_buttons: u32 = 4;
-    let bar_width = num_buttons as f64 * (button_size + gap) - gap;
-    let bar_height = button_size;
-    let margin_left = 8.0; // matches the title x-offset in render_sub_pane
+    let margin_left = 8.0; // matches the old title x-offset
+    let title_x = content.x + margin_left;
+    // Vertical center for text and icons — aligns with icon center row.
+    let title_center_y = content.y + 13.0;
 
-    // Measure the indicator title to position the button bar right after it.
     ctx.set_font("10px sans-serif");
-    let title_width = ctx.measure_text(indicator_title);
+    ctx.set_text_align(crate::render::TextAlign::Left);
+    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
-    // Position: top-left, right after the title text.
-    // Title is drawn at (content.x + 8, content.y + 4).
-    let title_gap = 6.0; // space between title end and first button
-    let bar_x = content.x + margin_left + title_width + title_gap;
-    let bar_y = content.y + 4.0; // aligned with title baseline
+    let _ = instance_id; // used by caller for hit-test resolution
 
-    // Clip: don't draw if the bar would overlap the right-side overlay area.
-    // Right overlay sits within the last ~120px (5 buttons × 20px) of the pane.
-    let right_margin = 5.0 * (button_size + gap) + 10.0;
-    if bar_x + bar_width > content.x + content.width - right_margin {
+    if !state.visible {
+        // Not hovering — draw the indicator name in the muted theme text color,
+        // same visual position as the old standalone title block.
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(indicator_title, title_x, title_center_y);
         return (None, None, None, None);
     }
 
-    // Draw background pill.
+    // Hovering — draw a unified pill containing: title text + 4 action buttons.
+
+    let num_buttons: u32 = 4;
+    let buttons_width = num_buttons as f64 * (button_size + gap) - gap;
+
+    // Measure title to size the pill correctly.
+    let title_width = ctx.measure_text(indicator_title);
+
+    let text_to_buttons_gap = 6.0;
+    let pill_padding = 4.0;
+    let pill_x = title_x - pill_padding;
+    let pill_y = content.y + 2.0;
+    let pill_height = 22.0;
+    let pill_width = pill_padding + title_width + text_to_buttons_gap + buttons_width + pill_padding;
+
+    // Clip: don't draw if the pill would overlap the right-side overlay area.
+    let right_margin = 5.0 * (button_size + gap) + 10.0;
+    if pill_x + pill_width > content.x + content.width - right_margin {
+        // Pane too narrow — still draw text only, no pill/buttons.
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(indicator_title, title_x, title_center_y);
+        return (None, None, None, None);
+    }
+
+    // Draw pill background.
     let bg_color = apply_opacity(&frame_theme.toolbar_bg, 0.80);
     ctx.set_fill_color(&bg_color);
-    ctx.fill_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+    ctx.fill_rounded_rect(pill_x, pill_y, pill_width, pill_height, 3.0);
 
-    // Draw border.
+    // Draw pill border.
     let border_color = apply_opacity(&frame_theme.toolbar_border, 0.6);
     ctx.set_stroke_color(&border_color);
     ctx.set_stroke_width(0.5);
-    ctx.stroke_rounded_rect(bar_x - 3.0, bar_y - 2.0, bar_width + 6.0, bar_height + 4.0, 3.0);
+    ctx.stroke_rounded_rect(pill_x, pill_y, pill_width, pill_height, 3.0);
+
+    // Draw title text inside the pill.
+    ctx.set_fill_color(text_color);
+    ctx.fill_text(indicator_title, title_x, title_center_y);
+
+    // Position buttons after the title text.
+    let buttons_start_x = title_x + title_width + text_to_buttons_gap;
+    let bar_y = pill_y + (pill_height - button_size) / 2.0;
 
     // Helper: compute button rect at index.
     let button_rect = |idx: u32| -> LayoutRect {
         LayoutRect::new(
-            bar_x + idx as f64 * (button_size + gap),
+            buttons_start_x + idx as f64 * (button_size + gap),
             bar_y,
             button_size,
             button_size,
@@ -2232,8 +2247,6 @@ pub fn render_sub_pane_left_overlay(
         (2, Icon::Settings, SubPaneButton::IndicatorSettings),
         (3, Icon::Delete, SubPaneButton::IndicatorDelete),
     ];
-
-    let _ = instance_id; // instance_id used by caller for hit-test resolution
 
     let mut eye_rect: Option<LayoutRect> = None;
     let mut alert_rect: Option<LayoutRect> = None;
