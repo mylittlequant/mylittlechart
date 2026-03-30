@@ -2830,6 +2830,7 @@ impl ChartPanelApp {
                             &settings_data.outputs,
                             settings_data.display_info.as_ref(),
                             settings_data.signals_enabled,
+                            &settings_data.signal_display,
                             settings_data.timeframe_visibility.as_ref(),
                             current_time_ms,
                             frame_theme,

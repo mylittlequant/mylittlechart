@@ -2187,6 +2187,12 @@ pub struct AlertSettingsState {
     pub signal_direction_dropdown_open: bool,
     /// Whether the signal bar state dropdown is open.
     pub signal_bar_state_dropdown_open: bool,
+    /// Filter by signal kind (None = any kind). Only relevant for Signal alerts.
+    pub kind_filter: Option<String>,
+    /// Available signal kinds for dropdown (populated when editing Signal alerts).
+    pub available_signal_kinds: Vec<String>,
+    /// Whether the kind_filter dropdown is open.
+    pub kind_filter_dropdown_open: bool,
 }
 
 impl Default for AlertSettingsState {
@@ -2231,6 +2237,9 @@ impl Default for AlertSettingsState {
             signal_bar_state: SignalBarState::Forming,
             signal_direction_dropdown_open: false,
             signal_bar_state_dropdown_open: false,
+            kind_filter: None,
+            available_signal_kinds: Vec::new(),
+            kind_filter_dropdown_open: false,
         }
     }
 }
@@ -2274,6 +2283,8 @@ impl AlertSettingsState {
         self.trigger_mode_dropdown_open = false;
         self.signal_direction_dropdown_open = false;
         self.signal_bar_state_dropdown_open = false;
+        self.kind_filter = None;
+        self.kind_filter_dropdown_open = false;
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
@@ -2309,15 +2320,18 @@ impl AlertSettingsState {
         }).unwrap_or_default();
         self.trigger_mode_dropdown_open = false;
         // Initialize signal-specific fields from the alert source.
-        if let AlertSource::Signal { direction_filter, bar_state, .. } = &alert.source {
+        if let AlertSource::Signal { direction_filter, bar_state, kind_filter, .. } = &alert.source {
             self.signal_direction = *direction_filter;
             self.signal_bar_state = *bar_state;
+            self.kind_filter = kind_filter.clone();
         } else {
             self.signal_direction = SignalDirection::Any;
             self.signal_bar_state = SignalBarState::Forming;
+            self.kind_filter = None;
         }
         self.signal_direction_dropdown_open = false;
         self.signal_bar_state_dropdown_open = false;
+        self.kind_filter_dropdown_open = false;
         self.is_dragging = false;
         self.drag_offset = None;
         self.hovered_item_id = None;
@@ -2373,13 +2387,13 @@ impl AlertSettingsState {
     /// `direction_filter` and `bar_state` with the values currently selected in the modal.
     /// Returns the source unchanged if it is not `AlertSource::Signal`.
     pub fn build_signal_source(&self) -> AlertSource {
-        if let AlertSource::Signal { indicator_id, ref label, ref kind_filter, .. } = self.source {
+        if let AlertSource::Signal { indicator_id, ref label, .. } = self.source {
             AlertSource::Signal {
                 indicator_id,
                 label: label.clone(),
                 direction_filter: self.signal_direction,
                 bar_state: self.signal_bar_state,
-                kind_filter: kind_filter.clone(),
+                kind_filter: self.kind_filter.clone(),
             }
         } else {
             self.source.clone()
@@ -2397,6 +2411,7 @@ impl AlertSettingsState {
         self.trigger_mode_dropdown_open = false;
         self.signal_direction_dropdown_open = false;
         self.signal_bar_state_dropdown_open = false;
+        self.kind_filter_dropdown_open = false;
     }
 
     /// Start dragging the modal.

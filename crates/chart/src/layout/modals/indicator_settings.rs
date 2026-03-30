@@ -22,6 +22,7 @@ use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use crate::drawing::TimeframeVisibilityConfig;
 use crate::layout::render_ui::toolbar_to_widget_theme;
+use crate::indicator_source::{SignalDisplayConfig, SignalShape};
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
 
@@ -40,6 +41,7 @@ use uzor::render::{TextAlign, TextBaseline};
 /// * `outputs` - Indicator outputs with colors
 /// * `definition` - Optional indicator display info for metadata
 /// * `signals_enabled` - Whether signals are currently enabled
+/// * `signal_display` - Visual configuration for signal markers (shape, colors, size, offset)
 /// * `timeframe_visibility` - Optional timeframe visibility config
 /// * `current_time_ms` - Current time in milliseconds (for cursor blink)
 /// * `frame_theme` - Frame theme
@@ -57,6 +59,7 @@ pub fn render_indicator_settings_modal(
     outputs: &[(String, String)],
     definition: Option<&IndicatorDisplayInfo>,
     signals_enabled: bool,
+    signal_display: &SignalDisplayConfig,
     timeframe_visibility: Option<&TimeframeVisibilityConfig>,
     current_time_ms: u64,
     frame_theme: &FrameTheme,
@@ -686,8 +689,16 @@ pub fn render_indicator_settings_modal(
             // Calculate total content height for scroll
             let signals_on = result.signals_enabled;
             let total_content_height = if signals_on {
-                // toggle row + gap + 2 desc lines + gap + header + 3 detector lines
-                row_height + 10.0 + row_height * 0.6 + row_height + row_height + row_height * 0.8 + row_height * 0.6 * 3.0
+                // toggle row + gap + 2 desc lines + gap
+                // + shape row + bullish color row + bearish color row
+                // + size row + offset row
+                let base = row_height + 10.0 + row_height * 0.6 + row_height + 12.0;
+                let config_rows = row_height // shape selector
+                    + row_height // bullish color
+                    + row_height // bearish color
+                    + row_height // size
+                    + row_height; // offset
+                base + config_rows
             } else {
                 // toggle row + gap + 2 desc lines
                 row_height + 10.0 + row_height * 0.6 + row_height
@@ -743,19 +754,230 @@ pub fn render_indicator_settings_modal(
             ctx.fill_text("значений индикатора (пересечения, уровни и т.д.)", content_x + content_padding, row_y);
             row_y += row_height;
 
-            // Signal types info (based on indicator)
+            // Signal display configuration controls (shown only when signals are enabled)
             if signals_on {
-                ctx.set_fill_color(text_color);
-                ctx.fill_text("Активные детекторы:", content_x + content_padding, row_y);
-                row_y += row_height * 0.8;
+                row_y += 12.0; // visual gap before config section
 
-                ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("  • Пересечение уровней", content_x + content_padding, row_y);
-                row_y += row_height * 0.6;
-                ctx.fill_text("  • Перекупленность/перепроданность", content_x + content_padding, row_y);
-                row_y += row_height * 0.6;
-                ctx.fill_text("  • Кроссовер сигнальной линии", content_x + content_padding, row_y);
-                let _ = row_y; // suppress unused variable warning
+                // --- Shape selector ---
+                ctx.set_fill_color(text_color);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Форма:", content_x + content_padding, row_y + row_height / 2.0);
+
+                let shape_btn_size = 24.0;
+                let shape_btn_gap = 6.0;
+                let shapes_start_x = content_x + content_padding + 100.0;
+                let shapes = [
+                    (SignalShape::Arrow,    "ind_set:signal_shape:arrow",    "→"),
+                    (SignalShape::Triangle, "ind_set:signal_shape:triangle", "▲"),
+                    (SignalShape::Circle,   "ind_set:signal_shape:circle",   "●"),
+                    (SignalShape::Diamond,  "ind_set:signal_shape:diamond",  "◆"),
+                ];
+
+                for (idx, (shape, shape_id, shape_glyph)) in shapes.iter().enumerate() {
+                    let btn_x = shapes_start_x + idx as f64 * (shape_btn_size + shape_btn_gap);
+                    let btn_y = row_y + (row_height - shape_btn_size) / 2.0;
+                    let is_active = signal_display.shape == *shape;
+
+                    // Button background
+                    let btn_bg = if is_active {
+                        &toolbar_theme.item_bg_active
+                    } else {
+                        &toolbar_theme.item_bg_hover
+                    };
+                    ctx.set_fill_color(btn_bg);
+                    ctx.fill_rounded_rect(btn_x, btn_y, shape_btn_size, shape_btn_size, 4.0);
+
+                    // Border — accent when active
+                    let border_color = if is_active {
+                        &toolbar_theme.accent
+                    } else {
+                        &toolbar_theme.separator
+                    };
+                    ctx.set_stroke_color(border_color);
+                    ctx.set_stroke_width(if is_active { 2.0 } else { 1.0 });
+                    ctx.stroke_rounded_rect(btn_x, btn_y, shape_btn_size, shape_btn_size, 4.0);
+
+                    // Shape glyph centered in button
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { text_color });
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(shape_glyph, btn_x + shape_btn_size / 2.0, btn_y + shape_btn_size / 2.0);
+
+                    // Store rect for hit testing
+                    result.content_items.push((
+                        (*shape_id).to_string(),
+                        WidgetRect::new(btn_x, btn_y, shape_btn_size, shape_btn_size),
+                    ));
+                }
+
+                // Restore font and alignment for subsequent rows
+                ctx.set_font("13px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                row_y += row_height;
+
+                // --- Bullish color swatch ---
+                let swatch_size = 20.0;
+                let swatch_col_x = content_x + content_padding + 120.0;
+                let is_bullish_picker_open =
+                    indicator_state.color_picker_field.as_deref() == Some("signal_bullish_color");
+
+                ctx.set_fill_color(text_color);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Цвет бычий:", content_x + content_padding, row_y + row_height / 2.0);
+
+                let bull_swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                if is_bullish_picker_open {
+                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                    ctx.fill_rect(swatch_col_x - 2.0, bull_swatch_y - 2.0, swatch_size + 4.0, swatch_size + 4.0);
+                }
+                ctx.set_fill_color(&signal_display.bullish_color);
+                ctx.fill_rect(swatch_col_x, bull_swatch_y, swatch_size, swatch_size);
+                let bull_border = if is_bullish_picker_open { &toolbar_theme.accent } else { &toolbar_theme.separator };
+                ctx.set_stroke_color(bull_border);
+                ctx.set_stroke_width(if is_bullish_picker_open { 2.0 } else { 1.0 });
+                ctx.stroke_rect(swatch_col_x, bull_swatch_y, swatch_size, swatch_size);
+
+                result.content_items.push((
+                    "ind_set:signal_bullish_color".to_string(),
+                    WidgetRect::new(swatch_col_x, bull_swatch_y, swatch_size, swatch_size),
+                ));
+                row_y += row_height;
+
+                // --- Bearish color swatch ---
+                let is_bearish_picker_open =
+                    indicator_state.color_picker_field.as_deref() == Some("signal_bearish_color");
+
+                ctx.set_fill_color(text_color);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Цвет медведь:", content_x + content_padding, row_y + row_height / 2.0);
+
+                let bear_swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                if is_bearish_picker_open {
+                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                    ctx.fill_rect(swatch_col_x - 2.0, bear_swatch_y - 2.0, swatch_size + 4.0, swatch_size + 4.0);
+                }
+                ctx.set_fill_color(&signal_display.bearish_color);
+                ctx.fill_rect(swatch_col_x, bear_swatch_y, swatch_size, swatch_size);
+                let bear_border = if is_bearish_picker_open { &toolbar_theme.accent } else { &toolbar_theme.separator };
+                ctx.set_stroke_color(bear_border);
+                ctx.set_stroke_width(if is_bearish_picker_open { 2.0 } else { 1.0 });
+                ctx.stroke_rect(swatch_col_x, bear_swatch_y, swatch_size, swatch_size);
+
+                result.content_items.push((
+                    "ind_set:signal_bearish_color".to_string(),
+                    WidgetRect::new(swatch_col_x, bear_swatch_y, swatch_size, swatch_size),
+                ));
+                row_y += row_height;
+
+                // --- Size stepper (8–24 range) ---
+                let stepper_btn_w = 22.0;
+                let stepper_btn_h = 22.0;
+                let stepper_val_w = 36.0;
+                let stepper_x = content_x + content_padding + 100.0;
+
+                ctx.set_fill_color(text_color);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Размер:", content_x + content_padding, row_y + row_height / 2.0);
+
+                // Dec button
+                let dec_size_x = stepper_x;
+                let dec_size_y = row_y + (row_height - stepper_btn_h) / 2.0;
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rounded_rect(dec_size_x, dec_size_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(dec_size_x, dec_size_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text("−", dec_size_x + stepper_btn_w / 2.0, dec_size_y + stepper_btn_h / 2.0);
+
+                result.content_items.push((
+                    "ind_set:signal_size_dec".to_string(),
+                    WidgetRect::new(dec_size_x, dec_size_y, stepper_btn_w, stepper_btn_h),
+                ));
+
+                // Value label
+                let val_size_x = dec_size_x + stepper_btn_w + 4.0;
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text(
+                    &format!("{}", signal_display.size as i64),
+                    val_size_x + stepper_val_w / 2.0,
+                    row_y + row_height / 2.0,
+                );
+
+                // Inc button
+                let inc_size_x = val_size_x + stepper_val_w + 4.0;
+                let inc_size_y = dec_size_y;
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rounded_rect(inc_size_x, inc_size_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(inc_size_x, inc_size_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text("+", inc_size_x + stepper_btn_w / 2.0, inc_size_y + stepper_btn_h / 2.0);
+
+                result.content_items.push((
+                    "ind_set:signal_size_inc".to_string(),
+                    WidgetRect::new(inc_size_x, inc_size_y, stepper_btn_w, stepper_btn_h),
+                ));
+
+                ctx.set_text_align(TextAlign::Left);
+                row_y += row_height;
+
+                // --- Offset stepper (0–16 range) ---
+                ctx.set_fill_color(text_color);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Отступ:", content_x + content_padding, row_y + row_height / 2.0);
+
+                // Dec button
+                let dec_off_x = stepper_x;
+                let dec_off_y = row_y + (row_height - stepper_btn_h) / 2.0;
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rounded_rect(dec_off_x, dec_off_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(dec_off_x, dec_off_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text("−", dec_off_x + stepper_btn_w / 2.0, dec_off_y + stepper_btn_h / 2.0);
+
+                result.content_items.push((
+                    "ind_set:signal_offset_dec".to_string(),
+                    WidgetRect::new(dec_off_x, dec_off_y, stepper_btn_w, stepper_btn_h),
+                ));
+
+                // Value label
+                let val_off_x = dec_off_x + stepper_btn_w + 4.0;
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text(
+                    &format!("{}", signal_display.offset as i64),
+                    val_off_x + stepper_val_w / 2.0,
+                    row_y + row_height / 2.0,
+                );
+
+                // Inc button
+                let inc_off_x = val_off_x + stepper_val_w + 4.0;
+                let inc_off_y = dec_off_y;
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rounded_rect(inc_off_x, inc_off_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(inc_off_x, inc_off_y, stepper_btn_w, stepper_btn_h, 3.0);
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.fill_text("+", inc_off_x + stepper_btn_w / 2.0, inc_off_y + stepper_btn_h / 2.0);
+
+                result.content_items.push((
+                    "ind_set:signal_offset_inc".to_string(),
+                    WidgetRect::new(inc_off_x, inc_off_y, stepper_btn_w, stepper_btn_h),
+                ));
+
+                ctx.set_text_align(TextAlign::Left);
+                let _ = row_y; // row_y advanced past last used row
             }
 
             let widget_theme = WidgetTheme::default();

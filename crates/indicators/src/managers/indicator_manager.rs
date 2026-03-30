@@ -384,6 +384,9 @@ pub struct IndicatorInstance {
     pub signals: Vec<Signal>,
     /// Whether signal generation is enabled for this instance
     pub signals_enabled: bool,
+    /// Visual configuration for signal markers on chart
+    #[serde(default)]
+    pub signal_display: zengeld_chart::indicator_source::SignalDisplayConfig,
 }
 
 /// Output configuration for an instance
@@ -434,6 +437,7 @@ impl IndicatorInstance {
             origin_id: None,
             signals: Vec::new(),
             signals_enabled: true, // Enabled by default
+            signal_display: Default::default(),
         }
     }
 
@@ -1504,6 +1508,7 @@ impl zengeld_chart::indicator_source::IndicatorSource for IndicatorManager {
             outputs,
             display_info,
             signals_enabled: inst.signals_enabled,
+            signal_display: inst.signal_display.clone(),
             timeframe_visibility: inst.timeframe_visibility.clone(),
         })
     }
@@ -1604,6 +1609,7 @@ impl IndicatorManager {
             histogram_style,
             signals,
             signals_enabled: inst.signals_enabled,
+            signal_display: inst.signal_display.clone(),
             color_params,
             bool_params,
             timeframe_visibility: inst.timeframe_visibility.clone(),

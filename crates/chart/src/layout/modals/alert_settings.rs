@@ -377,6 +377,10 @@ fn compute_settings_tab_height(state: &AlertSettingsState) -> f64 {
     if matches!(state.trigger_mode, AlertTriggerMode::TimesN(_)) {
         rows += 1;
     }
+    // kind_filter dropdown row (only for Signal alerts with available kinds)
+    if !state.available_signal_kinds.is_empty() {
+        rows += 1;
+    }
     rows as f64 * (ROW_H + ITEM_PADDING) + PADDING * 2.0 + BTN_H + ITEM_PADDING
 }
 
@@ -446,6 +450,28 @@ fn render_settings_tab(
     // --- 1. Source (readonly) ---
     draw_readonly_row(ctx, "Source", &state.source_name, content_x, y, ROW_H, LABEL_W, toolbar_theme);
     y += ROW_H + ITEM_PADDING;
+
+    // --- 1b. Signal Kind filter (only for Signal alerts with available kinds) ---
+    if !state.available_signal_kinds.is_empty() {
+        let kind_display = state.kind_filter.as_deref().unwrap_or("Any");
+        let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:kind_filter");
+        draw_dropdown_field(
+            ctx,
+            "Signal Kind",
+            kind_display,
+            is_hovered,
+            content_x,
+            y,
+            ROW_H,
+            LABEL_W,
+            field_w,
+            toolbar_theme,
+        );
+        let r = WidgetRect::new(field_x, y, field_w, ROW_H);
+        result.content_items.push(("alert_set:item:kind_filter".to_string(), r));
+        input_coordinator.register_on_layer("alert_set:item:kind_filter", r, Sense::CLICK, layer_id);
+        y += ROW_H + ITEM_PADDING;
+    }
 
     // --- 2. Condition dropdown ---
     {

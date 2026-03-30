@@ -71,12 +71,18 @@ pub use types::{Bar, Tick, CalendarService, TimeService};
 // Signal system re-exports
 pub use signals::{
     SignalKind, SignalCategory,
+    // SignalKind subtypes
+    ThresholdSub, HistogramSub, ChannelSub, DivergenceSub, TrendSub,
+    VolatilitySub, VolumeSub, StructureSub, PatternSub, CompositeSub,
+    // Condition primitives (used by detectors internally and by consumers)
     ThresholdCondition, CrossoverType, CompareCondition, TrendCondition,
     DivergenceType, ChannelPosition, PatternState, CandlePattern,
     VolatilityRegime, VolumeCharacter, LogicOp, ConfirmationRequirement,
+    // Detectors
     CrossoverDetector, ThresholdMonitor, ZeroCrossDetector, HistogramDetector,
     ChannelDetector, DivergenceDetector, TrendDetector, VolatilityDetector,
     VolumeDetector, SwingDetector, MultiSignalDetector,
+    // Signal types
     Signal, Direction, BarConfirmation, SignalSource,
 };
 

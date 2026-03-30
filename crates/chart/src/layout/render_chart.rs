@@ -762,6 +762,7 @@ pub fn draw_overlay_indicators(
                 ctx,
                 state,
                 &instance.signals,
+                &instance.signal_display,
                 chart_rect.x,
                 chart_rect.y,
                 chart_rect.height,
@@ -840,17 +841,20 @@ pub fn draw_indicator_selection_markers(
 
 /// Draw signal markers for an indicator
 ///
-/// Renders small triangles at bar positions where signals occurred.
+/// Renders shaped markers at bar positions where signals occurred.
+/// The visual appearance is controlled by `signal_display`.
 pub fn draw_indicator_signals(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
     signals: &[crate::indicator_source::SignalRenderData],
+    signal_display: &crate::indicator_source::SignalDisplayConfig,
     chart_x: f64,
     chart_y: f64,
     chart_height: f64,
     price_min: f64,
     price_max: f64,
 ) {
+    use crate::indicator_source::SignalShape;
     use crate::ui::icons::{ICON_ARROW_UP, ICON_ARROW_DOWN};
     use crate::render::draw_svg_icon;
 
@@ -868,8 +872,8 @@ pub fn draw_indicator_signals(
         return;
     }
 
-    let icon_size = 12.0;
-    let offset = 4.0;
+    let icon_size = signal_display.size;
+    let offset = signal_display.offset;
 
     let is_sub_pane = price_max <= 150.0 && price_min >= -150.0;
 
@@ -882,13 +886,20 @@ pub fn draw_indicator_signals(
         let direction = signal.direction;
         let is_bullish = direction >= 0;
 
-        let color = if direction > 0 { "#26a69a" } else if direction < 0 { "#ef5350" } else { "#2962ff" };
+        let color: &str = if direction > 0 {
+            &signal_display.bullish_color
+        } else if direction < 0 {
+            &signal_display.bearish_color
+        } else {
+            &signal_display.neutral_color
+        };
 
-        let (icon, icon_y) = if is_sub_pane {
+        // Compute icon_y position (outside shape match so it is shared)
+        let icon_y = if is_sub_pane {
             if is_bullish {
-                (ICON_ARROW_UP, chart_y + chart_height - icon_size - offset)
+                chart_y + chart_height - icon_size - offset
             } else {
-                (ICON_ARROW_DOWN, chart_y + offset)
+                chart_y + offset
             }
         } else {
             let bar = state.bars.get(signal.bar_index);
@@ -898,14 +909,57 @@ pub fn draw_indicator_signals(
 
             if is_bullish {
                 let low_y = chart_y + ((price_max - bar_low) / price_range) * chart_height;
-                (ICON_ARROW_UP, low_y + offset)
+                low_y + offset
             } else {
                 let high_y = chart_y + ((price_max - bar_high) / price_range) * chart_height;
-                (ICON_ARROW_DOWN, high_y - icon_size - offset)
+                high_y - icon_size - offset
             }
         };
 
-        draw_svg_icon(ctx, icon, x - icon_size / 2.0, icon_y, icon_size, icon_size, color);
+        match signal_display.shape {
+            SignalShape::Arrow => {
+                let icon = if is_bullish { ICON_ARROW_UP } else { ICON_ARROW_DOWN };
+                draw_svg_icon(ctx, icon, x - icon_size / 2.0, icon_y, icon_size, icon_size, color);
+            }
+            SignalShape::Triangle => {
+                ctx.set_fill_color(color);
+                ctx.begin_path();
+                if is_bullish {
+                    // Upward-pointing triangle
+                    ctx.move_to(x, icon_y);
+                    ctx.line_to(x - icon_size / 2.0, icon_y + icon_size);
+                    ctx.line_to(x + icon_size / 2.0, icon_y + icon_size);
+                } else {
+                    // Downward-pointing triangle
+                    ctx.move_to(x - icon_size / 2.0, icon_y);
+                    ctx.line_to(x + icon_size / 2.0, icon_y);
+                    ctx.line_to(x, icon_y + icon_size);
+                }
+                ctx.close_path();
+                ctx.fill();
+            }
+            SignalShape::Circle => {
+                ctx.set_fill_color(color);
+                let r = icon_size / 2.0;
+                let cx = x;
+                let cy = icon_y + r;
+                ctx.begin_path();
+                ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+                ctx.fill();
+            }
+            SignalShape::Diamond => {
+                ctx.set_fill_color(color);
+                let half = icon_size / 2.0;
+                let cy = icon_y + half;
+                ctx.begin_path();
+                ctx.move_to(x, cy - half);
+                ctx.line_to(x + half, cy);
+                ctx.line_to(x, cy + half);
+                ctx.line_to(x - half, cy);
+                ctx.close_path();
+                ctx.fill();
+            }
+        }
     }
 }
 
@@ -1294,6 +1348,7 @@ pub fn render_sub_pane(
             ctx,
             state,
             &instance.signals,
+            &instance.signal_display,
             content.x,
             content.y,
             content.height,

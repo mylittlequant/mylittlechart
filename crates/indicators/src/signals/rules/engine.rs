@@ -6,11 +6,11 @@
 use crate::bar_indicators::bar_indicator_id::BarIndicatorId;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::signals::{
-    ChannelDetector, CrossoverDetector, HistogramDetector, SignalKind,
-    ThresholdMonitor, ZeroCrossDetector,
+    ChannelDetector, CrossoverDetector, DivergenceDetector, HistogramDetector, SignalKind,
+    SwingDetector, ThresholdMonitor, TrendDetector, VolatilityDetector, VolumeDetector,
+    ZeroCrossDetector,
 };
 use crate::signals::signal::{Signal, Direction, BarConfirmation, SignalSource};
-
 use super::config::{DetectorConfig, DetectorParams, DetectorType, ValueSource};
 use super::profile::SignalProfile;
 
@@ -42,6 +42,31 @@ enum DetectorInstance {
         detector: ChannelDetector,
         upper_source: ValueSource,
         lower_source: ValueSource,
+    },
+    Divergence {
+        config_id: String,
+        detector: DivergenceDetector,
+        indicator_source: ValueSource,
+    },
+    Trend {
+        config_id: String,
+        detector: TrendDetector,
+        value_source: ValueSource,
+    },
+    Volatility {
+        config_id: String,
+        detector: VolatilityDetector,
+        value_source: ValueSource,
+    },
+    Volume {
+        config_id: String,
+        detector: VolumeDetector,
+        value_source: ValueSource,
+    },
+    Swing {
+        config_id: String,
+        detector: SwingDetector,
+        value_source: ValueSource,
     },
 }
 
@@ -104,17 +129,59 @@ impl DetectorInstance {
                 lower_source: lower_source.clone(),
             }),
 
-            // Other types not yet implemented
+            (DetectorType::Divergence, DetectorParams::Divergence { indicator_source, lookback }) => {
+                Some(DetectorInstance::Divergence {
+                    config_id: config.id.clone(),
+                    detector: DivergenceDetector::new(3, *lookback),
+                    indicator_source: indicator_source.clone(),
+                })
+            }
+
+            (DetectorType::Trend, DetectorParams::Trend { value_source, .. }) => {
+                Some(DetectorInstance::Trend {
+                    config_id: config.id.clone(),
+                    detector: TrendDetector::new(),
+                    value_source: value_source.clone(),
+                })
+            }
+
+            (DetectorType::Volatility, DetectorParams::Volatility { value_source, low_threshold, .. }) => {
+                Some(DetectorInstance::Volatility {
+                    config_id: config.id.clone(),
+                    detector: VolatilityDetector::new(0.0, 1.0, *low_threshold),
+                    value_source: value_source.clone(),
+                })
+            }
+
+            (DetectorType::Volume, DetectorParams::Volume { value_source, .. }) => {
+                Some(DetectorInstance::Volume {
+                    config_id: config.id.clone(),
+                    detector: VolumeDetector::new(1.0),
+                    value_source: value_source.clone(),
+                })
+            }
+
+            (DetectorType::Swing, DetectorParams::Swing { lookback, .. }) => {
+                Some(DetectorInstance::Swing {
+                    config_id: config.id.clone(),
+                    detector: SwingDetector::new(*lookback),
+                    value_source: ValueSource::Main,
+                })
+            }
+
             _ => None,
         }
     }
 
-    /// Process a value and return signal if generated
+    /// Process a value and return `(config_id, SignalKind, Direction)` if a signal fired.
     fn process(
         &mut self,
         value: &IndicatorValue,
         price: Option<f64>,
-    ) -> Option<(String, SignalKind)> {
+        high: f64,
+        low: f64,
+        volume: f64,
+    ) -> Option<(String, SignalKind, Direction)> {
         match self {
             DetectorInstance::Threshold {
                 config_id,
@@ -122,8 +189,8 @@ impl DetectorInstance {
                 value_source,
             } => {
                 let v = value_source.extract(value)?;
-                let signal = monitor.update(v)?;
-                Some((config_id.clone(), signal))
+                let (kind, direction) = monitor.update(v)?;
+                Some((config_id.clone(), kind, direction))
             }
 
             DetectorInstance::ZeroCross {
@@ -132,8 +199,8 @@ impl DetectorInstance {
                 value_source,
             } => {
                 let v = value_source.extract(value)?;
-                let signal = detector.update(v)?;
-                Some((config_id.clone(), signal))
+                let (kind, direction) = detector.update(v)?;
+                Some((config_id.clone(), kind, direction))
             }
 
             DetectorInstance::Crossover {
@@ -142,7 +209,6 @@ impl DetectorInstance {
                 line_a,
                 line_b,
             } => {
-                // Handle Price source - use price parameter instead of extracting from value
                 let a = if matches!(line_a, ValueSource::Price) {
                     price?
                 } else {
@@ -153,8 +219,8 @@ impl DetectorInstance {
                 } else {
                     line_b.extract(value)?
                 };
-                let signal = detector.update(a, b)?;
-                Some((config_id.clone(), signal))
+                let (kind, direction) = detector.update(a, b)?;
+                Some((config_id.clone(), kind, direction))
             }
 
             DetectorInstance::Histogram {
@@ -163,8 +229,8 @@ impl DetectorInstance {
                 value_source,
             } => {
                 let v = value_source.extract(value)?;
-                let signal = detector.update(v)?;
-                Some((config_id.clone(), signal))
+                let (kind, direction) = detector.update(v)?;
+                Some((config_id.clone(), kind, direction))
             }
 
             DetectorInstance::Channel {
@@ -176,8 +242,47 @@ impl DetectorInstance {
                 let price_val = price?;
                 let upper = upper_source.extract(value)?;
                 let lower = lower_source.extract(value)?;
-                let signal = detector.update(price_val, upper, lower)?;
-                Some((config_id.clone(), signal))
+                let (kind, direction) = detector.update(price_val, upper, lower)?;
+                Some((config_id.clone(), kind, direction))
+            }
+
+            DetectorInstance::Divergence { config_id, detector, indicator_source } => {
+                let price_val = price?;
+                let ind_val = indicator_source.extract(value)?;
+                let (kind, direction) = detector.update(price_val, ind_val)?;
+                Some((config_id.clone(), kind, direction))
+            }
+
+            DetectorInstance::Trend { config_id, detector, value_source } => {
+                let price_val = price?;
+                let fast_ma = value_source.extract(value)?;
+                let slow_ma = match value {
+                    IndicatorValue::Double(_, b) => *b,
+                    _ => fast_ma,
+                };
+                let (kind, direction) = detector.update(price_val, fast_ma, slow_ma)?;
+                Some((config_id.clone(), kind, direction))
+            }
+
+            DetectorInstance::Volatility { config_id, detector, value_source } => {
+                let v = value_source.extract(value)?;
+                let (kind, direction) = detector.update(v)?;
+                Some((config_id.clone(), kind, direction))
+            }
+
+            DetectorInstance::Volume { config_id, detector, value_source } => {
+                let v = if matches!(value_source, ValueSource::Main) {
+                    volume
+                } else {
+                    value_source.extract(value)?
+                };
+                let (kind, direction) = detector.update(v, None)?;
+                Some((config_id.clone(), kind, direction))
+            }
+
+            DetectorInstance::Swing { config_id, detector, .. } => {
+                let (kind, direction) = detector.update(high, low)?;
+                Some((config_id.clone(), kind, direction))
             }
         }
     }
@@ -192,6 +297,11 @@ impl DetectorInstance {
             DetectorInstance::Channel { detector, .. } => {
                 *detector = ChannelDetector::new(0.001);
             }
+            DetectorInstance::Divergence { detector, .. } => detector.reset(),
+            DetectorInstance::Trend { detector, .. } => detector.reset(),
+            DetectorInstance::Volatility { detector, .. } => detector.reset(),
+            DetectorInstance::Volume { detector, .. } => detector.reset(),
+            DetectorInstance::Swing { detector, .. } => detector.reset(),
         }
     }
 }
@@ -232,17 +342,14 @@ impl SignalEngine {
     }
 
     /// Process an indicator value and return any generated signals
-    ///
-    /// # Arguments
-    /// * `value` - The indicator value to process
-    /// * `price` - Current price (needed for channel detectors)
-    /// * `timestamp` - Unix timestamp (ms) of the bar
-    /// * `indicator_name` - Name of the indicator emitting this signal
-    /// * `is_last_bar` - Whether this is the last (potentially unclosed) bar
     pub fn process(
         &mut self,
         value: &IndicatorValue,
-        price: f64,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: f64,
         timestamp: i64,
         indicator_name: &str,
         is_last_bar: bool,
@@ -250,17 +357,41 @@ impl SignalEngine {
         let mut signals = Vec::new();
 
         for detector in &mut self.detectors {
-            if let Some((_detector_id, signal_kind)) = detector.process(value, Some(price)) {
+            if let Some((_detector_id, signal_kind, direction)) =
+                detector.process(value, Some(close), high, low, volume)
+            {
                 self.signal_counter += 1;
+
+                let confirmation = if is_last_bar {
+                    BarConfirmation::Pending
+                } else {
+                    match direction {
+                        Direction::Up => {
+                            if close < open {
+                                BarConfirmation::WickOnly
+                            } else {
+                                BarConfirmation::Closed
+                            }
+                        }
+                        Direction::Down => {
+                            if close > open {
+                                BarConfirmation::WickOnly
+                            } else {
+                                BarConfirmation::Closed
+                            }
+                        }
+                        Direction::Neutral => BarConfirmation::Closed,
+                    }
+                };
 
                 signals.push(Signal::new(
                     self.signal_counter,
                     self.bar_index,
                     timestamp,
-                    price,
+                    close,
                     signal_kind,
-                    Direction::from_i8(signal_kind.direction()),
-                    if is_last_bar { BarConfirmation::Pending } else { BarConfirmation::Closed },
+                    direction,
+                    confirmation,
                     SignalSource::Indicator(indicator_name.to_string()),
                 ));
             }
@@ -271,12 +402,6 @@ impl SignalEngine {
     }
 
     /// Process with just indicator value (no price, channel detectors won't work)
-    ///
-    /// # Arguments
-    /// * `value` - The indicator value to process
-    /// * `timestamp` - Unix timestamp (ms) of the bar
-    /// * `indicator_name` - Name of the indicator emitting this signal
-    /// * `is_last_bar` - Whether this is the last (potentially unclosed) bar
     pub fn process_simple(
         &mut self,
         value: &IndicatorValue,
@@ -285,7 +410,7 @@ impl SignalEngine {
         is_last_bar: bool,
     ) -> Vec<Signal> {
         let price = value.main();
-        self.process(value, price, timestamp, indicator_name, is_last_bar)
+        self.process(value, price, price, price, price, 0.0, timestamp, indicator_name, is_last_bar)
     }
 
     /// Reset all detector states
@@ -339,6 +464,7 @@ impl std::fmt::Debug for SignalEngine {
 mod tests {
     use super::*;
     use crate::signals::rules::defaults;
+    use crate::signals::catalog::{ThresholdSub, HistogramSub};
 
     #[test]
     fn test_engine_from_rsi_profile() {
@@ -354,7 +480,6 @@ mod tests {
         let profile = defaults::rsi_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        // Feed values that go into overbought territory
         let values = [50.0, 60.0, 70.0, 75.0, 80.0];
 
         let mut all_signals = Vec::new();
@@ -363,10 +488,13 @@ mod tests {
             all_signals.extend(signals);
         }
 
-        // Should have generated at least one overbought signal
+        // Should have generated at least one threshold-enter signal (Up = overbought)
         let has_overbought = all_signals
             .iter()
-            .any(|s| matches!(s.kind, SignalKind::OscillatorOverbought));
+            .any(|s| {
+                matches!(s.kind, SignalKind::Threshold(ThresholdSub::Enter))
+                    && s.direction == Direction::Up
+            });
         assert!(has_overbought, "Expected overbought signal");
     }
 
@@ -375,7 +503,6 @@ mod tests {
         let profile = defaults::macd_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        // Simulate MACD line crossing above signal line
         let values = [
             IndicatorValue::Macd {
                 line: -0.5,
@@ -403,7 +530,7 @@ mod tests {
         // Should have crossover up signal
         let has_crossup = all_signals
             .iter()
-            .any(|s| matches!(s.kind, SignalKind::CrossoverUp));
+            .any(|s| matches!(s.kind, SignalKind::Crossover) && s.direction == Direction::Up);
         assert!(has_crossup, "Expected crossover up signal");
     }
 
@@ -412,11 +539,10 @@ mod tests {
         let profile = defaults::stochastic_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        // Simulate %K crossing above %D using Double
         let values = [
             IndicatorValue::Double(20.0, 30.0), // K=20, D=30
             IndicatorValue::Double(28.0, 29.0), // K=28, D=29
-            IndicatorValue::Double(35.0, 30.0), // K=35, D=30 - crossover!
+            IndicatorValue::Double(35.0, 30.0), // K=35, D=30 — crossover!
         ];
 
         let mut all_signals = Vec::new();
@@ -425,10 +551,10 @@ mod tests {
             all_signals.extend(signals);
         }
 
-        // Should have crossover signal
+        // Should have a crossover signal (any direction)
         let has_cross = all_signals
             .iter()
-            .any(|s| matches!(s.kind, SignalKind::CrossoverUp | SignalKind::CrossoverDown));
+            .any(|s| matches!(s.kind, SignalKind::Crossover));
         assert!(has_cross, "Expected K/D crossover signal");
     }
 
@@ -437,13 +563,11 @@ mod tests {
         let profile = defaults::rsi_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        // Process some values
         engine.process_simple(&IndicatorValue::Single(75.0), 0, "Test", false);
         engine.process_simple(&IndicatorValue::Single(80.0), 0, "Test", false);
 
         assert!(engine.bar_index() > 0);
 
-        // Reset
         engine.reset();
         assert_eq!(engine.signals_generated(), 0);
         assert_eq!(engine.bar_index(), 0);
@@ -464,7 +588,6 @@ mod tests {
         let profile = defaults::macd_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        // Simulate histogram going from negative to positive
         let values = [
             IndicatorValue::Macd {
                 line: -0.5,
@@ -489,10 +612,13 @@ mod tests {
             all_signals.extend(signals);
         }
 
-        // Should have histogram positive signal
+        // Should have histogram sign-change signal (Up = positive)
         let has_hist_pos = all_signals
             .iter()
-            .any(|s| matches!(s.kind, SignalKind::HistogramPositive));
+            .any(|s| {
+                matches!(s.kind, SignalKind::Histogram(HistogramSub::SignChange))
+                    && s.direction == Direction::Up
+            });
         assert!(has_hist_pos, "Expected histogram positive signal");
     }
 }

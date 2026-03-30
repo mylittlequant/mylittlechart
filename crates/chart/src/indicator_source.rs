@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 use crate::ui::modal_settings::IndicatorDisplayInfo;
 use crate::drawing::TimeframeVisibilityConfig;
 
@@ -70,6 +71,49 @@ pub struct IndicatorOutputRenderDef {
     pub line_width: f32,
 }
 
+/// Shape used for signal markers on the chart
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SignalShape {
+    Arrow,
+    Triangle,
+    Circle,
+    Diamond,
+}
+
+impl Default for SignalShape {
+    fn default() -> Self { Self::Arrow }
+}
+
+/// Visual configuration for signal markers
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignalDisplayConfig {
+    /// Shape of the signal marker
+    pub shape: SignalShape,
+    /// Color for bullish signals (direction > 0)
+    pub bullish_color: String,
+    /// Color for bearish signals (direction < 0)
+    pub bearish_color: String,
+    /// Color for neutral signals (direction == 0)
+    pub neutral_color: String,
+    /// Marker size in pixels
+    pub size: f64,
+    /// Offset from bar high/low in pixels
+    pub offset: f64,
+}
+
+impl Default for SignalDisplayConfig {
+    fn default() -> Self {
+        Self {
+            shape: SignalShape::Arrow,
+            bullish_color: "#26a69a".to_string(),
+            bearish_color: "#ef5350".to_string(),
+            neutral_color: "#2962ff".to_string(),
+            size: 12.0,
+            offset: 4.0,
+        }
+    }
+}
+
 /// Signal data for rendering on chart
 #[derive(Clone, Debug)]
 pub struct SignalRenderData {
@@ -116,6 +160,8 @@ pub struct IndicatorRenderInstance {
     pub signals: Vec<SignalRenderData>,
     /// Whether signal rendering is enabled
     pub signals_enabled: bool,
+    /// Visual configuration for signal markers
+    pub signal_display: SignalDisplayConfig,
     /// Extra params needed by rendering (e.g. BB fill color, volume colors)
     /// Uses simple key->string format for color params
     pub color_params: HashMap<String, String>,
@@ -164,6 +210,8 @@ pub struct IndicatorSettingsData {
     pub display_info: Option<IndicatorDisplayInfo>,
     /// Whether signal generation is enabled for this instance
     pub signals_enabled: bool,
+    /// Visual configuration for signal markers
+    pub signal_display: SignalDisplayConfig,
     /// Optional timeframe visibility configuration
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
 }

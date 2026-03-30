@@ -146,7 +146,7 @@ impl IndicatorCalculator {
             // Generate signals if engine exists
             if let Some(ref mut engine) = signal_engine {
                 let is_last_bar = bar_idx + 1 == bar_count;
-                let signals = engine.process(&value, bar.close, bar.time, &indicator_name, is_last_bar);
+                let signals = engine.process(&value, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.time, &indicator_name, is_last_bar);
                 all_signals.extend(signals);
             }
 
