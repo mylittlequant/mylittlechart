@@ -17,6 +17,7 @@ members = [
     "crates/updater",
     "crates/bar-store",
     "crates/bar-service",
+    "crates/diagnostics",
 ]
 resolver = "2"
 
@@ -38,6 +39,8 @@ license = "MIT OR Apache-2.0"
 [profile.release]
 opt-level = "s"
 lto = true
+debug = "line-tables-only"
+split-debuginfo = "packed"
 
 # Optimize indicators in dev mode to prevent stack overflow
 # (large enum with 480 variants needs optimization)

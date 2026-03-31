@@ -9,6 +9,7 @@ name = "mylittlechart"
 path = "src/main.rs"
 
 [dependencies]
+diagnostics = { path = "../diagnostics" }
 chart-app = { path = "../chart-app" }
 sidebar-content = { path = "../sidebar-content" }
 alert-delivery = { path = "../alert-delivery" }

@@ -7858,6 +7858,15 @@ fn main() {
     println!("  Ctrl+S    : Screenshot (copied to clipboard + saved to Pictures/Screenshots)");
     println!();
 
+    // Initialize diagnostics (logging, crash reporting, memory watchdog).
+    // The guard must live until the end of main() to keep the log file writer alive.
+    let log_dir = diagnostics::default_log_dir();
+    let _diagnostics = diagnostics::init(&log_dir, env!("CARGO_PKG_VERSION"));
+
+    // Start memory watchdog — logs warnings via tracing regardless of whether
+    // the receiver is consumed. UI toast support can be added later.
+    let _mem_warnings = diagnostics::watchdog::start();
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll); // Will be updated per-frame in about_to_wait()
 

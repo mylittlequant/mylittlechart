@@ -1,0 +1,18 @@
+[package]
+name = "diagnostics"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
+tracing-appender = "0.2"
+tracing-log = "0.2"
+chrono = { version = "0.4", features = ["clock"] }
+sysinfo = "0.34"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+flate2 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
+sha2 = "0.10"
