@@ -1979,13 +1979,6 @@ impl ChartApp {
                                 is_backfill, window.bars.len(), window.pending_symbol_load);
                             if is_backfill {
                                 window.update_bars(bars.clone());
-                                {
-                                    let bar_count = window.bars.len();
-                                    if bar_count > 0 {
-                                        let tail: Vec<_> = window.bars.iter().rev().take(3).collect();
-                                        eprintln!("[BarsLoaded] BACKFILL last 3 bars: {}", tail.iter().rev().map(|b| format!("ts={} o={:.2} c={:.2}", b.timestamp, b.open, b.close)).collect::<Vec<_>>().join(" | "));
-                                    }
-                                }
                                 // Also schedule backfill for cached windows that haven't
                                 // reached the target bar count yet.
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
@@ -2002,13 +1995,6 @@ impl ChartApp {
                                 window.price_scale.scale_mode = self.default_scale_mode;
                                 window.set_bars(bars.clone());
                                 window.pending_symbol_load = false;
-                                {
-                                    let bar_count = window.bars.len();
-                                    if bar_count > 0 {
-                                        let tail: Vec<_> = window.bars.iter().rev().take(3).collect();
-                                        eprintln!("[BarsLoaded] INITIAL last 3 bars: {}", tail.iter().rev().map(|b| format!("ts={} o={:.2} c={:.2}", b.timestamp, b.open, b.close)).collect::<Vec<_>>().join(" | "));
-                                    }
-                                }
                                 // Schedule a Layer 2 background backfill to extend history
                                 // beyond the initial 300 bars.
                                 let target = self.panel_app.user_manager.profile.data_load.background_bar_count;
@@ -2102,13 +2088,6 @@ impl ChartApp {
                         }
                         // Backfill always uses update_bars — viewport is never reset.
                         window.update_bars(bars.clone());
-                        {
-                            let bar_count = window.bars.len();
-                            if bar_count > 0 {
-                                let tail: Vec<_> = window.bars.iter().rev().take(3).collect();
-                                eprintln!("[BackfillComplete] last 3 bars: {}", tail.iter().rev().map(|b| format!("ts={} o={:.2} c={:.2}", b.timestamp, b.open, b.close)).collect::<Vec<_>>().join(" | "));
-                            }
-                        }
                         window.drawing_manager.recalculate_all_bar_caches(&window.bars);
                         window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                         if window.price_scale.scale_mode.is_auto_y() {
@@ -2251,8 +2230,6 @@ impl ChartApp {
                                     }
                                     // Trade belongs to a new candle — push a fresh bar.
                                     let new_candle_start = (trade_ts_secs / period_secs) * period_secs;
-                                    eprintln!("[tick] NEW BAR: last_ts={} candle_end={} trade_ts={} new_start={} period={} tf={} bars={}",
-                                        last_ts, candle_end, trade_ts_secs, new_candle_start, period_secs, window.timeframe.name, window.bars.len());
                                     window.bars.push(zengeld_chart::Bar {
                                         timestamp: new_candle_start,
                                         open: price,

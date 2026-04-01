@@ -1448,19 +1448,22 @@ pub fn account_type_from_short_label(s: &str) -> AccountType {
 /// "15m"→900, "1h"→3600, "4h"→14400, "1d"→86400, "1w"→604800.
 /// Falls back to minutes when the unit is unrecognised.
 fn interval_to_seconds(interval: &str) -> i64 {
-    let s = interval.to_lowercase();
+    let s = interval.trim();
     if s.is_empty() {
         return 60;
     }
+    // Case-sensitive: 'm' = minutes, 'M' = months.
+    // All other units are case-insensitive.
     let unit = s.chars().last().unwrap_or('m');
-    let num_part = &s[..s.len() - 1];
+    let num_part = &s[..s.len() - unit.len_utf8()];
     let num: i64 = num_part.parse().unwrap_or(1);
     match unit {
-        's' => num,
-        'm' => num * 60,
-        'h' => num * 3_600,
-        'd' => num * 86_400,
-        'w' => num * 604_800,
+        's' | 'S' => num,
+        'm' => num * 60,             // minutes (lowercase)
+        'M' => num * 2_592_000,      // months (uppercase) ≈ 30 days
+        'h' | 'H' => num * 3_600,
+        'd' | 'D' => num * 86_400,
+        'w' | 'W' => num * 604_800,
         _ => num * 60,
     }
 }
@@ -1476,18 +1479,11 @@ fn make_series_key(exchange_id: ExchangeId, account_type: AccountType, symbol: &
 
 /// Parse a timeframe name string (e.g. "1m", "4h", "1d") to period in seconds.
 fn tf_period_secs(tf_name: &str) -> i64 {
-    let name = tf_name.trim();
-    if let Some(n) = name.strip_suffix('m') {
-        n.parse::<i64>().unwrap_or(1) * 60
-    } else if let Some(n) = name.strip_suffix('h') {
-        n.parse::<i64>().unwrap_or(1) * 3_600
-    } else if let Some(n) = name.strip_suffix('d') {
-        n.parse::<i64>().unwrap_or(1) * 86_400
-    } else if let Some(n) = name.strip_suffix('w') {
-        n.parse::<i64>().unwrap_or(1) * 604_800
-    } else {
-        60 // default to 1m
-    }
+    // Timeframe names use uppercase suffix ("1D", "1H", "1W") — must be
+    // case-insensitive.  Without this, "1D" falls through to the default
+    // 60-second period, causing trade bars to be created with 1-minute
+    // boundaries inside a daily series (phantom bar bug).
+    interval_to_seconds(tf_name.trim())
 }
 
 /// Get or create a `BarSeries` entry in the shared map, returning a clone of
@@ -1569,13 +1565,6 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     let fresh_first_ts = fresh.first().map(|b| b.timestamp).unwrap_or(0);
     if fresh_first_ts > old_last_ts {
         old.extend(fresh);
-        if old.len() >= 2 {
-            for w in old.windows(2) {
-                if w[0].timestamp >= w[1].timestamp {
-                    eprintln!("[merge_bars] WARNING: non-ascending or duplicate timestamps: ts1={} ts2={}", w[0].timestamp, w[1].timestamp);
-                }
-            }
-        }
         return old;
     }
 
@@ -1590,13 +1579,6 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     }
     let mut merged: Vec<Bar> = map.into_values().collect();
     merged.sort_by_key(|b| b.timestamp);
-    if merged.len() >= 2 {
-        for w in merged.windows(2) {
-            if w[0].timestamp >= w[1].timestamp {
-                eprintln!("[merge_bars] WARNING: non-ascending or duplicate timestamps: ts1={} ts2={}", w[0].timestamp, w[1].timestamp);
-            }
-        }
-    }
     merged
 }
 
