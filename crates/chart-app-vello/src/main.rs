@@ -6622,6 +6622,12 @@ impl ApplicationHandler for App<'_> {
             let frame_time = now_ms();
             let bar_svc = &mut self.bar_service;
             for pw in self.windows.values_mut() {
+                // Skip tick for minimized windows — no point updating viewport
+                // or processing trades for an invisible surface.  On restore,
+                // snap_to_end repositions the viewport to the latest bars.
+                if pw.was_minimized {
+                    continue;
+                }
                 pw.chart.tick(frame_time, bar_svc);
             }
         }
@@ -7211,16 +7217,18 @@ impl ApplicationHandler for App<'_> {
                     pw.toolbar_dirty = true;
                     pw.sidebar_dirty_scene = true;
 
-                    // Snap viewport to end on restore from minimize so the chart
-                    // shows the latest bars rather than the pre-minimized position.
+                    // Restore from minimize: tick was skipped while minimized,
+                    // so viewport stayed at the pre-minimize position.  For
+                    // Follow/Auto modes, snap ALL windows to end so the chart
+                    // shows the latest bars.  Manual mode keeps user's position.
                     if pw.was_minimized {
                         pw.was_minimized = false;
-                        if let Some(window) = pw.chart.panel_app.panel_grid.active_window_mut() {
-                            if window.price_scale.scale_mode.is_follow()
-                                || window.price_scale.scale_mode == zengeld_chart::ScaleMode::Auto
+                        for window in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
+                            if !window.bars.is_empty()
+                                && (window.price_scale.scale_mode.is_follow()
+                                    || window.price_scale.scale_mode == zengeld_chart::ScaleMode::Auto)
                             {
                                 window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
-                                eprintln!("[App] Snapped to end after restore from minimize");
                             }
                         }
                     }
