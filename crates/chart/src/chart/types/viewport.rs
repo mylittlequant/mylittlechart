@@ -38,8 +38,8 @@ impl Default for Viewport {
             view_start: 0.0,
             bar_spacing: 8.0,
             bar_width_ratio: 0.8,
-            chart_width: 800.0,
-            chart_height: 400.0,
+            chart_width: 0.0,
+            chart_height: 0.0,
             bar_count: 0,
         }
     }
