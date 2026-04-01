@@ -1794,6 +1794,8 @@ impl ChartApp {
                 && old_width > 0.0
             {
                 let bar_shift = (old_width - new_width) / window.viewport.bar_spacing;
+                eprintln!("[sync_viewport] bar_shift={:.3} old_width={} new_width={} view_start={:.3}->{:.3}",
+                    bar_shift, old_width, new_width, window.viewport.view_start, window.viewport.view_start + bar_shift);
                 window.viewport.view_start += bar_shift;
             }
             window.viewport.chart_width = new_width;
