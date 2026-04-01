@@ -6502,6 +6502,10 @@ impl ChartApp {
                                 points,
                                 data,
                             });
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                let bars = window.bars.clone();
+                                window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                            }
                             self.autosave_snapshot();
                         }
                     }
@@ -6536,6 +6540,10 @@ impl ChartApp {
                                 points,
                                 data,
                             });
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                let bars = window.bars.clone();
+                                window.drawing_manager.update_all_timestamps_from_bars(&bars);
+                            }
                             self.autosave_snapshot();
                         }
                     }
