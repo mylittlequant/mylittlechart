@@ -208,14 +208,51 @@ impl TimeScale {
         self
     }
 
-    /// Convert bar index to timestamp (handles extrapolation)
-    fn bar_idx_to_timestamp(idx: i64, first_ts: i64, bar_interval: i64) -> i64 {
-        first_ts + idx * bar_interval
+    /// Convert bar index to timestamp using real bar data where available.
+    ///
+    /// For indices within `[0..bars.len())` returns the actual bar timestamp.
+    /// For indices outside that range extrapolates from the nearest edge using `bar_interval`.
+    fn bar_idx_to_timestamp(idx: i64, bars: &[Bar], first_ts: i64, bar_interval: i64) -> i64 {
+        if bars.is_empty() {
+            return first_ts + idx * bar_interval;
+        }
+        if idx >= 0 && (idx as usize) < bars.len() {
+            return bars[idx as usize].timestamp;
+        }
+        if idx < 0 {
+            // Extrapolate backwards from the first bar
+            first_ts + idx * bar_interval
+        } else {
+            // Extrapolate forwards from the last bar
+            let last_ts = bars[bars.len() - 1].timestamp;
+            let beyond = idx - (bars.len() as i64 - 1);
+            last_ts + beyond * bar_interval
+        }
     }
 
-    /// Convert timestamp to bar index (handles extrapolation)
-    fn timestamp_to_bar_idx(ts: i64, first_ts: i64, bar_interval: i64) -> i64 {
-        (ts - first_ts) / bar_interval
+    /// Convert timestamp to bar index using real bar data where available.
+    ///
+    /// For timestamps within the data range performs a binary search.
+    /// For timestamps outside the range extrapolates from the nearest edge.
+    fn timestamp_to_bar_idx(ts: i64, bars: &[Bar], first_ts: i64, bar_interval: i64) -> i64 {
+        if bars.is_empty() || bar_interval <= 0 {
+            return (ts - first_ts) / bar_interval.max(1);
+        }
+        let last_ts = bars[bars.len() - 1].timestamp;
+        if ts < first_ts {
+            // Before data: extrapolate backwards from first bar
+            (ts - first_ts) / bar_interval
+        } else if ts > last_ts {
+            // After data: extrapolate forwards from last bar
+            let beyond_secs = ts - last_ts;
+            (bars.len() as i64 - 1) + beyond_secs / bar_interval
+        } else {
+            // Within data: binary search for closest bar
+            match bars.binary_search_by_key(&ts, |b| b.timestamp) {
+                Ok(idx) => idx as i64,
+                Err(idx) => idx as i64,
+            }
+        }
     }
 
     /// Grid cell constraints (in pixels)
@@ -323,8 +360,8 @@ impl TimeScale {
         let start_bar = viewport.view_start.floor() as i64;
         let end_bar = (viewport.view_start + visible_bars as f64).ceil() as i64;
 
-        let start_ts = Self::bar_idx_to_timestamp(start_bar - 50, first_ts, bar_interval);
-        let end_ts = Self::bar_idx_to_timestamp(end_bar + 50, first_ts, bar_interval);
+        let start_ts = Self::bar_idx_to_timestamp(start_bar - 50, bars, first_ts, bar_interval);
+        let end_ts = Self::bar_idx_to_timestamp(end_bar + 50, bars, first_ts, bar_interval);
 
         // How many pixels is one day?
         let bars_per_day = DAY / bar_interval;
@@ -337,7 +374,7 @@ impl TimeScale {
             self.generate_intraday_ticks(
                 &mut ticks,
                 start_ts, end_ts,
-                first_ts, bar_interval,
+                bars, first_ts, bar_interval,
                 viewport,
                 day_width_px,
                 &measure_text,
@@ -348,7 +385,7 @@ impl TimeScale {
             self.generate_daily_ticks(
                 &mut ticks,
                 start_ts, end_ts,
-                first_ts, bar_interval,
+                bars, first_ts, bar_interval,
                 viewport,
                 day_width_px,
                 &measure_text,
@@ -367,6 +404,7 @@ impl TimeScale {
         ticks: &mut Vec<TimeTick>,
         start_ts: i64,
         end_ts: i64,
+        bars: &[Bar],
         first_ts: i64,
         bar_interval: i64,
         viewport: &Viewport,
@@ -393,13 +431,13 @@ impl TimeScale {
         let mut candidates: Vec<(i64, f64, TickMarkWeight, i64)> = Vec::new();
 
         // Also add day boundaries for context
-        self.add_day_boundaries(&mut candidates, start_ts, end_ts, first_ts, bar_interval, viewport);
+        self.add_day_boundaries(&mut candidates, start_ts, end_ts, bars, first_ts, bar_interval, viewport);
 
         // Add intraday boundaries
         let first_boundary = (start_ts / time_interval) * time_interval;
         let mut boundary_ts = first_boundary;
         while boundary_ts <= end_ts {
-            let bar_idx = Self::timestamp_to_bar_idx(boundary_ts, first_ts, bar_interval);
+            let bar_idx = Self::timestamp_to_bar_idx(boundary_ts, bars, first_ts, bar_interval);
             let x = viewport.bar_to_x_f64(bar_idx as f64);
 
             if x >= -100.0 && x <= viewport.chart_width + 100.0 {
@@ -428,6 +466,7 @@ impl TimeScale {
         ticks: &mut Vec<TimeTick>,
         start_ts: i64,
         end_ts: i64,
+        bars: &[Bar],
         first_ts: i64,
         bar_interval: i64,
         viewport: &Viewport,
@@ -458,7 +497,7 @@ impl TimeScale {
         // Count visible 1st-of-months (only within actual data range)
         let visible_month_count = months_in_range.iter().filter(|&&(y, m)| {
             let ts = date_to_timestamp(y, m, 1, 0, 0, 0);
-            let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
+            let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
             // Skip months before data starts
             if bar_idx < 0 { return false; }
             let x = viewport.bar_to_x_f64(bar_idx as f64);
@@ -469,7 +508,7 @@ impl TimeScale {
         if visible_month_count >= 3 {
             for &(y, m) in &months_in_range {
                 let ts = date_to_timestamp(y, m, 1, 0, 0, 0);
-                let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
+                let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
                 let x = viewport.bar_to_x_f64(bar_idx as f64);
                 if x >= -50.0 && x <= viewport.chart_width + 50.0 {
                     candidates.push((bar_idx, x, TickMarkWeight::Month, ts));
@@ -496,7 +535,7 @@ impl TimeScale {
             if max_step_width < Self::MIN_CELL_WIDTH {
                 for &(y, m) in &months_in_range {
                     let ts = date_to_timestamp(y, m, 1, 0, 0, 0);
-                    let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
+                    let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
                     let x = viewport.bar_to_x_f64(bar_idx as f64);
                     if x >= -50.0 && x <= viewport.chart_width + 50.0 {
                         candidates.push((bar_idx, x, TickMarkWeight::Month, ts));
@@ -517,7 +556,7 @@ impl TimeScale {
 
             for &day in tick_days {
                 let ts = date_to_timestamp(y, m, day, 0, 0, 0);
-                let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
+                let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
                 let x = viewport.bar_to_x_f64(bar_idx as f64);
 
                 // Skip if far outside visible area
@@ -551,6 +590,7 @@ impl TimeScale {
         candidates: &mut Vec<(i64, f64, TickMarkWeight, i64)>,
         start_ts: i64,
         end_ts: i64,
+        bars: &[Bar],
         first_ts: i64,
         bar_interval: i64,
         viewport: &Viewport,
@@ -569,7 +609,7 @@ impl TimeScale {
         }
 
         while ts <= end_ts {
-            let bar_idx = Self::timestamp_to_bar_idx(ts, first_ts, bar_interval);
+            let bar_idx = Self::timestamp_to_bar_idx(ts, bars, first_ts, bar_interval);
             let x = viewport.bar_to_x_f64(bar_idx as f64);
 
             if x >= -100.0 && x <= viewport.chart_width + 100.0 {
