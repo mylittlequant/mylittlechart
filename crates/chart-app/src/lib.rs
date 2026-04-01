@@ -1795,8 +1795,6 @@ impl ChartApp {
                 && new_width > 0.0
             {
                 let bar_shift = (old_width - new_width) / window.viewport.bar_spacing;
-                eprintln!("[sync_viewport] bar_shift={:.3} old_width={} new_width={} view_start={:.3}->{:.3}",
-                    bar_shift, old_width, new_width, window.viewport.view_start, window.viewport.view_start + bar_shift);
                 window.viewport.view_start += bar_shift;
             }
             // Don't store negative/zero widths — they'd poison the next bar_shift calc.
@@ -2232,6 +2230,8 @@ impl ChartApp {
                                     }
                                     // Trade belongs to a new candle — push a fresh bar.
                                     let new_candle_start = (trade_ts_secs / period_secs) * period_secs;
+                                    eprintln!("[tick] NEW BAR: last_ts={} candle_end={} trade_ts={} new_start={} period={} tf={} bars={}",
+                                        last_ts, candle_end, trade_ts_secs, new_candle_start, period_secs, window.timeframe.name, window.bars.len());
                                     window.bars.push(zengeld_chart::Bar {
                                         timestamp: new_candle_start,
                                         open: price,

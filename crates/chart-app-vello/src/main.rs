@@ -7222,38 +7222,19 @@ impl ApplicationHandler for App<'_> {
                     // Follow/Auto modes, snap ALL windows to end so the chart
                     // shows the latest bars.  Manual mode keeps user's position.
                     if pw.was_minimized {
-                        if let Some(w) = pw.chart.panel_app.panel_grid.active_window() {
-                            eprintln!("[Restore] BEFORE resize: size={}x{} view_start={:.3} chart_width={} bar_spacing={} bars={} scale_mode={:?}",
-                                size.width, size.height,
-                                w.viewport.view_start, w.viewport.chart_width, w.viewport.bar_spacing, w.bars.len(),
-                                w.price_scale.scale_mode);
-                        }
-                        // resize() already ran above (line ~7205) and called sync_viewport_from_layout.
-                        // Log the post-resize state before snap.
-                        if let Some(w) = pw.chart.panel_app.panel_grid.active_window() {
-                            eprintln!("[Restore] AFTER resize: view_start={:.3} chart_width={}",
-                                w.viewport.view_start, w.viewport.chart_width);
-                        }
                         pw.was_minimized = false;
                         for window in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
                             if !window.bars.is_empty()
                                 && (window.price_scale.scale_mode.is_follow()
                                     || window.price_scale.scale_mode == zengeld_chart::ScaleMode::Auto)
                             {
-                                let old_vs = window.viewport.view_start;
                                 window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
-                                eprintln!("[Restore] snap_to_end: view_start {:.3} -> {:.3} (bars={})",
-                                    old_vs, window.viewport.view_start, window.bars.len());
                             }
                         }
                     }
                 } else {
                     // Window minimized — size collapses to 0x0 on Windows.
                     pw.was_minimized = true;
-                    if let Some(w) = pw.chart.panel_app.panel_grid.active_window() {
-                        eprintln!("[Minimize] view_start={:.3} chart_width={} bar_spacing={} bars={}",
-                            w.viewport.view_start, w.viewport.chart_width, w.viewport.bar_spacing, w.bars.len());
-                    }
                 }
             }
 
