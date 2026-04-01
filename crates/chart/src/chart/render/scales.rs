@@ -109,8 +109,11 @@ pub fn draw_price_scale(
     // Generate price ticks
     let ticks = price_scale.generate_ticks_for_mode(viewport.chart_height);
 
+    // Dynamic font size: shrinks for long labels so they fit in 70px scale
+    let dynamic_font_size = price_scale.calc_font_size(viewport.chart_height);
+
     // Set text styles before save so they persist after restore for boxes
-    ctx.set_font(&format!("{}px sans-serif", config.font_size));
+    ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
 
@@ -166,7 +169,7 @@ pub fn draw_price_scale(
             ctx.fill_rect(label_x, label_y, width, height);
 
             // Draw label text (white for better contrast)
-            ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
+            ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
             ctx.set_fill_color("#ffffff");
             ctx.fill_text(&label, text_x, origin_y + display_y);
 
@@ -199,7 +202,7 @@ pub fn draw_price_scale(
             ctx.fill_rect(label_x, label_y, width, height);
 
             // Draw label text
-            ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
+            ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
             ctx.set_fill_color(&scale_theme.crosshair_label_text);
             ctx.fill_text(&label, text_x, origin_y + display_y);
 

@@ -384,10 +384,8 @@ where
         config.radius,
     );
 
-    // Blur background (FrostedGlass/LiquidGlass)
-    ctx.draw_blur_background(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height);
-
-    // Draw background
+    // Draw fully opaque background (no blur — dropdowns must be solid
+    // so content underneath doesn't bleed through)
     ctx.set_fill_color(&theme.background);
     ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
@@ -457,12 +455,18 @@ where
                     text_x += config.icon_size + 8.0;
                 }
 
-                // Draw label
+                // Draw label (clipped to avoid overflow into toggle/shortcut zone)
                 ctx.set_font(&format!("{}px sans-serif", config.font_size));
                 ctx.set_fill_color(text_color);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.save();
+                ctx.begin_path();
+                let label_max_w = (item_rect.right() - text_x - config.item_padding_x - 40.0).max(20.0);
+                ctx.rect(text_x, item_rect.y, label_max_w, item_rect.height);
+                ctx.clip();
                 ctx.fill_text(label, text_x, item_rect.center_y());
+                ctx.restore();
 
                 // Draw toggle switch OR shortcut/subtitle on the right
                 if let Some(is_on) = toggle {
@@ -592,12 +596,18 @@ where
                     text_x += config.icon_size + 8.0;
                 }
 
-                // Draw label
+                // Draw label (clipped for submenu items)
                 ctx.set_font(&format!("{}px sans-serif", config.font_size));
                 ctx.set_fill_color(text_color);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.save();
+                ctx.begin_path();
+                let label_max_w = (item_rect.right() - text_x - config.item_padding_x - 20.0).max(20.0);
+                ctx.rect(text_x, item_rect.y, label_max_w, item_rect.height);
+                ctx.clip();
                 ctx.fill_text(label, text_x, item_rect.center_y());
+                ctx.restore();
 
                 // Draw submenu arrow
                 let arrow_x = item_rect.right() - config.item_padding_x;
@@ -741,10 +751,8 @@ where
         config.radius,
     );
 
-    // Blur background (FrostedGlass/LiquidGlass)
-    ctx.draw_blur_background(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height);
-
-    // Draw background
+    // Draw fully opaque background (no blur — dropdowns must be solid
+    // so content underneath doesn't bleed through)
     ctx.set_fill_color(&theme.background);
     ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
@@ -968,10 +976,8 @@ where
         config.radius,
     );
 
-    // Blur background (FrostedGlass/LiquidGlass)
-    ctx.draw_blur_background(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height);
-
-    // Draw background
+    // Draw fully opaque background (no blur — dropdowns must be solid
+    // so content underneath doesn't bleed through)
     ctx.set_fill_color(&theme.background);
     ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 

@@ -1370,8 +1370,10 @@ impl ChartApp {
                     }
                 }
             }
-            // Indicator settings scrollbar / slider drag start
-            if self.panel_app.indicator_settings_state.is_open() {
+            // Indicator settings scrollbar / slider drag start (skip when color picker is open above)
+            if self.panel_app.indicator_settings_state.is_open()
+                && !self.panel_app.indicator_settings_state.is_color_picker_open()
+            {
                 if let Some(ref is) = result.indicator_settings {
                     if let Some(ref handle_rect) = is.scrollbar_handle_rect {
                         // Inflate scrollbar handle ±5px horizontally for easier grab.
@@ -1471,8 +1473,10 @@ impl ChartApp {
                     }
                 }
             }
-            // Primitive settings slider drag start
-            if self.panel_app.primitive_settings_state.is_open() {
+            // Primitive settings slider drag start (skip when color picker is open above)
+            if self.panel_app.primitive_settings_state.is_open()
+                && !self.panel_app.primitive_settings_state.is_color_picker_open()
+            {
                 if let Some(ref ps) = result.primitive_settings {
                     for track in &ps.slider_tracks {
                         if let Some((_, item_rect)) = ps.content_items.iter().find(|(id, _)| id == &track.field_id) {
@@ -11431,6 +11435,8 @@ impl ChartApp {
                         if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                             w.drawing_manager.apply_style_property(idx, prop_id, new_val);
                         }
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
                         eprintln!("[ChartApp] prim_settings style_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     PropertyType::Select { ref options } => {
@@ -11443,6 +11449,8 @@ impl ChartApp {
                             if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                                 w.drawing_manager.apply_style_property(idx, prop_id, new_val);
                             }
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
                             eprintln!("[ChartApp] prim_settings style_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
                     }

@@ -751,7 +751,13 @@ pub fn render_primitive_settings_modal(
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         ctx.set_text_align(TextAlign::Left);
                         ctx.set_text_baseline(TextBaseline::Middle);
+                        // Clip text so it doesn't overflow into arrow zone
+                        ctx.save();
+                        ctx.begin_path();
+                        ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                        ctx.clip();
                         ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
+                        ctx.restore();
 
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         let arrow_x = dropdown_rect.right() - 16.0;
@@ -991,7 +997,13 @@ pub fn render_primitive_settings_modal(
                             ctx.set_fill_color(&toolbar_theme.item_text);
                             ctx.set_text_align(TextAlign::Left);
                             ctx.set_text_baseline(TextBaseline::Middle);
+                            // Clip text so it doesn't overflow into arrow zone
+                            ctx.save();
+                            ctx.begin_path();
+                            ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                            ctx.clip();
                             ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
+                            ctx.restore();
 
                             ctx.set_fill_color(&toolbar_theme.item_text);
                             let arrow_x = dropdown_rect.right() - 16.0;
@@ -1474,7 +1486,13 @@ pub fn render_primitive_settings_modal(
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         ctx.set_text_align(TextAlign::Left);
                         ctx.set_text_baseline(TextBaseline::Middle);
+                        // Clip text so it doesn't overflow into arrow zone
+                        ctx.save();
+                        ctx.begin_path();
+                        ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                        ctx.clip();
                         ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
+                        ctx.restore();
 
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         let arrow_x = dropdown_rect.right() - 16.0;
