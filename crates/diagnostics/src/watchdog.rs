@@ -1,5 +1,7 @@
 use sysinfo::System;
-use tokio::sync::mpsc;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 /// Memory warning levels.
 #[derive(Debug, Clone)]
@@ -23,31 +25,32 @@ const POLL_INTERVAL_SECS: u64 = 30;
 /// Cooldown: don't repeat same warning level for N polls (10 * 30s = 5 minutes).
 const WARNING_COOLDOWN_POLLS: u32 = 10;
 
-/// Start the memory watchdog as a tokio task.
+/// Start the memory watchdog on a background OS thread (no tokio required).
 ///
 /// Returns a receiver for memory warnings. The caller should consume this and
 /// react to warnings (show toast, graceful shutdown, etc.). The watchdog logs
 /// warnings via tracing regardless of whether the receiver is consumed.
 pub fn start() -> mpsc::Receiver<MemoryWarning> {
-    let (tx, rx) = mpsc::channel(16);
+    let (tx, rx) = mpsc::channel();
 
-    tokio::spawn(async move {
-        watchdog_loop(tx).await;
-    });
+    thread::Builder::new()
+        .name("mem-watchdog".into())
+        .spawn(move || {
+            watchdog_loop(tx);
+        })
+        .expect("failed to spawn memory watchdog thread");
 
     rx
 }
 
-async fn watchdog_loop(tx: mpsc::Sender<MemoryWarning>) {
+fn watchdog_loop(tx: mpsc::Sender<MemoryWarning>) {
     let mut sys = System::new();
     let mut low_cooldown: u32 = 0;
     let mut critical_cooldown: u32 = 0;
     let mut emergency_cooldown: u32 = 0;
 
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(POLL_INTERVAL_SECS));
-
     loop {
-        interval.tick().await;
+        thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
         sys.refresh_memory();
         let total_mb = sys.total_memory() / 1024 / 1024;
@@ -60,15 +63,15 @@ async fn watchdog_loop(tx: mpsc::Sender<MemoryWarning>) {
 
         if available_mb < THRESHOLD_EMERGENCY_MB && emergency_cooldown == 0 {
             tracing::error!(available_mb, total_mb, "EMERGENCY: system memory critically low");
-            let _ = tx.send(MemoryWarning::Emergency { available_mb, total_mb }).await;
+            let _ = tx.send(MemoryWarning::Emergency { available_mb, total_mb });
             emergency_cooldown = WARNING_COOLDOWN_POLLS;
         } else if available_mb < THRESHOLD_CRITICAL_MB && critical_cooldown == 0 {
             tracing::warn!(available_mb, total_mb, "system memory critical");
-            let _ = tx.send(MemoryWarning::Critical { available_mb, total_mb }).await;
+            let _ = tx.send(MemoryWarning::Critical { available_mb, total_mb });
             critical_cooldown = WARNING_COOLDOWN_POLLS;
         } else if available_mb < THRESHOLD_LOW_MB && low_cooldown == 0 {
             tracing::warn!(available_mb, total_mb, "system memory low");
-            let _ = tx.send(MemoryWarning::Low { available_mb, total_mb }).await;
+            let _ = tx.send(MemoryWarning::Low { available_mb, total_mb });
             low_cooldown = WARNING_COOLDOWN_POLLS;
         }
     }

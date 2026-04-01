@@ -32,7 +32,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.280"
+version = "0.5.281"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -40,7 +40,7 @@ license = "MIT OR Apache-2.0"
 opt-level = "s"
 lto = true
 debug = "line-tables-only"
-split-debuginfo = "packed"
+strip = "none"
 
 # Optimize indicators in dev mode to prevent stack overflow
 # (large enum with 480 variants needs optimization)
