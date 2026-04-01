@@ -151,6 +151,34 @@ impl Primitive for CypherPattern {
             }
         }
 
+        if self.show_ratios {
+            let ratio_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
+            let ratio_font_size = (self.label_style.font_size - 1.0).max(9.0);
+            ctx.set_font(&format!("{}px sans-serif", ratio_font_size as i32));
+            ctx.set_fill_color(ratio_color);
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+
+            // Points: X=0, A=1, B=2, C=3, D=4
+            let xa = (self.points[1].1 - self.points[0].1).abs();
+            let ab = (self.points[2].1 - self.points[1].1).abs();
+            let xc = (self.points[3].1 - self.points[0].1).abs();
+            let cd = (self.points[4].1 - self.points[3].1).abs();
+
+            // AB/XA on AB leg midpoint
+            if xa > 0.0 {
+                draw_ratio_label(ctx, screen[1], screen[2], ab / xa);
+            }
+            // XC/XA on BC leg midpoint (key Cypher ratio)
+            if xa > 0.0 {
+                draw_ratio_label(ctx, screen[2], screen[3], xc / xa);
+            }
+            // CD/XC on CD leg midpoint
+            if xc > 0.0 {
+                draw_ratio_label(ctx, screen[3], screen[4], cd / xc);
+            }
+        }
+
         if is_selected {
             ctx.set_stroke_color(CONTROL_POINT_STROKE);
             ctx.set_fill_color(CONTROL_POINT_FILL);
@@ -230,6 +258,17 @@ impl Primitive for CypherPattern {
         }
         false
     }
+}
+
+fn draw_ratio_label(ctx: &mut dyn RenderContext, p1: (f64, f64), p2: (f64, f64), ratio: f64) {
+    let mid_x = (p1.0 + p2.0) / 2.0;
+    let mid_y = (p1.1 + p2.1) / 2.0;
+    let dx = p2.0 - p1.0;
+    let dy = p2.1 - p1.1;
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let ox = -dy / len * 10.0;
+    let oy = dx / len * 10.0;
+    ctx.fill_text(&format!("{:.3}", ratio), mid_x + ox, mid_y + oy);
 }
 
 fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {

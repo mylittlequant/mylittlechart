@@ -180,6 +180,9 @@ pub fn render_primitive_settings_modal(
     let mut result = PrimitiveSettingsResult::default();
     // Deferred line style dropdown — rendered after footer to avoid z-overlap
     let mut deferred_line_style_dropdown: Option<(f64, f64, f64, String)> = None;
+    // Deferred Select property dropdown — rendered after footer to avoid z-overlap
+    // Fields: (x, y, width, id_prefix, options: Vec<(value, label)>)
+    let mut deferred_select_dropdown: Option<(f64, f64, f64, String, Vec<(String, String)>)> = None;
 
     // Get primitive info
     let Some(idx) = state.primitive_idx else {
@@ -702,25 +705,58 @@ pub fn render_primitive_settings_modal(
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         ctx.set_text_align(TextAlign::Left);
                         ctx.set_text_baseline(TextBaseline::Middle);
+                        let chevron_part = 22.0;
+                        let text_part = dropdown_rect.width - chevron_part;
                         // Clip text so it doesn't overflow into arrow zone
                         ctx.save();
                         ctx.begin_path();
-                        ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                        ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
                         ctx.clip();
                         ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
                         ctx.restore();
 
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        let arrow_x = dropdown_rect.right() - 16.0;
-                        let arrow_y = dropdown_rect.center_y();
+                        // Vertical separator between text part and chevron part
+                        let sep_x = dropdown_rect.x + text_part;
+                        ctx.set_stroke_color(&toolbar_theme.separator);
+                        ctx.set_stroke_width(1.0);
                         ctx.begin_path();
-                        ctx.move_to(arrow_x - 4.0, arrow_y - 2.0);
-                        ctx.line_to(arrow_x + 4.0, arrow_y - 2.0);
-                        ctx.line_to(arrow_x, arrow_y + 3.0);
+                        ctx.move_to(sep_x, dropdown_rect.y);
+                        ctx.line_to(sep_x, dropdown_rect.bottom());
+                        ctx.stroke();
+
+                        ctx.set_fill_color(&toolbar_theme.item_text);
+                        let arrow_cx = sep_x + chevron_part / 2.0;
+                        let arrow_cy = dropdown_rect.center_y();
+                        ctx.begin_path();
+                        ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
+                        ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
+                        ctx.line_to(arrow_cx, arrow_cy + 3.0);
                         ctx.close_path();
                         ctx.fill();
 
-                        result.content_items.push((format!("style_prop:{}", prop.id), dropdown_rect));
+                        // Two hit zones: left = cycle, right = open dropdown
+                        let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
+                        let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
+                        result.content_items.push((format!("style_prop:{}", prop.id), cycle_zone));
+                        result.content_items.push((format!("style_prop_menu:{}", prop.id), menu_zone));
+
+                        // Deferred: record geometry if this prop's dropdown is open
+                        if state.open_select_dropdown.as_ref()
+                            .map(|(k, id)| k == "style" && id == prop.id.as_str())
+                            .unwrap_or(false)
+                        {
+                            let opts: Vec<(String, String)> = options.iter()
+                                .map(|o| (o.value.clone(), o.label.clone()))
+                                .collect();
+                            deferred_select_dropdown = Some((
+                                dropdown_rect.x,
+                                dropdown_rect.bottom() + 2.0,
+                                dropdown_rect.width,
+                                format!("style_prop_option:{}:", prop.id),
+                                opts,
+                            ));
+                        }
+
                         row_y += row_height + row_gap;
                     }
                     PropertyType::Number { min, max, .. } => {
@@ -948,25 +984,58 @@ pub fn render_primitive_settings_modal(
                             ctx.set_fill_color(&toolbar_theme.item_text);
                             ctx.set_text_align(TextAlign::Left);
                             ctx.set_text_baseline(TextBaseline::Middle);
+                            let chevron_part = 22.0;
+                            let text_part = dropdown_rect.width - chevron_part;
                             // Clip text so it doesn't overflow into arrow zone
                             ctx.save();
                             ctx.begin_path();
-                            ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                            ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
                             ctx.clip();
                             ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
                             ctx.restore();
 
-                            ctx.set_fill_color(&toolbar_theme.item_text);
-                            let arrow_x = dropdown_rect.right() - 16.0;
-                            let arrow_y = dropdown_rect.center_y();
+                            // Vertical separator between text part and chevron part
+                            let sep_x = dropdown_rect.x + text_part;
+                            ctx.set_stroke_color(&toolbar_theme.separator);
+                            ctx.set_stroke_width(1.0);
                             ctx.begin_path();
-                            ctx.move_to(arrow_x - 4.0, arrow_y - 2.0);
-                            ctx.line_to(arrow_x + 4.0, arrow_y - 2.0);
-                            ctx.line_to(arrow_x, arrow_y + 3.0);
+                            ctx.move_to(sep_x, dropdown_rect.y);
+                            ctx.line_to(sep_x, dropdown_rect.bottom());
+                            ctx.stroke();
+
+                            ctx.set_fill_color(&toolbar_theme.item_text);
+                            let arrow_cx = sep_x + chevron_part / 2.0;
+                            let arrow_cy = dropdown_rect.center_y();
+                            ctx.begin_path();
+                            ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
+                            ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
+                            ctx.line_to(arrow_cx, arrow_cy + 3.0);
                             ctx.close_path();
                             ctx.fill();
 
-                            result.content_items.push((format!("text_prop:{}", prop.id), dropdown_rect));
+                            // Two hit zones: left = cycle, right = open dropdown
+                            let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
+                            let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
+                            result.content_items.push((format!("text_prop:{}", prop.id), cycle_zone));
+                            result.content_items.push((format!("text_prop_menu:{}", prop.id), menu_zone));
+
+                            // Deferred: record geometry if this prop's dropdown is open
+                            if state.open_select_dropdown.as_ref()
+                                .map(|(k, id)| k == "text" && id == prop.id.as_str())
+                                .unwrap_or(false)
+                            {
+                                let opts: Vec<(String, String)> = options.iter()
+                                    .map(|o| (o.value.clone(), o.label.clone()))
+                                    .collect();
+                                deferred_select_dropdown = Some((
+                                    dropdown_rect.x,
+                                    dropdown_rect.bottom() + 2.0,
+                                    dropdown_rect.width,
+                                    format!("text_prop_option:{}:", prop.id),
+                                    opts,
+                                ));
+                            }
+
                             row_y += row_height + row_gap;
                         }
                         _ => {}
@@ -1437,25 +1506,58 @@ pub fn render_primitive_settings_modal(
                         ctx.set_fill_color(&toolbar_theme.item_text);
                         ctx.set_text_align(TextAlign::Left);
                         ctx.set_text_baseline(TextBaseline::Middle);
+                        let chevron_part = 22.0;
+                        let text_part = dropdown_rect.width - chevron_part;
                         // Clip text so it doesn't overflow into arrow zone
                         ctx.save();
                         ctx.begin_path();
-                        ctx.rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width - 22.0, dropdown_rect.height);
+                        ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
                         ctx.clip();
                         ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
                         ctx.restore();
 
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        let arrow_x = dropdown_rect.right() - 16.0;
-                        let arrow_y = dropdown_rect.center_y();
+                        // Vertical separator between text part and chevron part
+                        let sep_x = dropdown_rect.x + text_part;
+                        ctx.set_stroke_color(&toolbar_theme.separator);
+                        ctx.set_stroke_width(1.0);
                         ctx.begin_path();
-                        ctx.move_to(arrow_x - 4.0, arrow_y - 2.0);
-                        ctx.line_to(arrow_x + 4.0, arrow_y - 2.0);
-                        ctx.line_to(arrow_x, arrow_y + 3.0);
+                        ctx.move_to(sep_x, dropdown_rect.y);
+                        ctx.line_to(sep_x, dropdown_rect.bottom());
+                        ctx.stroke();
+
+                        ctx.set_fill_color(&toolbar_theme.item_text);
+                        let arrow_cx = sep_x + chevron_part / 2.0;
+                        let arrow_cy = dropdown_rect.center_y();
+                        ctx.begin_path();
+                        ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
+                        ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
+                        ctx.line_to(arrow_cx, arrow_cy + 3.0);
                         ctx.close_path();
                         ctx.fill();
 
-                        result.content_items.push((format!("level_prop:{}", prop.id), dropdown_rect));
+                        // Two hit zones: left = cycle, right = open dropdown
+                        let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
+                        let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
+                        result.content_items.push((format!("level_prop:{}", prop.id), cycle_zone));
+                        result.content_items.push((format!("level_prop_menu:{}", prop.id), menu_zone));
+
+                        // Deferred: record geometry if this prop's dropdown is open
+                        if state.open_select_dropdown.as_ref()
+                            .map(|(k, id)| k == "level" && id == prop.id.as_str())
+                            .unwrap_or(false)
+                        {
+                            let opts: Vec<(String, String)> = options.iter()
+                                .map(|o| (o.value.clone(), o.label.clone()))
+                                .collect();
+                            deferred_select_dropdown = Some((
+                                dropdown_rect.x,
+                                dropdown_rect.bottom() + 2.0,
+                                dropdown_rect.width,
+                                format!("level_prop_option:{}:", prop.id),
+                                opts,
+                            ));
+                        }
+
                         row_y += row_height + row_gap;
                     }
                     _ => {}
@@ -1900,6 +2002,58 @@ pub fn render_primitive_settings_modal(
         for (item_id, item_rect) in &dropdown_result.item_rects {
             result.content_items.push((
                 format!("line_style_option:{}", item_id),
+                WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
+            ));
+        }
+    }
+
+    // Deferred Select property dropdown — draw AFTER footer so it appears on top
+    if let Some((drop_x, drop_y, btn_w, id_prefix, options)) = deferred_select_dropdown {
+        let dropdown_items: Vec<DropdownItem> = options.iter()
+            .map(|(val, label)| DropdownItem::item(&format!("{}{}", id_prefix, val), label))
+            .collect();
+        let dropdown_cfg = DropdownConfig {
+            items: dropdown_items,
+            min_width: btn_w,
+            max_width: btn_w + 40.0,
+            item_height: 28.0,
+            separator_height: 9.0,
+            header_height: 28.0,
+            padding: 4.0,
+            item_padding_x: 12.0,
+            radius: 4.0,
+            icon_size: 16.0,
+            font_size: 13.0,
+            shadow_blur: 24.0,
+            grid_columns: None,
+        };
+        let dropdown_theme = DropdownTheme {
+            background: toolbar_theme.dropdown_bg.clone(),
+            border: toolbar_theme.separator.clone(),
+            shadow: "rgba(0,0,0,0.5)".to_string(),
+            item_text: toolbar_theme.item_text.clone(),
+            item_text_hover: toolbar_theme.item_text_hover.clone(),
+            item_text_disabled: toolbar_theme.item_text_muted.clone(),
+            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
+            item_danger: "#f23645".to_string(),
+            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
+            header_text: toolbar_theme.item_text.clone(),
+            header_border: toolbar_theme.separator.clone(),
+            separator: toolbar_theme.separator.clone(),
+            shortcut_text: toolbar_theme.item_text_muted.clone(),
+        };
+        let hovered = state.hovered_item_id.as_deref();
+        let dropdown_result = render_dropdown(
+            ctx,
+            &dropdown_cfg,
+            (drop_x, drop_y),
+            &dropdown_theme,
+            hovered,
+            |_ctx, _icon, _rect, _color| {},
+        );
+        for (item_id, item_rect) in &dropdown_result.item_rects {
+            result.content_items.push((
+                item_id.clone(),
                 WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
             ));
         }

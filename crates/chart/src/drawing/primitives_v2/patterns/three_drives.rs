@@ -78,7 +78,7 @@ impl Primitive for ThreeDrives {
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
         let screen: Vec<_> = self.points.iter().map(|(b, p)| (ctx.bar_to_x(*b), ctx.price_to_y(*p))).collect();
-        let labels = ["1", "2", "3", "4", "5", "6", "7"];
+        let labels = ["", "D1", "R1", "D2", "R2", "D3", ""];
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -148,6 +148,39 @@ impl Primitive for ThreeDrives {
                 }
 
                 ctx.fill_text(label, *x, *y + offset);
+            }
+        }
+
+        if self.show_ratios {
+            let ratio_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
+            let ratio_font_size = (self.label_style.font_size - 1.0).max(9.0);
+            ctx.set_font(&format!("{}px sans-serif", ratio_font_size as i32));
+            ctx.set_fill_color(ratio_color);
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+
+            // Points: start=0, drive1=1, retrace1=2, drive2=3, retrace2=4, drive3=5, end=6
+            let d1 = (self.points[1].1 - self.points[0].1).abs(); // start to drive1
+            let r1 = (self.points[2].1 - self.points[1].1).abs(); // drive1 to retrace1
+            let d2 = (self.points[3].1 - self.points[2].1).abs(); // retrace1 to drive2
+            let r2 = (self.points[4].1 - self.points[3].1).abs(); // drive2 to retrace2
+            let d3 = (self.points[5].1 - self.points[4].1).abs(); // retrace2 to drive3
+
+            // R1/D1 on retrace1 leg (≈0.618)
+            if d1 > 0.0 {
+                draw_ratio_label(ctx, screen[1], screen[2], r1 / d1);
+            }
+            // D2/R1 on drive2 leg (≈1.272)
+            if r1 > 0.0 {
+                draw_ratio_label(ctx, screen[2], screen[3], d2 / r1);
+            }
+            // R2/D2 on retrace2 leg (≈0.618)
+            if d2 > 0.0 {
+                draw_ratio_label(ctx, screen[3], screen[4], r2 / d2);
+            }
+            // D3/R2 on drive3 leg (≈1.272)
+            if r2 > 0.0 {
+                draw_ratio_label(ctx, screen[4], screen[5], d3 / r2);
             }
         }
 
@@ -230,6 +263,17 @@ impl Primitive for ThreeDrives {
         }
         false
     }
+}
+
+fn draw_ratio_label(ctx: &mut dyn RenderContext, p1: (f64, f64), p2: (f64, f64), ratio: f64) {
+    let mid_x = (p1.0 + p2.0) / 2.0;
+    let mid_y = (p1.1 + p2.1) / 2.0;
+    let dx = p2.0 - p1.0;
+    let dy = p2.1 - p1.1;
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let ox = -dy / len * 10.0;
+    let oy = dx / len * 10.0;
+    ctx.fill_text(&format!("{:.3}", ratio), mid_x + ox, mid_y + oy);
 }
 
 fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {

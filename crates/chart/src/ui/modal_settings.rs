@@ -372,6 +372,9 @@ pub struct PrimitiveSettingsState {
     pub text_select_dragging: bool,
     /// Whether the line-style dropdown is open.
     pub open_line_style_dropdown: bool,
+    /// Currently open Select-property dropdown: (prop_kind, prop_id).
+    /// prop_kind is "style", "text", or "level".
+    pub open_select_dropdown: Option<(String, String)>,
     // ---- Template UI state ----
     /// Whether the template dropdown is open.
     pub template_dropdown_open: bool,
@@ -410,6 +413,7 @@ impl PrimitiveSettingsState {
         self.slider_drag = None;
         self.text_select_dragging = false;
         self.open_line_style_dropdown = false;
+        self.open_select_dropdown = None;
         self.template_dropdown_open = false;
         self.save_template_mode = false;
         self.template_name_editing = None;

@@ -6060,6 +6060,8 @@ impl ChartApp {
                                 }
                             }
                         }
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
                         eprintln!("[ChartApp] prim_settings style_prop '{}' committed: {}", prop_id, text);
                     } else {
                         // For all other unrecognized fields, just close editing.
@@ -10899,6 +10901,17 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
         }
 
+        // Close select-property dropdown when clicking anything unrelated to it
+        if !item_id.starts_with("style_prop_menu:")
+            && !item_id.starts_with("style_prop_option:")
+            && !item_id.starts_with("text_prop_menu:")
+            && !item_id.starts_with("text_prop_option:")
+            && !item_id.starts_with("level_prop_menu:")
+            && !item_id.starts_with("level_prop_option:")
+        {
+            self.panel_app.primitive_settings_state.open_select_dropdown = None;
+        }
+
         // ── Footer: OK / Cancel ───────────────────────────────────────────────
         if item_id == "ok" || item_id == "cancel" {
             self.panel_app.primitive_settings_state.close();
@@ -11002,6 +11015,49 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
             self.snapshot_primitive_settings_to_user_manager(idx);
             return;
+        }
+
+        // ── Select property menu (chevron) — toggle dropdown ─────────────────
+        for prefix in &["style_prop_menu:", "text_prop_menu:", "level_prop_menu:"] {
+            if let Some(prop_id) = item_id.strip_prefix(prefix) {
+                let kind = if prefix.starts_with("style") { "style" }
+                           else if prefix.starts_with("text") { "text" }
+                           else { "level" };
+                let key = (kind.to_string(), prop_id.to_string());
+                if self.panel_app.primitive_settings_state.open_select_dropdown.as_ref() == Some(&key) {
+                    self.panel_app.primitive_settings_state.open_select_dropdown = None;
+                } else {
+                    self.panel_app.primitive_settings_state.open_select_dropdown = Some(key);
+                }
+                eprintln!("[ChartApp] prim_settings {}{} toggled select dropdown", prefix, prop_id);
+                return;
+            }
+        }
+
+        // ── Select property option — apply value and close dropdown ───────────
+        for prefix in &["style_prop_option:", "text_prop_option:", "level_prop_option:"] {
+            if let Some(rest) = item_id.strip_prefix(prefix) {
+                // rest = "{prop_id}:{value}"
+                if let Some(colon_pos) = rest.find(':') {
+                    let prop_id = &rest[..colon_pos];
+                    let value = &rest[colon_pos + 1..];
+                    let new_val = zengeld_chart::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        if prefix.starts_with("style") {
+                            w.drawing_manager.apply_style_property(idx, prop_id, new_val);
+                        } else if prefix.starts_with("text") {
+                            w.drawing_manager.apply_text_property(idx, prop_id, new_val);
+                        } else {
+                            w.drawing_manager.apply_level_property(idx, prop_id, new_val);
+                        }
+                    }
+                    self.sync_drawing_back_to_group();
+                    self.autosave_snapshot();
+                    self.panel_app.primitive_settings_state.open_select_dropdown = None;
+                    eprintln!("[ChartApp] prim_settings {}{}:{} applied", prefix, prop_id, value);
+                }
+                return;
+            }
         }
 
         // ── Stroke width value — start inline text editing ───────────────────
@@ -13358,7 +13414,7 @@ impl ChartApp {
                     _ if field.starts_with("style_prop:") => {
                         // Style property color — apply via primitive's apply_style_property
                         let prop_id = &field["style_prop:".len()..];
-                        let value = zengeld_chart::drawing::primitives_v2::config::PropertyValue::String(color.to_string());
+                        let value = zengeld_chart::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
                         window.drawing_manager.apply_style_property(idx, prop_id, value);
                     }
                     _ => {}
@@ -18257,6 +18313,7 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 window.drawing_manager.apply_style_property(idx, prop_id, new_val);
             }
+            self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             return;
         }
