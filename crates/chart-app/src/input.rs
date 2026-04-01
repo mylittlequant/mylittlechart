@@ -10865,6 +10865,8 @@ impl ChartApp {
                     window.drawing_manager.apply_text_property(idx, prop_id, value);
                 }
             }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
             eprintln!("[ChartApp] prim_settings text_prop '{}' auto-committed: {}", prop_id, text);
         } else if let Some(prop_id) = field.strip_prefix("style_prop:") {
             use zengeld_chart::drawing::primitives_v2::config::PropertyValue;
@@ -10875,6 +10877,8 @@ impl ChartApp {
                     }
                 }
             }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
             eprintln!("[ChartApp] prim_settings style_prop '{}' auto-committed: {}", prop_id, text);
         } else {
             eprintln!("[ChartApp] prim_settings '{}' editing auto-closed (value: {})", field, text);
@@ -13350,6 +13354,12 @@ impl ChartApp {
                     }
                     _ if field.starts_with("level_") && field.ends_with("_color") => {
                         eprintln!("[ChartApp] level color change: {} = {}", field, color);
+                    }
+                    _ if field.starts_with("style_prop:") => {
+                        // Style property color — apply via primitive's apply_style_property
+                        let prop_id = &field["style_prop:".len()..];
+                        let value = zengeld_chart::drawing::primitives_v2::config::PropertyValue::String(color.to_string());
+                        window.drawing_manager.apply_style_property(idx, prop_id, value);
                     }
                     _ => {}
                 }

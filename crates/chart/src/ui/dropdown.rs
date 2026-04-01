@@ -462,7 +462,9 @@ where
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.save();
                 ctx.begin_path();
-                let label_max_w = (item_rect.right() - text_x - config.item_padding_x - 40.0).max(20.0);
+                // Reserve space for right-side content: toggle (36+pad), shortcut, or nothing
+                let right_reserve = if toggle.is_some() { 48.0 } else if shortcut.is_some() || subtitle.is_some() { 40.0 } else { 4.0 };
+                let label_max_w = (item_rect.right() - text_x - config.item_padding_x - right_reserve).max(20.0);
                 ctx.rect(text_x, item_rect.y, label_max_w, item_rect.height);
                 ctx.clip();
                 ctx.fill_text(label, text_x, item_rect.center_y());

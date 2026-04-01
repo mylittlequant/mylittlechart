@@ -298,27 +298,26 @@ impl PriceScale {
             if price >= self.price_max {
                 break;
             }
-            let label = format_price(price, step);
+            let label = format_price_with_precision(price, step, self.user_precision);
             max_len = max_len.max(label.len());
         }
 
         // Also check the max price label
-        let max_label = format_price(self.price_max, step);
+        let max_label = format_price_with_precision(self.price_max, step, self.user_precision);
         max_len = max_len.max(max_label.len());
 
         // Dynamic font size: fewer chars = bigger font, more chars = smaller font
-        // Available width for text: PRICE_SCALE_WIDTH - borders - padding ≈ 55px
-        // At 12px font, roughly 7px per char, so 55/7 ≈ 8 chars max
-        // At 9px font, roughly 5px per char, so 55/5 ≈ 11 chars max
-        let font_size = match max_len {
-            0..=5 => PRICE_SCALE_FONT_SIZE_MAX, // 13px - short labels
+        // Available width for text: PRICE_SCALE_WIDTH - borders - padding ≈ 60px
+        // Approximate char widths: 13px~8px/ch, 11px~6.5px/ch, 9px~5px/ch, 7px~4px/ch
+        match max_len {
+            0..=5 => PRICE_SCALE_FONT_SIZE_MAX, // 13px - short labels (≤5 chars)
             6..=7 => 12.0,                      // 12px - medium labels
             8..=9 => 11.0,                      // 11px - longer labels
             10..=11 => 10.0,                    // 10px - even longer
-            _ => PRICE_SCALE_FONT_SIZE_MIN,    // 9px - very long labels
-        };
-
-        font_size
+            12..=13 => 9.0,                     // 9px - long (e.g. precision=6)
+            14..=15 => 8.0,                     // 8px - very long (precision=8)
+            _ => 7.0,                           // 7px - extreme (16+ chars)
+        }
     }
 
     /// Calculate auto-scale based on visible bars and optional MA values

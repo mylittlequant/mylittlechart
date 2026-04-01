@@ -178,6 +178,8 @@ pub fn render_primitive_settings_modal(
     use crate::drawing::primitives_v2::PrimitiveRegistry;
 
     let mut result = PrimitiveSettingsResult::default();
+    // Deferred line style dropdown — rendered after footer to avoid z-overlap
+    let mut deferred_line_style_dropdown: Option<(f64, f64, f64, String)> = None;
 
     // Get primitive info
     let Some(idx) = state.primitive_idx else {
@@ -591,12 +593,17 @@ pub fn render_primitive_settings_modal(
                 }
             }
 
-            // Label text (right of the preview)
+            // Label text (right of the preview, clipped to text zone)
             ctx.set_font("12px sans-serif");
             ctx.set_fill_color(&toolbar_theme.item_text);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(btn_rect.x + 44.0, btn_rect.y, text_part - 44.0, btn_rect.height);
+            ctx.clip();
             ctx.fill_text(style_label, btn_rect.x + 44.0, btn_rect.center_y());
+            ctx.restore();
 
             // Vertical separator between text part and chevron part
             let sep_x = btn_rect.x + text_part;
@@ -625,15 +632,8 @@ pub fn render_primitive_settings_modal(
             result.content_items.push(("line_style_menu".to_string(), menu_rect));
             row_y += row_height + row_gap;
 
-            // Dropdown list (rendered below the button row when open)
+            // Deferred: line style dropdown renders AFTER footer to avoid z-order overlap
             if state.open_line_style_dropdown {
-                let all_styles: &[(&str, &str)] = &[
-                    ("solid",        "Сплошная"),
-                    ("dashed",       "Пунктир"),
-                    ("dotted",       "Точки"),
-                    ("large_dashed", "Длинный пунктир"),
-                    ("sparse_dotted","Редкие точки"),
-                ];
                 let current_style_str = match prim_data.style {
                     LineStyle::Solid        => "solid",
                     LineStyle::Dashed       => "dashed",
@@ -641,56 +641,7 @@ pub fn render_primitive_settings_modal(
                     LineStyle::LargeDashed  => "large_dashed",
                     LineStyle::SparseDotted => "sparse_dotted",
                 };
-                let dropdown_items: Vec<DropdownItem> = all_styles.iter()
-                    .map(|(id, label)| DropdownItem::item(id, label))
-                    .collect();
-                let dropdown_cfg = DropdownConfig {
-                    items: dropdown_items,
-                    min_width: btn_total_width,
-                    max_width: btn_total_width + 40.0,
-                    item_height: 28.0,
-                    separator_height: 9.0,
-                    header_height: 28.0,
-                    padding: 4.0,
-                    item_padding_x: 12.0,
-                    radius: 4.0,
-                    icon_size: 16.0,
-                    font_size: 13.0,
-                    shadow_blur: 24.0,
-                    grid_columns: None,
-                };
-                let dropdown_theme = DropdownTheme {
-                    background: toolbar_theme.dropdown_bg.clone(),
-                    border: toolbar_theme.separator.clone(),
-                    shadow: "rgba(0,0,0,0.5)".to_string(),
-                    item_text: toolbar_theme.item_text.clone(),
-                    item_text_hover: toolbar_theme.item_text_hover.clone(),
-                    item_text_disabled: toolbar_theme.item_text_muted.clone(),
-                    item_bg_hover: toolbar_theme.item_bg_hover.clone(),
-                    item_danger: "#f23645".to_string(),
-                    item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
-                    header_text: toolbar_theme.item_text.clone(),
-                    header_border: toolbar_theme.separator.clone(),
-                    separator: toolbar_theme.separator.clone(),
-                    shortcut_text: toolbar_theme.item_text_muted.clone(),
-                };
-                // Position dropdown just below the button (row_y has already advanced)
-                let drop_x = btn_rect.x;
-                let drop_y = btn_rect.bottom() + 2.0;
-                let dropdown_result = render_dropdown(
-                    ctx,
-                    &dropdown_cfg,
-                    (drop_x, drop_y),
-                    &dropdown_theme,
-                    Some(current_style_str),
-                    |_ctx, _icon, _rect, _color| {},
-                );
-                for (item_id, item_rect) in &dropdown_result.item_rects {
-                    result.content_items.push((
-                        format!("line_style_option:{}", item_id),
-                        WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-                    ));
-                }
+                deferred_line_style_dropdown = Some((btn_rect.x, btn_rect.bottom() + 2.0, btn_total_width, current_style_str.to_string()));
             }
 
             // Row 4: Fill Color (if applicable)
@@ -1894,6 +1845,64 @@ pub fn render_primitive_settings_modal(
             sense,
             &layer_id,
         );
+    }
+
+    // Deferred line style dropdown — draw AFTER footer so it appears on top
+    if let Some((drop_x, drop_y, btn_w, current_style_str)) = deferred_line_style_dropdown {
+        let all_styles: &[(&str, &str)] = &[
+            ("solid",        "Сплошная"),
+            ("dashed",       "Пунктир"),
+            ("dotted",       "Точки"),
+            ("large_dashed", "Длинный пунктир"),
+            ("sparse_dotted","Редкие точки"),
+        ];
+        let dropdown_items: Vec<DropdownItem> = all_styles.iter()
+            .map(|(id, label)| DropdownItem::item(id, label))
+            .collect();
+        let dropdown_cfg = DropdownConfig {
+            items: dropdown_items,
+            min_width: btn_w,
+            max_width: btn_w + 40.0,
+            item_height: 28.0,
+            separator_height: 9.0,
+            header_height: 28.0,
+            padding: 4.0,
+            item_padding_x: 12.0,
+            radius: 4.0,
+            icon_size: 16.0,
+            font_size: 13.0,
+            shadow_blur: 24.0,
+            grid_columns: None,
+        };
+        let dropdown_theme = DropdownTheme {
+            background: toolbar_theme.dropdown_bg.clone(),
+            border: toolbar_theme.separator.clone(),
+            shadow: "rgba(0,0,0,0.5)".to_string(),
+            item_text: toolbar_theme.item_text.clone(),
+            item_text_hover: toolbar_theme.item_text_hover.clone(),
+            item_text_disabled: toolbar_theme.item_text_muted.clone(),
+            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
+            item_danger: "#f23645".to_string(),
+            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
+            header_text: toolbar_theme.item_text.clone(),
+            header_border: toolbar_theme.separator.clone(),
+            separator: toolbar_theme.separator.clone(),
+            shortcut_text: toolbar_theme.item_text_muted.clone(),
+        };
+        let dropdown_result = render_dropdown(
+            ctx,
+            &dropdown_cfg,
+            (drop_x, drop_y),
+            &dropdown_theme,
+            Some(&current_style_str),
+            |_ctx, _icon, _rect, _color| {},
+        );
+        for (item_id, item_rect) in &dropdown_result.item_rects {
+            result.content_items.push((
+                format!("line_style_option:{}", item_id),
+                WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
+            ));
+        }
     }
 
     // Pop modal layer
