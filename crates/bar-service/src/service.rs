@@ -99,6 +99,21 @@ impl BarService {
         &self.bar_store.bars_dir
     }
 
+    /// Delete the .bin cache file for the given keys and remove the in-memory
+    /// series entry so the next load starts fresh.
+    ///
+    /// Returns `true` if the file existed and was deleted.
+    pub fn delete_file(&self, exchange: &str, symbol: &str, timeframe: &str, account_type: &str) -> bool {
+        self.bar_store.delete_file(exchange, symbol, timeframe, account_type)
+    }
+
+    /// Remove the in-memory series for the given key so the next bar load
+    /// starts with an empty series (no stale data).
+    pub fn remove_series(&mut self, key: &BarSeriesKey) {
+        let mut map = self.series.write().unwrap_or_else(|e| e.into_inner());
+        map.remove(key);
+    }
+
     /// Delegate to the underlying store's bulk disk load.
     pub fn load_many(&self, keys: &[(&str, &str, &str, &str)]) -> Vec<(String, String, String, String, Vec<Bar>)> {
         self.bar_store.load_many(keys)

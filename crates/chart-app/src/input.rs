@@ -7664,7 +7664,9 @@ impl ChartApp {
                         .map(|w| w.symbol.clone());
                     let prev_exchange = self.panel_app.panel_grid.active_window()
                         .map(|w| w.exchange.clone());
-                    if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) {
+                    let prev_account_type = self.panel_app.panel_grid.active_window()
+                        .map(|w| w.account_type.clone());
+                    if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
                         let old_trade_exchange = self.active_exchange;
                         let old_trade_symbol = self.panel_app.panel_grid.active_window()
@@ -16249,6 +16251,14 @@ impl ChartApp {
                         self.modal_state.start_editing(0);
                         eprintln!("[ChartApp] symbol search opened from context menu");
                     }
+                    "reset_cache" => {
+                        self.pending_reset_cache = true;
+                        eprintln!("[ChartApp] Reset cache requested");
+                    }
+                    "reset_storage" => {
+                        self.pending_reset_storage = true;
+                        eprintln!("[ChartApp] Reset storage requested");
+                    }
                     _ => {
                         eprintln!("[ChartApp] Unhandled background context action: {}", action);
                     }
@@ -19971,5 +19981,8 @@ fn build_chart_background_menu() -> Vec<ContextMenuItemState> {
         ContextMenuItemState::action_with_icon("camera", "screenshot", "Скриншот"),
         ContextMenuItemState::separator(),
         ContextMenuItemState::action_with_icon("search", "symbol_search", "Найти символ"),
+        ContextMenuItemState::separator(),
+        ContextMenuItemState::action_with_icon("delete", "reset_cache", "Сбросить кэш"),
+        ContextMenuItemState::action_with_icon("delete", "reset_storage", "Сбросить хранилище"),
     ]
 }

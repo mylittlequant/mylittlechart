@@ -107,6 +107,27 @@ impl BarStoreHandle {
         result
     }
 
+    /// Delete the .bin cache file for a specific symbol/exchange/timeframe/account_type.
+    ///
+    /// Returns `true` if a file was deleted, `false` if it did not exist.
+    pub fn delete_file(&self, exchange: &str, symbol: &str, timeframe: &str, account_type: &str) -> bool {
+        let path = self.file_path(exchange, symbol, timeframe, account_type);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                eprintln!("[BarStore] Deleted: {}", path.display());
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("[BarStore] File not found (already clean): {}", path.display());
+                false
+            }
+            Err(e) => {
+                eprintln!("[BarStore] Error deleting {}: {}", path.display(), e);
+                false
+            }
+        }
+    }
+
     /// Flush all queued writes. Blocks the calling thread until the queue drains.
     ///
     /// Only call from the main thread during shutdown (`save_all()`).

@@ -244,6 +244,10 @@ struct PerWindowState {
     chrome_tooltip_start: std::time::Instant,
     /// Tooltip state for toolbar button hover tooltips (left/top/right/bottom strips).
     toolbar_tooltip: uzor::TooltipState,
+    /// True when the window was minimized (detected via Resized with 0x0 size).
+    /// Cleared on the first non-zero resize after minimization, which triggers
+    /// a snap-to-end so the viewport is back at the latest bar after restore.
+    was_minimized: bool,
 }
 
 /// A pending request to open a new window.
@@ -1464,7 +1468,11 @@ fn submit_window_gpu_from_gpu_scene(
             *close_all = true;
             return render_tex_us;
         }
-        Err(_) => return render_tex_us,
+        Err(e) => {
+            eprintln!("[GPU] Surface error: {:?}, reconfiguring", e);
+            pw.surface.surface.configure(device, &pw.surface.config);
+            return render_tex_us;
+        }
     };
 
     let surface_view = surface_texture
@@ -2664,6 +2672,7 @@ impl App<'_> {
             visible_set: false,
             chrome_tooltip_start: std::time::Instant::now(),
             toolbar_tooltip: uzor::TooltipState::with_delay(700.0),
+            was_minimized: false,
         };
 
         self.windows.insert(win_id, pw);
@@ -6616,6 +6625,61 @@ impl ApplicationHandler for App<'_> {
                 pw.chart.tick(frame_time, bar_svc);
             }
         }
+
+        // Drain pending reset-cache / reset-storage flags set by the context menu.
+        for pw in self.windows.values_mut() {
+            if pw.chart.pending_reset_cache || pw.chart.pending_reset_storage {
+                let delete_storage = pw.chart.pending_reset_storage;
+                pw.chart.pending_reset_cache = false;
+                pw.chart.pending_reset_storage = false;
+
+                // Collect window info before borrowing bar_service / bridge.
+                let (symbol, exchange, account_type, timeframe, bar_count) =
+                    if let Some(window) = pw.chart.panel_app.panel_grid.active_window() {
+                        (
+                            window.symbol.clone(),
+                            window.exchange.clone(),
+                            window.account_type.clone(),
+                            window.timeframe.clone(),
+                            pw.chart.panel_app.user_manager.profile.bar_count as usize,
+                        )
+                    } else {
+                        continue;
+                    };
+
+                if delete_storage {
+                    self.bar_service.delete_file(&exchange, &symbol, &timeframe.name, &account_type);
+                }
+
+                // Remove the in-memory series so the next fetch starts clean.
+                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
+                    let at = chart_app::account_type_from_label(&account_type);
+                    let key = bar_service::BarSeriesKey::new(eid, at, symbol.clone(), timeframe.name.clone());
+                    self.bar_service.remove_series(&key);
+                }
+
+                // Clear bars on the window and mark pending load.
+                if let Some(window) = pw.chart.panel_app.panel_grid.active_window_mut() {
+                    window.bars.clear();
+                    window.viewport.bar_count = 0;
+                    window.viewport.view_start = 0.0;
+                    window.pending_symbol_load = true;
+                }
+
+                // Request a fresh bar fetch from the exchange.
+                if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
+                    let at = chart_app::account_type_from_label(&account_type);
+                    self.bridge.request_bars(eid, &symbol, &timeframe, at, None, Some(bar_count), true);
+                }
+
+                eprintln!(
+                    "[App] Reset {} for {}:{} {} ({})",
+                    if delete_storage { "storage+cache" } else { "cache" },
+                    symbol, exchange, timeframe.name, account_type
+                );
+            }
+        }
+
         // Capture the active window's scale mode back to AppState so it
         // persists across sessions.  Reading after tick() ensures any toggle
         // from this frame is captured.
@@ -7146,6 +7210,23 @@ impl ApplicationHandler for App<'_> {
                     // Toolbar and sidebar layout changes on resize — must rebuild both.
                     pw.toolbar_dirty = true;
                     pw.sidebar_dirty_scene = true;
+
+                    // Snap viewport to end on restore from minimize so the chart
+                    // shows the latest bars rather than the pre-minimized position.
+                    if pw.was_minimized {
+                        pw.was_minimized = false;
+                        if let Some(window) = pw.chart.panel_app.panel_grid.active_window_mut() {
+                            if window.price_scale.scale_mode.is_follow()
+                                || window.price_scale.scale_mode == zengeld_chart::ScaleMode::Auto
+                            {
+                                window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
+                                eprintln!("[App] Snapped to end after restore from minimize");
+                            }
+                        }
+                    }
+                } else {
+                    // Window minimized — size collapses to 0x0 on Windows.
+                    pw.was_minimized = true;
                 }
             }
 

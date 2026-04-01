@@ -187,6 +187,11 @@ pub struct ChartApp {
     /// Pending screenshot request — set by context menu, drained by the renderer.
     pending_screenshot: bool,
 
+    /// When set, the frame loop should clear in-memory bars and re-fetch.
+    pub pending_reset_cache: bool,
+    /// When set, the frame loop should delete the .bin file, clear in-memory bars, and re-fetch.
+    pub pending_reset_storage: bool,
+
     /// Points of the primitive captured at drag start, keyed by primitive index.
     ///
     /// Set in `StartPrimitiveDrag` so that `EndPrimitiveDrag` can compare old
@@ -735,6 +740,8 @@ impl ChartApp {
             indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_reset_cache: false,
+            pending_reset_storage: false,
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
@@ -1000,6 +1007,8 @@ impl ChartApp {
             indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_reset_cache: false,
+            pending_reset_storage: false,
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
@@ -1170,6 +1179,8 @@ impl ChartApp {
             indicator_manager: IndicatorManager::new(),
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_reset_cache: false,
+            pending_reset_storage: false,
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
