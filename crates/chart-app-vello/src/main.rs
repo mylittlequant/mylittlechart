@@ -2224,6 +2224,11 @@ impl App<'_> {
                         let at = chart_app::account_type_from_label(account_type_label);
                         let period_secs = timeframe_period_secs(timeframe);
                         let key = bar_service::BarSeriesKey::new(eid, at, symbol.clone(), timeframe.clone());
+                        if !bars.is_empty() {
+                            let tail: Vec<_> = bars.iter().rev().take(3).collect();
+                            eprintln!("[seed_from_disk] {}/{}/{} bars={} last 3: {}", exchange_str, symbol, timeframe, bars.len(),
+                                tail.iter().rev().map(|b| format!("ts={} o={:.2} c={:.2}", b.timestamp, b.open, b.close)).collect::<Vec<_>>().join(" | "));
+                        }
                         bar_service.seed_from_disk(key, bars.clone(), period_secs);
                     }
                 }

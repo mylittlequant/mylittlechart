@@ -1569,6 +1569,13 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     let fresh_first_ts = fresh.first().map(|b| b.timestamp).unwrap_or(0);
     if fresh_first_ts > old_last_ts {
         old.extend(fresh);
+        if old.len() >= 2 {
+            for w in old.windows(2) {
+                if w[0].timestamp >= w[1].timestamp {
+                    eprintln!("[merge_bars] WARNING: non-ascending or duplicate timestamps: ts1={} ts2={}", w[0].timestamp, w[1].timestamp);
+                }
+            }
+        }
         return old;
     }
 
@@ -1583,6 +1590,13 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     }
     let mut merged: Vec<Bar> = map.into_values().collect();
     merged.sort_by_key(|b| b.timestamp);
+    if merged.len() >= 2 {
+        for w in merged.windows(2) {
+            if w[0].timestamp >= w[1].timestamp {
+                eprintln!("[merge_bars] WARNING: non-ascending or duplicate timestamps: ts1={} ts2={}", w[0].timestamp, w[1].timestamp);
+            }
+        }
+    }
     merged
 }
 
