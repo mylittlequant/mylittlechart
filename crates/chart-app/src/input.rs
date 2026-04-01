@@ -16515,6 +16515,8 @@ impl ChartApp {
                         window.update_title();
                         window.bars.clear();
                         window.viewport.bar_count = 0;
+                        window.viewport.view_start = 0.0;
+                        window.pending_symbol_load = true;
                     }
                     // Fetch bars for new timeframe. Trade stream stays alive — trades
                     // build bars regardless of timeframe and the symbol has not changed.
@@ -19288,6 +19290,8 @@ impl ChartApp {
                 window.timeframe = tf.clone();
                 window.bars.clear();
                 window.viewport.bar_count = 0;
+                window.viewport.view_start = 0.0;
+                window.pending_symbol_load = true;
                 window.update_title();
             }
         }
