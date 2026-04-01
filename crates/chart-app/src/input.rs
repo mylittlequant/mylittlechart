@@ -16525,7 +16525,7 @@ impl ChartApp {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe change)", eid_str);
                         } else {
                             let at = crate::account_type_from_label(&at_label_tf);
-                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
+                            self.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), true);
                         }
                     }
                     // Propagate new timeframe to all leaves in the same sync group.
@@ -19315,7 +19315,7 @@ impl ChartApp {
             }
             let at = crate::account_type_from_label(&at_label);
             self.bridge.ensure_connector(resolved_exchange);
-            self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), false);
+            self.bridge.request_bars(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
             eprintln!(
                 "[TagManager] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf
