@@ -1792,14 +1792,20 @@ impl ChartApp {
                 && (old_width - new_width).abs() > 0.5
                 && window.viewport.bar_spacing > 0.0
                 && old_width > 0.0
+                && new_width > 0.0
             {
                 let bar_shift = (old_width - new_width) / window.viewport.bar_spacing;
                 eprintln!("[sync_viewport] bar_shift={:.3} old_width={} new_width={} view_start={:.3}->{:.3}",
                     bar_shift, old_width, new_width, window.viewport.view_start, window.viewport.view_start + bar_shift);
                 window.viewport.view_start += bar_shift;
             }
-            window.viewport.chart_width = new_width;
-            window.viewport.chart_height = new_height;
+            // Don't store negative/zero widths — they'd poison the next bar_shift calc.
+            if new_width > 0.0 {
+                window.viewport.chart_width = new_width;
+            }
+            if new_height > 0.0 {
+                window.viewport.chart_height = new_height;
+            }
         }
     }
 
