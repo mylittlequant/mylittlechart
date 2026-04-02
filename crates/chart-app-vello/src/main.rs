@@ -7927,7 +7927,8 @@ fn main() {
             .encode_utf16()
             .collect();
         let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
-        if handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        let is_ota_restart = std::env::args().any(|a| a == "--wait-pid");
+        if !is_ota_restart && handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             eprintln!("[App] another instance is already running — exiting.");
             std::process::exit(0);
         }
