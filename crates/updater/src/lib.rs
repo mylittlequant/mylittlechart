@@ -36,11 +36,27 @@ pub fn now_ts() -> String {
 use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
 
-/// Interval between update checks (2 minutes — active debugging; bump to 4h for production).
-const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
-
 /// Base URL for the update server.
 const UPDATE_SERVER: &str = "https://chart.example";
+
+/// Returns the active update channel based on the `UPDATE_CHANNEL` env var.
+///
+/// - `"dev"` — fast 2-minute poll interval, used for local dev builds.
+/// - `"stable"` (default) — 4-hour poll interval for production installs.
+pub fn get_channel() -> &'static str {
+    match std::env::var("UPDATE_CHANNEL").as_deref() {
+        Ok("dev") => "dev",
+        _ => "stable",
+    }
+}
+
+/// Returns the check interval for the current channel.
+fn check_interval_for_channel(channel: &str) -> std::time::Duration {
+    match channel {
+        "dev" => std::time::Duration::from_secs(2 * 60),
+        _ => std::time::Duration::from_secs(4 * 60 * 60),
+    }
+}
 
 /// Trait for providing telemetry data from the application.
 /// Implemented by the main app to feed live metrics to the updater.
@@ -147,7 +163,10 @@ async fn updater_loop(
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
+    let channel = get_channel();
+    let interval_secs = check_interval_for_channel(channel).as_secs();
     eprintln!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
+    log::info!("[Updater] channel={}, interval={}s", channel, interval_secs);
 
     // Shared HTTP client for key sync requests.
     // Built once here; reused on every interval tick.
@@ -186,14 +205,14 @@ async fn updater_loop(
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    let mut check_interval = tokio::time::interval(CHECK_INTERVAL);
+    let mut check_interval = tokio::time::interval(check_interval_for_channel(channel));
     check_interval.tick().await; // consume first immediate tick
 
     // Do initial check + telemetry only in connected mode.
     if connected {
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
-        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source).await;
+        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, channel).await;
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
     }
@@ -214,7 +233,7 @@ async fn updater_loop(
                 if connected {
                     let token = token_store::load_token();
                     let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
 
                     // If we found an update, cache it and auto-install.
                     if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
@@ -236,7 +255,7 @@ async fn updater_loop(
                         if connected {
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -303,7 +322,7 @@ async fn updater_loop(
                             log::info!("[Updater] Switched to connected mode — running immediate update check");
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -817,6 +836,7 @@ async fn do_check_and_telemetry(
     current_version: &str,
     auth_header: Option<&str>,
     telemetry_source: &Arc<dyn TelemetrySource>,
+    channel: &str,
 ) {
     // Send telemetry (fire-and-forget, don't block update check).
     {
@@ -849,7 +869,7 @@ async fn do_check_and_telemetry(
 
     // Check for updates.
     let _ = status_tx.send(UpdateStatus::Checking);
-    match check::fetch_latest(auth_header).await {
+    match check::fetch_latest(auth_header, channel).await {
         Ok(manifest) => {
             if check::is_newer(current_version, &manifest.version) {
                 eprintln!("[{} Updater] OTA: update available v{} → v{}", now_ts(), current_version, manifest.version);

@@ -4,8 +4,16 @@ use crate::state::VersionManifest;
 use crate::{UPDATE_SERVER, platform};
 
 /// Fetch the latest version manifest from the server.
-pub async fn fetch_latest(auth_header: Option<&str>) -> Result<VersionManifest, String> {
-    let url = format!("{}/api/updates/latest?platform={}", UPDATE_SERVER, platform::current_platform());
+///
+/// `channel` is appended as a query parameter so the server can serve
+/// the correct release track (`"stable"` or `"dev"`).
+pub async fn fetch_latest(auth_header: Option<&str>, channel: &str) -> Result<VersionManifest, String> {
+    let url = format!(
+        "{}/api/updates/latest?platform={}&channel={}",
+        UPDATE_SERVER,
+        platform::current_platform(),
+        channel,
+    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

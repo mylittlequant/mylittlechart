@@ -279,6 +279,125 @@ fn render_page_profile_list(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
+    left_cy += 22.0;
+
+    // ── Device mode toggles ──────────────────────────────────────────────────
+    // Connected / Standalone radio pair
+    let radio_r = 5.0;
+    let radio_row_h = 22.0;
+    let radio_label_x = left_inner_x + radio_r * 2.0 + 7.0;
+
+    // "Connected" row
+    {
+        let id = "profile_mgr:device_connected";
+        let is_active = state.device_ota_enabled;
+        let circle_cy = left_cy + radio_row_h / 2.0;
+        let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
+        if is_active {
+            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.begin_path();
+            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        } else {
+            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+        }
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Connected", radio_label_x, circle_cy);
+        result.content_items.push((id.to_string(), row_rect));
+        input_coordinator.register_on_layer(
+            id,
+            row_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        left_cy += radio_row_h;
+    }
+
+    // "Standalone" row
+    {
+        let id = "profile_mgr:device_standalone";
+        let is_active = !state.device_ota_enabled;
+        let circle_cy = left_cy + radio_row_h / 2.0;
+        let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
+        if is_active {
+            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.begin_path();
+            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+        } else {
+            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+            ctx.stroke();
+        }
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Standalone", radio_label_x, circle_cy);
+        result.content_items.push((id.to_string(), row_rect));
+        input_coordinator.register_on_layer(
+            id,
+            row_rect,
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        left_cy += radio_row_h;
+    }
+
+    // Channel selector — only shown in Connected mode
+    if state.device_ota_enabled {
+        left_cy += 8.0;
+        ctx.set_font("bold 10px sans-serif");
+        ctx.set_fill_color("rgba(254,255,238,0.30)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("CHANNEL", left_inner_x, left_cy);
+        left_cy += 16.0;
+
+        let channel_rows: &[(&str, &str, &str)] = &[
+            ("stable", "Stable", "profile_mgr:channel_stable"),
+            ("dev",    "Dev",    "profile_mgr:channel_dev"),
+        ];
+        for &(channel_key, label, id) in channel_rows {
+            let is_active = state.device_update_channel == channel_key;
+            let circle_cy = left_cy + radio_row_h / 2.0;
+            let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
+            if is_active {
+                ctx.set_fill_color("rgba(244,205,99,0.9)");
+                ctx.begin_path();
+                ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+                ctx.fill();
+            } else {
+                ctx.set_stroke_color("rgba(254,255,238,0.35)");
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
+                ctx.stroke();
+            }
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, radio_label_x, circle_cy);
+            result.content_items.push((id.to_string(), row_rect));
+            input_coordinator.register_on_layer(
+                id,
+                row_rect,
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+            left_cy += radio_row_h;
+        }
+    }
 
     // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
     let mascot_w = 140.0;

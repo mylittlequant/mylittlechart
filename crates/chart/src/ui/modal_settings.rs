@@ -3491,6 +3491,15 @@ pub struct UserSettingsState {
     /// Whether OTA auto-updates are enabled.
     pub ota_enabled: bool,
 
+    // ── Device-level settings (device_settings.json) ──────────────────────
+    /// Device-level OTA enabled flag (`DeviceSettings.ota_enabled`).
+    /// `true` = Connected mode; `false` = Standalone mode.
+    /// Distinct from profile-level `ota_enabled` — applies to the whole device.
+    pub device_ota_enabled: bool,
+    /// Device-level OTA channel (`DeviceSettings.update_channel`).
+    /// One of `"stable"` or `"dev"`.
+    pub device_update_channel: String,
+
     // ── SYNC STATUS (P0) ──────────────────────────────────────────────────
     /// Human-readable sync status: "Idle" / "Syncing…" / "Synced — ↑3 ↓1" / "Error: …"
     pub sync_status_label: String,
@@ -3696,6 +3705,8 @@ impl Default for UserSettingsState {
             sync_watchlists: true,
             sync_theme_toggle: true,
             ota_enabled: true,
+            device_ota_enabled: true,
+            device_update_channel: "stable".to_string(),
             sync_status_label: "Idle".to_string(),
             sync_status_color: "#888888".to_string(),
             sync_is_active: false,

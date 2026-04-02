@@ -9724,6 +9724,41 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("logout".to_string());
                     eprintln!("[ChartApp] profile_mgr: logout requested");
                 }
+                // ── Device-level OTA toggles ───────────────────────────────
+                "profile_mgr:device_connected" => {
+                    self.panel_app.user_settings_state.device_ota_enabled = true;
+                    // Persist to disk immediately.
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.ota_enabled = true;
+                    ds.save();
+                    // Tell the updater to resume network activity.
+                    self.pending_updater_cmd = Some("device_ota:connected".to_string());
+                    eprintln!("[ChartApp] profile_mgr: device mode → Connected");
+                }
+                "profile_mgr:device_standalone" => {
+                    self.panel_app.user_settings_state.device_ota_enabled = false;
+                    // Persist to disk immediately.
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.ota_enabled = false;
+                    ds.save();
+                    // Tell the updater to stop network activity.
+                    self.pending_updater_cmd = Some("device_ota:standalone".to_string());
+                    eprintln!("[ChartApp] profile_mgr: device mode → Standalone");
+                }
+                "profile_mgr:channel_stable" => {
+                    self.panel_app.user_settings_state.device_update_channel = "stable".to_string();
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.update_channel = "stable".to_string();
+                    ds.save();
+                    eprintln!("[ChartApp] profile_mgr: OTA channel → stable");
+                }
+                "profile_mgr:channel_dev" => {
+                    self.panel_app.user_settings_state.device_update_channel = "dev".to_string();
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.update_channel = "dev".to_string();
+                    ds.save();
+                    eprintln!("[ChartApp] profile_mgr: OTA channel → dev");
+                }
                 _ => {
                     eprintln!("[ChartApp] user_settings unhandled action: {}", action);
                 }

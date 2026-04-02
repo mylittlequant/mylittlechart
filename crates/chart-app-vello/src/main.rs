@@ -2139,7 +2139,13 @@ impl App<'_> {
             #[cfg(feature = "standalone")]
             let connected = false;
             #[cfg(not(feature = "standalone"))]
-            let connected = profile.ota_enabled;
+            let connected = {
+                // Device-level OTA toggle takes precedence: if the user has set
+                // Standalone mode on this device, the updater never connects
+                // regardless of the profile's ota_enabled flag.
+                let device_settings = zengeld_chart::user_profile::DeviceSettings::load();
+                device_settings.ota_enabled && profile.ota_enabled
+            };
 
             // Build attestation — embedded at compile time by build.rs.
             // Empty string for dev builds (no RELEASE_SIGNING_KEY set).
@@ -2515,6 +2521,14 @@ impl App<'_> {
         {
             let uss = &mut chart.panel_app.user_settings_state;
             uss.ota_enabled = self.profile_manager.profile.ota_enabled;
+        }
+        // Seed device-level settings into the UI state so the profile manager
+        // toggles reflect the persisted device preferences.
+        {
+            let ds = zengeld_chart::user_profile::DeviceSettings::load();
+            let uss = &mut chart.panel_app.user_settings_state;
+            uss.device_ota_enabled = ds.ota_enabled;
+            uss.device_update_channel = ds.update_channel;
         }
         // Sync profile data into the user settings state.
         {
@@ -5627,6 +5641,12 @@ impl ApplicationHandler for App<'_> {
                         } else {
                             Some(UpdaterCommand::SetCloudEnabled(true))
                         }
+                    } else if cmd_str == "device_ota:connected" {
+                        // Device-level Connected mode toggle — enable network activity.
+                        Some(UpdaterCommand::SetCloudEnabled(true))
+                    } else if cmd_str == "device_ota:standalone" {
+                        // Device-level Standalone mode toggle — disable all network activity.
+                        Some(UpdaterCommand::SetCloudEnabled(false))
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetCloudEnabled(false))
                     // ── Sync level commands ────────────────────────────────────
