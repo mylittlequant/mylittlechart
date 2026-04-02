@@ -14503,6 +14503,7 @@ impl ChartApp {
                     self.sync_drawing_back_to_group();
                     eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
                 }
+                self.snapshot_primitive_settings_to_user_manager(idx);
             }
 
             // ── Width cycle ──────────────────────────────────────────────────
@@ -14512,6 +14513,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
+                self.snapshot_primitive_settings_to_user_manager(idx);
             }
 
             // ── Name label — absorb, no action ──────────────────────────────
@@ -14606,6 +14608,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] inline: set line style to {}", style_str);
                     }
                 }
+                self.snapshot_primitive_settings_to_user_manager(idx);
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
@@ -14626,6 +14629,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] inline: set line width to {}", new_width);
                     }
                 }
+                self.snapshot_primitive_settings_to_user_manager(idx);
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
@@ -15231,7 +15235,26 @@ impl ChartApp {
                             .map(|w| w.symbol.clone())
                             .unwrap_or_default();
                         let type_id_str = item_id.to_string();
+                        // Determine auto-color for overlay duplicates BEFORE create_instance
+                        // (borrowck: create_instance needs &mut, query needs &).
+                        let auto_color: Option<String> = self
+                            .panel_app
+                            .panel_grid
+                            .docking()
+                            .active_leaf()
+                            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
+                            .and_then(|cid| {
+                                self.indicator_manager.pick_overlay_color(item_id, &symbol, cid.0)
+                            });
                         if let Some(new_id) = self.indicator_manager.create_instance(item_id, &symbol) {
+                            // Apply auto-color when this is a duplicate overlay indicator.
+                            if let Some(ref color) = auto_color {
+                                if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
+                                    for oc in inst.outputs.values_mut() {
+                                        oc.color = Some(color.clone());
+                                    }
+                                }
+                            }
                             // Set window_id for the new instance so it's scoped to this window.
                             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                                 if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
@@ -18304,6 +18327,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
+            self.snapshot_primitive_settings_to_user_manager(idx);
             return;
         }
 

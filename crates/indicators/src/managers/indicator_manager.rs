@@ -797,6 +797,79 @@ impl IndicatorManager {
             .unwrap_or_default()
     }
 
+    /// Pick a distinct palette color for a new overlay indicator instance.
+    ///
+    /// Returns `Some(color)` when:
+    /// - The indicator type is an overlay (`definition.overlay == true`)
+    /// - At least one instance of the same `type_id` already exists in `window_id`
+    ///
+    /// The returned color is the first entry from the fixed palette that is not
+    /// already in use by existing same-type instances in that window.  The
+    /// definition's own default output colors are also counted as "in use" so
+    /// the very first (default-colored) instance is never given a duplicate color.
+    ///
+    /// Returns `None` when no auto-color is needed (non-overlay, no existing
+    /// instances of the same type, or the palette is exhausted).
+    pub fn pick_overlay_color(&self, type_id: &str, symbol: &str, window_id: u64) -> Option<String> {
+        /// Colors evenly spread across the visible spectrum, ordered so that
+        /// successive duplicates contrast clearly with each other and with the
+        /// typical default blue (#2196F3).
+        const OVERLAY_PALETTE: &[&str] = &[
+            "#F44336", // red
+            "#4CAF50", // green
+            "#FF9800", // orange
+            "#9C27B0", // purple
+            "#00BCD4", // cyan
+            "#E91E63", // pink
+            "#FFEB3B", // yellow
+            "#009688", // teal
+            "#3F51B5", // indigo
+            "#03A9F4", // light blue
+            "#FF5722", // deep orange
+            "#CDDC39", // lime
+            "#FFC107", // amber
+            "#9E9E9E", // gray
+            "#607D8B", // blue gray
+            "#2196F3", // blue (last resort — same as many defaults)
+        ];
+
+        let definition = self.definitions.get(type_id)?;
+        if !definition.overlay {
+            return None;
+        }
+
+        let existing_same_type: Vec<&IndicatorInstance> = self
+            .get_instances_for_symbol_in_window(symbol, window_id)
+            .into_iter()
+            .filter(|i| i.type_id == type_id)
+            .collect();
+
+        if existing_same_type.is_empty() {
+            return None;
+        }
+
+        // Collect colors that are already visually in use.
+        // An instance with `color = None` renders with the definition's default
+        // output color, so those defaults count as "used" too.
+        let def_colors: std::collections::HashSet<String> = definition
+            .outputs
+            .iter()
+            .map(|o| o.color.clone())
+            .collect();
+
+        let mut used: std::collections::HashSet<String> = existing_same_type
+            .iter()
+            .flat_map(|i| i.outputs.values())
+            .filter_map(|oc| oc.color.clone())
+            .collect();
+        used.extend(def_colors);
+
+        OVERLAY_PALETTE
+            .iter()
+            .find(|&&c| !used.contains(c))
+            .map(|c| c.to_string())
+    }
+
     /// Get all instances
     pub fn get_all_instances(&self) -> Vec<&IndicatorInstance> {
         self.instances.values().collect()

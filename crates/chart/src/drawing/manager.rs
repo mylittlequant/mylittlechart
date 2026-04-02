@@ -2,12 +2,42 @@
 //!
 //! Works with PrimitiveRegistry and Box<dyn Primitive> instead of hardcoded types.
 
+use std::collections::HashMap;
 use crate::{PriceScale, Viewport, Bar, find_bar_for_timestamp};
 use super::primitives_v2::{
     Primitive, PrimitiveRegistry, ClickBehavior,
     ControlPoint, ControlPointType, HitTestResult,
     PrimitiveExt,  // For is_locked, set_locked, is_visible, set_visible
 };
+use super::primitives_v2::config::TemplateStyle;
+
+/// Apply a `TemplateStyle` snapshot to a freshly-created primitive.
+///
+/// Free function so it can be called without borrowing `&self`, which avoids
+/// borrow-checker conflicts when `self.state` is already mutably borrowed inside
+/// `on_click` match arms.
+fn apply_last_style_snapshot(prim: &mut Box<dyn Primitive>, style: &TemplateStyle) {
+    let data = prim.data_mut();
+    if let Some(ref c) = style.color {
+        data.color.stroke = c.clone();
+    }
+    if let Some(w) = style.width {
+        data.width = w;
+    }
+    if let Some(ref s) = style.line_style {
+        use super::primitives_v2::LineStyle;
+        data.style = match s.as_str() {
+            "dashed"        => LineStyle::Dashed,
+            "dotted"        => LineStyle::Dotted,
+            "large_dashed"  => LineStyle::LargeDashed,
+            "sparse_dotted" => LineStyle::SparseDotted,
+            _               => LineStyle::Solid,
+        };
+    }
+    if let Some(ref f) = style.fill_color {
+        data.color.fill = Some(f.clone());
+    }
+}
 
 /// Drawing state - tracks multi-click primitive creation
 #[derive(Clone, Debug, Default)]
@@ -110,6 +140,10 @@ pub struct DrawingManager {
     current_pane_id: Option<u64>,
     /// Current window ID for new primitives (for multi-window support)
     current_window_id: Option<u64>,
+    /// Per-tool-type last-used style settings.
+    /// Key: type_id (e.g. "trend_line"). Value: last style the user applied.
+    /// Applied automatically when a new primitive of the same type is created.
+    last_used_style: HashMap<String, TemplateStyle>,
 }
 
 impl Default for DrawingManager {
@@ -139,6 +173,7 @@ impl Clone for DrawingManager {
             visible: self.visible,
             current_pane_id: self.current_pane_id,
             current_window_id: self.current_window_id,
+            last_used_style: self.last_used_style.clone(),
         }
     }
 }
@@ -160,6 +195,7 @@ impl DrawingManager {
             visible: true,
             current_pane_id: None,
             current_window_id: None,
+            last_used_style: HashMap::new(),
         }
     }
 
@@ -445,46 +481,50 @@ impl DrawingManager {
     /// NOTE: Unlike other primitives, FreehandDrag tools stay active after completion
     /// to allow continuous drawing without re-selecting the tool
     pub fn complete_freehand(&mut self) -> bool {
-        if let DrawingState::Creating { tool_id, points } = &self.state {
-            let point_count = points.len();
+        // Extract tool_id and points first to avoid overlapping borrows later.
+        let (tool_id_clone, points_clone, point_count) = match &self.state {
+            DrawingState::Creating { tool_id, points } => {
+                (tool_id.clone(), points.clone(), points.len())
+            }
+            _ => return false,
+        };
 
-            if point_count >= 2 {
-                let tool_id_clone = tool_id.clone();
-                let registry = PrimitiveRegistry::global().read().unwrap();
-                if let Some(meta) = registry.get(&tool_id_clone) {
-                    if meta.click_behavior == ClickBehavior::FreehandDrag {
-                        // Use tool's default color from metadata
-                        let color = meta.default_color;
-                        if let Some(mut prim) = registry.create(&tool_id_clone, points, Some(color)) {
-                            drop(registry); // Release lock before mutable borrow
-                            prim.data_mut().id = crate::drawing::alloc_primitive_id();
-                            prim.data_mut().pane_id = self.current_pane_id;
-                            prim.data_mut().window_id = self.current_window_id;
-                            self.primitives.push(prim);
-                            self.selected = Some(self.primitives.len() - 1);
-                            // Reset to ready state for continuous drawing
-                            // Tool stays active, just clear points for next stroke
-                            self.state = DrawingState::Creating {
-                                tool_id: tool_id_clone,
-                                points: Vec::new(),
-                            };
-                            // Don't reset current_tool - stay in freehand mode
-                            self.current_pane_id = None;
-                            return true;
-                        }
+        if point_count >= 2 {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            if let Some(meta) = registry.get(&tool_id_clone) {
+                if meta.click_behavior == ClickBehavior::FreehandDrag {
+                    // Use tool's default color from metadata
+                    let color = meta.default_color;
+                    if let Some(mut prim) = registry.create(&tool_id_clone, &points_clone, Some(color)) {
+                        drop(registry); // Release lock before mutable borrow
+                        prim.data_mut().id = crate::drawing::alloc_primitive_id();
+                        prim.data_mut().pane_id = self.current_pane_id;
+                        prim.data_mut().window_id = self.current_window_id;
+                        // Apply last-used style for this tool type (if any)
+                        self.apply_last_style_to_prim(&mut prim, &tool_id_clone);
+                        self.primitives.push(prim);
+                        self.selected = Some(self.primitives.len() - 1);
+                        // Reset to ready state for continuous drawing
+                        // Tool stays active, just clear points for next stroke
+                        self.state = DrawingState::Creating {
+                            tool_id: tool_id_clone,
+                            points: Vec::new(),
+                        };
+                        // Don't reset current_tool - stay in freehand mode
+                        self.current_pane_id = None;
+                        return true;
                     }
                 }
-            } else {
-                // Not enough points - stay in Creating state for FreehandDrag tools
-                // so user can try again without re-selecting the tool
-                let tool_id_clone = tool_id.clone();
-                // Clear points but stay in Creating state
-                self.state = DrawingState::Creating {
-                    tool_id: tool_id_clone,
-                    points: Vec::new(),
-                };
-                return false;
             }
+        } else {
+            // Not enough points - stay in Creating state for FreehandDrag tools
+            // so user can try again without re-selecting the tool
+            // Clear points but stay in Creating state
+            self.state = DrawingState::Creating {
+                tool_id: tool_id_clone,
+                points: Vec::new(),
+            };
+            return false;
         }
         false
     }
@@ -550,6 +590,9 @@ impl DrawingManager {
             None => return false,
         };
 
+        // Look up last-used style BEFORE borrowing self.state in match arms below.
+        let last_style = self.last_used_style.get(&tool_id).cloned();
+
         let registry = PrimitiveRegistry::global().read().unwrap();
         let click_behavior = match registry.click_behavior(&tool_id) {
             Some(cb) => cb,
@@ -563,6 +606,9 @@ impl DrawingManager {
                     prim.data_mut().id = crate::drawing::alloc_primitive_id();
                     prim.data_mut().pane_id = self.current_pane_id;
                     prim.data_mut().window_id = self.current_window_id;
+
+                    // Apply last-used style for this tool type (if any)
+                    if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
 
                     // Apply tool variant (e.g., emoji type)
                     if let Some(variant) = &self.tool_variant {
@@ -593,6 +639,9 @@ impl DrawingManager {
                             prim.data_mut().id = crate::drawing::alloc_primitive_id();
                             prim.data_mut().pane_id = self.current_pane_id;
                             prim.data_mut().window_id = self.current_window_id;
+
+                            // Apply last-used style for this tool type (if any)
+                            if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
 
                             // Apply tool variant (e.g., emoji type)
                             if let Some(variant) = &self.tool_variant {
@@ -633,6 +682,8 @@ impl DrawingManager {
                                 prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
                                 prim.data_mut().window_id = self.current_window_id;
+                                // Apply last-used style for this tool type (if any)
+                                if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -665,6 +716,8 @@ impl DrawingManager {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
                                 prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
+                                // Apply last-used style for this tool type (if any)
+                                if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -700,6 +753,8 @@ impl DrawingManager {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
                                 prim.data_mut().id = crate::drawing::alloc_primitive_id();
                                 prim.data_mut().pane_id = self.current_pane_id;
+                                // Apply last-used style for this tool type (if any)
+                                if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -730,20 +785,30 @@ impl DrawingManager {
 
     /// Finish a multi-point primitive (called on double-click or Enter)
     pub fn finish_multipoint(&mut self) -> bool {
-        if let DrawingState::Creating { tool_id, points } = &self.state {
-            let registry = PrimitiveRegistry::global().read().unwrap();
-            if let Some(ClickBehavior::MultiPoint(min)) = registry.click_behavior(tool_id) {
-                if points.len() >= min as usize {
-                    if let Some(mut prim) = registry.create(tool_id, points, Some(&self.default_color)) {
-                        prim.data_mut().id = crate::drawing::alloc_primitive_id();
-                        prim.data_mut().pane_id = self.current_pane_id;
-                        self.primitives.push(prim);
-                        self.selected = Some(self.primitives.len() - 1);
-                        self.state = DrawingState::Idle;
-                        self.current_tool = None;
-                        self.current_pane_id = None; // Reset pane context
-                        return true;
-                    }
+        // Extract tool_id and points first to avoid overlapping borrows later.
+        let (tool_id, points) = match &self.state {
+            DrawingState::Creating { tool_id, points } => (tool_id.clone(), points.clone()),
+            _ => {
+                self.state = DrawingState::Idle;
+                return false;
+            }
+        };
+
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        if let Some(ClickBehavior::MultiPoint(min)) = registry.click_behavior(&tool_id) {
+            if points.len() >= min as usize {
+                if let Some(mut prim) = registry.create(&tool_id, &points, Some(&self.default_color)) {
+                    drop(registry); // Release lock before self mutation
+                    prim.data_mut().id = crate::drawing::alloc_primitive_id();
+                    prim.data_mut().pane_id = self.current_pane_id;
+                    // Apply last-used style for this tool type (if any)
+                    self.apply_last_style_to_prim(&mut prim, &tool_id);
+                    self.primitives.push(prim);
+                    self.selected = Some(self.primitives.len() - 1);
+                    self.state = DrawingState::Idle;
+                    self.current_tool = None;
+                    self.current_pane_id = None; // Reset pane context
+                    return true;
                 }
             }
         }
@@ -2007,6 +2072,43 @@ impl DrawingManager {
             .filter(|(_, p)| p.type_id() == type_id)
             .map(|(i, _)| i)
             .collect()
+    }
+
+    // =========================================================================
+    // Last-Used Style (remember settings per tool type)
+    // =========================================================================
+
+    /// Save the style fields from `data` as the last-used style for its `type_id`.
+    ///
+    /// Call this whenever the user finishes editing a primitive's settings so that
+    /// the next primitive of the same type is pre-populated with these values.
+    pub fn save_last_style_from_data(&mut self, data: &super::primitives_v2::PrimitiveData) {
+        let style = TemplateStyle {
+            color: Some(data.color.stroke.clone()),
+            width: Some(data.width),
+            line_style: Some(data.style.as_str().to_string()),
+            fill_color: data.color.fill.clone(),
+            fill_opacity: None,
+            show_labels: None,
+            show_prices: None,
+        };
+        self.last_used_style.insert(data.type_id.clone(), style);
+    }
+
+    /// Look up the last-used style snapshot for `tool_id` and return a clone.
+    ///
+    /// Use this BEFORE entering a `match &mut self.state` block to avoid
+    /// overlapping borrows.  Pass the result to `apply_last_style_snapshot`.
+    pub fn last_style_for(&self, tool_id: &str) -> Option<TemplateStyle> {
+        self.last_used_style.get(tool_id).cloned()
+    }
+
+    /// Apply last-used style for this tool type (if any) to a freshly-created
+    /// primitive.  Pass the result of `last_style_for` here.
+    fn apply_last_style_to_prim(&self, prim: &mut Box<dyn Primitive>, tool_id: &str) {
+        if let Some(style) = self.last_used_style.get(tool_id) {
+            apply_last_style_snapshot(prim, style);
+        }
     }
 
     // =========================================================================
