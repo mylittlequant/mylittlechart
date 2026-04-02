@@ -1433,6 +1433,11 @@ pub struct TemplateStyle {
     pub show_labels: Option<bool>,
     /// Show prices
     pub show_prices: Option<bool>,
+    /// Extended per-primitive style properties (e.g. show_labels, line_extend,
+    /// label_font_size, etc.) captured via `style_properties()` and restored via
+    /// `apply_style_property()` on the next creation of the same primitive type.
+    #[serde(default)]
+    pub style_properties: Vec<(String, PropertyValue)>,
 }
 
 impl Default for TemplateStyle {
@@ -1445,6 +1450,7 @@ impl Default for TemplateStyle {
             fill_opacity: None,
             show_labels: None,
             show_prices: None,
+            style_properties: Vec::new(),
         }
     }
 }

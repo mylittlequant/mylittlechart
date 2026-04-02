@@ -7308,10 +7308,10 @@ impl ChartApp {
             if let Ok(val) = serde_json::to_value(&data) {
                 self.snapshot_actions.push(SnapshotAction::PrimitiveSettings { type_id, data: val });
             }
-            // Also remember this style so the next primitive of the same type
-            // is pre-populated with these settings.
+            // Remember this style (including extended style_properties) so the next
+            // primitive of the same type is pre-populated with these settings.
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                window.drawing_manager.save_last_style_from_data(&data);
+                window.drawing_manager.save_last_style_at_index(idx);
             }
         }
     }

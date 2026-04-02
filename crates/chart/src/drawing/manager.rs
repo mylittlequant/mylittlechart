@@ -17,25 +17,31 @@ use super::primitives_v2::config::TemplateStyle;
 /// borrow-checker conflicts when `self.state` is already mutably borrowed inside
 /// `on_click` match arms.
 fn apply_last_style_snapshot(prim: &mut Box<dyn Primitive>, style: &TemplateStyle) {
-    let data = prim.data_mut();
-    if let Some(ref c) = style.color {
-        data.color.stroke = c.clone();
+    {
+        let data = prim.data_mut();
+        if let Some(ref c) = style.color {
+            data.color.stroke = c.clone();
+        }
+        if let Some(w) = style.width {
+            data.width = w;
+        }
+        if let Some(ref s) = style.line_style {
+            use super::primitives_v2::LineStyle;
+            data.style = match s.as_str() {
+                "dashed"        => LineStyle::Dashed,
+                "dotted"        => LineStyle::Dotted,
+                "large_dashed"  => LineStyle::LargeDashed,
+                "sparse_dotted" => LineStyle::SparseDotted,
+                _               => LineStyle::Solid,
+            };
+        }
+        if let Some(ref f) = style.fill_color {
+            data.color.fill = Some(f.clone());
+        }
     }
-    if let Some(w) = style.width {
-        data.width = w;
-    }
-    if let Some(ref s) = style.line_style {
-        use super::primitives_v2::LineStyle;
-        data.style = match s.as_str() {
-            "dashed"        => LineStyle::Dashed,
-            "dotted"        => LineStyle::Dotted,
-            "large_dashed"  => LineStyle::LargeDashed,
-            "sparse_dotted" => LineStyle::SparseDotted,
-            _               => LineStyle::Solid,
-        };
-    }
-    if let Some(ref f) = style.fill_color {
-        data.color.fill = Some(f.clone());
+    // Apply extended per-primitive style properties (show_labels, line_extend, etc.)
+    for (prop_id, value) in &style.style_properties {
+        prim.apply_style_property(prop_id, value);
     }
 }
 
@@ -566,8 +572,21 @@ impl DrawingManager {
             preview_points.push((cursor_bar, cursor_price));
         }
 
-        // Create the primitive with preview points
-        let mut prim = (meta.factory)(&preview_points, &self.default_color);
+        // Create the primitive with preview points.
+        // Use the last-used style color as the seed color for the factory so the
+        // preview already has the right hue even before style is applied below.
+        let seed_color = self.last_used_style
+            .get(tool_id)
+            .and_then(|s| s.color.as_deref())
+            .unwrap_or(&self.default_color);
+        let mut prim = (meta.factory)(&preview_points, seed_color);
+
+        // Apply the full last-used style (color, width, line_style, fill, extended
+        // style_properties) so the preview matches what a finished primitive would
+        // look like instead of falling back to hardcoded factory defaults.
+        if let Some(style) = self.last_used_style.get(tool_id) {
+            apply_last_style_snapshot(&mut prim, style);
+        }
 
         // Apply tool variant (e.g., emoji type) to preview
         if let Some(variant) = &self.tool_variant {
@@ -2082,6 +2101,8 @@ impl DrawingManager {
     ///
     /// Call this whenever the user finishes editing a primitive's settings so that
     /// the next primitive of the same type is pre-populated with these values.
+    /// Only saves basic fields (color, width, line_style, fill_color). Use
+    /// `save_last_style_at_index` to also capture extended `style_properties`.
     pub fn save_last_style_from_data(&mut self, data: &super::primitives_v2::PrimitiveData) {
         let style = TemplateStyle {
             color: Some(data.color.stroke.clone()),
@@ -2091,8 +2112,41 @@ impl DrawingManager {
             fill_opacity: None,
             show_labels: None,
             show_prices: None,
+            style_properties: Vec::new(),
         };
         self.last_used_style.insert(data.type_id.clone(), style);
+    }
+
+    /// Save the full style of the primitive at `index` as the last-used style for
+    /// its type, including extended `style_properties` (show_labels, line_extend,
+    /// label_font_size, etc.).
+    ///
+    /// Prefer this over `save_last_style_from_data` so that all per-primitive
+    /// settings are inherited by the next primitive of the same type.
+    pub fn save_last_style_at_index(&mut self, index: usize) {
+        let Some(prim) = self.primitives.get(index) else { return };
+        let data = prim.data();
+        let type_id = data.type_id.clone();
+
+        // Capture extended style properties reported by the primitive itself.
+        let style_props: Vec<(String, super::primitives_v2::config::PropertyValue)> = prim
+            .style_properties()
+            .into_iter()
+            .filter(|prop| !prop.readonly)
+            .map(|prop| (prop.id, prop.value))
+            .collect();
+
+        let style = TemplateStyle {
+            color: Some(data.color.stroke.clone()),
+            width: Some(data.width),
+            line_style: Some(data.style.as_str().to_string()),
+            fill_color: data.color.fill.clone(),
+            fill_opacity: None,
+            show_labels: None,
+            show_prices: None,
+            style_properties: style_props,
+        };
+        self.last_used_style.insert(type_id, style);
     }
 
     /// Look up the last-used style snapshot for `tool_id` and return a clone.
