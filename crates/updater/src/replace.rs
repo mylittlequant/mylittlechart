@@ -131,34 +131,45 @@ pub fn wait_for_parent_exit() {
 
     #[cfg(target_os = "windows")]
     {
-        // Phase 1: wait for the PID to disappear from tasklist.
-        let mut pid_gone = false;
-        for _ in 0..60 {
-            let output = std::process::Command::new("tasklist")
-                .args(&["/FI", &format!("PID eq {}", pid_str), "/NH"])
-                .output();
+        // Phase 1: wait for the PID to exit using kernel handle (no tasklist spawn).
+        extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
+            fn WaitForSingleObject(handle: isize, milliseconds: u32) -> u32;
+            fn CloseHandle(handle: isize) -> i32;
+        }
+        const SYNCHRONIZE: u32 = 0x00100000;
+        const WAIT_OBJECT_0: u32 = 0;
+        const WAIT_TIMEOUT: u32 = 258;
 
-            match output {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    if !stdout.contains(&pid_str) {
+        let pid_gone;
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+            if handle == 0 {
+                // Can't open process — already dead or access denied
+                log::info!("Parent process {} already exited (OpenProcess failed)", pid_str);
+                pid_gone = true;
+            } else {
+                // Wait up to 30 seconds for process to exit
+                let result = unsafe { WaitForSingleObject(handle, 30_000) };
+                unsafe { CloseHandle(handle); }
+                match result {
+                    WAIT_OBJECT_0 => {
                         log::info!("Parent process {} has exited", pid_str);
                         pid_gone = true;
-                        break;
+                    }
+                    WAIT_TIMEOUT => {
+                        log::warn!("Timed out waiting for parent process {} to exit", pid_str);
+                        pid_gone = false;
+                    }
+                    _ => {
+                        log::warn!("WaitForSingleObject returned {}, proceeding", result);
+                        pid_gone = true;
                     }
                 }
-                Err(_) => {
-                    // tasklist unavailable — proceed anyway
-                    log::warn!("tasklist unavailable, proceeding without wait");
-                    return;
-                }
             }
-
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-
-        if !pid_gone {
-            log::warn!("Timed out waiting for parent process {} to exit", pid_str);
+        } else {
+            log::warn!("Invalid PID '{}', proceeding without wait", pid_str);
+            pid_gone = true;
         }
 
         // Phase 2: if a port was given, probe until it's free (or timeout).
