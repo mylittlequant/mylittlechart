@@ -41,6 +41,17 @@ pub struct SettingsSnapshots {
     /// Last known compare overlay settings.
     #[serde(default)]
     pub compare_settings: Option<serde_json::Value>,
+
+    /// Last-used drawing style per primitive `type_id`.
+    ///
+    /// Persisted so that the next primitive of the same type is pre-populated
+    /// with the user's last-used color, width, line style, and extended
+    /// style properties.  Applies globally across all chart windows.
+    ///
+    /// Stored as `serde_json::Value` for forward-compatibility so that
+    /// new `TemplateStyle` fields never break deserialization of older files.
+    #[serde(default)]
+    pub last_used_drawing_styles: HashMap<String, serde_json::Value>,
 }
 
 // =============================================================================

@@ -2157,6 +2157,33 @@ impl DrawingManager {
         self.last_used_style.get(tool_id).cloned()
     }
 
+    /// Bulk-load last-used drawing styles from a persisted snapshot map.
+    ///
+    /// Called at startup after loading `settings_snapshots.json` so that styles
+    /// survive app restarts.  Entries that fail to deserialize are silently
+    /// skipped — a missing or malformed entry is not fatal.
+    ///
+    /// Only inserts styles that are not already present; styles set during
+    /// preset loading take precedence over persisted ones.
+    pub fn load_last_styles(&mut self, stored: &std::collections::HashMap<String, serde_json::Value>) {
+        for (type_id, value) in stored {
+            if self.last_used_style.contains_key(type_id) {
+                continue;
+            }
+            match serde_json::from_value::<TemplateStyle>(value.clone()) {
+                Ok(style) => {
+                    self.last_used_style.insert(type_id.clone(), style);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[DrawingManager] load_last_styles: failed to deserialize style for '{}': {}",
+                        type_id, e
+                    );
+                }
+            }
+        }
+    }
+
     /// Apply last-used style for this tool type (if any) to a freshly-created
     /// primitive.  Pass the result of `last_style_for` here.
     fn apply_last_style_to_prim(&self, prim: &mut Box<dyn Primitive>, tool_id: &str) {

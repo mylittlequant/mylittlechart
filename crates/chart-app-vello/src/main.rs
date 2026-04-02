@@ -2479,6 +2479,11 @@ impl App<'_> {
             self.profile.open_tabs = chart.panel_app.open_tabs.clone();
         }
         chart.panel_app.user_manager.snapshots = self.app_state.snapshots.clone();
+        // Apply persisted last-used drawing styles to all DrawingManagers in this new window.
+        let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
+        for w in chart.panel_app.panel_grid.windows_mut().values_mut() {
+            w.drawing_manager.load_last_styles(drawing_styles);
+        }
         chart.panel_app.template_manager = self.app_state.template_manager.clone();
         // Sync server settings so the User Settings modal shows current state.
         chart.panel_app.user_settings_state.server_enabled = self.app_state.server_enabled;
@@ -4189,6 +4194,9 @@ impl ApplicationHandler for App<'_> {
                     }
                     chart_app::SnapshotAction::CompareSettings(data) => {
                         self.app_state.snapshots.compare_settings = Some(data);
+                    }
+                    chart_app::SnapshotAction::DrawingStyle { type_id, data } => {
+                        self.app_state.snapshots.last_used_drawing_styles.insert(type_id, data);
                     }
                 }
             }
@@ -6596,9 +6604,15 @@ impl ApplicationHandler for App<'_> {
                 self.app_state.presets_dirty = false;
             }
             if self.app_state.snapshots_dirty {
+                let drawing_styles = &self.app_state.snapshots.last_used_drawing_styles;
                 for pw in self.windows.values_mut() {
                     pw.chart.panel_app.user_manager.snapshots =
                         self.app_state.snapshots.clone();
+                    // Apply persisted last-used drawing styles to every DrawingManager
+                    // so new primitives of each type inherit the user's last-used style.
+                    for w in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
+                        w.drawing_manager.load_last_styles(drawing_styles);
+                    }
                 }
                 self.app_state.snapshots_dirty = false;
             }

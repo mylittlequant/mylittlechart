@@ -574,6 +574,12 @@ pub enum SnapshotAction {
     IndicatorSettings { type_id: String, data: serde_json::Value },
     /// Update the compare overlay settings snapshot.
     CompareSettings(serde_json::Value),
+    /// Update the last-used drawing style for a given primitive `type_id`.
+    ///
+    /// Persisted globally so the next primitive of the same type is
+    /// pre-populated with the user's last-used color, width, line style, and
+    /// extended style properties.
+    DrawingStyle { type_id: String, data: serde_json::Value },
 }
 
 /// An action that mutates app-level template state.
@@ -7306,12 +7312,24 @@ impl ChartApp {
         {
             let type_id = data.type_id.clone();
             if let Ok(val) = serde_json::to_value(&data) {
-                self.snapshot_actions.push(SnapshotAction::PrimitiveSettings { type_id, data: val });
+                self.snapshot_actions.push(SnapshotAction::PrimitiveSettings {
+                    type_id: type_id.clone(),
+                    data: val,
+                });
             }
             // Remember this style (including extended style_properties) so the next
             // primitive of the same type is pre-populated with these settings.
             if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                 window.drawing_manager.save_last_style_at_index(idx);
+                // Persist the last-used style globally so it survives app restarts.
+                if let Some(style) = window.drawing_manager.last_style_for(&type_id) {
+                    if let Ok(style_val) = serde_json::to_value(&style) {
+                        self.snapshot_actions.push(SnapshotAction::DrawingStyle {
+                            type_id,
+                            data: style_val,
+                        });
+                    }
+                }
             }
         }
     }
