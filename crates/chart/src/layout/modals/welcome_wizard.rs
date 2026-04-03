@@ -183,11 +183,12 @@ fn render_page0(
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
     let is_btn_hovered = hovered == Some("wizard_get_started");
-    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    let btn_bg = if is_btn_hovered { toolbar_theme.accent.as_str() } else { toolbar_theme.item_bg_active.as_str() };
+    let btn_text = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.item_text.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_fill_color(btn_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
@@ -303,11 +304,12 @@ fn render_page1_theme(
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
     let is_btn_hovered = hovered == Some("wizard_theme_next");
-    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    let btn_bg = if is_btn_hovered { toolbar_theme.accent.as_str() } else { toolbar_theme.item_bg_active.as_str() };
+    let btn_text = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.item_text.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_fill_color(btn_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
@@ -385,6 +387,7 @@ fn render_page2_profile(
     let name_input_result = draw_input(ctx, &name_config, WidgetState::Normal, name_rect, &widget_theme);
 
     result.content_items.push(("wizard_profile_name_input".to_string(), name_rect));
+    result.input_char_positions.push(("wizard_profile_name_input".to_string(), name_input_result.char_x_positions.clone()));
     input_coordinator.register_on_layer("user_settings:wizard_profile_name_input", name_rect, Sense::CLICK, layer_id);
 
     if state.new_profile_name_focused && name_editing.is_cursor_visible(current_time_ms) {
@@ -431,11 +434,17 @@ fn render_page2_profile(
     let finish_bg = if finish_disabled {
         "rgba(244,205,99,0.20)"
     } else if is_finish_hovered {
+        toolbar_theme.accent.as_str()
+    } else {
+        toolbar_theme.item_bg_active.as_str()
+    };
+    let finish_text_col = if finish_disabled {
+        "rgba(0,0,0,0.35)"
+    } else if is_finish_hovered {
         "rgba(255,255,255,0.92)"
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.item_text.as_str()
     };
-    let finish_text_col = if finish_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
 
     let btn_h = 36.0;
     let btn_w = w.min(220.0);
@@ -547,6 +556,7 @@ fn render_passphrase_input(
 
     // Register for click-to-focus
     result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
+    result.input_char_positions.push(("e2e_passphrase_input".to_string(), input_result.char_x_positions.clone()));
     input_coordinator.register_on_layer("user_settings:e2e_passphrase_input", input_rect, Sense::CLICK, layer_id);
 
     // Blinking cursor (only when focused)
@@ -668,11 +678,17 @@ pub fn render_vault_unlock(
     let btn_bg = if unlock_disabled {
         "rgba(244,205,99,0.20)"
     } else if is_unlock_hovered {
+        toolbar_theme.accent.as_str()
+    } else {
+        toolbar_theme.item_bg_active.as_str()
+    };
+    let btn_text_col = if unlock_disabled {
+        "rgba(0,0,0,0.35)"
+    } else if is_unlock_hovered {
         "rgba(255,255,255,0.92)"
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.item_text.as_str()
     };
-    let btn_text_col = if unlock_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);

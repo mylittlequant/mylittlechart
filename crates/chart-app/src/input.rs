@@ -2292,7 +2292,7 @@ impl ChartApp {
                     "e2e_passphrase_input" => {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
                     }
-                    "profile_mgr:name_input" => {
+                    "wizard_profile_name_input" | "profile_mgr:name_input" => {
                         self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
                     }
                     "profile_mgr:recovery_key_input" => {
@@ -3009,7 +3009,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start,
                     self.panel_app.user_settings_state.e2e_passphrase_editing.cursor,
                 ),
-                "profile_mgr:name_input" => (
+                "wizard_profile_name_input" | "profile_mgr:name_input" => (
                     self.panel_app.user_settings_state.new_profile_name_editing.selection_start,
                     self.panel_app.user_settings_state.new_profile_name_editing.cursor,
                 ),
@@ -3036,7 +3036,7 @@ impl ChartApp {
                     "e2e_passphrase_input" => {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                     }
-                    "profile_mgr:name_input" => {
+                    "wizard_profile_name_input" | "profile_mgr:name_input" => {
                         self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     }
                     "profile_mgr:recovery_key_input" => {
