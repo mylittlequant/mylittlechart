@@ -190,6 +190,11 @@ pub enum UpdaterCommand {
         /// UUID of the profile to restore.
         profile_id: String,
     },
+    /// Switch the OTA update channel at runtime (`"stable"` or `"dev"`).
+    ///
+    /// Also resets the check interval to match the new channel:
+    /// `"dev"` → 2 minutes, `"stable"` → 4 hours.
+    SetChannel(String),
     /// Shut down the updater background task cleanly.
     ///
     /// After receiving this command the loop exits; no further network calls

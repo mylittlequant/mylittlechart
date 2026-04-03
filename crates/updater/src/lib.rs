@@ -39,15 +39,21 @@ use std::sync::Arc;
 /// Base URL for the update server.
 const UPDATE_SERVER: &str = "https://chart.example";
 
-/// Returns the active update channel based on the `UPDATE_CHANNEL` env var.
+/// Returns the active update channel from DeviceSettings, with env var override.
 ///
+/// Priority: `UPDATE_CHANNEL` env var > `device_settings.json` > default `"stable"`.
 /// - `"dev"` — fast 2-minute poll interval, used for local dev builds.
 /// - `"stable"` (default) — 4-hour poll interval for production installs.
-pub fn get_channel() -> &'static str {
-    match std::env::var("UPDATE_CHANNEL").as_deref() {
-        Ok("dev") => "dev",
-        _ => "stable",
+pub fn get_channel() -> String {
+    // Env var override for CI / scripted launches
+    if let Ok(ch) = std::env::var("UPDATE_CHANNEL") {
+        if ch == "dev" || ch == "stable" {
+            return ch;
+        }
     }
+    // Read from persisted DeviceSettings
+    let ds = zengeld_chart::user_profile::DeviceSettings::load();
+    ds.update_channel
 }
 
 /// Returns the check interval for the current channel.
@@ -163,10 +169,10 @@ async fn updater_loop(
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
-    let channel = get_channel();
-    let interval_secs = check_interval_for_channel(channel).as_secs();
+    let mut channel = get_channel();
+    let interval_secs = check_interval_for_channel(&channel).as_secs();
     eprintln!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
-    log::info!("[Updater] channel={}, interval={}s", channel, interval_secs);
+    log::info!("[Updater] channel={}, interval={}s", &channel, interval_secs);
 
     // Shared HTTP client for key sync requests.
     // Built once here; reused on every interval tick.
@@ -205,14 +211,14 @@ async fn updater_loop(
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    let mut check_interval = tokio::time::interval(check_interval_for_channel(channel));
+    let mut check_interval = tokio::time::interval(check_interval_for_channel(&channel));
     check_interval.tick().await; // consume first immediate tick
 
     // Do initial check + telemetry only in connected mode.
     if connected {
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
-        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, channel).await;
+        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, &channel).await;
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
     }
@@ -233,7 +239,7 @@ async fn updater_loop(
                 if connected {
                     let token = token_store::load_token();
                     let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
+                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
 
                     // If we found an update, cache it and auto-install.
                     if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
@@ -255,7 +261,7 @@ async fn updater_loop(
                         if connected {
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -322,7 +328,7 @@ async fn updater_loop(
                             log::info!("[Updater] Switched to connected mode — running immediate update check");
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, channel).await;
+                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -734,6 +740,21 @@ async fn updater_loop(
                                         );
                                     }
                                 }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::SetChannel(new_channel) => {
+                        if new_channel != channel {
+                            eprintln!("[{} Updater] channel switched: {} → {}", now_ts(), channel, new_channel);
+                            channel = new_channel;
+                            check_interval = tokio::time::interval(check_interval_for_channel(&channel));
+                            check_interval.tick().await; // consume immediate tick
+                            log::info!("[Updater] channel={}, interval={}s", channel, check_interval_for_channel(&channel).as_secs());
+                            // Immediately check for updates on the new channel
+                            if connected {
+                                let token = token_store::load_token();
+                                let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                                do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
                             }
                         }
                     }

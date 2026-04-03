@@ -5647,6 +5647,8 @@ impl ApplicationHandler for App<'_> {
                     } else if cmd_str == "device_ota:standalone" {
                         // Device-level Standalone mode toggle — disable all network activity.
                         Some(UpdaterCommand::SetCloudEnabled(false))
+                    } else if let Some(ch) = cmd_str.strip_prefix("set_channel:") {
+                        Some(UpdaterCommand::SetChannel(ch.to_string()))
                     } else if cmd_str == "set_standalone" {
                         Some(UpdaterCommand::SetCloudEnabled(false))
                     // ── Sync level commands ────────────────────────────────────
