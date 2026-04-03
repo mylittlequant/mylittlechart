@@ -416,6 +416,29 @@ fn render_page_profile_list(
         }
     }
 
+    // ── Temporary: Run Setup Wizard button ───────────────────────────────────
+    left_cy += 12.0;
+    let wiz_btn_h = 28.0;
+    let wiz_id = "profile_mgr:run_wizard";
+    let is_wiz_hovered = hovered == Some(wiz_id);
+    let wiz_bg = if is_wiz_hovered { "rgba(255,255,255,0.08)" } else { "rgba(255,255,255,0.04)" };
+    ctx.set_fill_color(wiz_bg);
+    ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, wiz_btn_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Run Setup Wizard", left_inner_x + 8.0, left_cy + wiz_btn_h / 2.0);
+    let wiz_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, wiz_btn_h);
+    result.content_items.push((wiz_id.to_string(), wiz_rect));
+    input_coordinator.register_on_layer(
+        format!("user_settings:{}", wiz_id).as_str(),
+        wiz_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+    left_cy += wiz_btn_h;
+
     // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
     let mascot_w = 140.0;
     let mascot_h = mascot_w * (251.0 / 197.0); // ~178px

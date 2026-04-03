@@ -6,7 +6,10 @@
 //!
 //! Pages:
 //!   0 — Welcome          (Get Started button)
-//!   1 — Set Passphrase   (mandatory; Connected mode also shows sign-in section)
+//!   1 — Language         (English / Русский selection)
+//!   2 — Set Passphrase   (mandatory)
+//!   3 — Theme            (5 presets)
+//!   4 — Performance      (backend selection)
 
 use crate::engine::render::RenderContext;
 use uzor::render::{TextAlign, TextBaseline};
@@ -20,6 +23,7 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
+use crate::i18n::{Language, current_language};
 
 /// Render the Welcome Wizard overlay.
 ///
@@ -57,8 +61,12 @@ pub fn render_welcome_wizard(
     // ── Modal dimensions ─────────────────────────────────────────────────────
     let modal_w: f64 = 580.0;
     let modal_h: f64 = match state.wizard_page {
-        1 => page1_height(state),
-        _ => 360.0, // page 0 — welcome + Get Started
+        0 => 360.0,
+        1 => 300.0,   // language
+        2 => page2_height(state),
+        3 => 420.0,   // theme
+        4 => 380.0,   // performance
+        _ => 360.0,
     };
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
@@ -85,14 +93,17 @@ pub fn render_welcome_wizard(
 
     match state.wizard_page {
         0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1_passphrase(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        1 => render_page1_language(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        2 => render_page2_passphrase(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        3 => render_page3_theme(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        4 => render_page4_performance(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
         _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 }
 
-/// Compute the height for page 1.
-fn page1_height(_state: &UserSettingsState) -> f64 {
-    320.0 // Passphrase only
+/// Compute the height for page 2 (passphrase).
+fn page2_height(_state: &UserSettingsState) -> f64 {
+    320.0
 }
 
 // =============================================================================
@@ -172,11 +183,123 @@ fn render_page0(
 }
 
 // =============================================================================
-// Page 1 — Set Passphrase (mandatory; Connected mode also shows sign-in)
+// Page 1 — Language
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page1_passphrase(
+fn render_page1_language(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    cy: &mut f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+    let active_lang = current_language();
+
+    // Back button
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    *cy += 8.0;
+
+    // Step indicator (top-right)
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Step 1 of 5", x + w, *cy - 20.0);
+
+    // Title
+    ctx.set_font("bold 22px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Language", x + w / 2.0, *cy);
+    *cy += 34.0;
+
+    // Subtitle
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("Choose your preferred language", x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 28.0;
+
+    // Language rows
+    let langs: &[(Language, &str)] = &[
+        (Language::En, "wizard_lang_en"),
+        (Language::Ru, "wizard_lang_ru"),
+    ];
+
+    let row_h = 44.0;
+    let row_gap = 8.0;
+
+    for (lang, widget_id) in langs {
+        let is_active = active_lang == *lang;
+        let is_row_hovered = hovered == Some(widget_id);
+
+        let row_bg = if is_row_hovered {
+            "rgba(255,255,255,0.08)"
+        } else {
+            "rgba(255,255,255,0.04)"
+        };
+        ctx.set_fill_color(row_bg);
+        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+
+        // Active accent left border
+        if is_active {
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
+            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+        }
+
+        // Language name
+        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
+        ctx.set_font("14px sans-serif");
+        ctx.set_fill_color(text_alpha);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(lang.native_name(), x + 16.0, *cy + row_h / 2.0);
+
+        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        result.content_items.push((widget_id.to_string(), row_rect));
+        let hit_id = format!("user_settings:{}", widget_id);
+        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+        *cy += row_h + row_gap;
+    }
+
+    *cy += 16.0;
+
+    // "Next" button
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
+    let btn_x = x + (w - btn_w) / 2.0;
+    let is_btn_hovered = hovered == Some("wizard_lang_next");
+    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Next", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
+    result.content_items.push(("wizard_lang_next".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_lang_next", btn_rect, Sense::CLICK, layer_id);
+}
+
+// =============================================================================
+// Page 2 — Set Passphrase (was page 1)
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page2_passphrase(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -196,6 +319,13 @@ fn render_page1_passphrase(
     render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
+    // Step indicator (top-right)
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Step 3 of 5", x + w, *cy - 20.0);
+
     // Title
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
@@ -205,11 +335,11 @@ fn render_page1_passphrase(
     ctx.set_text_align(TextAlign::Left);
     *cy += 26.0;
 
-    // Step indicator
+    // Step indicator centered (legacy style, kept for spacing)
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text("Step 2 of 2 — Set Passphrase", x + w / 2.0, *cy);
+    ctx.fill_text("Step 3 of 5 — Set Passphrase", x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 24.0;
 
@@ -249,7 +379,7 @@ fn render_page1_passphrase(
     ctx.set_fill_color(enable_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Complete Setup", x + cbtn_w / 2.0, *cy + cbtn_h / 2.0);
+    ctx.fill_text("Next", x + cbtn_w / 2.0, *cy + cbtn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !enable_disabled {
@@ -257,6 +387,265 @@ fn render_page1_passphrase(
         result.content_items.push(("wizard_enable_e2e".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:wizard_enable_e2e", btn_rect, Sense::CLICK, layer_id);
     }
+}
+
+// =============================================================================
+// Page 3 — Theme Selection
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page3_theme(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    cy: &mut f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    // Determine active theme — fallback to "dark" if not yet selected
+    let active_theme = if state.wizard_selected_theme.is_empty() {
+        "dark"
+    } else {
+        state.wizard_selected_theme.as_str()
+    };
+
+    // Back button
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    *cy += 8.0;
+
+    // Step indicator (top-right)
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Step 4 of 5", x + w, *cy - 20.0);
+
+    // Title
+    ctx.set_font("bold 22px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Theme", x + w / 2.0, *cy);
+    *cy += 34.0;
+
+    // Subtitle
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("Choose your visual theme", x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 28.0;
+
+    // Theme rows: (key, display label, widget_id)
+    let themes: &[(&str, &str, &str)] = &[
+        ("dark",                  "Dark",                "wizard_theme_dark"),
+        ("light",                 "Light",               "wizard_theme_light"),
+        ("high_contrast",         "High Contrast",       "wizard_theme_high_contrast"),
+        ("high_contrast_mono",    "High Contrast Mono",  "wizard_theme_high_contrast_mono"),
+        ("cypherpunk",            "Cypherpunk",          "wizard_theme_cypherpunk"),
+    ];
+
+    let row_h = 40.0;
+    let row_gap = 6.0;
+
+    for (key, label, widget_id) in themes {
+        let is_active = active_theme == *key;
+        let is_row_hovered = hovered == Some(widget_id);
+
+        let row_bg = if is_row_hovered {
+            "rgba(255,255,255,0.08)"
+        } else {
+            "rgba(255,255,255,0.04)"
+        };
+        ctx.set_fill_color(row_bg);
+        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+
+        // Active accent left border
+        if is_active {
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
+            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+        }
+
+        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
+        ctx.set_font("14px sans-serif");
+        ctx.set_fill_color(text_alpha);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, x + 16.0, *cy + row_h / 2.0);
+
+        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        result.content_items.push((widget_id.to_string(), row_rect));
+        let hit_id = format!("user_settings:{}", widget_id);
+        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+        *cy += row_h + row_gap;
+    }
+
+    *cy += 16.0;
+
+    // "Next" button
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
+    let btn_x = x + (w - btn_w) / 2.0;
+    let is_btn_hovered = hovered == Some("wizard_theme_next");
+    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Next", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
+    result.content_items.push(("wizard_theme_next".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_theme_next", btn_rect, Sense::CLICK, layer_id);
+}
+
+// =============================================================================
+// Page 4 — Performance (Backend Selection)
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page4_performance(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    cy: &mut f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    // Determine active backend — fallback to "vello_gpu" if not yet selected
+    let active_backend = if state.wizard_selected_backend.is_empty() {
+        "vello_gpu"
+    } else {
+        state.wizard_selected_backend.as_str()
+    };
+
+    // Back button
+    render_back_button(ctx, x, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    *cy += 8.0;
+
+    // Step indicator (top-right)
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Step 5 of 5", x + w, *cy - 20.0);
+
+    // Title
+    ctx.set_font("bold 22px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Performance", x + w / 2.0, *cy);
+    *cy += 34.0;
+
+    // Subtitle
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("Recommended settings based on your hardware", x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 20.0;
+
+    // "Auto-detected" info line
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.50)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Auto-detected", x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 22.0;
+
+    // Backend rows: (key, display label, widget_id, recommended)
+    // "vello_gpu" is the recommended default for discrete/integrated GPU
+    let backends: &[(&str, &str, &str, bool)] = &[
+        ("vello_gpu",        "Vello GPU",        "wizard_backend_vello_gpu",        true),
+        ("instanced_wgpu",   "Instanced wGPU",   "wizard_backend_instanced_wgpu",   false),
+        ("vello_cpu",        "Vello CPU",         "wizard_backend_vello_cpu",        false),
+        ("vello_hybrid",     "Vello Hybrid",      "wizard_backend_vello_hybrid",     false),
+        ("tiny_skia",        "Tiny-Skia CPU",     "wizard_backend_tiny_skia",        false),
+    ];
+
+    let row_h = 40.0;
+    let row_gap = 5.0;
+
+    for (key, label, widget_id, recommended) in backends {
+        let is_active = active_backend == *key;
+        let is_row_hovered = hovered == Some(widget_id);
+
+        let row_bg = if is_row_hovered {
+            "rgba(255,255,255,0.08)"
+        } else {
+            "rgba(255,255,255,0.04)"
+        };
+        ctx.set_fill_color(row_bg);
+        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+
+        // Active accent left border
+        if is_active {
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
+            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+        }
+
+        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
+        ctx.set_font("14px sans-serif");
+        ctx.set_fill_color(text_alpha);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, x + 16.0, *cy + row_h / 2.0);
+
+        // "(Recommended)" badge for the default backend
+        if *recommended {
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("rgba(244,205,99,0.65)");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("(Recommended)", x + w - 10.0, *cy + row_h / 2.0);
+        }
+
+        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        result.content_items.push((widget_id.to_string(), row_rect));
+        let hit_id = format!("user_settings:{}", widget_id);
+        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+        *cy += row_h + row_gap;
+    }
+
+    *cy += 16.0;
+
+    // "Finish" button
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
+    let btn_x = x + (w - btn_w) / 2.0;
+    let is_btn_hovered = hovered == Some("wizard_finish");
+    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color("rgba(0,0,0,0.85)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Finish", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
+    result.content_items.push(("wizard_finish".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_finish", btn_rect, Sense::CLICK, layer_id);
 }
 
 // =============================================================================

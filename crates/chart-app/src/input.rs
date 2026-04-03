@@ -9210,8 +9210,72 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
+                "wizard_lang_en" => {
+                    crate::set_language(crate::Language::En);
+                    eprintln!("[ChartApp] wizard: language set to English");
+                }
+                "wizard_lang_ru" => {
+                    crate::set_language(crate::Language::Ru);
+                    eprintln!("[ChartApp] wizard: language set to Russian");
+                }
+                "wizard_lang_next" => {
+                    self.panel_app.user_settings_state.wizard_page = 2;
+                    eprintln!("[ChartApp] wizard: language done, going to page 2 (passphrase)");
+                }
                 "wizard_enable_e2e" => {
-                    // Page 1: user confirmed passphrase — apply E2E and close wizard.
+                    // Page 2: user confirmed passphrase — advance to page 3 (theme).
+                    let passphrase = &self.panel_app.user_settings_state.e2e_passphrase_editing.text;
+                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
+                        self.panel_app.user_settings_state.wizard_page = 3;
+                        eprintln!("[ChartApp] wizard: passphrase set, going to page 3 (theme)");
+                    }
+                }
+                "wizard_theme_dark" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
+                    eprintln!("[ChartApp] wizard: theme selected → dark");
+                }
+                "wizard_theme_light" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "light".to_string();
+                    eprintln!("[ChartApp] wizard: theme selected → light");
+                }
+                "wizard_theme_high_contrast" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast".to_string();
+                    eprintln!("[ChartApp] wizard: theme selected → high_contrast");
+                }
+                "wizard_theme_high_contrast_mono" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast_mono".to_string();
+                    eprintln!("[ChartApp] wizard: theme selected → high_contrast_mono");
+                }
+                "wizard_theme_cypherpunk" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "cypherpunk".to_string();
+                    eprintln!("[ChartApp] wizard: theme selected → cypherpunk");
+                }
+                "wizard_theme_next" => {
+                    self.panel_app.user_settings_state.wizard_page = 4;
+                    eprintln!("[ChartApp] wizard: theme done, going to page 4 (performance)");
+                }
+                "wizard_backend_vello_gpu" => {
+                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_gpu".to_string();
+                    eprintln!("[ChartApp] wizard: backend selected → vello_gpu");
+                }
+                "wizard_backend_instanced_wgpu" => {
+                    self.panel_app.user_settings_state.wizard_selected_backend = "instanced_wgpu".to_string();
+                    eprintln!("[ChartApp] wizard: backend selected → instanced_wgpu");
+                }
+                "wizard_backend_vello_cpu" => {
+                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_cpu".to_string();
+                    eprintln!("[ChartApp] wizard: backend selected → vello_cpu");
+                }
+                "wizard_backend_vello_hybrid" => {
+                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_hybrid".to_string();
+                    eprintln!("[ChartApp] wizard: backend selected → vello_hybrid");
+                }
+                "wizard_backend_tiny_skia" => {
+                    self.panel_app.user_settings_state.wizard_selected_backend = "tiny_skia".to_string();
+                    eprintln!("[ChartApp] wizard: backend selected → tiny_skia");
+                }
+                "wizard_finish" => {
+                    // Final page: submit passphrase and close wizard.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
                         self.pending_updater_cmd = Some(format!("wizard_complete:{}", passphrase));
@@ -9220,8 +9284,14 @@ impl ChartApp {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        eprintln!("[ChartApp] wizard: setup complete, closing wizard");
+                        eprintln!("[ChartApp] wizard: setup complete");
                     }
+                }
+                "profile_mgr:run_wizard" => {
+                    self.panel_app.user_settings_state.show_welcome_wizard = true;
+                    self.panel_app.user_settings_state.show_profile_manager = false;
+                    self.panel_app.user_settings_state.wizard_page = 0;
+                    eprintln!("[ChartApp] profile_mgr: launching setup wizard");
                 }
                 // ── Vault unlock handler (returning encrypted users) ──────────
                 "vault_unlock_btn" => {

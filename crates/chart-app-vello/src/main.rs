@@ -532,6 +532,8 @@ struct App<'s> {
     perf_log_enabled: bool,
     /// Current selected render backend.
     render_backend: sidebar_content::state::RenderBackend,
+    /// True if no backend was explicitly saved — triggers auto-detection on first GPU info.
+    backend_auto_detect: bool,
     /// Whether VSync is enabled.
     vsync_enabled: bool,
     /// System info — CPU/RAM metrics, refreshed once per second.
@@ -2272,7 +2274,19 @@ impl App<'_> {
             msaa_samples: 8,
             max_bars: 0,
             perf_log_enabled: false,
-            render_backend: sidebar_content::state::RenderBackend::VelloGpu,
+            render_backend: {
+                use sidebar_content::state::RenderBackend;
+                let ds = zengeld_chart::user_profile::DeviceSettings::load();
+                match ds.render_backend {
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu) => RenderBackend::VelloGpu,
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu) => RenderBackend::InstancedWgpu,
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu) => RenderBackend::VelloCpu,
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid) => RenderBackend::VelloHybrid,
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia) => RenderBackend::TinySkia,
+                    None => RenderBackend::VelloGpu, // will be overridden by auto-detect
+                }
+            },
+            backend_auto_detect: zengeld_chart::user_profile::DeviceSettings::load().render_backend.is_none(),
             vsync_enabled: true,
             sys: {
                 let mut s = System::new();
@@ -3881,12 +3895,41 @@ impl ApplicationHandler for App<'_> {
         // ── GPU info: query once ────────────────────────────────────────────
         if self.gpu_name.is_empty() && !self.render_cx.devices.is_empty() {
             let info = self.render_cx.devices[0].adapter().get_info();
-            self.gpu_name = info.name;
-            self.gpu_driver = info.driver_info;
+            self.gpu_name = info.name.clone();
+            self.gpu_driver = info.driver_info.clone();
             eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
             // Write to shared so telemetry thread can read it.
             if let Ok(mut g) = self.telemetry_shared.gpu_name.lock() {
                 *g = self.gpu_name.clone();
+            }
+
+            // Auto-detect best backend based on GPU capabilities
+            if self.backend_auto_detect {
+                use sidebar_content::state::RenderBackend;
+                let recommended = match info.device_type {
+                    wgpu::DeviceType::DiscreteGpu => RenderBackend::VelloGpu,
+                    wgpu::DeviceType::IntegratedGpu => RenderBackend::VelloGpu,
+                    wgpu::DeviceType::VirtualGpu => RenderBackend::VelloCpu,
+                    wgpu::DeviceType::Cpu => RenderBackend::TinySkia,
+                    _ => RenderBackend::VelloGpu,
+                };
+                if self.render_backend != recommended {
+                    self.render_backend = recommended;
+                    eprintln!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
+                }
+                // Save auto-detected choice so it persists
+                {
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.render_backend = Some(match recommended {
+                        RenderBackend::VelloGpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu,
+                        RenderBackend::InstancedWgpu => zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu,
+                        RenderBackend::VelloCpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu,
+                        RenderBackend::VelloHybrid => zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid,
+                        RenderBackend::TinySkia => zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia,
+                    });
+                    ds.save();
+                }
+                self.backend_auto_detect = false;
             }
         }
 
@@ -4306,6 +4349,19 @@ impl ApplicationHandler for App<'_> {
                         }
                         self.render_backend = new_backend;
                         eprintln!("[App] Backend → {:?}", self.render_backend);
+                        // Persist to device_settings.json
+                        {
+                            let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                            ds.render_backend = Some(match new_backend {
+                                RenderBackend::VelloGpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu,
+                                RenderBackend::InstancedWgpu => zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu,
+                                RenderBackend::VelloCpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu,
+                                RenderBackend::VelloHybrid => zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid,
+                                RenderBackend::TinySkia => zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia,
+                            });
+                            ds.save();
+                            self.backend_auto_detect = false;
+                        }
                     }
                     chart_app::PerfAction::ToggleVsync => {
                         self.vsync_enabled = !self.vsync_enabled;

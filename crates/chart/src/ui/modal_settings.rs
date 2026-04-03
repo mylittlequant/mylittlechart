@@ -3639,6 +3639,15 @@ pub struct UserSettingsState {
     /// Active slider drag for the DATA & CACHE sliders.
     pub data_slider_drag: Option<SliderDragState>,
 
+    // ── WELCOME WIZARD — per-page selections ─────────────────────────────────
+    /// Theme preset selected on wizard page 3 (e.g. "dark", "cypherpunk").
+    /// Empty string means no explicit selection yet — renderer falls back to "dark".
+    pub wizard_selected_theme: String,
+    /// Rendering backend selected on wizard page 4
+    /// (e.g. "vello_gpu", "instanced_wgpu", "vello_cpu", "vello_hybrid", "tiny_skia").
+    /// Empty string means no explicit selection yet — renderer falls back to "vello_gpu".
+    pub wizard_selected_backend: String,
+
 }
 
 impl Default for UserSettingsState {
@@ -3782,6 +3791,8 @@ impl Default for UserSettingsState {
             data_store_size_mb: 500,
             data_cleanup_days: 30,
             data_slider_drag: None,
+            wizard_selected_theme: String::new(),
+            wizard_selected_backend: String::new(),
         }
     }
 }

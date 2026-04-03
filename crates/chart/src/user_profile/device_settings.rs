@@ -13,6 +13,20 @@ use std::path::PathBuf;
 
 use super::storage::app_data_dir;
 
+/// Available render backends for the chart application.
+///
+/// Stored in `device_settings.json` so the user's choice survives restarts.
+/// `None` (the default) means auto-detect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderBackend {
+    VelloGpu,
+    InstancedWgpu,
+    VelloCpu,
+    VelloHybrid,
+    TinySkia,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -40,6 +54,13 @@ pub struct DeviceSettings {
     /// Only meaningful when `ota_enabled` is `true`.
     #[serde(default = "default_stable")]
     pub update_channel: String,
+
+    /// Preferred render backend.
+    ///
+    /// `None` (default) means auto-detect: the app picks the best available
+    /// backend at startup.  Set to a specific variant to force a backend.
+    #[serde(default)]
+    pub render_backend: Option<RenderBackend>,
 }
 
 impl Default for DeviceSettings {
@@ -47,6 +68,7 @@ impl Default for DeviceSettings {
         Self {
             ota_enabled: true,
             update_channel: "stable".to_string(),
+            render_backend: None,
         }
     }
 }
