@@ -22,7 +22,7 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
-use crate::i18n::{Language, current_language};
+use crate::i18n::{Language, current_language, WizardKey, t_wizard};
 use crate::ui::icons::Icon;
 
 const MINI_MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mini_mascot.svg");
@@ -126,7 +126,8 @@ fn render_page0(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Welcome to mylittlechart", x + w / 2.0, *cy);
+    let title = format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo));
+    ctx.fill_text(&title, x + w / 2.0, *cy);
     *cy += 28.0;
 
     // Mini mascot centered
@@ -192,7 +193,7 @@ fn render_page0(
     ctx.set_fill_color("rgba(0,0,0,0.85)");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Get Started", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
@@ -235,21 +236,21 @@ fn render_page1_performance(
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Step 2 of 4", x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step2of4), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 22px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Performance", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::Performance), x + w / 2.0, *cy);
     *cy += 34.0;
 
     // Subtitle
     ctx.set_font("14px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.65)");
     ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text("Recommended settings based on your hardware", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::RecommendedSettings), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 20.0;
 
@@ -258,7 +259,7 @@ fn render_page1_performance(
     ctx.set_fill_color("rgba(254,255,238,0.50)");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Auto-detected", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::AutoDetected), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 22.0;
 
@@ -305,7 +306,7 @@ fn render_page1_performance(
             ctx.set_fill_color("rgba(244,205,99,0.65)");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("(Recommended)", x + w - 10.0, *cy + row_h / 2.0);
+            ctx.fill_text(t_wizard(WizardKey::Recommended), x + w - 10.0, *cy + row_h / 2.0);
         }
 
         let row_rect = WidgetRect::new(x, *cy, w, row_h);
@@ -330,7 +331,7 @@ fn render_page1_performance(
     ctx.set_fill_color("rgba(0,0,0,0.85)");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Next", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
@@ -373,21 +374,21 @@ fn render_page2_theme(
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Step 3 of 4", x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step3of4), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 22px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Theme", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::Theme), x + w / 2.0, *cy);
     *cy += 34.0;
 
     // Subtitle
     ctx.set_font("14px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.65)");
     ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text("Choose your visual theme", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::ChooseTheme), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 28.0;
 
@@ -450,7 +451,7 @@ fn render_page2_theme(
     ctx.set_fill_color("rgba(0,0,0,0.85)");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Next", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
@@ -488,14 +489,14 @@ fn render_page3_profile(
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Step 4 of 4", x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step4of4), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Profile & Security", x + w / 2.0, *cy);
+    ctx.fill_text(t_wizard(WizardKey::ProfileAndSecurity), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 30.0;
 
@@ -503,7 +504,7 @@ fn render_page3_profile(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.65)");
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Profile Name", x, *cy);
+    ctx.fill_text(t_wizard(WizardKey::ProfileName), x, *cy);
     *cy += 18.0;
 
     let input_h = 32.0;
@@ -556,9 +557,9 @@ fn render_page3_profile(
     ctx.set_fill_color("rgba(244,205,99,0.75)");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Your passphrase creates a Zero-trust container", x + 12.0, *cy + 8.0);
-    ctx.fill_text("for API keys, indicators, strategies and agent prompts.", x + 12.0, *cy + 24.0);
-    ctx.fill_text("It is never stored on any server.", x + 12.0, *cy + 40.0);
+    ctx.fill_text(t_wizard(WizardKey::ZtInfo1), x + 12.0, *cy + 8.0);
+    ctx.fill_text(t_wizard(WizardKey::ZtInfo2), x + 12.0, *cy + 24.0);
+    ctx.fill_text(t_wizard(WizardKey::ZtInfo3), x + 12.0, *cy + 40.0);
     *cy += note_h + 14.0;
 
     // ── Complete Setup button ─────────────────────────────────────────────────
@@ -586,7 +587,7 @@ fn render_page3_profile(
     ctx.set_fill_color(finish_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Complete Setup", btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::CompleteSetup), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !finish_disabled {
@@ -633,7 +634,7 @@ fn render_back_button(
     ctx.set_fill_color(icon_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Back", x + 8.0 + icon_size + 4.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::Back), x + 8.0 + icon_size + 4.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let back_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
@@ -662,7 +663,7 @@ fn render_passphrase_input(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.65)");
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Passphrase", x, *cy);
+    ctx.fill_text(t_wizard(WizardKey::Passphrase), x, *cy);
     *cy += 18.0;
 
     // Input box using canonical draw_input
@@ -679,7 +680,7 @@ fn render_passphrase_input(
     let input_config = InputConfig::new(&editing.text)
         .with_focused(state.e2e_passphrase_focused)
         .with_cursor(editing.cursor)
-        .with_placeholder("Click to type passphrase\u{2026}")
+        .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
         .with_type(InputType::Password)
         .with_selection(sel_start, sel_end);
 

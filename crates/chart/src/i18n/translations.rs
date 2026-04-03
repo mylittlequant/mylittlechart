@@ -1,7 +1,7 @@
 //! Translation utilities — chart-specific Translatable implementations
 
 use uzor::i18n::{Language, Translatable};
-use super::keys::{MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey};
+use super::keys::{MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey, WizardKey};
 
 impl Translatable for MenuKey {
     fn display_name(&self, lang: Language) -> &'static str {
@@ -28,6 +28,12 @@ impl Translatable for StyleKey {
 }
 
 impl Translatable for LabelPositionKey {
+    fn display_name(&self, lang: Language) -> &'static str {
+        self.get(lang)
+    }
+}
+
+impl Translatable for WizardKey {
     fn display_name(&self, lang: Language) -> &'static str {
         self.get(lang)
     }

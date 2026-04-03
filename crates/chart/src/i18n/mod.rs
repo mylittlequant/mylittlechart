@@ -21,6 +21,7 @@ pub use keys::{
     StyleKey,
     LabelPositionKey,
     ToolbarTooltipKey,
+    WizardKey,
 };
 
 // Chart-specific convenience functions (use uzor's Language)
@@ -70,6 +71,12 @@ pub fn t_style(key: StyleKey) -> &'static str {
 /// Translate a label position key using current global language
 #[inline]
 pub fn t_label_pos(key: LabelPositionKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a wizard key using current global language
+#[inline]
+pub fn t_wizard(key: WizardKey) -> &'static str {
     key.get(current_language())
 }
 
