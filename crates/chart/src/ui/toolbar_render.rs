@@ -78,6 +78,10 @@ pub struct ToolbarTheme {
     pub item_bg_hover: String,
     /// Item background when active/selected.
     pub item_bg_active: String,
+    /// Button background colour (idle state).
+    pub button_bg: String,
+    /// Button background colour on hover.
+    pub button_bg_hover: String,
     /// Default icon / label colour.
     pub item_text: String,
     /// Muted icon / label colour (for secondary/disabled items).
@@ -101,6 +105,8 @@ impl Default for ToolbarTheme {
             separator: "#313244".into(),
             item_bg_hover: "#45475a".into(),
             item_bg_active: "#585b70".into(),
+            button_bg: "#1e222d".into(),
+            button_bg_hover: "#2a2e39".into(),
             item_text: "#a6adc8".into(),
             item_text_muted: "#6c7086".into(),
             item_text_hover: "#cdd6f4".into(),

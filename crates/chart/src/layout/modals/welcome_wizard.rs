@@ -147,9 +147,9 @@ fn render_page0(
         let is_row_hovered = hovered == Some(widget_id);
 
         let row_bg = if is_row_hovered {
-            toolbar_theme.item_bg_hover.as_str()
+            toolbar_theme.button_bg_hover.as_str()
         } else {
-            toolbar_theme.item_bg_active.as_str()
+            toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
@@ -183,8 +183,8 @@ fn render_page0(
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
     let is_btn_hovered = hovered == Some("wizard_get_started");
-    let btn_bg = if is_btn_hovered { toolbar_theme.accent.as_str() } else { toolbar_theme.item_bg_active.as_str() };
-    let btn_text = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.item_text.as_str() };
+    let btn_bg = if is_btn_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+    let btn_text = if is_btn_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 13px sans-serif");
@@ -269,9 +269,9 @@ fn render_page1_theme(
         let is_row_hovered = hovered == Some(widget_id);
 
         let row_bg = if is_row_hovered {
-            toolbar_theme.item_bg_hover.as_str()
+            toolbar_theme.button_bg_hover.as_str()
         } else {
-            toolbar_theme.item_bg_active.as_str()
+            toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
@@ -304,8 +304,8 @@ fn render_page1_theme(
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
     let is_btn_hovered = hovered == Some("wizard_theme_next");
-    let btn_bg = if is_btn_hovered { toolbar_theme.accent.as_str() } else { toolbar_theme.item_bg_active.as_str() };
-    let btn_text = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.item_text.as_str() };
+    let btn_bg = if is_btn_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+    let btn_text = if is_btn_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 13px sans-serif");
@@ -434,14 +434,14 @@ fn render_page2_profile(
     let finish_bg = if finish_disabled {
         "rgba(244,205,99,0.20)"
     } else if is_finish_hovered {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.item_bg_active.as_str()
+        toolbar_theme.button_bg.as_str()
     };
     let finish_text_col = if finish_disabled {
         "rgba(0,0,0,0.35)"
     } else if is_finish_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.item_text_hover.as_str()
     } else {
         toolbar_theme.item_text.as_str()
     };
@@ -484,7 +484,7 @@ fn render_back_button(
     let btn_w = 76.0;
     let btn_h = 26.0;
     let is_hovered = hovered_item_id == Some("wizard_back");
-    let btn_bg = if is_hovered { toolbar_theme.item_bg_hover.as_str() } else { toolbar_theme.item_bg_active.as_str() };
+    let btn_bg = if is_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
     let stroke_color = if is_hovered { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.separator.as_str() };
@@ -678,14 +678,14 @@ pub fn render_vault_unlock(
     let btn_bg = if unlock_disabled {
         "rgba(244,205,99,0.20)"
     } else if is_unlock_hovered {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.item_bg_active.as_str()
+        toolbar_theme.button_bg.as_str()
     };
     let btn_text_col = if unlock_disabled {
         "rgba(0,0,0,0.35)"
     } else if is_unlock_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.item_text_hover.as_str()
     } else {
         toolbar_theme.item_text.as_str()
     };
