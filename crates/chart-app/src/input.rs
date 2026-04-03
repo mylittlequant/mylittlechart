@@ -9192,10 +9192,11 @@ impl ChartApp {
                     eprintln!("[ChartApp] logout: sending logout command to updater");
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
+                // New page order: 0=Welcome+Lang, 1=Performance, 2=Theme, 3=Profile+Passphrase
                 "wizard_get_started" => {
-                    // Page 0: user clicked Get Started — go to page 1 (passphrase)
+                    // Page 0: user clicked Get Started — go to page 1 (Performance)
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (passphrase)");
+                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (performance)");
                 }
                 "wizard_back" => {
                     // Back arrow — go to previous page
@@ -9218,17 +9219,10 @@ impl ChartApp {
                     crate::set_language(crate::Language::Ru);
                     eprintln!("[ChartApp] wizard: language set to Russian");
                 }
-                "wizard_lang_next" => {
+                "wizard_perf_next" => {
+                    // Page 1 (Performance): go to page 2 (Theme)
                     self.panel_app.user_settings_state.wizard_page = 2;
-                    eprintln!("[ChartApp] wizard: language done, going to page 2 (passphrase)");
-                }
-                "wizard_enable_e2e" => {
-                    // Page 2: user confirmed passphrase — advance to page 3 (theme).
-                    let passphrase = &self.panel_app.user_settings_state.e2e_passphrase_editing.text;
-                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
-                        self.panel_app.user_settings_state.wizard_page = 3;
-                        eprintln!("[ChartApp] wizard: passphrase set, going to page 3 (theme)");
-                    }
+                    eprintln!("[ChartApp] wizard: performance done, going to page 2 (theme)");
                 }
                 "wizard_theme_dark" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
@@ -9251,8 +9245,15 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: theme selected → cypherpunk");
                 }
                 "wizard_theme_next" => {
-                    self.panel_app.user_settings_state.wizard_page = 4;
-                    eprintln!("[ChartApp] wizard: theme done, going to page 4 (performance)");
+                    // Page 2 (Theme): go to page 3 (Profile + Passphrase)
+                    self.panel_app.user_settings_state.wizard_page = 3;
+                    eprintln!("[ChartApp] wizard: theme done, going to page 3 (profile + passphrase)");
+                }
+                "wizard_profile_name_input" => {
+                    // Focus the profile name input on page 3
+                    self.panel_app.user_settings_state.new_profile_name_focused = true;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    eprintln!("[ChartApp] wizard: profile name input focused");
                 }
                 "wizard_backend_vello_gpu" => {
                     self.panel_app.user_settings_state.wizard_selected_backend = "vello_gpu".to_string();
@@ -9275,9 +9276,11 @@ impl ChartApp {
                     eprintln!("[ChartApp] wizard: backend selected → tiny_skia");
                 }
                 "wizard_finish" => {
-                    // Final page: submit passphrase and close wizard.
+                    // Page 3: submit passphrase (and log profile name) then close wizard.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
+                    let profile_name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
+                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
+                        eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
                         self.pending_updater_cmd = Some(format!("wizard_complete:{}", passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
                         self.panel_app.user_settings_state.needs_vault_unlock = false;
