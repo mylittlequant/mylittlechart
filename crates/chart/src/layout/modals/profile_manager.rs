@@ -452,12 +452,21 @@ fn render_page_profile_list(
         );
     }
 
-    // Title
+    // Title row: "Profiles" left, ZT badge center, "+" button right
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Profiles", inner_x, cy);
+
+    // ZT badge — centered between title and "+" button
+    let zt_badge_y = cy + 5.0;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(80,200,120,0.55)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x + inner_w / 2.0 - 52.0, zt_badge_y, 12.0, 12.0, "rgba(80,200,120,0.55)");
+    ctx.fill_text("Zero-trust encrypted", inner_x + inner_w / 2.0 + 8.0, zt_badge_y);
 
     // "+" button — right-aligned on the same line as title
     let plus_size = 24.0;
@@ -484,32 +493,12 @@ fn render_page_profile_list(
         layer_id,
     );
 
-    cy += 28.0;
-
-    // ZT badge — single line instead of per-profile labels
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color("rgba(80,200,120,0.6)");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x, cy + 1.0, 11.0, 11.0, "rgba(80,200,120,0.6)");
-    ctx.fill_text("Zero-trust encrypted", inner_x + 14.0, cy);
-    cy += 16.0;
-
-    // Subtitle
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.50)");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Select a profile to load", inner_x, cy);
-    cy += 20.0 + 16.0;
+    cy += 34.0;
 
     // ── Scrollable viewport for profile rows + cloud section ──────────────────
-    let create_btn_h = 36.0;
-    let create_btn_margin = 12.0;
-    // Viewport spans from below the subtitle down to just above the Create button.
+    // No bottom button — list fills all available space.
     let scroll_viewport_y = cy;
-    let scroll_viewport_h = ((modal_y + modal_h) - scroll_viewport_y
-        - create_btn_h - create_btn_margin - 12.0)
+    let scroll_viewport_h = ((modal_y + modal_h) - scroll_viewport_y - 12.0)
         .max(0.0);
 
     // Measure total unclipped content height (profile rows + optional cloud section).
@@ -809,62 +798,6 @@ fn render_page_profile_list(
         result.profile_list_track_rect = Some(track_rect);
     }
 
-    // ── Bottom button — Login (skeleton, not logged in) or Create New Profile ──
-    let create_y = modal_y + modal_h - create_btn_h - 12.0;
-    if !state.is_logged_in && state.runtime_profile_id.is_empty() {
-        // "Login" button for new users in skeleton mode
-        let is_login_hovered = hovered == Some("profile_mgr:sign_in");
-        let login_bg = if is_login_hovered {
-            "rgba(255,255,255,0.92)"
-        } else {
-            toolbar_theme.accent.as_str()
-        };
-        ctx.set_fill_color(login_bg);
-        ctx.fill_rounded_rect(inner_x, create_y, inner_w, create_btn_h, 4.0);
-        draw_svg_icon(ctx, Icon::LogIn.svg(), inner_x + inner_w / 2.0 - 40.0, create_y + (create_btn_h - 16.0) / 2.0, 16.0, 16.0, "rgba(0,0,0,0.85)");
-        ctx.set_font("bold 12px sans-serif");
-        ctx.set_fill_color("rgba(0,0,0,0.85)");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Login", inner_x + inner_w / 2.0 + 4.0, create_y + create_btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let login_rect = WidgetRect::new(inner_x, create_y, inner_w, create_btn_h);
-        let login_id = "profile_mgr:sign_in";
-        result.content_items.push((login_id.to_string(), login_rect));
-        input_coordinator.register_on_layer(
-            format!("user_settings:{}", login_id).as_str(),
-            login_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-    } else {
-        // Normal "Create New Profile" button
-        let is_create_hovered = hovered == Some("profile_mgr:create_new");
-        let create_bg = if is_create_hovered {
-            "rgba(255,255,255,0.92)"
-        } else {
-            toolbar_theme.accent.as_str()
-        };
-        ctx.set_fill_color(create_bg);
-        ctx.fill_rounded_rect(inner_x, create_y, inner_w, create_btn_h, 4.0);
-        ctx.set_font("bold 12px sans-serif");
-        ctx.set_fill_color("rgba(0,0,0,0.85)");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Create New Profile", inner_x + inner_w / 2.0, create_y + create_btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let create_rect = WidgetRect::new(inner_x, create_y, inner_w, create_btn_h);
-        let create_id = "profile_mgr:create_new";
-        result.content_items.push((create_id.to_string(), create_rect));
-        input_coordinator.register_on_layer(
-            format!("user_settings:{}", create_id).as_str(),
-            create_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-    }
 }
 
 // =============================================================================
