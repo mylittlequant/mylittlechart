@@ -92,6 +92,14 @@ pub struct ToolbarTheme {
     pub item_text_active: String,
     /// Accent colour for active indicator dots etc.
     pub accent: String,
+    /// Accent colour on hover.
+    pub accent_hover: String,
+    /// Success colour (confirmations, positive states).
+    pub success: String,
+    /// Danger colour (errors, destructive actions, logout).
+    pub danger: String,
+    /// Warning colour (cautions, alerts).
+    pub warning: String,
     /// When `true` the toolbar is rendered in a compact sidebar style
     /// (no background blur, narrower padding).
     pub sidebar_style: bool,
@@ -112,6 +120,10 @@ impl Default for ToolbarTheme {
             item_text_hover: "#cdd6f4".into(),
             item_text_active: "#cdd6f4".into(),
             accent: "#3b82f6".into(),
+            accent_hover: "#1e53e4".into(),
+            success: "#26a69a".into(),
+            danger: "#f23645".into(),
+            warning: "#ff9800".into(),
             sidebar_style: false,
         }
     }

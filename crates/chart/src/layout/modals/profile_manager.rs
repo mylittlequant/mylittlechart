@@ -140,7 +140,7 @@ fn render_page_profile_list(
     let right_col_w = modal_w - left_col_w - 1.0;
 
     // Vertical divider
-    ctx.set_stroke_color("rgba(255,255,255,0.08)");
+    ctx.set_stroke_color(toolbar_theme.separator.as_str());
     ctx.set_stroke_width(1.0);
     ctx.begin_path();
     ctx.move_to(divider_x, modal_y + 20.0);
@@ -155,7 +155,7 @@ fn render_page_profile_list(
 
     // "ACCOUNT" section header
     ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("ACCOUNT", left_inner_x, left_cy);
@@ -173,7 +173,7 @@ fn render_page_profile_list(
         // Provider label
         if !state.auth_provider.is_empty() {
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.45)");
+            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.fill_text(&format!("via {}", state.auth_provider), left_inner_x, left_cy);
@@ -193,7 +193,7 @@ fn render_page_profile_list(
         };
         ctx.set_fill_color(logout_bg);
         ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, logout_btn_h, 4.0);
-        let logout_text_color = if is_logout_hovered { "rgba(255,120,100,1.0)" } else { "rgba(255,120,100,0.75)" };
+        let logout_text_color = if is_logout_hovered { toolbar_theme.danger.as_str() } else { toolbar_theme.danger.as_str() };
         draw_svg_icon(ctx, Icon::LogOut.svg(), left_inner_x + 10.0, left_cy + (logout_btn_h - 14.0) / 2.0, 14.0, 14.0, logout_text_color);
         ctx.set_font("bold 11px sans-serif");
         ctx.set_fill_color(logout_text_color);
@@ -214,7 +214,7 @@ fn render_page_profile_list(
     } else {
         // Not logged in — brief description
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.40)");
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text("Sign in to enable cloud", left_inner_x, left_cy);
@@ -227,7 +227,7 @@ fn render_page_profile_list(
         let signin_id = "profile_mgr:sign_in";
         let is_signin_hovered = hovered == Some(signin_id);
         let signin_bg = if is_signin_hovered {
-            "rgba(255,255,255,0.92)"
+            toolbar_theme.accent_hover.as_str()
         } else {
             toolbar_theme.accent.as_str()
         };
@@ -254,7 +254,7 @@ fn render_page_profile_list(
 
     // ── Separator ─────────────────────────────────────────────────────────────
     left_cy += 20.0;
-    ctx.set_stroke_color("rgba(255,255,255,0.08)");
+    ctx.set_stroke_color(toolbar_theme.separator.as_str());
     ctx.set_stroke_width(1.0);
     ctx.begin_path();
     ctx.move_to(left_inner_x, left_cy);
@@ -264,7 +264,7 @@ fn render_page_profile_list(
 
     // ── VERSION ────────────────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_fill_color(toolbar_theme.item_text.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
@@ -272,7 +272,7 @@ fn render_page_profile_list(
 
     // ── PRIVACY section ──────────────────────────────────────────────────────
     ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("PRIVACY", left_inner_x, left_cy);
@@ -282,9 +282,9 @@ fn render_page_profile_list(
         let icon_size = 14.0;
         let row_h = 18.0;
         let mid_y = left_cy + row_h / 2.0;
-        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, mid_y - icon_size / 2.0, icon_size, icon_size, "rgba(254,255,238,0.65)");
+        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, mid_y - icon_size / 2.0, icon_size, icon_size, toolbar_theme.item_text.as_str());
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.65)");
+        ctx.set_fill_color(toolbar_theme.item_text.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, mid_y);
@@ -293,7 +293,7 @@ fn render_page_profile_list(
 
     // ── OTA UPDATES section ──────────────────────────────────────────────────
     ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("OTA UPDATES", left_inner_x, left_cy);
@@ -311,19 +311,19 @@ fn render_page_profile_list(
         let circle_cy = left_cy + radio_row_h / 2.0;
         let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
         if is_active {
-            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
             ctx.begin_path();
             ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
             ctx.fill();
         } else {
-            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
             ctx.set_stroke_width(1.0);
             ctx.begin_path();
             ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
             ctx.stroke();
         }
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+        ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Connected", radio_label_x, circle_cy);
@@ -344,19 +344,19 @@ fn render_page_profile_list(
         let circle_cy = left_cy + radio_row_h / 2.0;
         let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
         if is_active {
-            ctx.set_fill_color("rgba(244,205,99,0.9)");
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
             ctx.begin_path();
             ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
             ctx.fill();
         } else {
-            ctx.set_stroke_color("rgba(254,255,238,0.35)");
+            ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
             ctx.set_stroke_width(1.0);
             ctx.begin_path();
             ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
             ctx.stroke();
         }
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+        ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Standalone", radio_label_x, circle_cy);
@@ -374,7 +374,7 @@ fn render_page_profile_list(
     if state.device_ota_enabled {
         left_cy += 8.0;
         ctx.set_font("bold 10px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.30)");
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text("CHANNEL", left_inner_x, left_cy);
@@ -389,19 +389,19 @@ fn render_page_profile_list(
             let circle_cy = left_cy + radio_row_h / 2.0;
             let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
             if is_active {
-                ctx.set_fill_color("rgba(244,205,99,0.9)");
+                ctx.set_fill_color(toolbar_theme.accent.as_str());
                 ctx.begin_path();
                 ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
                 ctx.fill();
             } else {
-                ctx.set_stroke_color("rgba(254,255,238,0.35)");
+                ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
                 ctx.set_stroke_width(1.0);
                 ctx.begin_path();
                 ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
                 ctx.stroke();
             }
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(if is_active { "rgba(254,255,238,0.90)" } else { "rgba(254,255,238,0.45)" });
+            ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, radio_label_x, circle_cy);
@@ -421,11 +421,11 @@ fn render_page_profile_list(
     let wiz_btn_h = 28.0;
     let wiz_id = "profile_mgr:run_wizard";
     let is_wiz_hovered = hovered == Some(wiz_id);
-    let wiz_bg = if is_wiz_hovered { "rgba(255,255,255,0.08)" } else { "rgba(255,255,255,0.04)" };
+    let wiz_bg = if is_wiz_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
     ctx.set_fill_color(wiz_bg);
     ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, wiz_btn_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_fill_color(toolbar_theme.item_text.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Run Setup Wizard", left_inner_x + 8.0, left_cy + wiz_btn_h / 2.0);
@@ -479,12 +479,12 @@ fn render_page_profile_list(
         let close_hovered = hovered == Some("profile_mgr:close");
 
         if close_hovered {
-            ctx.set_fill_color("rgba(255,255,255,0.10)");
+            ctx.set_fill_color(toolbar_theme.item_bg_hover.as_str());
             ctx.fill_rounded_rect(close_x, close_y, close_size, close_size, 4.0);
         }
 
         draw_svg_icon(ctx, Icon::Close.svg(), close_x + 4.0, close_y + 4.0, 20.0, 20.0,
-            if close_hovered { "rgba(255,255,255,0.9)" } else { "rgba(255,255,255,0.5)" });
+            if close_hovered { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
 
         let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
         result.content_items.push(("profile_mgr:close".to_string(), close_rect));
@@ -516,15 +516,15 @@ fn render_page_profile_list(
     let create_id = "profile_mgr:create_new";
     let is_create_hovered = hovered == Some(create_id);
     let create_bg = if is_create_hovered {
-        "rgba(255,255,255,0.08)"
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        "rgba(255,255,255,0.04)"
+        toolbar_theme.button_bg.as_str()
     };
     ctx.set_fill_color(create_bg);
     ctx.fill_rounded_rect(btn_x, cy, btn_w, header_h, 4.0);
 
     ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(if is_create_hovered { "rgba(255,255,255,0.85)" } else { "rgba(255,255,255,0.50)" });
+    ctx.set_fill_color(if is_create_hovered { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("+ Create New Profile", btn_x + btn_w / 2.0, header_mid_y);
@@ -591,9 +591,9 @@ fn render_page_profile_list(
 
         // Row background
         let row_bg = if is_row_hovered {
-            "rgba(255,255,255,0.08)"
+            toolbar_theme.button_bg_hover.as_str()
         } else {
-            "rgba(255,255,255,0.04)"
+            toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(inner_x, cy, inner_w, profile_row_h, 4.0);
@@ -625,7 +625,7 @@ fn render_page_profile_list(
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("rgba(255,100,80,0.8)");
+            ctx.set_fill_color(toolbar_theme.danger.as_str());
             ctx.fill_text("Unprotected", inner_x + inner_w - 70.0, row_mid_y);
 
             // Delete button
@@ -639,7 +639,7 @@ fn render_page_profile_list(
             ctx.set_fill_color(del_bg);
             ctx.fill_rounded_rect(del_x, del_y, del_w, del_h, 3.0);
             ctx.set_font("bold 10px sans-serif");
-            ctx.set_fill_color("rgba(255,255,255,0.9)");
+            ctx.set_fill_color(toolbar_theme.item_text.as_str());
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text("Delete", del_x + del_w / 2.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
@@ -670,7 +670,7 @@ fn render_page_profile_list(
 
         // Section header row: "CLOUD PROFILES" label + "Refresh" link
         ctx.set_font("bold 10px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("CLOUD PROFILES", inner_x, cy + 10.0);
@@ -680,9 +680,9 @@ fn render_page_profile_list(
         let is_refresh_hovered = hovered == Some(refresh_id);
         ctx.set_font("10px sans-serif");
         ctx.set_fill_color(if is_refresh_hovered {
-            "rgba(244,205,99,0.9)"
+            toolbar_theme.accent.as_str()
         } else {
-            "rgba(244,205,99,0.55)"
+            toolbar_theme.item_text_muted.as_str()
         });
         ctx.set_text_align(TextAlign::Right);
         ctx.fill_text("Refresh", inner_x + inner_w, cy + 10.0);
@@ -701,14 +701,14 @@ fn render_page_profile_list(
         // Loading / error state
         if state.cloud_profiles_loading {
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.45)");
+            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.fill_text("Loading\u{2026}", inner_x, cy);
             cy += 24.0;
         } else if !state.cloud_profiles_error.is_empty() {
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(255,100,80,0.85)");
+            ctx.set_fill_color(toolbar_theme.danger.as_str());
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.fill_text(&state.cloud_profiles_error, inner_x, cy);
@@ -722,9 +722,9 @@ fn render_page_profile_list(
 
             // Row background
             let row_bg = if is_row_hovered {
-                "rgba(255,255,255,0.07)"
+                toolbar_theme.button_bg_hover.as_str()
             } else {
-                "rgba(255,255,255,0.03)"
+                toolbar_theme.button_bg.as_str()
             };
             ctx.set_fill_color(row_bg);
             ctx.fill_rounded_rect(inner_x, cy, inner_w, cloud_row_h, 4.0);
@@ -733,7 +733,7 @@ fn render_page_profile_list(
 
             // Lock icon for encrypted cloud profiles
             let label_x = if cp.has_vault {
-                draw_svg_icon(ctx, Icon::Lock.svg(), inner_x + 6.0, row_mid_y - 7.0, 14.0, 14.0, "rgba(254,255,238,0.5)");
+                draw_svg_icon(ctx, Icon::Lock.svg(), inner_x + 6.0, row_mid_y - 7.0, 14.0, 14.0, toolbar_theme.item_text_muted.as_str());
                 inner_x + 26.0
             } else {
                 inner_x + 8.0
@@ -745,15 +745,15 @@ fn render_page_profile_list(
             let mut text_x = label_x;
             if let Some(ref name) = cp.display_name {
                 ctx.set_font("bold 13px sans-serif");
-                ctx.set_fill_color("rgba(254,255,238,0.85)");
+                ctx.set_fill_color(toolbar_theme.item_text.as_str());
                 ctx.fill_text(name, text_x, row_mid_y);
                 text_x += ctx.measure_text(name) + 6.0;
                 ctx.set_font("11px sans-serif");
-                ctx.set_fill_color("rgba(254,255,238,0.35)");
+                ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
                 ctx.fill_text(&format!("({})", short_id), text_x, row_mid_y);
             } else {
                 ctx.set_font("bold 13px sans-serif");
-                ctx.set_fill_color("rgba(254,255,238,0.75)");
+                ctx.set_fill_color(toolbar_theme.item_text.as_str());
                 ctx.fill_text(&short_id, text_x, row_mid_y);
             }
 
@@ -772,7 +772,7 @@ fn render_page_profile_list(
                 )
             };
             ctx.set_font("10px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.35)");
+            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&size_str, inner_x + 8.0, row_mid_y + 13.0);
@@ -786,17 +786,17 @@ fn render_page_profile_list(
             let is_restoring = state.restoring_profile_id.as_deref() == Some(&cp.profile_id);
             let btn_label = if is_restoring { "Restoring\u{2026}" } else { "Restore" };
             let btn_bg = if is_restoring {
-                "rgba(100,100,100,0.4)"
+                toolbar_theme.button_bg.as_str()
             } else if is_row_hovered {
-                "rgba(244,205,99,0.6)"
+                toolbar_theme.accent_hover.as_str()
             } else {
-                "rgba(244,205,99,0.30)"
+                toolbar_theme.accent.as_str()
             };
             ctx.set_fill_color(btn_bg);
             ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
 
             let btn_text_color = if is_restoring {
-                "rgba(200,200,200,0.7)"
+                toolbar_theme.item_text_muted.as_str()
             } else {
                 "rgba(0,0,0,0.85)"
             };
@@ -834,7 +834,7 @@ fn render_page_profile_list(
         let thumb_h = (scroll_viewport_h * ratio).max(24.0);
         let scroll_ratio = if max_scroll > 0.0 { scroll_offset / max_scroll } else { 0.0 };
         let thumb_y = scroll_viewport_y + scroll_ratio * (scroll_viewport_h - thumb_h);
-        ctx.set_fill_color("rgba(255,255,255,0.18)");
+        ctx.set_fill_color(toolbar_theme.separator.as_str());
         ctx.fill_rounded_rect(track_x, thumb_y, scrollbar_w, thumb_h, 2.0);
 
         // Store rects for input handling (drag support)
@@ -907,7 +907,7 @@ fn render_page_unlock(
 
     // Subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Enter your passphrase to decrypt", inner_x + inner_w / 2.0, cy);
@@ -924,13 +924,13 @@ fn render_page_unlock(
     let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("profile_mgr:unlock");
     let btn_bg = if unlock_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_unlock_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
-    let btn_text_col = if unlock_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if unlock_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);
@@ -952,7 +952,7 @@ fn render_page_unlock(
     // Error message
     if let Some(ref err_msg) = state.vault_unlock_error {
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
@@ -965,9 +965,9 @@ fn render_page_unlock(
     let is_link_hovered = hovered == Some("profile_mgr:use_recovery_key");
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(if is_link_hovered {
-        "rgba(244,205,99,0.95)"
+        toolbar_theme.accent.as_str()
     } else {
-        "rgba(244,205,99,0.55)"
+        toolbar_theme.item_text_muted.as_str()
     });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
@@ -1044,7 +1044,7 @@ fn render_page_create_passphrase(
 
     // Subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Create a passphrase to protect your API keys", inner_x + inner_w / 2.0, cy);
@@ -1054,7 +1054,7 @@ fn render_page_create_passphrase(
     // Minimum length hint
     if state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH {
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.35)");
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(
@@ -1126,7 +1126,7 @@ fn render_page_create_passphrase(
     let confirm_text = &state.confirm_passphrase_editing.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text("Passphrases don't match", inner_x, cy);
@@ -1141,13 +1141,13 @@ fn render_page_create_passphrase(
         || !confirm_matches_create;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
     let btn_bg = if encrypt_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_encrypt_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
-    let btn_text_col = if encrypt_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if encrypt_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);
@@ -1230,7 +1230,7 @@ fn render_page_show_recovery_key(
 
     // Warning subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_fill_color(toolbar_theme.accent.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
@@ -1239,7 +1239,7 @@ fn render_page_show_recovery_key(
         cy,
     );
     cy += 18.0;
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.fill_text(
         "Если вы забудете пароль, этот ключ восстановит доступ",
         inner_x + inner_w / 2.0,
@@ -1258,24 +1258,8 @@ fn render_page_show_recovery_key(
     let key_box_h = 40.0;
     let key_display_rect = WidgetRect::new(inner_x, cy, inner_w, key_box_h);
 
-    // Build a WidgetTheme that matches the gold recovery key color scheme.
-    let key_widget_theme = crate::ui::widgets::types::WidgetTheme {
-        bg_normal: "rgba(0,0,0,0.35)".to_string(),
-        bg_hover: "rgba(0,0,0,0.40)".to_string(),
-        bg_pressed: "rgba(0,0,0,0.45)".to_string(),
-        bg_disabled: "rgba(0,0,0,0.20)".to_string(),
-        text_normal: "rgba(244,205,99,1.0)".to_string(),
-        text_hover: "rgba(244,205,99,1.0)".to_string(),
-        text_disabled: "rgba(244,205,99,0.5)".to_string(),
-        border_normal: "rgba(244,205,99,0.35)".to_string(),
-        border_hover: "rgba(244,205,99,0.55)".to_string(),
-        border_focused: "rgba(244,205,99,0.70)".to_string(),
-        accent: "rgba(244,205,99,0.30)".to_string(),
-        accent_hover: "rgba(244,205,99,0.40)".to_string(),
-        success: "#26a69a".to_string(),
-        warning: "#ff9800".to_string(),
-        danger: "#ef5350".to_string(),
-    };
+    // Build a WidgetTheme from toolbar_theme for consistent theming.
+    let key_widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
     let editing = &state.recovery_key_display_editing;
     let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
@@ -1307,14 +1291,13 @@ fn render_page_show_recovery_key(
     );
 
     // Draw blinking cursor if the display is focused.
-    let _ = frame_theme; // frame_theme reserved for future use (e.g. accent color)
     if display_focused && editing.is_cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             key_display_result.cursor_x,
             key_display_result.cursor_y,
             key_display_result.cursor_height,
-            "rgba(244,205,99,0.9)",
+            toolbar_theme.accent.as_str(),
         );
     }
 
@@ -1324,20 +1307,17 @@ fn render_page_show_recovery_key(
     let copy_btn_label = "Скопировать ключ";
     let is_copy_hovered = hovered == Some("profile_mgr:recovery_key_copy");
     let copy_btn_bg = if is_copy_hovered {
-        "rgba(244,205,99,0.2)"
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        "rgba(244,205,99,0.08)"
+        toolbar_theme.button_bg.as_str()
     };
     let copy_btn_h = 28.0;
     let copy_btn_w = inner_w.min(200.0);
     let copy_btn_x = inner_x + (inner_w - copy_btn_w) / 2.0;
     ctx.set_fill_color(copy_btn_bg);
     ctx.fill_rounded_rect(copy_btn_x, cy, copy_btn_w, copy_btn_h, 4.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.4)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(copy_btn_x, cy, copy_btn_w, copy_btn_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_fill_color(if is_copy_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(copy_btn_label, copy_btn_x + copy_btn_w / 2.0, cy + copy_btn_h / 2.0);
@@ -1358,7 +1338,7 @@ fn render_page_show_recovery_key(
     let btn_label = "Я записал — продолжить";
     let is_btn_hovered = hovered == Some("profile_mgr:recovery_key_confirm");
     let btn_bg = if is_btn_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
@@ -1491,13 +1471,13 @@ fn render_page_create_new(
     let create_disabled = name_is_empty;
     let is_create_hovered = !create_disabled && hovered == Some("profile_mgr:create_confirm");
     let create_bg = if create_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_create_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
-    let create_text_col = if create_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let create_text_col = if create_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
     let create_btn_h = 32.0;
     let create_btn_w = inner_w.min(180.0);
     ctx.set_fill_color(create_bg);
@@ -1580,7 +1560,7 @@ fn render_page_set_new_passphrase(
 
     // Subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
@@ -1687,7 +1667,7 @@ fn render_page_set_new_passphrase(
     // ── Error message ─────────────────────────────────────────────────────────
     if has_error {
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(state.set_passphrase_error.as_str(), inner_x + inner_w / 2.0, cy);
@@ -1704,13 +1684,13 @@ fn render_page_set_new_passphrase(
 
     let is_save_hovered = !save_disabled && hovered == Some("profile_mgr:save_new_passphrase");
     let save_bg = if save_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_save_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
-    let save_text_col = if save_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let save_text_col = if save_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(save_bg);
@@ -1790,7 +1770,7 @@ fn render_page_use_recovery_key(
 
     // Subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Enter the recovery key shown during vault setup", inner_x + inner_w / 2.0, cy);
@@ -1840,13 +1820,13 @@ fn render_page_use_recovery_key(
     let recover_disabled = state.recovery_key_editing.text.len() < 40;
     let is_recover_hovered = !recover_disabled && hovered == Some("profile_mgr:recovery_unlock");
     let btn_bg = if recover_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_recover_hovered {
-        "rgba(255,255,255,0.92)"
+        toolbar_theme.accent_hover.as_str()
     } else {
         toolbar_theme.accent.as_str()
     };
-    let btn_text_col = if recover_disabled { "rgba(0,0,0,0.35)" } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if recover_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);
@@ -1870,7 +1850,7 @@ fn render_page_use_recovery_key(
     // Error message
     if let Some(ref err_msg) = state.vault_unlock_error {
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
@@ -1896,10 +1876,10 @@ fn render_back_button(
     let btn_w = 120.0;
     let btn_h = 24.0;
     let is_hovered = hovered_item_id == Some("profile_mgr:back");
-    let btn_bg = if is_hovered { "rgba(255,255,255,0.12)" } else { "rgba(255,255,255,0.06)" };
+    let btn_bg = if is_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    let stroke_color = if is_hovered { "rgba(254,255,238,0.40)" } else { "rgba(254,255,238,0.15)" };
+    let stroke_color = if is_hovered { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.separator.as_str() };
     ctx.set_stroke_color(stroke_color);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);

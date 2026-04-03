@@ -2679,6 +2679,10 @@ impl ChartPanelApp {
             item_text_hover: rt.colors.text_primary.clone(),
             item_text_active: rt.colors.text_primary.clone(),
             accent: rt.colors.accent.clone(),
+            accent_hover: rt.colors.accent_hover.clone(),
+            success: rt.colors.success.clone(),
+            danger: rt.colors.danger.clone(),
+            warning: rt.colors.warning.clone(),
             sidebar_style: rt.style_params.toolbar_sidebar_style,
         }
     }

@@ -31,16 +31,16 @@ pub fn toolbar_to_widget_theme(toolbar_theme: &ToolbarTheme, frame_theme: &Frame
         bg_pressed: toolbar_theme.item_bg_active.clone(),
         bg_disabled: toolbar_theme.separator.clone(),
         text_normal: toolbar_theme.item_text.clone(),
-        text_hover: "#ffffff".to_string(),
+        text_hover: toolbar_theme.item_text_hover.clone(),
         text_disabled: toolbar_theme.item_text_muted.clone(),
         border_normal: toolbar_theme.separator.clone(),
         border_hover: toolbar_theme.item_bg_hover.clone(),
-        border_focused: toolbar_theme.item_bg_active.clone(),
-        accent: toolbar_theme.item_bg_active.clone(),
-        accent_hover: toolbar_theme.item_bg_active.clone(),
-        success: "#10b981".to_string(),
-        warning: "#f59e0b".to_string(),
-        danger: "#ef4444".to_string(),
+        border_focused: toolbar_theme.accent.clone(),
+        accent: toolbar_theme.accent.clone(),
+        accent_hover: toolbar_theme.accent_hover.clone(),
+        success: toolbar_theme.success.clone(),
+        warning: toolbar_theme.warning.clone(),
+        danger: toolbar_theme.danger.clone(),
     }
 }
 
