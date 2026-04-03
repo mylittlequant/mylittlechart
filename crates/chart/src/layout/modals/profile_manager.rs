@@ -452,48 +452,54 @@ fn render_page_profile_list(
         );
     }
 
-    // Title row: "Profiles" left, ZT badge center, "+" button right
+    // Title: "Profiles"
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Profiles", inner_x, cy);
+    cy += 28.0;
 
-    // ZT badge — centered between title and "+" button
-    let zt_badge_y = cy + 5.0;
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(80,200,120,0.55)");
-    ctx.set_text_align(TextAlign::Center);
+    // ZT badge — same font size as title
+    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x, cy + 3.0, 16.0, 16.0, "rgba(80,200,120,0.50)");
+    ctx.set_font("bold 20px sans-serif");
+    ctx.set_fill_color("rgba(80,200,120,0.50)");
+    ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x + inner_w / 2.0 - 52.0, zt_badge_y, 12.0, 12.0, "rgba(80,200,120,0.55)");
-    ctx.fill_text("Zero-trust encrypted", inner_x + inner_w / 2.0 + 8.0, zt_badge_y);
+    ctx.fill_text("Zero-trust encrypted", inner_x + 22.0, cy);
+    cy += 32.0;
 
-    // "+" button — right-aligned on the same line as title
-    let plus_size = 24.0;
-    let plus_x = inner_x + inner_w - plus_size;
-    let plus_y = cy;
-    let plus_id = "profile_mgr:create_new";
-    let is_plus_hovered = hovered == Some(plus_id);
-    let plus_bg = if is_plus_hovered { "rgba(255,255,255,0.15)" } else { "rgba(255,255,255,0.06)" };
-    ctx.set_fill_color(plus_bg);
-    ctx.fill_rounded_rect(plus_x, plus_y, plus_size, plus_size, 4.0);
-    ctx.set_font("bold 16px sans-serif");
-    ctx.set_fill_color(if is_plus_hovered { "rgba(255,255,255,0.9)" } else { "rgba(255,255,255,0.5)" });
+    // "Create New Profile" button — full width, accent style
+    let create_btn_h = 36.0;
+    let create_id = "profile_mgr:create_new";
+    let is_create_hovered = hovered == Some(create_id);
+    let create_bg = if is_create_hovered {
+        "rgba(255,255,255,0.12)"
+    } else {
+        "rgba(255,255,255,0.06)"
+    };
+    ctx.set_fill_color(create_bg);
+    ctx.fill_rounded_rect(inner_x, cy, inner_w, create_btn_h, 4.0);
+
+    // "+" icon + label
+    let btn_center_y = cy + create_btn_h / 2.0;
+    ctx.set_font("bold 18px sans-serif");
+    ctx.set_fill_color(if is_create_hovered { "rgba(255,255,255,0.85)" } else { "rgba(255,255,255,0.50)" });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("+", plus_x + plus_size / 2.0, plus_y + plus_size / 2.0);
+    ctx.fill_text("+ Create New Profile", inner_x + inner_w / 2.0, btn_center_y);
     ctx.set_text_align(TextAlign::Left);
 
-    let plus_rect = WidgetRect::new(plus_x, plus_y, plus_size, plus_size);
-    result.content_items.push((plus_id.to_string(), plus_rect));
+    let create_rect = WidgetRect::new(inner_x, cy, inner_w, create_btn_h);
+    result.content_items.push((create_id.to_string(), create_rect));
     input_coordinator.register_on_layer(
-        format!("user_settings:{}", plus_id).as_str(),
-        plus_rect,
+        format!("user_settings:{}", create_id).as_str(),
+        create_rect,
         Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
-    cy += 34.0;
+    cy += create_btn_h + 8.0;
 
     // ── Scrollable viewport for profile rows + cloud section ──────────────────
     // No bottom button — list fills all available space.
