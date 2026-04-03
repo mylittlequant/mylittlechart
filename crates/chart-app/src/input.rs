@@ -3670,10 +3670,10 @@ impl ChartApp {
         }
 
         // User settings modal — update hover highlight for content items.
-        if self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard {
+        if self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.show_profile_manager {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref us) = result.user_settings {
-                    if us.modal_rect.contains(x, y) || self.panel_app.user_settings_state.show_welcome_wizard {
+                    if us.modal_rect.contains(x, y) || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.show_profile_manager {
                         let mut found = false;
                         for (id, rect) in &us.content_items {
                             if rect.contains(x, y) {

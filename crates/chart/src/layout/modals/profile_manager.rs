@@ -480,9 +480,9 @@ fn render_page_profile_list(
     let create_id = "profile_mgr:create_new";
     let is_create_hovered = hovered == Some(create_id);
     let create_bg = if is_create_hovered {
-        "rgba(255,255,255,0.12)"
+        "rgba(255,255,255,0.08)"
     } else {
-        "rgba(255,255,255,0.06)"
+        "rgba(255,255,255,0.04)"
     };
     ctx.set_fill_color(create_bg);
     ctx.fill_rounded_rect(btn_x, cy, btn_w, header_h, 4.0);
