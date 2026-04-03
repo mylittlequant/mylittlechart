@@ -1073,8 +1073,72 @@ fn render_page_create_passphrase(
         frame_theme, current_time_ms, layer_id, input_coordinator, result,
     );
 
-    // Encrypt button (disabled until passphrase meets minimum length)
-    let encrypt_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH;
+    // ── Confirm Passphrase input ──────────────────────────────────────────────
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text("Confirm Passphrase", inner_x, cy);
+    cy += 18.0;
+
+    let confirm_h = 32.0;
+    let confirm_rect = WidgetRect::new(inner_x, cy, inner_w, confirm_h);
+    let confirm_editing = &state.confirm_passphrase_editing;
+    let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = confirm_editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let confirm_config = InputConfig::new(&confirm_editing.text)
+        .with_focused(state.confirm_passphrase_focused)
+        .with_cursor(confirm_editing.cursor)
+        .with_placeholder("Confirm passphrase\u{2026}")
+        .with_type(InputType::Password)
+        .with_selection(conf_sel_start, conf_sel_end);
+
+    let confirm_result = draw_input(ctx, &confirm_config, WidgetState::Normal, confirm_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:create_confirm_passphrase_input".to_string(), confirm_rect));
+    result.input_char_positions.push(("profile_mgr:create_confirm_passphrase_input".to_string(), confirm_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:create_confirm_passphrase_input",
+        confirm_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.confirm_passphrase_focused && confirm_editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            confirm_result.cursor_x,
+            confirm_result.cursor_y,
+            confirm_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+
+    cy += confirm_h + 4.0;
+
+    // Mismatch error
+    let passphrase_text = &state.e2e_passphrase_editing.text;
+    let confirm_text = &state.confirm_passphrase_editing.text;
+    if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Passphrases don't match", inner_x, cy);
+        cy += 18.0;
+    } else {
+        cy += 18.0;
+    }
+
+    // Encrypt button (disabled until passphrase meets minimum length AND confirm matches)
+    let confirm_matches_create = state.confirm_passphrase_editing.text == state.e2e_passphrase_editing.text;
+    let encrypt_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+        || !confirm_matches_create;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
     let btn_bg = if encrypt_disabled {
         "rgba(244,205,99,0.20)"

@@ -18,7 +18,7 @@ use crate::ui::toolbar_render::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
-use crate::ui::widgets::types::WidgetState;
+use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::i18n::{Language, current_language, WizardKey, t_wizard};
@@ -64,7 +64,8 @@ pub fn render_welcome_wizard(
     let modal_h: f64 = match state.wizard_page {
         0 => 400.0,  // welcome + language + mascot
         1 => 420.0,  // theme
-        2 => 440.0,  // profile + passphrase (extra height for passphrase hint)
+        2 => 520.0,  // profile + passphrase + confirm passphrase
+        3 => 360.0,  // recovery key display
         _ => 400.0,
     };
     let modal_x = (window_w - modal_w) / 2.0;
@@ -94,6 +95,7 @@ pub fn render_welcome_wizard(
         0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
         1 => render_page1_theme(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
         2 => render_page2_profile(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        3 => render_page3_recovery(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
         _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 }
@@ -234,7 +236,7 @@ fn render_page1_theme(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step2of4), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 22px sans-serif");
@@ -350,7 +352,7 @@ fn render_page2_profile(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step3of3), x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step3of4), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 20px sans-serif");
@@ -408,6 +410,63 @@ fn render_page2_profile(
         current_time_ms, layer_id, input_coordinator, result,
     );
 
+    // ── Confirm Passphrase input ──────────────────────────────────────────────
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(t_wizard(WizardKey::ConfirmPassphrase), x, *cy);
+    *cy += 18.0;
+
+    let confirm_h = 32.0;
+    let confirm_rect = WidgetRect::new(x, *cy, w, confirm_h);
+    let confirm_editing = &state.confirm_passphrase_editing;
+    let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = confirm_editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let confirm_config = InputConfig::new(&confirm_editing.text)
+        .with_focused(state.confirm_passphrase_focused)
+        .with_cursor(confirm_editing.cursor)
+        .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
+        .with_type(InputType::Password)
+        .with_selection(conf_sel_start, conf_sel_end);
+
+    let confirm_result = draw_input(ctx, &confirm_config, WidgetState::Normal, confirm_rect, &widget_theme);
+
+    result.content_items.push(("wizard_confirm_passphrase_input".to_string(), confirm_rect));
+    result.input_char_positions.push(("wizard_confirm_passphrase_input".to_string(), confirm_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer("user_settings:wizard_confirm_passphrase_input", confirm_rect, Sense::CLICK, layer_id);
+
+    if state.confirm_passphrase_focused && confirm_editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            confirm_result.cursor_x,
+            confirm_result.cursor_y,
+            confirm_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+
+    *cy += confirm_h + 4.0;
+
+    // Mismatch error
+    let passphrase_text = &state.e2e_passphrase_editing.text;
+    let confirm_text = &state.confirm_passphrase_editing.text;
+    if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(t_wizard(WizardKey::PassphraseMismatch), x, *cy);
+        *cy += 18.0;
+    } else {
+        *cy += 18.0;
+    }
+
     // ── ZT container info plashka ─────────────────────────────────────────────
     let note_h = 58.0;
     ctx.set_fill_color("rgba(240,173,78,0.07)");
@@ -428,7 +487,8 @@ fn render_page2_profile(
     let profile_name = state.new_profile_name_editing.text.trim().to_string();
     let profile_name_ok = !profile_name.is_empty();
     let passphrase_ok = state.e2e_passphrase_editing.text.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH;
-    let finish_disabled = !passphrase_ok || !profile_name_ok;
+    let confirm_matches = state.confirm_passphrase_editing.text == state.e2e_passphrase_editing.text;
+    let finish_disabled = !passphrase_ok || !profile_name_ok || !confirm_matches;
 
     let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
     let finish_bg = if finish_disabled {
@@ -463,6 +523,174 @@ fn render_page2_profile(
         result.content_items.push(("wizard_finish".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:wizard_finish", btn_rect, Sense::CLICK, layer_id);
     }
+}
+
+// =============================================================================
+// Page 3 — Recovery Key (shown inside the wizard after key generation)
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page3_recovery(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    cy: &mut f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    // Step indicator (top-right — no back button on this page)
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::Step4of4), x + w, *cy);
+    *cy += 20.0;
+
+    // Title
+    ctx.set_font("bold 20px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::RecoveryKey), x + w / 2.0, *cy);
+    *cy += 30.0;
+
+    // Warning line 1 (amber)
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::RecoveryWarning1), x + w / 2.0, *cy);
+    *cy += 18.0;
+
+    // Warning line 2 (muted)
+    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.fill_text(t_wizard(WizardKey::RecoveryWarning2), x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 26.0;
+
+    // Recovery key display box (selectable read-only input, gold color scheme)
+    let key_text = state.recovery_key_display.as_deref().unwrap_or("(key not available)");
+
+    let key_widget_theme = WidgetTheme {
+        bg_normal: "rgba(0,0,0,0.35)".to_string(),
+        bg_hover: "rgba(0,0,0,0.40)".to_string(),
+        bg_pressed: "rgba(0,0,0,0.45)".to_string(),
+        bg_disabled: "rgba(0,0,0,0.20)".to_string(),
+        text_normal: "rgba(244,205,99,1.0)".to_string(),
+        text_hover: "rgba(244,205,99,1.0)".to_string(),
+        text_disabled: "rgba(244,205,99,0.5)".to_string(),
+        border_normal: "rgba(244,205,99,0.35)".to_string(),
+        border_hover: "rgba(244,205,99,0.55)".to_string(),
+        border_focused: "rgba(244,205,99,0.70)".to_string(),
+        accent: "rgba(244,205,99,0.30)".to_string(),
+        accent_hover: "rgba(244,205,99,0.40)".to_string(),
+        success: "#26a69a".to_string(),
+        warning: "#ff9800".to_string(),
+        danger: "#ef5350".to_string(),
+    };
+
+    let key_box_h = 40.0;
+    let key_display_rect = WidgetRect::new(x, *cy, w, key_box_h);
+    let editing = &state.recovery_key_display_editing;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let key_display_config = InputConfig::new(key_text)
+        .with_focused(state.recovery_key_display_focused)
+        .with_cursor(editing.cursor)
+        .with_type(InputType::Text)
+        .with_font_size(13.0)
+        .with_padding(10.0)
+        .with_radius(4.0)
+        .with_selection(sel_start, sel_end);
+
+    let key_display_result = draw_input(ctx, &key_display_config, WidgetState::Normal, key_display_rect, &key_widget_theme);
+
+    result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
+    result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_display",
+        key_display_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+
+    let _ = frame_theme;
+    if state.recovery_key_display_focused && editing.is_cursor_visible(current_time_ms) {
+        draw_input_cursor(
+            ctx,
+            key_display_result.cursor_x,
+            key_display_result.cursor_y,
+            key_display_result.cursor_height,
+            "rgba(244,205,99,0.9)",
+        );
+    }
+
+    *cy += key_box_h + 10.0;
+
+    // Copy Key button
+    let is_copy_hovered = hovered == Some("wizard_copy_key");
+    let copy_btn_bg = if is_copy_hovered { "rgba(244,205,99,0.2)" } else { "rgba(244,205,99,0.08)" };
+    let copy_btn_h = 28.0;
+    let copy_btn_w = w.min(200.0);
+    let copy_btn_x = x + (w - copy_btn_w) / 2.0;
+    ctx.set_fill_color(copy_btn_bg);
+    ctx.fill_rounded_rect(copy_btn_x, *cy, copy_btn_w, copy_btn_h, 4.0);
+    ctx.set_stroke_color("rgba(244,205,99,0.4)");
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(copy_btn_x, *cy, copy_btn_w, copy_btn_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_wizard(WizardKey::CopyKey), copy_btn_x + copy_btn_w / 2.0, *cy + copy_btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let copy_btn_rect = WidgetRect::new(copy_btn_x, *cy, copy_btn_w, copy_btn_h);
+    result.content_items.push(("wizard_copy_key".to_string(), copy_btn_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:wizard_copy_key",
+        copy_btn_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+
+    *cy += copy_btn_h + 12.0;
+
+    // "I've saved it — continue" button
+    let is_confirm_hovered = hovered == Some("wizard_recovery_confirm");
+    let confirm_bg = if is_confirm_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
+    let confirm_text_col = "rgba(0,0,0,0.85)";
+    let confirm_btn_h = 34.0;
+    let confirm_btn_w = w.min(260.0);
+    let confirm_btn_x = x + (w - confirm_btn_w) / 2.0;
+    ctx.set_fill_color(confirm_bg);
+    ctx.fill_rounded_rect(confirm_btn_x, *cy, confirm_btn_w, confirm_btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(confirm_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_wizard(WizardKey::SavedAndContinue), confirm_btn_x + confirm_btn_w / 2.0, *cy + confirm_btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let confirm_btn_rect = WidgetRect::new(confirm_btn_x, *cy, confirm_btn_w, confirm_btn_h);
+    result.content_items.push(("wizard_recovery_confirm".to_string(), confirm_btn_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:wizard_recovery_confirm",
+        confirm_btn_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
 }
 
 // =============================================================================
@@ -554,10 +782,10 @@ fn render_passphrase_input(
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
 
-    // Register for click-to-focus
-    result.content_items.push(("e2e_passphrase_input".to_string(), input_rect));
-    result.input_char_positions.push(("e2e_passphrase_input".to_string(), input_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer("user_settings:e2e_passphrase_input", input_rect, Sense::CLICK, layer_id);
+    // Register for click-to-focus (wizard-specific id to distinguish from settings modal)
+    result.content_items.push(("wizard_passphrase_input".to_string(), input_rect));
+    result.input_char_positions.push(("wizard_passphrase_input".to_string(), input_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer("user_settings:wizard_passphrase_input", input_rect, Sense::CLICK, layer_id);
 
     // Blinking cursor (only when focused)
     if state.e2e_passphrase_focused && editing.is_cursor_visible(current_time_ms) {

@@ -923,7 +923,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
                             }
-                            "profile_mgr:confirm_passphrase_input" => {
+                            "profile_mgr:confirm_passphrase_input"
+                            | "wizard_confirm_passphrase_input"
+                            | "profile_mgr:create_confirm_passphrase_input" => {
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = Some(drag_cursor);
                             }
@@ -2301,7 +2303,9 @@ impl ChartApp {
                     "profile_mgr:new_passphrase_input" => {
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
                     }
-                    "profile_mgr:confirm_passphrase_input" => {
+                    "profile_mgr:confirm_passphrase_input"
+                    | "wizard_confirm_passphrase_input"
+                    | "profile_mgr:create_confirm_passphrase_input" => {
                         self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
                     }
                     "profile_mgr:recovery_key_display" => {
@@ -3021,7 +3025,9 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
                     self.panel_app.user_settings_state.new_passphrase_editing.cursor,
                 ),
-                "profile_mgr:confirm_passphrase_input" => (
+                "profile_mgr:confirm_passphrase_input"
+                | "wizard_confirm_passphrase_input"
+                | "profile_mgr:create_confirm_passphrase_input" => (
                     self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start,
                     self.panel_app.user_settings_state.confirm_passphrase_editing.cursor,
                 ),
@@ -3045,7 +3051,9 @@ impl ChartApp {
                     "profile_mgr:new_passphrase_input" => {
                         self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
-                    "profile_mgr:confirm_passphrase_input" => {
+                    "profile_mgr:confirm_passphrase_input"
+                    | "wizard_confirm_passphrase_input"
+                    | "profile_mgr:create_confirm_passphrase_input" => {
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     }
                     "profile_mgr:recovery_key_display" => {
@@ -5669,11 +5677,18 @@ impl ChartApp {
             return;
         }
 
-        // Handle confirm passphrase input in the SetNewPassphrase profile manager page
-        if self.panel_app.user_settings_state.show_profile_manager
+        // Handle confirm passphrase input in the SetNewPassphrase profile manager page or wizard page 2
+        if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.confirm_passphrase_focused
         {
-            let passphrase_text = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
+            // For SetNewPassphrase page, compare against new_passphrase_editing; for wizard/CreatePassphrase compare against e2e_passphrase_editing.
+            let passphrase_text = if self.panel_app.user_settings_state.show_profile_manager
+                && !self.panel_app.user_settings_state.new_passphrase_editing.text.is_empty()
+            {
+                self.panel_app.user_settings_state.new_passphrase_editing.text.clone()
+            } else {
+                self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone()
+            };
             let editing = &mut self.panel_app.user_settings_state.confirm_passphrase_editing;
             match ch {
                 '\r' | '\n' => {
@@ -6562,8 +6577,8 @@ impl ChartApp {
             return;
         }
 
-        // ── Confirm passphrase text input key events (profile manager SetNewPassphrase page) ──
-        if self.panel_app.user_settings_state.show_profile_manager
+        // ── Confirm passphrase text input key events (profile manager or wizard) ──
+        if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.confirm_passphrase_focused
         {
             apply_key(&mut self.panel_app.user_settings_state.confirm_passphrase_editing, key);
@@ -9265,6 +9280,7 @@ impl ChartApp {
                     // Focus the profile name input on the profile page
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -9282,6 +9298,7 @@ impl ChartApp {
                     // Focus the passphrase input on the profile page
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -9294,6 +9311,23 @@ impl ChartApp {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] wizard: passphrase input focused");
+                }
+                "wizard_confirm_passphrase_input" => {
+                    // Focus the confirm passphrase input on wizard page 2.
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_confirm_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                    }
+                    eprintln!("[ChartApp] wizard: confirm_passphrase_input focused");
                 }
                 "wizard_finish" => {
                     // Page 2: submit passphrase (and log profile name) then close wizard.
@@ -9308,8 +9342,31 @@ impl ChartApp {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                         eprintln!("[ChartApp] wizard: setup complete");
                     }
+                }
+                "wizard_copy_key" => {
+                    // Page 3: copy recovery key to clipboard
+                    if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
+                        self.clipboard_text = Some(key.clone());
+                        eprintln!("[ChartApp] wizard: recovery key copied to clipboard");
+                    }
+                }
+                "wizard_recovery_confirm" => {
+                    // Page 3: user confirmed they saved the recovery key — close wizard and promote
+                    self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
+                    self.panel_app.user_settings_state.show_welcome_wizard = false;
+                    self.panel_app.user_settings_state.wizard_page = 0;
+                    self.panel_app.user_settings_state.recovery_key_display = None;
+                    self.panel_app.user_settings_state.recovery_key_display_editing.text.clear();
+                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor = 0;
+                    self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                    eprintln!("[ChartApp] wizard: recovery key confirmed, closing wizard");
                 }
                 "profile_mgr:run_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
@@ -9389,7 +9446,11 @@ impl ChartApp {
                 }
                 "profile_mgr:create_passphrase" => {
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
-                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH {
+                    let confirm = self.panel_app.user_settings_state.confirm_passphrase_editing.text.clone();
+                    if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && passphrase == confirm {
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
                         eprintln!("[ChartApp] profile_mgr: create passphrase submitted");
                     }
@@ -9482,6 +9543,25 @@ impl ChartApp {
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] profile_mgr: confirm_passphrase_input focused");
+                }
+                "profile_mgr:create_confirm_passphrase_input" => {
+                    // Confirm passphrase field on the CreatePassphrase page.
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:create_confirm_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                    }
+                    eprintln!("[ChartApp] profile_mgr: create_confirm_passphrase_input focused");
                 }
                 "profile_mgr:save_new_passphrase" => {
                     let passphrase_text = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();

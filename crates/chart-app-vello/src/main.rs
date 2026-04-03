@@ -5055,12 +5055,11 @@ impl ApplicationHandler for App<'_> {
                     self.needs_vault_unlock = false;
                     self.needs_migration = false;
 
-                    // If a recovery key was generated, show it before promoting.
+                    // If a recovery key was generated, show it inside the wizard (page 3).
                     let recovery_key = self.profile_manager.pending_recovery_key.clone();
                     if recovery_key.is_some() {
-                        // Show recovery key on skeleton first; promote after user confirms.
+                        // Stay in the wizard at page 3 so the user sees the key before closing.
                         for pw in self.windows.values_mut() {
-                            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                             pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                             pw.chart.panel_app.user_settings_state.recovery_key_display =
@@ -5070,9 +5069,9 @@ impl ApplicationHandler for App<'_> {
                             pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text = key_str.to_string();
                             pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = key_str.chars().count();
                             pw.chart.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
-                            pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                ProfileManagerPage::ShowRecoveryKey;
-                            pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                            // Navigate to wizard page 3 (recovery key) — wizard stays open
+                            pw.chart.panel_app.user_settings_state.wizard_page = 3;
+                            pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
                         }
                     } else {
                         // No recovery key — promote immediately.

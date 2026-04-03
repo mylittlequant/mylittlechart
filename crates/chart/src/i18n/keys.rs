@@ -734,16 +734,26 @@ pub enum WizardKey {
     Passphrase,
     PassphrasePlaceholder,
     MinPassphraseHint,
+    ConfirmPassphrase,
+    PassphraseMismatch,
     ZtInfo1,
     ZtInfo2,
     ZtInfo3,
     GenerateRecoveryPhrase,
 
+    // Page 3 — Recovery Key
+    RecoveryKey,
+    RecoveryWarning1,
+    RecoveryWarning2,
+    CopyKey,
+    SavedAndContinue,
+
     // Shared
     Back,
     Next,
-    Step2of3,
-    Step3of3,
+    Step2of4,
+    Step3of4,
+    Step4of4,
 }
 
 impl WizardKey {
@@ -766,14 +776,22 @@ impl WizardKey {
             Self::Passphrase => "Passphrase",
             Self::PassphrasePlaceholder => "Click to type passphrase\u{2026}",
             Self::MinPassphraseHint => "Minimum 8 characters",
+            Self::ConfirmPassphrase => "Confirm Passphrase",
+            Self::PassphraseMismatch => "Passphrases don't match",
             Self::ZtInfo1 => "Your passphrase creates a Zero-trust container",
             Self::ZtInfo2 => "for API keys, indicators, strategies and agent prompts.",
             Self::ZtInfo3 => "It is never stored on any server.",
             Self::GenerateRecoveryPhrase => "Generate Recovery Phrase",
+            Self::RecoveryKey => "Recovery Key",
+            Self::RecoveryWarning1 => "Save this key in a safe place",
+            Self::RecoveryWarning2 => "If you lose your passphrase, this key is the only way to recover your data",
+            Self::CopyKey => "Copy Key",
+            Self::SavedAndContinue => "I've saved it \u{2014} continue",
             Self::Back => "Back",
             Self::Next => "Next",
-            Self::Step2of3 => "Step 2 of 3",
-            Self::Step3of3 => "Step 3 of 3",
+            Self::Step2of4 => "Step 2 of 4",
+            Self::Step3of4 => "Step 3 of 4",
+            Self::Step4of4 => "Step 4 of 4",
         }
     }
 
@@ -788,14 +806,22 @@ impl WizardKey {
             Self::Passphrase => "Пароль",
             Self::PassphrasePlaceholder => "Нажмите, чтобы ввести пароль\u{2026}",
             Self::MinPassphraseHint => "Минимум 8 символов",
+            Self::ConfirmPassphrase => "Подтвердите пароль",
+            Self::PassphraseMismatch => "Пароли не совпадают",
             Self::ZtInfo1 => "Ваш пароль создаёт Zero-trust контейнер",
             Self::ZtInfo2 => "для API-ключей, индикаторов, стратегий и агент-промптов.",
             Self::ZtInfo3 => "Он никогда не хранится на сервере.",
             Self::GenerateRecoveryPhrase => "Сгенерировать фразу восстановления",
+            Self::RecoveryKey => "Ключ восстановления",
+            Self::RecoveryWarning1 => "Сохраните этот ключ в безопасном месте",
+            Self::RecoveryWarning2 => "Если вы забудете пароль, этот ключ — единственный способ восстановить данные",
+            Self::CopyKey => "Скопировать ключ",
+            Self::SavedAndContinue => "Я записал — продолжить",
             Self::Back => "Назад",
             Self::Next => "Далее",
-            Self::Step2of3 => "Шаг 2 из 3",
-            Self::Step3of3 => "Шаг 3 из 3",
+            Self::Step2of4 => "Шаг 2 из 4",
+            Self::Step3of4 => "Шаг 3 из 4",
+            Self::Step4of4 => "Шаг 4 из 4",
         }
     }
 }
