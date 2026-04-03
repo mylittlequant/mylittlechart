@@ -621,10 +621,28 @@ fn render_page3_recovery(
 
     *cy += key_box_h + 10.0;
 
-    // Copy Key button — same style as other wizard buttons
+    // Copy Key button — shows "Copied!" feedback for 2 seconds after click
     let is_copy_hovered = hovered == Some("wizard_copy_key");
-    let copy_btn_bg = if is_copy_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    let copy_btn_text = if is_copy_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let just_copied = state.recovery_key_copied_at > 0 && now_ms.saturating_sub(state.recovery_key_copied_at) < 2000;
+    let copy_btn_bg = if just_copied {
+        toolbar_theme.item_bg_active.as_str()
+    } else if is_copy_hovered {
+        toolbar_theme.button_bg_hover.as_str()
+    } else {
+        toolbar_theme.button_bg.as_str()
+    };
+    let copy_btn_text = if just_copied {
+        toolbar_theme.item_text_active.as_str()
+    } else if is_copy_hovered {
+        toolbar_theme.item_text_hover.as_str()
+    } else {
+        toolbar_theme.item_text.as_str()
+    };
+    let copy_label = if just_copied { "Copied!" } else { t_wizard(WizardKey::CopyKey) };
     let copy_btn_h = 28.0;
     let copy_btn_w = w.min(200.0);
     let copy_btn_x = x + (w - copy_btn_w) / 2.0;
@@ -634,7 +652,7 @@ fn render_page3_recovery(
     ctx.set_fill_color(copy_btn_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::CopyKey), copy_btn_x + copy_btn_w / 2.0, *cy + copy_btn_h / 2.0);
+    ctx.fill_text(copy_label, copy_btn_x + copy_btn_w / 2.0, *cy + copy_btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let copy_btn_rect = WidgetRect::new(copy_btn_x, *cy, copy_btn_w, copy_btn_h);

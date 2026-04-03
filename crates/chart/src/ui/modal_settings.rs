@@ -3630,6 +3630,9 @@ pub struct UserSettingsState {
     /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
     pub recovery_key_display_focused: bool,
 
+    /// Timestamp (ms) when recovery key was last copied. Used for visual feedback.
+    pub recovery_key_copied_at: u64,
+
     /// Retained for backward compatibility. No longer used by the profile wizard
     /// — sync level is now controlled device-wide via `device_ota_enabled`.
     pub new_profile_sync_level: String,
@@ -3792,6 +3795,7 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             recovery_key_display_focused: false,
+            recovery_key_copied_at: 0,
             new_profile_sync_level: "connected".to_string(),
             data_bg_bars: 2000,
             data_max_bars: 10000,

@@ -3126,17 +3126,16 @@ impl ChartPanelApp {
         // while the vault unlock / welcome wizard is shown.  Drawn BEFORE the
         // modal so the modal appears on top of the solid background.
         //
-        // Fill only the content area (between toolbars) rather than the entire
-        // window so the toolbars remain visible above and below.
+        // Fill the entire window so toolbars are also covered.
         if self.user_settings_state.show_welcome_wizard
             || self.user_settings_state.show_profile_manager
         {
             ctx.set_fill_color(&toolbar_theme.button_bg);
             ctx.fill_rect(
-                modal_layout.chart_x,
-                modal_layout.chart_y,
-                modal_layout.content_w,
-                modal_layout.content_h,
+                0.0,
+                0.0,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
             );
         }
 

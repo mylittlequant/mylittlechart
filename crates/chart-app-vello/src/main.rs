@@ -7920,6 +7920,9 @@ impl ApplicationHandler for App<'_> {
                         Key::Named(NamedKey::Space) => {
                             pw.chart.on_char_input(' ');
                         }
+                        Key::Named(NamedKey::Tab) => {
+                            pw.chart.on_char_input('\x09');
+                        }
                         Key::Named(NamedKey::Delete) => {
                             pw.chart.on_key_press(chart_app::KeyPress::Delete);
                         }

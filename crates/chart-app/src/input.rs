@@ -906,32 +906,56 @@ impl ChartApp {
                     }
                     if let Some(field_id) = drag_field {
                         // Set cursor and selection anchor on the appropriate editing state.
+                        // Also activate focus (drag = click, should focus the field).
                         match field_id.as_str() {
                             "e2e_passphrase_input" | "wizard_passphrase_input" => {
                                 self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                                self.panel_app.user_settings_state.new_profile_name_focused = false;
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
                             }
                             "wizard_profile_name_input" | "profile_mgr:name_input" => {
                                 self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.new_profile_name_focused = true;
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
                             }
                             "profile_mgr:recovery_key_input" => {
                                 self.panel_app.user_settings_state.recovery_key_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.recovery_key_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.recovery_key_focused = true;
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_profile_name_focused = false;
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                             }
                             "profile_mgr:new_passphrase_input" => {
                                 self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.new_passphrase_focused = true;
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                             }
                             "profile_mgr:confirm_passphrase_input"
                             | "wizard_confirm_passphrase_input"
                             | "profile_mgr:create_confirm_passphrase_input" => {
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_profile_name_focused = false;
+                                self.panel_app.user_settings_state.recovery_key_display_focused = false;
                             }
                             "profile_mgr:recovery_key_display" => {
                                 self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.recovery_key_display_focused = true;
+                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_profile_name_focused = false;
+                                self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                             }
                             _ => {}
                         }
@@ -9377,6 +9401,11 @@ impl ChartApp {
                     // Page 3: copy recovery key to clipboard
                     if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
                         self.clipboard_text = Some(key.clone());
+                        self.panel_app.user_settings_state.recovery_key_copied_at =
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
                         eprintln!("[ChartApp] wizard: recovery key copied to clipboard");
                     }
                 }
