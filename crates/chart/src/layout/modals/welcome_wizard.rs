@@ -6,9 +6,8 @@
 //!
 //! Pages:
 //!   0 — Welcome + Language   (mascot, lang selection, Get Started)
-//!   1 — Performance          (backend selection)
-//!   2 — Theme                (5 presets)
-//!   3 — Profile + Passphrase (name input, passphrase, ZT info, Complete Setup)
+//!   1 — Theme                (5 presets)
+//!   2 — Profile + Passphrase (name input, passphrase, ZT info, Generate Recovery Phrase)
 
 use crate::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 use uzor::render::{TextAlign, TextBaseline};
@@ -64,9 +63,8 @@ pub fn render_welcome_wizard(
     let modal_w: f64 = 580.0;
     let modal_h: f64 = match state.wizard_page {
         0 => 400.0,  // welcome + language + mascot
-        1 => 380.0,  // performance
-        2 => 420.0,  // theme
-        3 => 420.0,  // profile + passphrase
+        1 => 420.0,  // theme
+        2 => 440.0,  // profile + passphrase (extra height for passphrase hint)
         _ => 400.0,
     };
     let modal_x = (window_w - modal_w) / 2.0;
@@ -94,9 +92,8 @@ pub fn render_welcome_wizard(
 
     match state.wizard_page {
         0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1_performance(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        2 => render_page2_theme(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        3 => render_page3_profile(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        1 => render_page1_theme(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        2 => render_page2_profile(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
         _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 }
@@ -202,149 +199,11 @@ fn render_page0(
 }
 
 // =============================================================================
-// Page 1 — Performance (Backend Selection)
+// Page 1 — Theme Selection
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page1_performance(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-
-    // Determine active backend — fallback to "vello_gpu" if not yet selected
-    let active_backend = if state.wizard_selected_backend.is_empty() {
-        "vello_gpu"
-    } else {
-        state.wizard_selected_backend.as_str()
-    };
-
-    // Back button
-    render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    // Step indicator (top-right)
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step2of4), x + w, *cy - 20.0);
-
-    // Title
-    ctx.set_font("bold 22px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Performance), x + w / 2.0, *cy);
-    *cy += 34.0;
-
-    // Subtitle
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text(t_wizard(WizardKey::RecommendedSettings), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 20.0;
-
-    // "Auto-detected" info line
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.50)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::AutoDetected), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 22.0;
-
-    // Backend rows: (key, display label, widget_id, recommended)
-    let backends: &[(&str, &str, &str, bool)] = &[
-        ("vello_gpu",        "Vello GPU",        "wizard_backend_vello_gpu",        true),
-        ("instanced_wgpu",   "Instanced wGPU",   "wizard_backend_instanced_wgpu",   false),
-        ("vello_cpu",        "Vello CPU",         "wizard_backend_vello_cpu",        false),
-        ("vello_hybrid",     "Vello Hybrid",      "wizard_backend_vello_hybrid",     false),
-        ("tiny_skia",        "Tiny-Skia CPU",     "wizard_backend_tiny_skia",        false),
-    ];
-
-    let row_h = 40.0;
-    let row_gap = 5.0;
-
-    for (key, label, widget_id, recommended) in backends {
-        let is_active = active_backend == *key;
-        let is_row_hovered = hovered == Some(widget_id);
-
-        let row_bg = if is_row_hovered {
-            "rgba(255,255,255,0.08)"
-        } else {
-            "rgba(255,255,255,0.04)"
-        };
-        ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
-
-        // Active accent left border
-        if is_active {
-            ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
-        }
-
-        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
-        ctx.set_font("14px sans-serif");
-        ctx.set_fill_color(text_alpha);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, x + 16.0, *cy + row_h / 2.0);
-
-        // "(Recommended)" badge for the default backend
-        if *recommended {
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color("rgba(244,205,99,0.65)");
-            ctx.set_text_align(TextAlign::Right);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(t_wizard(WizardKey::Recommended), x + w - 10.0, *cy + row_h / 2.0);
-        }
-
-        let row_rect = WidgetRect::new(x, *cy, w, row_h);
-        result.content_items.push((widget_id.to_string(), row_rect));
-        let hit_id = format!("user_settings:{}", widget_id);
-        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-        *cy += row_h + row_gap;
-    }
-
-    *cy += 16.0;
-
-    // "Next" button (goes to theme page)
-    let btn_h = 38.0;
-    let btn_w = w.min(200.0);
-    let btn_x = x + (w - btn_w) / 2.0;
-    let is_btn_hovered = hovered == Some("wizard_perf_next");
-    let btn_bg = if is_btn_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-    ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color("rgba(0,0,0,0.85)");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_perf_next".to_string(), btn_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_perf_next", btn_rect, Sense::CLICK, layer_id);
-}
-
-// =============================================================================
-// Page 2 — Theme Selection
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_page2_theme(
+fn render_page1_theme(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -374,7 +233,7 @@ fn render_page2_theme(
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step3of4), x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 22px sans-serif");
@@ -460,11 +319,11 @@ fn render_page2_theme(
 }
 
 // =============================================================================
-// Page 3 — Profile + Passphrase (last page)
+// Page 2 — Profile + Passphrase (last page)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page3_profile(
+fn render_page2_profile(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -489,7 +348,7 @@ fn render_page3_profile(
     ctx.set_fill_color("rgba(254,255,238,0.35)");
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step4of4), x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step3of3), x + w, *cy - 20.0);
 
     // Title
     ctx.set_font("bold 20px sans-serif");
@@ -587,7 +446,7 @@ fn render_page3_profile(
     ctx.set_fill_color(finish_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::CompleteSetup), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::GenerateRecoveryPhrase), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !finish_disabled {
@@ -701,7 +560,16 @@ fn render_passphrase_input(
         );
     }
 
-    *cy += input_h + 14.0;
+    *cy += input_h + 4.0;
+
+    // Passphrase length hint
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::MinPassphraseHint), x, *cy);
+
+    *cy += 18.0;
     *cy
 }
 

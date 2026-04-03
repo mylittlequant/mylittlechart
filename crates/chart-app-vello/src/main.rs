@@ -6092,7 +6092,7 @@ impl ApplicationHandler for App<'_> {
                             // The user must still enter a passphrase (mandatory zero-trust).
                             for pw in self.windows.values_mut() {
                                 let uss = &mut pw.chart.panel_app.user_settings_state;
-                                if uss.show_welcome_wizard && uss.wizard_page == 1 {
+                                if uss.show_welcome_wizard {
                                     uss.wizard_linking_status = format!("Linked as {}", dn);
                                 }
                             }

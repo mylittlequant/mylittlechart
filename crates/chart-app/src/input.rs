@@ -5771,8 +5771,8 @@ impl ChartApp {
             return;
         }
 
-        // Handle new profile name text input (in settings modal OR profile manager)
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager)
+        // Handle new profile name text input (in settings modal, profile manager, or welcome wizard)
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.new_profile_name_focused
         {
             let editing = &mut self.panel_app.user_settings_state.new_profile_name_editing;
@@ -6532,8 +6532,8 @@ impl ChartApp {
             return;
         }
 
-        // ── New profile name text input key events (settings modal OR profile manager) ──
-        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager)
+        // ── New profile name text input key events (settings modal, profile manager, or welcome wizard) ──
+        if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.new_profile_name_focused
         {
             apply_key(&mut self.panel_app.user_settings_state.new_profile_name_editing, key);
@@ -9117,6 +9117,7 @@ impl ChartApp {
                 }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -9192,11 +9193,11 @@ impl ChartApp {
                     eprintln!("[ChartApp] logout: sending logout command to updater");
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
-                // New page order: 0=Welcome+Lang, 1=Performance, 2=Theme, 3=Profile+Passphrase
+                // Page order: 0=Welcome+Lang, 1=Theme, 2=Profile+Passphrase
                 "wizard_get_started" => {
-                    // Page 0: user clicked Get Started — go to page 1 (Performance)
+                    // Page 0: user clicked Get Started — go to page 1 (Theme)
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (performance)");
+                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (theme)");
                 }
                 "wizard_back" => {
                     // Back arrow — go to previous page
@@ -9219,64 +9220,77 @@ impl ChartApp {
                     crate::set_language(crate::Language::Ru);
                     eprintln!("[ChartApp] wizard: language set to Russian");
                 }
-                "wizard_perf_next" => {
-                    // Page 1 (Performance): go to page 2 (Theme)
-                    self.panel_app.user_settings_state.wizard_page = 2;
-                    eprintln!("[ChartApp] wizard: performance done, going to page 2 (theme)");
-                }
                 "wizard_theme_dark" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
+                    self.panel_app.theme_manager.set_preset("dark");
+                    self.theme_changed = Some("dark".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → dark");
                 }
                 "wizard_theme_light" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "light".to_string();
+                    self.panel_app.theme_manager.set_preset("light");
+                    self.theme_changed = Some("light".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → light");
                 }
                 "wizard_theme_high_contrast" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast".to_string();
+                    self.panel_app.theme_manager.set_preset("high_contrast");
+                    self.theme_changed = Some("high_contrast".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → high_contrast");
                 }
                 "wizard_theme_high_contrast_mono" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast_mono".to_string();
+                    self.panel_app.theme_manager.set_preset("high_contrast_mono");
+                    self.theme_changed = Some("high_contrast_mono".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → high_contrast_mono");
                 }
                 "wizard_theme_cypherpunk" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "cypherpunk".to_string();
+                    self.panel_app.theme_manager.set_preset("cypherpunk");
+                    self.theme_changed = Some("cypherpunk".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → cypherpunk");
                 }
                 "wizard_theme_next" => {
-                    // Page 2 (Theme): go to page 3 (Profile + Passphrase)
-                    self.panel_app.user_settings_state.wizard_page = 3;
-                    eprintln!("[ChartApp] wizard: theme done, going to page 3 (profile + passphrase)");
+                    // Page 1 (Theme): go to page 2 (Profile + Passphrase)
+                    self.panel_app.user_settings_state.wizard_page = 2;
+                    eprintln!("[ChartApp] wizard: theme done, going to page 2 (profile + passphrase)");
                 }
                 "wizard_profile_name_input" => {
-                    // Focus the profile name input on page 3
+                    // Focus the profile name input on the profile page
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    // Position cursor at click point using pre-computed char positions.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_profile_name_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                    }
                     eprintln!("[ChartApp] wizard: profile name input focused");
                 }
-                "wizard_backend_vello_gpu" => {
-                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_gpu".to_string();
-                    eprintln!("[ChartApp] wizard: backend selected → vello_gpu");
-                }
-                "wizard_backend_instanced_wgpu" => {
-                    self.panel_app.user_settings_state.wizard_selected_backend = "instanced_wgpu".to_string();
-                    eprintln!("[ChartApp] wizard: backend selected → instanced_wgpu");
-                }
-                "wizard_backend_vello_cpu" => {
-                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_cpu".to_string();
-                    eprintln!("[ChartApp] wizard: backend selected → vello_cpu");
-                }
-                "wizard_backend_vello_hybrid" => {
-                    self.panel_app.user_settings_state.wizard_selected_backend = "vello_hybrid".to_string();
-                    eprintln!("[ChartApp] wizard: backend selected → vello_hybrid");
-                }
-                "wizard_backend_tiny_skia" => {
-                    self.panel_app.user_settings_state.wizard_selected_backend = "tiny_skia".to_string();
-                    eprintln!("[ChartApp] wizard: backend selected → tiny_skia");
+                "wizard_passphrase_input" => {
+                    // Focus the passphrase input on the profile page
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    // Position cursor at click point using pre-computed char positions.
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_passphrase_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    }
+                    eprintln!("[ChartApp] wizard: passphrase input focused");
                 }
                 "wizard_finish" => {
-                    // Page 3: submit passphrase (and log profile name) then close wizard.
+                    // Page 2: submit passphrase (and log profile name) then close wizard.
                     let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
                     let profile_name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {

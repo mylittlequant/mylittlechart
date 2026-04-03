@@ -724,33 +724,26 @@ pub enum WizardKey {
     WelcomeTo,
     GetStarted,
 
-    // Page 1 — Performance
-    Performance,
-    RecommendedSettings,
-    AutoDetected,
-    Recommended,
-
-    // Page 2 — Theme
+    // Page 1 — Theme
     Theme,
     ChooseTheme,
 
-    // Page 3 — Profile + Passphrase
+    // Page 2 — Profile + Passphrase
     ProfileAndSecurity,
     ProfileName,
     Passphrase,
     PassphrasePlaceholder,
+    MinPassphraseHint,
     ZtInfo1,
     ZtInfo2,
     ZtInfo3,
-    CompleteSetup,
+    GenerateRecoveryPhrase,
 
     // Shared
     Back,
     Next,
-    Step1of4,
-    Step2of4,
-    Step3of4,
-    Step4of4,
+    Step2of3,
+    Step3of3,
 }
 
 impl WizardKey {
@@ -766,26 +759,21 @@ impl WizardKey {
         match self {
             Self::WelcomeTo => "Welcome to",
             Self::GetStarted => "Get Started",
-            Self::Performance => "Performance",
-            Self::RecommendedSettings => "Recommended settings based on your hardware",
-            Self::AutoDetected => "Auto-detected",
-            Self::Recommended => "(Recommended)",
             Self::Theme => "Theme",
             Self::ChooseTheme => "Choose your visual theme",
             Self::ProfileAndSecurity => "Profile & Security",
             Self::ProfileName => "Profile Name",
             Self::Passphrase => "Passphrase",
             Self::PassphrasePlaceholder => "Click to type passphrase\u{2026}",
+            Self::MinPassphraseHint => "Minimum 8 characters",
             Self::ZtInfo1 => "Your passphrase creates a Zero-trust container",
             Self::ZtInfo2 => "for API keys, indicators, strategies and agent prompts.",
             Self::ZtInfo3 => "It is never stored on any server.",
-            Self::CompleteSetup => "Complete Setup",
+            Self::GenerateRecoveryPhrase => "Generate Recovery Phrase",
             Self::Back => "Back",
             Self::Next => "Next",
-            Self::Step1of4 => "Step 1 of 4",
-            Self::Step2of4 => "Step 2 of 4",
-            Self::Step3of4 => "Step 3 of 4",
-            Self::Step4of4 => "Step 4 of 4",
+            Self::Step2of3 => "Step 2 of 3",
+            Self::Step3of3 => "Step 3 of 3",
         }
     }
 
@@ -793,26 +781,21 @@ impl WizardKey {
         match self {
             Self::WelcomeTo => "Добро пожаловать в",
             Self::GetStarted => "Начать",
-            Self::Performance => "Производительность",
-            Self::RecommendedSettings => "Рекомендуемые настройки для вашего оборудования",
-            Self::AutoDetected => "Автоопределение",
-            Self::Recommended => "(Рекомендуется)",
             Self::Theme => "Тема",
             Self::ChooseTheme => "Выберите визуальную тему",
             Self::ProfileAndSecurity => "Профиль и безопасность",
             Self::ProfileName => "Имя профиля",
             Self::Passphrase => "Пароль",
             Self::PassphrasePlaceholder => "Нажмите, чтобы ввести пароль\u{2026}",
+            Self::MinPassphraseHint => "Минимум 8 символов",
             Self::ZtInfo1 => "Ваш пароль создаёт Zero-trust контейнер",
             Self::ZtInfo2 => "для API-ключей, индикаторов, стратегий и агент-промптов.",
             Self::ZtInfo3 => "Он никогда не хранится на сервере.",
-            Self::CompleteSetup => "Завершить настройку",
+            Self::GenerateRecoveryPhrase => "Сгенерировать фразу восстановления",
             Self::Back => "Назад",
             Self::Next => "Далее",
-            Self::Step1of4 => "Шаг 1 из 4",
-            Self::Step2of4 => "Шаг 2 из 4",
-            Self::Step3of4 => "Шаг 3 из 4",
-            Self::Step4of4 => "Шаг 4 из 4",
+            Self::Step2of3 => "Шаг 2 из 3",
+            Self::Step3of3 => "Шаг 3 из 3",
         }
     }
 }
