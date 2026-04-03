@@ -262,14 +262,7 @@ fn render_page_profile_list(
     ctx.stroke();
     left_cy += 16.0;
 
-    // ── UPDATES section ────────────────────────────────────────────────────────
-    ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("UPDATES", left_inner_x, left_cy);
-    left_cy += 18.0;
-
+    // ── VERSION ────────────────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.65)");
     ctx.set_text_align(TextAlign::Left);
@@ -277,20 +270,35 @@ fn render_page_profile_list(
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
     left_cy += 22.0;
 
-    // ── Zero-trust badge ──────────────────────────────────────────────────────
+    // ── PRIVACY section ──────────────────────────────────────────────────────
+    ctx.set_font("bold 10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("PRIVACY", left_inner_x, left_cy);
+    left_cy += 18.0;
+
     {
-        let icon_size = 16.0;
-        let icon_y = left_cy + 1.0;
-        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, icon_y, icon_size, icon_size, text_color);
+        let icon_size = 14.0;
+        let row_h = 18.0;
+        let mid_y = left_cy + row_h / 2.0;
+        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, mid_y - icon_size / 2.0, icon_size, icon_size, "rgba(254,255,238,0.65)");
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(text_color);
+        ctx.set_fill_color("rgba(254,255,238,0.65)");
         ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, left_cy + 2.0);
-        left_cy += 22.0;
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, mid_y);
+        left_cy += row_h + 8.0;
     }
 
-    // ── Device mode toggles ──────────────────────────────────────────────────
+    // ── OTA UPDATES section ──────────────────────────────────────────────────
+    ctx.set_font("bold 10px sans-serif");
+    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("OTA UPDATES", left_inner_x, left_cy);
+    left_cy += 18.0;
+
     // Connected / Standalone radio pair
     let radio_r = 5.0;
     let radio_row_h = 22.0;
