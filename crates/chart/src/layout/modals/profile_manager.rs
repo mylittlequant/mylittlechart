@@ -452,22 +452,22 @@ fn render_page_profile_list(
         );
     }
 
-    // Title: "Profiles"
+    // Title row: "Profiles" left, "Zero-trust encrypted" right — single line
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Profiles", inner_x, cy);
-    cy += 28.0;
 
-    // ZT badge — same font size as title
-    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x, cy + 3.0, 16.0, 16.0, "rgba(80,200,120,0.50)");
-    ctx.set_font("bold 20px sans-serif");
+    // ZT badge — right-aligned on same line: "Zero-trust" + shield icon
+    ctx.set_font("13px sans-serif");
     ctx.set_fill_color("rgba(80,200,120,0.50)");
-    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Zero-trust encrypted", inner_x + 22.0, cy);
-    cy += 32.0;
+    ctx.fill_text("Zero-trust", inner_x + inner_w - 18.0, cy + 5.0);
+    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x + inner_w - 14.0, cy + 5.0, 14.0, 14.0, "rgba(80,200,120,0.50)");
+    ctx.set_text_align(TextAlign::Left);
+    cy += 30.0;
 
     // "Create New Profile" button — full width, accent style
     let create_btn_h = 36.0;
