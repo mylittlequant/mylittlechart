@@ -582,8 +582,8 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
 
         // ── Mascot icon (SVG, 24×24, full color) ─────────────────────────────
         {
-            let icon_x = bp.mascot_left + (MASCOT_BUTTON_WIDTH - 24.0) / 2.0;
-            let icon_y = (CHROME_HEIGHT - 24.0) / 2.0;
+            let icon_x = (bp.mascot_left + (MASCOT_BUTTON_WIDTH - 24.0) / 2.0).floor();
+            let icon_y = ((CHROME_HEIGHT - 24.0) / 2.0).floor();
             draw_svg_multicolor(ctx, MINI_MASCOT_SVG, icon_x, icon_y, 24.0, 24.0);
         }
     }

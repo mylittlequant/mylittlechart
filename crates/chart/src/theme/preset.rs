@@ -265,7 +265,7 @@ impl ChartTheme {
             chart: ChartColors {
                 background: "#ffffff",
 
-                grid_line: "#0000000f",
+                grid_line: "rgba(0,0,0,0.09)",
                 grid_line_horz: None,
                 grid_line_vert: None,
 
@@ -479,7 +479,7 @@ impl ChartTheme {
 
                 legend_text: "#ffffff",
                 legend_value_up: "#ffffff",
-                legend_value_down: "#888888",
+                legend_value_down: "#999999",
 
                 watermark_text: "rgba(255, 255, 255, 0.06)",
 
@@ -508,7 +508,7 @@ impl ChartTheme {
                 area_bottom: "rgba(255, 255, 255, 0.02)",
 
                 histogram_positive: "#ffffff",
-                histogram_negative: "#666666",
+                histogram_negative: "#777777",
 
                 baseline_top_line: "#ffffff",
                 baseline_top_fill: "rgba(255, 255, 255, 0.15)",
@@ -520,8 +520,8 @@ impl ChartTheme {
                 bar_down: "#888888",
 
                 ma_fast: "#ffffff",
-                ma_slow: "#888888",
-                ma_third: "#555555",
+                ma_slow: "#aaaaaa",
+                ma_third: "#666666",
 
                 volume_up: "rgba(255, 255, 255, 0.4)",
                 volume_down: "rgba(255, 255, 255, 0.15)",
@@ -551,7 +551,7 @@ impl ChartTheme {
     /// Mascot theme (landing page aesthetic: deep navy + blue accents + cream text)
     pub fn mascot() -> Self {
         Self {
-            name: "Mascot",
+            name: "Wizard Hat",
             chart: ChartColors {
                 background: "#0a0f1a",
 
@@ -911,7 +911,7 @@ impl UITheme {
                 toolbar_bg: "#f8f9fa",
                 button_bg: "#e9ecef",
                 button_bg_hover: "#dee2e6",
-                button_bg_active: "#2962ff",
+                button_bg_active: "#4a90d9",
                 button_hover_stroke: "transparent",
                 button_active_stroke: "transparent",
                 button_rounding: 4.0,
@@ -925,8 +925,8 @@ impl UITheme {
                 divider: "#dee2e6",
                 toolbar_divider: "#dee2e6",
                 ui_border: "#dee2e6",
-                accent: "#2962ff",
-                accent_hover: "#1e53e4",
+                accent: "#4a90d9",
+                accent_hover: "#3a7bc8",
                 success: "#26a69a",
                 danger: "#f23645",
                 warning: "#ff9800",
@@ -1075,11 +1075,11 @@ impl UITheme {
                 divider: "#444444",
                 toolbar_divider: "#333333",
                 ui_border: "#333333",
-                accent: "#ffffff",
+                accent: "#dddddd",
                 accent_hover: "#dddddd",
-                success: "#ffffff",
+                success: "#cccccc",
                 danger: "#ffffff",
-                warning: "#ffffff",
+                warning: "#aaaaaa",
             },
             chart: ChartTheme::high_contrast_mono().chart,
             series: ChartTheme::high_contrast_mono().series,
@@ -1131,7 +1131,7 @@ impl UITheme {
     /// Mascot theme (full UI + chart)
     pub fn mascot() -> Self {
         Self {
-            name: "Mascot",
+            name: "Wizard Hat",
             colors: UIColors {
                 toolbar_bg: "#0a0f1a",
                 button_bg: "#131d2e",

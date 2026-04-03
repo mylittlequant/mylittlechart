@@ -2165,7 +2165,7 @@ pub fn render_sub_pane_left_overlay(
     let margin_left = 8.0; // matches the old title x-offset
     let title_x = content.x + margin_left;
     // Vertical center for text and icons — aligns with icon center row.
-    let title_center_y = content.y + 13.0;
+    let title_center_y = content.y + content.height / 2.0;
 
     ctx.set_font("10px sans-serif");
     ctx.set_text_align(crate::render::TextAlign::Left);

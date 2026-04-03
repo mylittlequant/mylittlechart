@@ -1074,7 +1074,7 @@ fn render_appearance_settings(
         ("light", "Светлая", "#ffffff"),
         ("high_contrast", "Высокий контраст", "#000000"),
         ("high_contrast_mono", "High Contrast Mono", "#000000"),
-        ("mascot", "Mascot", "#0a0f1a"),
+        ("mascot", "Wizard Hat", "#0a0f1a"),
     ];
     let current_theme = theme_manager.preset_name();
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);

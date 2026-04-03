@@ -758,9 +758,10 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         let theme = pw.chart.panel_app.theme_manager.current();
         pw.chrome_state.colors.background = theme.chart.background.clone();
         pw.chrome_state.colors.icon_normal = theme.colors.text_primary.clone();
-        pw.chrome_state.colors.icon_hover = theme.colors.text_primary.clone();
-        pw.chrome_state.colors.separator = theme.colors.toolbar_divider.clone();
-        pw.chrome_state.colors.tab_accent = theme.colors.accent.clone();
+        pw.chrome_state.colors.icon_hover  = theme.colors.accent.clone();
+        pw.chrome_state.colors.button_hover = theme.colors.button_bg_hover.clone();
+        pw.chrome_state.colors.separator   = theme.colors.toolbar_divider.clone();
+        pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
     }
 
     // Sync tabs from open_tabs order.
