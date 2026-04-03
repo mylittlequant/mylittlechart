@@ -277,6 +277,19 @@ fn render_page_profile_list(
     ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
     left_cy += 22.0;
 
+    // ── Zero-trust badge ──────────────────────────────────────────────────────
+    {
+        let icon_size = 16.0;
+        let icon_y = left_cy + 1.0;
+        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, icon_y, icon_size, icon_size, text_color);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, left_cy + 2.0);
+        left_cy += 22.0;
+    }
+
     // ── Device mode toggles ──────────────────────────────────────────────────
     // Connected / Standalone radio pair
     let radio_r = 5.0;
@@ -453,26 +466,18 @@ fn render_page_profile_list(
     }
 
     // ── Header row: two halves ──────────────────────────────────────────────
-    // Left half:  "Profiles" left-aligned, "Zero-trust" + icon right-aligned
+    // Left half:  "Profiles" title
     // Right half: entire area is "+ Create New Profile" button
     let header_h = 36.0;
     let half_w = inner_w / 2.0;
     let header_mid_y = cy + header_h / 2.0;
 
-    // ── Left half: "Profiles" + "Zero-trust" ──
+    // ── Left half: "Profiles" ──
     ctx.set_font("bold 20px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Profiles", inner_x, header_mid_y);
-
-    // "Zero-trust" + shield icon — right side of left half
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color("rgba(80,200,120,0.50)");
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Zero-trust", inner_x + half_w - 22.0, header_mid_y);
-    draw_svg_icon(ctx, Icon::ShieldCheck.svg(), inner_x + half_w - 18.0, header_mid_y - 9.0, 18.0, 18.0, "rgba(80,200,120,0.50)");
 
     // ── Right half: "+ Create New Profile" button ──
     let btn_x = inner_x + half_w + 8.0;
