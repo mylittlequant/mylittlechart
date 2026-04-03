@@ -674,7 +674,7 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
                 DropdownItemDef::action("theme_dark", "Dark"),
                 DropdownItemDef::action("theme_light", "Light"),
                 DropdownItemDef::action("theme_high_contrast", "High Contrast"),
-                DropdownItemDef::action("theme_cypherpunk", "Cypherpunk"),
+                DropdownItemDef::action("theme_mascot", "Mascot"),
             ],
             grid_columns: None,
         },

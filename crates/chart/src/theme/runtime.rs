@@ -377,7 +377,7 @@ impl From<&UITheme> for RuntimeTheme {
 
 impl RuntimeTheme {
     /// Available preset names
-    pub const PRESETS: &'static [&'static str] = &["dark", "light", "high_contrast", "high_contrast_mono", "cypherpunk"];
+    pub const PRESETS: &'static [&'static str] = &["dark", "light", "high_contrast", "high_contrast_mono", "mascot"];
 
     /// Create from a preset name
     pub fn from_preset(name: &str) -> Self {
@@ -386,7 +386,7 @@ impl RuntimeTheme {
             "light" => Self::from(&UITheme::light()),
             "high_contrast" => Self::from(&UITheme::high_contrast()),
             "high_contrast_mono" => Self::from(&UITheme::high_contrast_mono()),
-            "cypherpunk" => Self::from(&UITheme::cypherpunk()),
+            "mascot" => Self::from(&UITheme::mascot()),
             _ => Self::from(&UITheme::dark()),
         }
     }
@@ -411,9 +411,9 @@ impl RuntimeTheme {
         Self::from_preset("high_contrast_mono")
     }
 
-    /// Create cypherpunk theme
-    pub fn cypherpunk() -> Self {
-        Self::from_preset("cypherpunk")
+    /// Create mascot theme
+    pub fn mascot() -> Self {
+        Self::from_preset("mascot")
     }
 
     // === Style Management ===

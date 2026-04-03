@@ -548,100 +548,98 @@ impl ChartTheme {
         }
     }
 
-    /// Cypherpunk theme (terminal green hacker aesthetic)
-    /// Based on classic terminal/hacker UI: black bg + neon green + amber/cyan accents
-    pub fn cypherpunk() -> Self {
+    /// Mascot theme (landing page aesthetic: deep navy + blue accents + cream text)
+    pub fn mascot() -> Self {
         Self {
-            name: "Cypherpunk",
+            name: "Mascot",
             chart: ChartColors {
-                background: "#000000",  // Pure black
+                background: "#0a0f1a",
 
-                grid_line: "#0a2a0a",   // Very dark green grid
+                grid_line: "#1a274033",
                 grid_line_horz: None,
                 grid_line_vert: None,
 
-                scale_bg: "#000000",
-                scale_border: "#003300",
-                scale_text: "#00ff00",       // Terminal green
-                scale_text_muted: "#008800", // Dim green
+                scale_bg: "#0e1525",
+                scale_border: "#1a2740",
+                scale_text: "#FEFFEE",
+                scale_text_muted: "#6b7a8d",
 
-                time_scale_bg: "#000000",
-                time_scale_border: "#003300",
-                time_scale_text: "#00ff00",
-                time_scale_text_medium: "#00cc00",
-                time_scale_text_muted: "#008800",
+                time_scale_bg: "#0e1525",
+                time_scale_border: "#1a2740",
+                time_scale_text: "#FEFFEE",
+                time_scale_text_medium: "#b8c4d0",
+                time_scale_text_muted: "#6b7a8d",
 
-                crosshair_line: "#00ff00",
-                crosshair_label_bg: "#003300",
-                crosshair_label_text: "#00ff00",
+                crosshair_line: "#2158A4",
+                crosshair_label_bg: "#2158A4",
+                crosshair_label_text: "#FEFFEE",
 
-                legend_text: "#00ff00",
-                legend_value_up: "#ffb000",   // Amber for up
-                legend_value_down: "#00ffff", // Cyan for down
+                legend_text: "#FEFFEE",
+                legend_value_up: "#26a69a",
+                legend_value_down: "#ef5350",
 
-                watermark_text: "rgba(0, 255, 0, 0.08)",
+                watermark_text: "rgba(33,88,164,0.12)",
 
-                sidebar_bg: "#0a0a0a",
-                sidebar_border: "#003300",
-                sidebar_header_bg: "#000000",
-                sidebar_text: "#00ff00",
+                sidebar_bg: "#0e1525",
+                sidebar_border: "#1a2740",
+                sidebar_header_bg: "#0a0f1a",
+                sidebar_text: "#FEFFEE",
 
-                chart_border: "#004400",
-                frame_border: "#003300",
+                chart_border: "#1a2740",
+                frame_border: "#1a2740",
             },
             series: SeriesColors {
-                // Amber up, cyan down (from reference)
-                candle_up_body: "#ffb000",    // Amber
-                candle_up_wick: "#ffb000",
+                candle_up_body: "#26a69a",
+                candle_up_wick: "#26a69a",
                 candle_up_border: None,
-                candle_down_body: "#00ffff",  // Cyan
-                candle_down_wick: "#00ffff",
+                candle_down_body: "#ef5350",
+                candle_down_wick: "#ef5350",
                 candle_down_border: None,
 
-                line_color: "#00ff00",
+                line_color: "#2962ff",
                 line_width: 2.0,
 
-                area_line: "#00ff00",
-                area_top: "rgba(0, 255, 0, 0.2)",
-                area_bottom: "rgba(0, 255, 0, 0.02)",
+                area_line: "#2962ff",
+                area_top: "rgba(41,98,255,0.28)",
+                area_bottom: "rgba(41,98,255,0.05)",
 
-                histogram_positive: "#ffb000",
-                histogram_negative: "#00ffff",
+                histogram_positive: "#26a69a",
+                histogram_negative: "#ef5350",
 
-                baseline_top_line: "#ffb000",
-                baseline_top_fill: "rgba(255, 176, 0, 0.2)",
-                baseline_bottom_line: "#00ffff",
-                baseline_bottom_fill: "rgba(0, 255, 255, 0.15)",
-                baseline_line: "#00ff00",
+                baseline_top_line: "#26a69a",
+                baseline_top_fill: "rgba(38,166,154,0.28)",
+                baseline_bottom_line: "#ef5350",
+                baseline_bottom_fill: "rgba(239,83,80,0.28)",
+                baseline_line: "#2158A4",
 
-                bar_up: "#ffb000",
-                bar_down: "#00ffff",
+                bar_up: "#26a69a",
+                bar_down: "#ef5350",
 
-                ma_fast: "#ffb000",   // Amber
-                ma_slow: "#00ffff",   // Cyan
-                ma_third: "#00ff00",  // Green
+                ma_fast: "#2962ff",
+                ma_slow: "#F4CD63",   // Gold from mascot stars
+                ma_third: "#EBA25D", // Orange from mascot nose
 
-                volume_up: "rgba(255, 176, 0, 0.3)",
-                volume_down: "rgba(0, 255, 255, 0.15)",
+                volume_up: "rgba(38,166,154,0.5)",
+                volume_down: "rgba(239,83,80,0.5)",
             },
             fonts: ChartFonts {
-                family: "'Share Tech Mono', 'Source Code Pro', monospace",
+                family: "'Trebuchet MS', Arial, sans-serif",
 
-                price_scale_size_min: 10.0,
-                price_scale_size_max: 12.0,
+                price_scale_size_min: 9.0,
+                price_scale_size_max: 13.0,
                 price_scale_weight: 400,
 
-                time_scale_size: 11.0,
+                time_scale_size: 12.0,
                 time_scale_weight: 400,
 
-                legend_size: 11.0,
-                legend_weight: 400,
+                legend_size: 12.0,
+                legend_weight: 500,
 
-                crosshair_label_size: 10.0,
+                crosshair_label_size: 11.0,
                 crosshair_label_weight: 400,
 
-                watermark_size: 48.0,
-                watermark_weight: 400,
+                watermark_size: 52.0,
+                watermark_weight: 700,
             },
         }
     }
@@ -1063,7 +1061,7 @@ impl UITheme {
                 toolbar_bg: "#000000",
                 button_bg: "#111111",
                 button_bg_hover: "#222222",
-                button_bg_active: "#ffffff",
+                button_bg_active: "#dddddd",
                 button_hover_stroke: "#444444",
                 button_active_stroke: "#ffffff",
                 button_rounding: 0.0,
@@ -1078,7 +1076,7 @@ impl UITheme {
                 toolbar_divider: "#333333",
                 ui_border: "#333333",
                 accent: "#ffffff",
-                accent_hover: "#cccccc",
+                accent_hover: "#dddddd",
                 success: "#ffffff",
                 danger: "#ffffff",
                 warning: "#ffffff",
@@ -1130,58 +1128,58 @@ impl UITheme {
         }
     }
 
-    /// Cypherpunk theme (full UI + chart)
-    pub fn cypherpunk() -> Self {
+    /// Mascot theme (full UI + chart)
+    pub fn mascot() -> Self {
         Self {
-            name: "Cypherpunk",
+            name: "Mascot",
             colors: UIColors {
-                toolbar_bg: "#0b0f14",
-                button_bg: "#17212b",
-                button_bg_hover: "#17212b",
-                button_bg_active: "#00f0c8",
+                toolbar_bg: "#0a0f1a",
+                button_bg: "#131d2e",
+                button_bg_hover: "#1a2740",
+                button_bg_active: "#2158A4",
                 button_hover_stroke: "transparent",
                 button_active_stroke: "transparent",
-                button_rounding: 4.0,
-                dropdown_bg: "#17212b",
-                status_bar_bg: "#0b0f14",
-                text_primary: "#c8f5ff",
-                text_secondary: "#5b7480",
-                text_muted: "#5b7480",
-                border: "#0b0f14",
-                border_light: "#17212b",
-                divider: "#17212b",
-                toolbar_divider: "#17212b",
-                ui_border: "#17212b",
-                accent: "#00f0c8",
-                accent_hover: "#00f0c8",
-                success: "#00f0c8",
-                danger: "#00f0c8",
-                warning: "#00f0c8",
+                button_rounding: 6.0,
+                dropdown_bg: "#131d2e",
+                status_bar_bg: "#0a0f1a",
+                text_primary: "#FEFFEE",
+                text_secondary: "#b8c4d0",
+                text_muted: "#6b7a8d",
+                border: "#0a0f1a",
+                border_light: "#1a2740",
+                divider: "#1a2740",
+                toolbar_divider: "#1a2740",
+                ui_border: "#1a2740",
+                accent: "#2962ff",
+                accent_hover: "#1e53e4",
+                danger: "#f23645",
+                success: "#26a69a",
+                warning: "#F4CD63",
             },
-            chart: ChartTheme::cypherpunk().chart,
-            series: ChartTheme::cypherpunk().series,
+            chart: ChartTheme::mascot().chart,
+            series: ChartTheme::mascot().series,
             fonts: UIFonts {
-                family: "'Share Tech Mono', 'Source Code Pro', monospace",
-                family_mono: "'Share Tech Mono', monospace",
-                family_chart: "'Share Tech Mono', monospace",
+                family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                family_mono: "'Share Tech Mono', 'Consolas', monospace",
+                family_chart: "'Trebuchet MS', Arial, sans-serif",
                 size_small: 11.0,
-                size_normal: 12.0,
+                size_normal: 13.0,
                 size_large: 14.0,
-                weight_light: 400,
+                weight_light: 300,
                 weight_normal: 400,
                 weight_medium: 500,
                 weight_bold: 600,
                 price_scale_size_min: 9.0,
-                price_scale_size_max: 12.0,
+                price_scale_size_max: 13.0,
                 price_scale_weight: 400,
-                time_scale_size: 11.0,
+                time_scale_size: 12.0,
                 time_scale_weight: 400,
-                legend_size: 11.0,
-                legend_weight: 400,
-                crosshair_label_size: 10.0,
+                legend_size: 12.0,
+                legend_weight: 500,
+                crosshair_label_size: 11.0,
                 crosshair_label_weight: 400,
-                watermark_size: 48.0,
-                watermark_weight: 400,
+                watermark_size: 52.0,
+                watermark_weight: 700,
                 status_bar_size: 11.0,
                 status_bar_weight: 400,
             },
@@ -1192,14 +1190,14 @@ impl UITheme {
                 button_padding_x: 12.0,
                 button_padding_y: 6.0,
                 icon_size: 16.0,
-                border_radius: 4.0,
+                border_radius: 6.0,
                 dropdown_min_width: 160.0,
                 kbd_padding: 4.0,
             },
             effects: UIEffects {
-                transition_duration: "0.12s",
-                shadow_dropdown: "0 8px 24px rgba(11, 15, 20, 0.6)",
-                shadow_floating: "0 4px 12px rgba(11, 15, 20, 0.5)",
+                transition_duration: "0.15s",
+                shadow_dropdown: "0 8px 24px rgba(10,15,26,0.7)",
+                shadow_floating: "0 4px 12px rgba(10,15,26,0.5)",
                 hover_scale: 0.98,
             },
         }

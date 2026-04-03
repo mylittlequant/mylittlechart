@@ -253,7 +253,7 @@ fn render_page1_theme(
         ("light",                 "Light",               "wizard_theme_light"),
         ("high_contrast",         "High Contrast",       "wizard_theme_high_contrast"),
         ("high_contrast_mono",    "High Contrast Mono",  "wizard_theme_high_contrast_mono"),
-        ("cypherpunk",            "Cypherpunk",          "wizard_theme_cypherpunk"),
+        ("mascot",                "Mascot",              "wizard_theme_mascot"),
     ];
 
     let row_h = 40.0;

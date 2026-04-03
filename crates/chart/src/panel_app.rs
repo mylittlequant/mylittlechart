@@ -1180,7 +1180,7 @@ impl ChartToolbarState {
                     "theme_dark"           => vec![ChartOutEvent::SetTheme("dark")],
                     "theme_light"          => vec![ChartOutEvent::SetTheme("light")],
                     "theme_high_contrast"  => vec![ChartOutEvent::SetTheme("high_contrast")],
-                    "theme_cypherpunk"     => vec![ChartOutEvent::SetTheme("cypherpunk")],
+                    "theme_mascot"         => vec![ChartOutEvent::SetTheme("mascot")],
 
                     // UI Style
                     "style_solid"              => vec![ChartOutEvent::SetStyle("solid")],

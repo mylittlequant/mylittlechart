@@ -2,7 +2,7 @@
 //!
 //! ThemeManager is the single source of truth for all theme operations.
 //! It handles:
-//! - Preset switching (dark, light, high_contrast, high_contrast_mono, cypherpunk)
+//! - Preset switching (dark, light, high_contrast, high_contrast_mono, mascot)
 //! - Individual color/font modifications
 //! - CSS export for web platforms
 //! - JSON serialization for persistence

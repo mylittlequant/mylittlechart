@@ -107,7 +107,7 @@ pub enum ChartAction {
     Redo,
 
     // === Theme ===
-    SetTheme(&'static str),  // "dark", "light", "high_contrast", "high_contrast_mono", "cypherpunk"
+    SetTheme(&'static str),  // "dark", "light", "high_contrast", "high_contrast_mono", "mascot"
     OpenThemeSettings,       // Open theme configuration panel
 
     // === UI Style ===
@@ -370,7 +370,7 @@ impl ChartAction {
             "theme_light" => Self::SetTheme("light"),
             "theme_high_contrast" => Self::SetTheme("high_contrast"),
             "theme_high_contrast_mono" => Self::SetTheme("high_contrast_mono"),
-            "theme_cypherpunk" => Self::SetTheme("cypherpunk"),
+            "theme_mascot" => Self::SetTheme("mascot"),
             "open_theme_settings" => Self::OpenThemeSettings,
 
             // UI Style

@@ -9331,11 +9331,11 @@ impl ChartApp {
                     self.theme_changed = Some("high_contrast_mono".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → high_contrast_mono");
                 }
-                "wizard_theme_cypherpunk" => {
-                    self.panel_app.user_settings_state.wizard_selected_theme = "cypherpunk".to_string();
-                    self.panel_app.theme_manager.set_preset("cypherpunk");
-                    self.theme_changed = Some("cypherpunk".to_string());
-                    eprintln!("[ChartApp] wizard: theme selected → cypherpunk");
+                "wizard_theme_mascot" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "mascot".to_string();
+                    self.panel_app.theme_manager.set_preset("mascot");
+                    self.theme_changed = Some("mascot".to_string());
+                    eprintln!("[ChartApp] wizard: theme selected → mascot");
                 }
                 "wizard_theme_next" => {
                     // Page 1 (Theme): go to page 2 (Profile + Passphrase)

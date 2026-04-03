@@ -3650,7 +3650,7 @@ pub struct UserSettingsState {
     pub data_slider_drag: Option<SliderDragState>,
 
     // ── WELCOME WIZARD — per-page selections ─────────────────────────────────
-    /// Theme preset selected on wizard page 3 (e.g. "dark", "cypherpunk").
+    /// Theme preset selected on wizard page 3 (e.g. "dark", "mascot").
     /// Empty string means no explicit selection yet — renderer falls back to "dark".
     pub wizard_selected_theme: String,
     /// Rendering backend selected on wizard page 4
