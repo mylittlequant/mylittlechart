@@ -2417,6 +2417,46 @@ impl App<'_> {
         let dev_id = surface.dev_id;
         let device = &self.render_cx.devices[dev_id].device;
 
+        // Populate GPU info unconditionally — adapter is available right after create_surface()
+        {
+            let info = self.render_cx.devices[dev_id].adapter().get_info();
+            self.gpu_name = info.name.clone();
+            self.gpu_driver = info.driver_info.clone();
+            eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
+            if let Ok(mut g) = self.telemetry_shared.gpu_name.lock() {
+                *g = self.gpu_name.clone();
+            }
+
+            // Auto-detect backend based on GPU capabilities (first launch only)
+            if self.backend_auto_detect {
+                use sidebar_content::state::RenderBackend;
+                let recommended = match info.device_type {
+                    wgpu::DeviceType::DiscreteGpu => RenderBackend::VelloGpu,
+                    wgpu::DeviceType::IntegratedGpu => RenderBackend::VelloGpu,
+                    wgpu::DeviceType::VirtualGpu => RenderBackend::VelloCpu,
+                    wgpu::DeviceType::Cpu => RenderBackend::TinySkia,
+                    _ => RenderBackend::VelloGpu,
+                };
+                if self.render_backend != recommended {
+                    self.render_backend = recommended;
+                }
+                eprintln!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
+                // Save auto-detected choice so next launch skips auto-detect
+                {
+                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                    ds.render_backend = Some(match recommended {
+                        RenderBackend::VelloGpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu,
+                        RenderBackend::InstancedWgpu => zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu,
+                        RenderBackend::VelloCpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu,
+                        RenderBackend::VelloHybrid => zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid,
+                        RenderBackend::TinySkia => zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia,
+                    });
+                    ds.save();
+                }
+                self.backend_auto_detect = false;
+            }
+        }
+
         // Vello creates the target texture without COPY_SRC, which breaks screenshot
         // readback. Recreate it with COPY_SRC added so copy_texture_to_buffer works.
         add_copy_src_to_target_texture(&mut surface, device);
@@ -3890,47 +3930,6 @@ impl ApplicationHandler for App<'_> {
             let instant_fps = 1000.0 / dt_ms;
             self.fps_ema = self.fps_ema * 0.9 + instant_fps * 0.1;
             self.last_frame_time_ms = dt_ms;
-        }
-
-        // ── GPU info: query once ────────────────────────────────────────────
-        if self.gpu_name.is_empty() && !self.render_cx.devices.is_empty() {
-            let info = self.render_cx.devices[0].adapter().get_info();
-            self.gpu_name = info.name.clone();
-            self.gpu_driver = info.driver_info.clone();
-            eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
-            // Write to shared so telemetry thread can read it.
-            if let Ok(mut g) = self.telemetry_shared.gpu_name.lock() {
-                *g = self.gpu_name.clone();
-            }
-
-            // Auto-detect best backend based on GPU capabilities
-            if self.backend_auto_detect {
-                use sidebar_content::state::RenderBackend;
-                let recommended = match info.device_type {
-                    wgpu::DeviceType::DiscreteGpu => RenderBackend::VelloGpu,
-                    wgpu::DeviceType::IntegratedGpu => RenderBackend::VelloGpu,
-                    wgpu::DeviceType::VirtualGpu => RenderBackend::VelloCpu,
-                    wgpu::DeviceType::Cpu => RenderBackend::TinySkia,
-                    _ => RenderBackend::VelloGpu,
-                };
-                if self.render_backend != recommended {
-                    self.render_backend = recommended;
-                    eprintln!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
-                }
-                // Save auto-detected choice so it persists
-                {
-                    let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                    ds.render_backend = Some(match recommended {
-                        RenderBackend::VelloGpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu,
-                        RenderBackend::InstancedWgpu => zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu,
-                        RenderBackend::VelloCpu => zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu,
-                        RenderBackend::VelloHybrid => zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid,
-                        RenderBackend::TinySkia => zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia,
-                    });
-                    ds.save();
-                }
-                self.backend_auto_detect = false;
-            }
         }
 
         // ── OTA updater status check ─────────────────────────────────────────
