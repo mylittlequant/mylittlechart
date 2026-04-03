@@ -618,16 +618,12 @@ struct App<'s> {
     /// by `recovery_key_confirmed` to trigger the actual switch.
     pending_switch_after_recovery: Option<(String, zengeld_chart::vault::VaultKey)>,
 
-    /// Profile switch deferred until the user chooses a sync level.
-    ///
-    /// Set by the `recovery_key_confirmed` handler when `pending_switch_after_recovery`
-    /// is consumed: instead of completing the switch immediately, the user is shown
-    /// the `ChooseSyncLevel` page.  Consumed by the `sync_level_chosen:` handler
-    /// which applies the chosen sync level and then completes the profile switch.
+    /// Unused — retained to avoid removing struct fields during the OTA simplification.
+    /// Previously held a deferred switch until the user chose a sync level in the wizard.
     pending_switch_after_sync_level: Option<(String, zengeld_chart::vault::VaultKey)>,
 
-    /// Sync level chosen by the user on the ChooseSyncLevel page.
-    /// Applied to the NEW profile AFTER it is loaded from disk in `execute_profile_switch`.
+    /// Unused — retained alongside `pending_switch_after_sync_level`.
+    /// Previously held the sync level chosen by the user on the (now removed) ChooseSyncLevel page.
     pending_switch_sync_level: Option<String>,
 
     /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
@@ -2140,11 +2136,11 @@ impl App<'_> {
             let connected = false;
             #[cfg(not(feature = "standalone"))]
             let connected = {
-                // Device-level OTA toggle takes precedence: if the user has set
-                // Standalone mode on this device, the updater never connects
-                // regardless of the profile's ota_enabled flag.
+                // OTA is controlled solely by the device-level toggle.
+                // Profile-level ota_enabled is kept in the struct for backward
+                // compatibility but no longer gates the updater.
                 let device_settings = zengeld_chart::user_profile::DeviceSettings::load();
-                device_settings.ota_enabled && profile.ota_enabled
+                device_settings.ota_enabled
             };
 
             // Build attestation — embedded at compile time by build.rs.
@@ -5370,18 +5366,16 @@ impl ApplicationHandler for App<'_> {
 
                 // ── Recovery key confirmed ───────────────────────────────────────────────────
                 // Emitted when the user clicks "I have written it down" on the ShowRecoveryKey page.
-                // Clears the pending recovery key from memory and closes the overlay.
+                // Clears the pending recovery key from memory and completes the profile switch.
                 if cmd_str == "recovery_key_confirmed" {
                     self.profile_manager.clear_pending_recovery_key();
                     if let Some((profile_id, vault_key)) = self.pending_switch_after_recovery.take() {
-                        // Recovery key was shown for a NEW profile — defer switch until sync level chosen.
-                        eprintln!("[App] recovery key confirmed — navigating to ChooseSyncLevel for new profile {}", profile_id);
-                        self.pending_switch_after_sync_level = Some((profile_id.clone(), vault_key));
-                        for pw in self.windows.values_mut() {
-                            use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                            pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ChooseSyncLevel;
-                            pw.chart.panel_app.user_settings_state.new_profile_sync_level = "connected".to_string();
-                        }
+                        // Recovery key was shown for a NEW profile — complete the switch immediately.
+                        // Sync level is no longer chosen in a wizard step; new profiles default to
+                        // device-level OTA control.
+                        eprintln!("[App] recovery key confirmed — completing switch for new profile {}", profile_id);
+                        self.pending_switch_vault_key = Some(vault_key);
+                        self.pending_profile_switch = Some(profile_id);
                     } else if self.pending_promote_after_recovery_key {
                         // Recovery key was shown after a vault re-key (post-recovery passphrase reset).
                         eprintln!("[App] recovery key confirmed (post re-key) — promoting skeleton to live");
@@ -5392,25 +5386,6 @@ impl ApplicationHandler for App<'_> {
                         eprintln!("[App] recovery key confirmed — promoting skeleton to live");
                         // Don't patch windows — skeleton promote will recreate them.
                         self.pending_skeleton_promote = true;
-                    }
-                }
-
-                // ── Sync level chosen (ChooseSyncLevel page) ────────────────────────────────
-                // Emitted when the user clicks "Продолжить" on the ChooseSyncLevel page.
-                // Applies the chosen sync level to the newly created profile and completes
-                // the deferred profile switch from `pending_switch_after_sync_level`.
-                if let Some(level) = cmd_str.strip_prefix("sync_level_chosen:") {
-                    eprintln!("[App] sync_level_chosen: level={}", level);
-                    if let Some((profile_id, vault_key)) = self.pending_switch_after_sync_level.take() {
-                        eprintln!("[App] sync_level_chosen — storing level={} for profile {} (will apply after reload)", level, profile_id);
-                        // Store the sync level — it will be applied to the NEW profile
-                        // AFTER execute_profile_switch reloads it from disk.
-                        self.pending_switch_sync_level = Some(level.to_string());
-                        // Complete the deferred profile switch.
-                        self.pending_switch_vault_key = Some(vault_key);
-                        self.pending_profile_switch = Some(profile_id);
-                    } else {
-                        eprintln!("[App] sync_level_chosen: no pending switch — ignoring (level={})", level);
                     }
                 }
 

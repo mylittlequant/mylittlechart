@@ -3318,11 +3318,6 @@ pub enum ProfileManagerPage {
     /// Shown immediately after `CreatePassphrase` succeeds.  The user must
     /// acknowledge ("I have written it down") before proceeding.
     ShowRecoveryKey,
-    /// Choose the sync level for the newly created profile.
-    ///
-    /// Shown after `ShowRecoveryKey` is confirmed during new profile creation.
-    /// The user picks Local / Connected / Cloud before the profile switch completes.
-    ChooseSyncLevel,
     /// Enter a recovery key to restore access when passphrase is forgotten.
     UseRecoveryKey,
     /// After recovery unlock — user must set a new passphrase before proceeding.
@@ -3628,10 +3623,8 @@ pub struct UserSettingsState {
     /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
     pub recovery_key_display_focused: bool,
 
-    // ── ChooseSyncLevel page ──────────────────────────────────────────────────
-    /// The sync level the user has selected on the `ChooseSyncLevel` page during
-    /// new profile creation.  One of "local", "connected", "cloud".
-    /// Defaults to "connected".  Consumed when the user clicks "Продолжить".
+    /// Retained for backward compatibility. No longer used by the profile wizard
+    /// — sync level is now controlled device-wide via `device_ota_enabled`.
     pub new_profile_sync_level: String,
 
     // ── DATA & CACHE slider state ─────────────────────────────────────────────
