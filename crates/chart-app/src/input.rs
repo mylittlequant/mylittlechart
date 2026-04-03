@@ -907,6 +907,7 @@ impl ChartApp {
                     if let Some(field_id) = drag_field {
                         // Set cursor and selection anchor on the appropriate editing state.
                         // Also activate focus (drag = click, should focus the field).
+                        // Clear selection on ALL other fields to prevent multiple highlights.
                         match field_id.as_str() {
                             "e2e_passphrase_input" | "wizard_passphrase_input" => {
                                 self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = drag_cursor;
@@ -915,6 +916,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             }
                             "wizard_profile_name_input" | "profile_mgr:name_input" => {
                                 self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
@@ -923,6 +927,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             }
                             "profile_mgr:recovery_key_input" => {
                                 self.panel_app.user_settings_state.recovery_key_editing.cursor = drag_cursor;
@@ -931,6 +938,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
                             "profile_mgr:new_passphrase_input" => {
                                 self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
@@ -938,6 +948,8 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.new_passphrase_focused = true;
                                 self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
                             "profile_mgr:confirm_passphrase_input"
                             | "wizard_confirm_passphrase_input"
@@ -948,6 +960,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             }
                             "profile_mgr:recovery_key_display" => {
                                 self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
@@ -956,6 +971,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                                self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
                             _ => {}
                         }
@@ -9329,6 +9347,9 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    // Clear selections on other fields
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -9347,6 +9368,9 @@ impl ChartApp {
                     self.panel_app.user_settings_state.e2e_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    // Clear selections on other fields
+                    self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -9365,6 +9389,9 @@ impl ChartApp {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = true;
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    // Clear selections on other fields
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
                         .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_confirm_passphrase_input"))

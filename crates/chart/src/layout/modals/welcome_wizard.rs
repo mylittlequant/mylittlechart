@@ -44,10 +44,6 @@ pub fn render_welcome_wizard(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // ── Full-screen dimmer ────────────────────────────────────────────────────
-    ctx.set_fill_color("rgba(0,0,0,0.72)");
-    ctx.fill_rect(0.0, 0.0, window_w, window_h);
-
     // Push a high-z modal layer so the wizard absorbs all input
     let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "welcome_wizard");
 
@@ -71,12 +67,9 @@ pub fn render_welcome_wizard(
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
-    // Modal background + border
+    // Modal background
     ctx.set_fill_color(toolbar_theme.background.as_str());
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
 
     // Absorb modal background clicks
     input_coordinator.register_on_layer(
@@ -469,13 +462,10 @@ fn render_page2_profile(
 
     // ── ZT container info plashka ─────────────────────────────────────────────
     let note_h = 58.0;
-    ctx.set_fill_color("rgba(240,173,78,0.07)");
+    ctx.set_fill_color(toolbar_theme.button_bg.as_str());
     ctx.fill_rounded_rect(x, *cy, w, note_h, 4.0);
-    ctx.set_stroke_color("rgba(240,173,78,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, *cy, w, note_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.75)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::ZtInfo1), x + 12.0, *cy + 8.0);
@@ -492,14 +482,14 @@ fn render_page2_profile(
 
     let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
     let finish_bg = if finish_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_finish_hovered {
         toolbar_theme.button_bg_hover.as_str()
     } else {
         toolbar_theme.button_bg.as_str()
     };
     let finish_text_col = if finish_disabled {
-        "rgba(0,0,0,0.35)"
+        toolbar_theme.item_text_muted.as_str()
     } else if is_finish_hovered {
         toolbar_theme.item_text_hover.as_str()
     } else {
@@ -828,10 +818,6 @@ pub fn render_vault_unlock(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // ── Full-screen dimmer ────────────────────────────────────────────────────
-    ctx.set_fill_color("rgba(0,0,0,0.72)");
-    ctx.fill_rect(0.0, 0.0, window_w, window_h);
-
     // Push a high-z modal layer so the dialog absorbs all input
     let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "vault_unlock");
 
@@ -857,12 +843,9 @@ pub fn render_vault_unlock(
     let modal_x = (window_w - modal_w) / 2.0;
     let modal_y = (window_h - modal_h) / 2.0;
 
-    // Modal background + border (vault unlock)
+    // Modal background (vault unlock)
     ctx.set_fill_color(toolbar_theme.background.as_str());
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.25)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
 
     // Absorb modal background clicks
     input_coordinator.register_on_layer(
@@ -903,14 +886,14 @@ pub fn render_vault_unlock(
     let hovered = state.hovered_item_id.as_deref();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
     let btn_bg = if unlock_disabled {
-        "rgba(244,205,99,0.20)"
+        toolbar_theme.button_bg.as_str()
     } else if is_unlock_hovered {
         toolbar_theme.button_bg_hover.as_str()
     } else {
         toolbar_theme.button_bg.as_str()
     };
     let btn_text_col = if unlock_disabled {
-        "rgba(0,0,0,0.35)"
+        toolbar_theme.item_text_muted.as_str()
     } else if is_unlock_hovered {
         toolbar_theme.item_text_hover.as_str()
     } else {
