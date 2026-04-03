@@ -886,8 +886,8 @@ impl ChartApp {
                     }
                 }
             }
-            // Profile manager inputs — text select drag on any active profile manager input.
-            if self.panel_app.user_settings_state.show_profile_manager {
+            // Profile manager / wizard inputs — text select drag on any active profile manager or wizard input.
+            if self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard {
                 if let Some(ref us) = result.user_settings {
                     // Iterate all registered input char-position entries and check if
                     // the drag started inside that input's rect.
@@ -907,11 +907,11 @@ impl ChartApp {
                     if let Some(field_id) = drag_field {
                         // Set cursor and selection anchor on the appropriate editing state.
                         match field_id.as_str() {
-                            "e2e_passphrase_input" => {
+                            "e2e_passphrase_input" | "wizard_passphrase_input" => {
                                 self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = Some(drag_cursor);
                             }
-                            "profile_mgr:name_input" => {
+                            "wizard_profile_name_input" | "profile_mgr:name_input" => {
                                 self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = Some(drag_cursor);
                             }
@@ -5778,16 +5778,22 @@ impl ChartApp {
             let editing = &mut self.panel_app.user_settings_state.new_profile_name_editing;
             match ch {
                 '\r' | '\n' => {
-                    // Enter submits the new profile creation.
-                    self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    let name = editing.text.trim().to_string();
-                    if !name.is_empty() {
-                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
-                        self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                    if self.panel_app.user_settings_state.show_welcome_wizard {
+                        // In the wizard, Enter in the profile name field moves focus to passphrase.
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    } else {
+                        // Enter submits the new profile creation.
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
+                        let name = editing.text.trim().to_string();
+                        if !name.is_empty() {
+                            self.pending_updater_cmd = Some(format!("profile_create:{}", name));
+                            self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                        }
                     }
                 }
                 '\x1b' => {
-                    // Escape cancels.
+                    // Escape cancels (wizard handles its own Escape elsewhere).
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.show_new_profile_dialog = false;
                 }
@@ -9295,7 +9301,8 @@ impl ChartApp {
                     let profile_name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
                         eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
-                        self.pending_updater_cmd = Some(format!("wizard_complete:{}", passphrase));
+                        let profile_name_final = if profile_name.is_empty() { "Default".to_string() } else { profile_name.clone() };
+                        self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", profile_name_final, passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
                         self.panel_app.user_settings_state.needs_vault_unlock = false;
                         self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();

@@ -71,7 +71,7 @@ pub fn render_welcome_wizard(
     let modal_y = (window_h - modal_h) / 2.0;
 
     // Modal background + border
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.set_fill_color(toolbar_theme.background.as_str());
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
     ctx.set_stroke_color("rgba(244,205,99,0.25)");
     ctx.set_stroke_width(1.0);
@@ -147,9 +147,9 @@ fn render_page0(
         let is_row_hovered = hovered == Some(widget_id);
 
         let row_bg = if is_row_hovered {
-            "rgba(255,255,255,0.08)"
+            toolbar_theme.item_bg_hover.as_str()
         } else {
-            "rgba(255,255,255,0.04)"
+            toolbar_theme.item_bg_active.as_str()
         };
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
@@ -161,7 +161,7 @@ fn render_page0(
         }
 
         // Language name
-        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
+        let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
         ctx.set_font("14px sans-serif");
         ctx.set_fill_color(text_alpha);
         ctx.set_text_align(TextAlign::Left);
@@ -230,7 +230,7 @@ fn render_page1_theme(
 
     // Step indicator (top-right)
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
@@ -245,7 +245,7 @@ fn render_page1_theme(
 
     // Subtitle
     ctx.set_font("14px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.fill_text(t_wizard(WizardKey::ChooseTheme), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
@@ -268,9 +268,9 @@ fn render_page1_theme(
         let is_row_hovered = hovered == Some(widget_id);
 
         let row_bg = if is_row_hovered {
-            "rgba(255,255,255,0.08)"
+            toolbar_theme.item_bg_hover.as_str()
         } else {
-            "rgba(255,255,255,0.04)"
+            toolbar_theme.item_bg_active.as_str()
         };
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
@@ -281,7 +281,7 @@ fn render_page1_theme(
             ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
         }
 
-        let text_alpha = if is_active { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.70)" };
+        let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
         ctx.set_font("14px sans-serif");
         ctx.set_fill_color(text_alpha);
         ctx.set_text_align(TextAlign::Left);
@@ -345,7 +345,7 @@ fn render_page2_profile(
 
     // Step indicator (top-right)
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Step3of3), x + w, *cy - 20.0);
@@ -361,7 +361,7 @@ fn render_page2_profile(
 
     // ── Profile Name input ────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::ProfileName), x, *cy);
     *cy += 18.0;
@@ -475,10 +475,10 @@ fn render_back_button(
     let btn_w = 76.0;
     let btn_h = 26.0;
     let is_hovered = hovered_item_id == Some("wizard_back");
-    let btn_bg = if is_hovered { "rgba(255,255,255,0.12)" } else { "rgba(255,255,255,0.06)" };
+    let btn_bg = if is_hovered { toolbar_theme.item_bg_hover.as_str() } else { toolbar_theme.item_bg_active.as_str() };
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    let stroke_color = if is_hovered { "rgba(254,255,238,0.40)" } else { "rgba(254,255,238,0.20)" };
+    let stroke_color = if is_hovered { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.separator.as_str() };
     ctx.set_stroke_color(stroke_color);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
@@ -486,7 +486,7 @@ fn render_back_button(
     let icon_size = 12.0;
     let icon_x = x + 8.0;
     let icon_y = *cy + (btn_h - icon_size) / 2.0;
-    let icon_color = if is_hovered { "rgba(254,255,238,0.80)" } else { toolbar_theme.item_text.as_str() };
+    let icon_color = if is_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     draw_svg_icon(ctx, Icon::ChevronLeft.svg(), icon_x, icon_y, icon_size, icon_size, icon_color);
 
     ctx.set_font("12px sans-serif");
@@ -520,7 +520,7 @@ fn render_passphrase_input(
 ) -> f64 {
     // Label
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.65)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Passphrase), x, *cy);
     *cy += 18.0;
@@ -564,7 +564,7 @@ fn render_passphrase_input(
 
     // Passphrase length hint
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.35)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::MinPassphraseHint), x, *cy);
@@ -621,7 +621,7 @@ pub fn render_vault_unlock(
     let modal_y = (window_h - modal_h) / 2.0;
 
     // Modal background + border (vault unlock)
-    ctx.set_fill_color("rgba(24,26,32,0.98)");
+    ctx.set_fill_color(toolbar_theme.background.as_str());
     ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
     ctx.set_stroke_color("rgba(244,205,99,0.25)");
     ctx.set_stroke_width(1.0);
@@ -651,7 +651,7 @@ pub fn render_vault_unlock(
 
     // Subtitle
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text("Enter your passphrase to decrypt your profile", inner_x + inner_w / 2.0, cy);
@@ -706,9 +706,9 @@ pub fn render_vault_unlock(
     if state.vault_unlock_attempts >= 3 {
         let is_hovered = hovered == Some("vault_unlock_new_profile");
         let link_color = if is_hovered {
-            "rgba(254,255,238,0.70)"
+            toolbar_theme.item_text.as_str()
         } else {
-            "rgba(254,255,238,0.38)"
+            toolbar_theme.item_text_muted.as_str()
         };
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(link_color);

@@ -4987,18 +4987,26 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
 
-                // ── Wizard complete: passphrase in a single command ──
-                // Format: "wizard_complete:{passphrase}"
-                if let Some(passphrase) = cmd_str.strip_prefix("wizard_complete:") {
+                // ── Wizard complete: name + passphrase in a single command ──
+                // Format: "wizard_complete:{name}:{passphrase}"
+                if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
+                    let (wizard_profile_name, passphrase) = if let Some(colon) = rest.find(':') {
+                        (rest[..colon].to_string(), &rest[colon + 1..])
+                    } else {
+                        // Legacy format without name — treat entire remainder as passphrase.
+                        ("Default".to_string(), rest)
+                    };
                     if !self.is_first_run {
                         // Creating a NEW profile from settings wizard.
                         // The current profile is immutable — create a fresh one.
                         match self.profile_manager.create_profile(None, "chart") {
                             Ok(meta) => {
                                 eprintln!(
-                                    "[App] wizard_complete: created new profile '{}'",
-                                    meta.id
+                                    "[App] wizard_complete: created new profile '{}' ({})",
+                                    wizard_profile_name, meta.id
                                 );
+                                // Apply the user-chosen name immediately.
+                                let _ = self.profile_manager.rename_profile(&meta.id, &wizard_profile_name);
                                 // Switch active profile to the new one.
                                 if let Some(mut index) = zengeld_chart::load_profile_index() {
                                     index.active_profile_id = meta.id.clone();
@@ -5019,6 +5027,14 @@ impl ApplicationHandler for App<'_> {
                         }
                     }
                     // First run — no profile creation needed, configure in-place.
+                    // Apply the user-chosen profile name.
+                    let active_id = self.profile_manager.profile.profile_id.clone();
+                    let _ = self.profile_manager.rename_profile(&active_id, &wizard_profile_name);
+                    self.profile.display_name = wizard_profile_name.clone();
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.user_settings_state.profile_display_name =
+                            wizard_profile_name.clone();
+                    }
 
                     // Derive vault key via ProfileManager and sync to app_state.
                     match self.profile_manager.derive_and_set_vault_key(passphrase) {
