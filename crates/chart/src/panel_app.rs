@@ -3131,7 +3131,7 @@ impl ChartPanelApp {
         if self.user_settings_state.show_welcome_wizard
             || self.user_settings_state.show_profile_manager
         {
-            ctx.set_fill_color(&frame_theme.toolbar_bg);
+            ctx.set_fill_color(&toolbar_theme.button_bg);
             ctx.fill_rect(
                 modal_layout.chart_x,
                 modal_layout.chart_y,

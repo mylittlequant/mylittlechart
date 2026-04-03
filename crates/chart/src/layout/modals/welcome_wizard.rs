@@ -545,6 +545,7 @@ fn render_page3_recovery(
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
     // Step indicator (top-right — no back button on this page)
     ctx.set_font("11px sans-serif");
@@ -562,40 +563,22 @@ fn render_page3_recovery(
     ctx.fill_text(t_wizard(WizardKey::RecoveryKey), x + w / 2.0, *cy);
     *cy += 30.0;
 
-    // Warning line 1 (amber)
+    // Warning line 1
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_fill_color(toolbar_theme.accent.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::RecoveryWarning1), x + w / 2.0, *cy);
     *cy += 18.0;
 
     // Warning line 2 (muted)
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.fill_text(t_wizard(WizardKey::RecoveryWarning2), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 26.0;
 
-    // Recovery key display box (selectable read-only input, gold color scheme)
+    // Recovery key display box — uses standard widget theme (same as other inputs)
     let key_text = state.recovery_key_display.as_deref().unwrap_or("(key not available)");
-
-    let key_widget_theme = WidgetTheme {
-        bg_normal: "rgba(0,0,0,0.35)".to_string(),
-        bg_hover: "rgba(0,0,0,0.40)".to_string(),
-        bg_pressed: "rgba(0,0,0,0.45)".to_string(),
-        bg_disabled: "rgba(0,0,0,0.20)".to_string(),
-        text_normal: "rgba(244,205,99,1.0)".to_string(),
-        text_hover: "rgba(244,205,99,1.0)".to_string(),
-        text_disabled: "rgba(244,205,99,0.5)".to_string(),
-        border_normal: "rgba(244,205,99,0.35)".to_string(),
-        border_hover: "rgba(244,205,99,0.55)".to_string(),
-        border_focused: "rgba(244,205,99,0.70)".to_string(),
-        accent: "rgba(244,205,99,0.30)".to_string(),
-        accent_hover: "rgba(244,205,99,0.40)".to_string(),
-        success: "#26a69a".to_string(),
-        warning: "#ff9800".to_string(),
-        danger: "#ef5350".to_string(),
-    };
 
     let key_box_h = 40.0;
     let key_display_rect = WidgetRect::new(x, *cy, w, key_box_h);
@@ -614,7 +597,7 @@ fn render_page3_recovery(
         .with_radius(4.0)
         .with_selection(sel_start, sel_end);
 
-    let key_display_result = draw_input(ctx, &key_display_config, WidgetState::Normal, key_display_rect, &key_widget_theme);
+    let key_display_result = draw_input(ctx, &key_display_config, WidgetState::Normal, key_display_rect, &widget_theme);
 
     result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
     result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
@@ -632,25 +615,23 @@ fn render_page3_recovery(
             key_display_result.cursor_x,
             key_display_result.cursor_y,
             key_display_result.cursor_height,
-            "rgba(244,205,99,0.9)",
+            toolbar_theme.accent.as_str(),
         );
     }
 
     *cy += key_box_h + 10.0;
 
-    // Copy Key button
+    // Copy Key button — same style as other wizard buttons
     let is_copy_hovered = hovered == Some("wizard_copy_key");
-    let copy_btn_bg = if is_copy_hovered { "rgba(244,205,99,0.2)" } else { "rgba(244,205,99,0.08)" };
+    let copy_btn_bg = if is_copy_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+    let copy_btn_text = if is_copy_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     let copy_btn_h = 28.0;
     let copy_btn_w = w.min(200.0);
     let copy_btn_x = x + (w - copy_btn_w) / 2.0;
     ctx.set_fill_color(copy_btn_bg);
     ctx.fill_rounded_rect(copy_btn_x, *cy, copy_btn_w, copy_btn_h, 4.0);
-    ctx.set_stroke_color("rgba(244,205,99,0.4)");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(copy_btn_x, *cy, copy_btn_w, copy_btn_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.9)");
+    ctx.set_fill_color(copy_btn_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_wizard(WizardKey::CopyKey), copy_btn_x + copy_btn_w / 2.0, *cy + copy_btn_h / 2.0);
@@ -667,17 +648,17 @@ fn render_page3_recovery(
 
     *cy += copy_btn_h + 12.0;
 
-    // "I've saved it — continue" button
+    // "I've saved it — continue" button — same style as other wizard buttons
     let is_confirm_hovered = hovered == Some("wizard_recovery_confirm");
-    let confirm_bg = if is_confirm_hovered { "rgba(255,255,255,0.92)" } else { toolbar_theme.accent.as_str() };
-    let confirm_text_col = "rgba(0,0,0,0.85)";
+    let confirm_bg = if is_confirm_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+    let confirm_text = if is_confirm_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     let confirm_btn_h = 34.0;
     let confirm_btn_w = w.min(260.0);
     let confirm_btn_x = x + (w - confirm_btn_w) / 2.0;
     ctx.set_fill_color(confirm_bg);
     ctx.fill_rounded_rect(confirm_btn_x, *cy, confirm_btn_w, confirm_btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
-    ctx.set_fill_color(confirm_text_col);
+    ctx.set_fill_color(confirm_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_wizard(WizardKey::SavedAndContinue), confirm_btn_x + confirm_btn_w / 2.0, *cy + confirm_btn_h / 2.0);

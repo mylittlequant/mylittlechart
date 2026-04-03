@@ -2291,7 +2291,7 @@ impl ChartApp {
             if !char_positions.is_empty() {
                 let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
                 match field_id.as_str() {
-                    "e2e_passphrase_input" => {
+                    "e2e_passphrase_input" | "wizard_passphrase_input" => {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
@@ -3009,7 +3009,7 @@ impl ChartApp {
             let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.take().unwrap_or_default();
             // Finalize: if anchor == cursor (plain click jitter), clear the selection.
             let (anchor, cursor) = match field_id.as_str() {
-                "e2e_passphrase_input" => (
+                "e2e_passphrase_input" | "wizard_passphrase_input" => (
                     self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start,
                     self.panel_app.user_settings_state.e2e_passphrase_editing.cursor,
                 ),
@@ -3039,7 +3039,7 @@ impl ChartApp {
             };
             if anchor == Some(cursor) {
                 match field_id.as_str() {
-                    "e2e_passphrase_input" => {
+                    "e2e_passphrase_input" | "wizard_passphrase_input" => {
                         self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
@@ -5560,6 +5560,13 @@ impl ChartApp {
                     }
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                 }
+                '\x09' => {
+                    // Tab moves to next field in wizard.
+                    if self.panel_app.user_settings_state.show_welcome_wizard {
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        self.panel_app.user_settings_state.confirm_passphrase_focused = true;
+                    }
+                }
                 '\x1b' => {
                     // Escape unfocuses without submitting
                     self.panel_app.user_settings_state.e2e_passphrase_focused = false;
@@ -5708,9 +5715,13 @@ impl ChartApp {
                     }
                 }
                 '\x09' => {
-                    // Tab cycles back to new passphrase field.
+                    // Tab cycles to next/first field.
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    self.panel_app.user_settings_state.new_passphrase_focused = true;
+                    if self.panel_app.user_settings_state.show_welcome_wizard {
+                        self.panel_app.user_settings_state.new_profile_name_focused = true;
+                    } else {
+                        self.panel_app.user_settings_state.new_passphrase_focused = true;
+                    }
                 }
                 '\x1b' => {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
@@ -5805,6 +5816,13 @@ impl ChartApp {
                             self.pending_updater_cmd = Some(format!("profile_create:{}", name));
                             self.panel_app.user_settings_state.show_new_profile_dialog = false;
                         }
+                    }
+                }
+                '\x09' => {
+                    // Tab moves to next field.
+                    if self.panel_app.user_settings_state.show_welcome_wizard {
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
+                        self.panel_app.user_settings_state.e2e_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
@@ -9155,6 +9173,12 @@ impl ChartApp {
                 "show_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
                     self.panel_app.user_settings_state.wizard_page = 0;
+                    // Clear leaked state from profile_manager
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
                     eprintln!("[ChartApp] show_wizard: opening welcome wizard");
                 }
                 "server_toggle" => {
@@ -9372,6 +9396,12 @@ impl ChartApp {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.wizard_page = 0;
+                    // Clear leaked state from profile_manager
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
                     eprintln!("[ChartApp] profile_mgr: launching setup wizard");
                 }
                 // ── Vault unlock handler (returning encrypted users) ──────────
@@ -9727,6 +9757,11 @@ impl ChartApp {
                     // Switch to profile_manager modal to show the passphrase page
                     self.panel_app.user_settings_state.show_profile_manager = true;
                     self.panel_app.user_settings_state.show_welcome_wizard = false;
+                    // Clear leaked state from wizard
+                    self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;

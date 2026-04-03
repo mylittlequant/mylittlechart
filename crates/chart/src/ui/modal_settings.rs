@@ -31,6 +31,13 @@ pub struct TextEditingState {
 }
 
 impl TextEditingState {
+    /// Reset all editing state (text, cursor, selection).
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+        self.selection_start = None;
+    }
+
     /// Convert a character index to a byte offset in `self.text`.
     ///
     /// This is necessary because `String::insert`, `String::remove`, and
