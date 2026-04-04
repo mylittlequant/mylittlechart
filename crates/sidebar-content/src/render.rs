@@ -1905,9 +1905,11 @@ fn render_object_tree_items(
                         rect.x + item_padding
                     };
 
+                    // Row base color: primary for visible, half-opacity for hidden.
+                    let row_color = if item.visible { &theme.item_text } else { &theme.item_text_hidden };
+
                     ctx.set_font("12px sans-serif");
-                    let text_color = if item.visible { &theme.item_text } else { &theme.item_text_muted };
-                    ctx.set_fill_color(text_color);
+                    ctx.set_fill_color(row_color);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text(&item.name, name_x, current_y + item_height / 2.0);
@@ -1916,29 +1918,29 @@ fn render_object_tree_items(
 
                     // Delete (X) — red only when hovering the delete button itself.
                     result.delete_button_rects.push((del_id, delete_rect));
-                    let delete_color = if del_hovered { "#ff5252" } else { theme.item_text_muted.as_str() };
+                    let delete_color = if del_hovered { "#ff5252" } else { row_color.as_str() };
                     draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
 
                     // Settings gear.
                     result.settings_button_rects.push((set_id, settings_rect));
-                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
+                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, row_color);
 
-                    // Alert bell — accent colour when an alert is bound, muted otherwise.
+                    // Alert bell — accent colour when an alert is bound, row color otherwise.
                     let alert_bell_color = if item.has_alert {
                         theme.accent.as_str()
                     } else {
-                        theme.item_text_muted.as_str()
+                        row_color.as_str()
                     };
                     draw_svg_icon(ctx, Icon::Alert.svg(), alert_x, icon_y, icon_size, icon_size, alert_bell_color);
 
                     // Eye / EyeOff (visibility toggle).
                     let vis_icon = if item.visible { Icon::Eye } else { Icon::EyeOff };
-                    draw_svg_icon(ctx, vis_icon.svg(), vis_x, icon_y, icon_size, icon_size, &theme.item_text_muted);
+                    draw_svg_icon(ctx, vis_icon.svg(), vis_x, icon_y, icon_size, icon_size, row_color);
 
                     // Lock icon — drawings only.
                     if is_drawing {
                         let lock_icon = if item.locked { Icon::Lock } else { Icon::Unlock };
-                        let lock_color = if item.locked { &theme.item_text } else { theme.item_text_muted.as_str() };
+                        let lock_color = if item.locked { &theme.item_text } else { row_color.as_str() };
                         draw_svg_icon(ctx, lock_icon.svg(), lock_x, icon_y, icon_size, icon_size, lock_color);
                     }
                 } else {

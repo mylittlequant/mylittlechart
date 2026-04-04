@@ -86,6 +86,8 @@ pub struct ToolbarTheme {
     pub item_text: String,
     /// Muted icon / label colour (for secondary/disabled items).
     pub item_text_muted: String,
+    /// Colour for hidden (invisible) items — item_text at 50% opacity.
+    pub item_text_hidden: String,
     /// Icon / label colour on hover.
     pub item_text_hover: String,
     /// Icon / label colour when active.
@@ -117,6 +119,7 @@ impl Default for ToolbarTheme {
             button_bg_hover: "#2a2e39".into(),
             item_text: "#a6adc8".into(),
             item_text_muted: "#6c7086".into(),
+            item_text_hidden: "#a6adc880".into(),
             item_text_hover: "#cdd6f4".into(),
             item_text_active: "#cdd6f4".into(),
             accent: "#3b82f6".into(),

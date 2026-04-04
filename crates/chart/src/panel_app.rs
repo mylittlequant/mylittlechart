@@ -2677,6 +2677,7 @@ impl ChartPanelApp {
             button_bg_hover: rt.colors.button_bg_hover.clone(),
             item_text: rt.colors.text_primary.clone(),
             item_text_muted: rt.colors.text_secondary.clone(),
+            item_text_hidden: crate::apply_opacity(&rt.colors.text_primary, 0.5),
             item_text_hover: rt.colors.text_primary.clone(),
             item_text_active: rt.colors.text_primary.clone(),
             accent: rt.colors.accent.clone(),
