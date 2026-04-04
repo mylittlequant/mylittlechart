@@ -555,17 +555,17 @@ impl ChartTheme {
             chart: ChartColors {
                 background: "#0a0f1a",
 
-                grid_line: "#1a274033",
+                grid_line: "#3a2e1433",
                 grid_line_horz: None,
                 grid_line_vert: None,
 
                 scale_bg: "#0e1525",
-                scale_border: "#1a2740",
+                scale_border: "#3a2e14",
                 scale_text: "#FEFFEE",
                 scale_text_muted: "#6b7a8d",
 
                 time_scale_bg: "#0e1525",
-                time_scale_border: "#1a2740",
+                time_scale_border: "#3a2e14",
                 time_scale_text: "#FEFFEE",
                 time_scale_text_medium: "#b8c4d0",
                 time_scale_text_muted: "#6b7a8d",
@@ -581,12 +581,12 @@ impl ChartTheme {
                 watermark_text: "rgba(33,88,164,0.12)",
 
                 sidebar_bg: "#0e1525",
-                sidebar_border: "#1a2740",
+                sidebar_border: "#3a2e14",
                 sidebar_header_bg: "#0a0f1a",
                 sidebar_text: "#FEFFEE",
 
-                chart_border: "#1a2740",
-                frame_border: "#1a2740",
+                chart_border: "#3a2e14",
+                frame_border: "#3a2e14",
             },
             series: SeriesColors {
                 candle_up_body: "#26a69a",
@@ -1146,10 +1146,10 @@ impl UITheme {
                 text_secondary: "#b8c4d0",
                 text_muted: "#6b7a8d",
                 border: "#0a0f1a",
-                border_light: "#1a2740",
-                divider: "#1a2740",
-                toolbar_divider: "#1a2740",
-                ui_border: "#1a2740",
+                border_light: "#3a2e14",
+                divider: "#3a2e14",
+                toolbar_divider: "#3a2e14",
+                ui_border: "#3a2e14",
                 accent: "#2962ff",
                 accent_hover: "#1e53e4",
                 danger: "#f23645",

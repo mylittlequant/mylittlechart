@@ -760,8 +760,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         pw.chrome_state.colors.icon_normal = theme.colors.text_primary.clone();
         pw.chrome_state.colors.icon_hover  = theme.colors.accent.clone();
         pw.chrome_state.colors.button_hover = theme.colors.button_bg_hover.clone();
+        pw.chrome_state.colors.close_hover = theme.colors.danger.clone();
         pw.chrome_state.colors.separator   = theme.colors.toolbar_divider.clone();
         pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
+        pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
+        pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
     }
 
     // Sync tabs from open_tabs order.
@@ -886,7 +889,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         {
             let mut tooltip_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
-            chrome::render_tooltip_state(&mut tooltip_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
+            chrome::render_tooltip_themed(&mut tooltip_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
         }
     } else {
         // ── Non-VelloGpu: full backend switch ─────────────────────────────────
@@ -975,7 +978,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                         None,
                     );
                     chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
-                    chrome::render_tooltip_state(&mut tooltip_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
+                    chrome::render_tooltip_themed(&mut tooltip_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&tooltip_ctx.inner().draw_commands);
                 }
 
@@ -1018,7 +1021,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 }
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_state(&mut cpu_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
+                chrome::render_tooltip_themed(&mut cpu_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Rasterize to pixel buffer.
                 let pixel_count = (width as usize) * (height as usize) * 4;
                 let mut pixels = vec![0u8; pixel_count];
@@ -1062,7 +1065,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 }
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_state(&mut skia_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
+                chrome::render_tooltip_themed(&mut skia_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 let pixels = skia_ctx.inner().pixels();
                 pw.cpu_chart_dims = (width, height);
                 pw.cpu_chart_pixels = pixels.to_vec();
@@ -1096,7 +1099,7 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
                 }
                 // Render tooltips (top-most layer).
                 chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_state(&mut hybrid_ctx, &pw.toolbar_tooltip, width as f64, height as f64);
+                chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
                 let mut inner = uzor_backend_vello_hybrid::VelloHybridRenderContext::new(1.0);

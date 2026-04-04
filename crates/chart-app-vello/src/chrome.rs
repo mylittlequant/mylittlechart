@@ -158,6 +158,8 @@ pub struct ChromeColors {
     pub close_hover: String,
     pub separator: String,
     pub tab_accent: String,
+    pub tooltip_bg: String,
+    pub tooltip_text: String,
 }
 
 impl Default for ChromeColors {
@@ -170,6 +172,8 @@ impl Default for ChromeColors {
             close_hover:  "#e81123".into(),
             separator:    "#313244".into(),
             tab_accent:   "#3b82f6".into(),
+            tooltip_bg:   "#323232".into(),
+            tooltip_text: "#ffffff".into(),
         }
     }
 }
@@ -369,13 +373,14 @@ pub fn render_tooltip(
     screen_width: f64,
     screen_height: f64,
 ) {
-    render_tooltip_state(ctx, &state.tooltip, screen_width, screen_height);
+    render_tooltip_themed(ctx, &state.tooltip, &state.colors.tooltip_bg, &state.colors.tooltip_text, screen_width, screen_height);
 }
 
-/// Render a tooltip from any `TooltipState` (chrome, toolbar, etc.).
-pub fn render_tooltip_state(
+pub fn render_tooltip_themed(
     ctx: &mut dyn RenderContext,
     tooltip: &TooltipState,
+    bg_color: &str,
+    text_color: &str,
     screen_width: f64,
     screen_height: f64,
 ) {
@@ -411,11 +416,11 @@ pub fn render_tooltip_state(
     ctx.fill_rounded_rect(tx + 1.0, ty + 1.0, tw, th, 4.0);
 
     // Background
-    ctx.set_fill_color("#323232");
+    ctx.set_fill_color(bg_color);
     ctx.fill_rounded_rect(tx, ty, tw, th, 4.0);
 
     // Text
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(text, tx + pad, ty + th / 2.0);
