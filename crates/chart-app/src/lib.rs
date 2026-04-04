@@ -3157,6 +3157,26 @@ impl ChartApp {
         // from a previous frame is expired before new update_field calls arrive.
         self.text_input.begin_frame();
 
+        // Sync TextInputManager cursor → picker.hex_cursor before rendering.
+        // The renderer reads hex_cursor from ColorPickerState, but TextInputManager
+        // owns the authoritative cursor position after mouse/keyboard events.
+        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
+            let cursor = self.text_input.cursor(crate::text_input::FieldId::HexColor);
+            let text = self.text_input.text(crate::text_input::FieldId::HexColor).to_string();
+            for picker in [
+                &mut self.panel_app.primitive_settings_state.color_picker,
+                &mut self.panel_app.indicator_settings_state.color_picker,
+                &mut self.panel_app.chart_settings_state.color_picker,
+                &mut self.panel_app.compare_settings_state.color_picker,
+                &mut self.panel_app.panel_color_picker,
+            ] {
+                if picker.hex_editing {
+                    picker.hex_cursor = cursor;
+                    picker.hex_input = text.clone();
+                }
+            }
+        }
+
         let sidebar_w = self.sidebar_state.right_width();
         let window_rect = LayoutRect::new(0.0, 0.0, width, height);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
