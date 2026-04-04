@@ -132,7 +132,7 @@ pub fn render_leaf_tab(
         0.0
     };
 
-    let center_y = y + TAB_HEIGHT / 2.0;
+    let center_y = (y + TAB_HEIGHT / 2.0).round();
 
     // ── Text ─────────────────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
@@ -160,7 +160,7 @@ pub fn render_leaf_tab(
     }
 
     // Derived x positions.
-    let text_x = x + LEFT_PAD;
+    let text_x = (x + LEFT_PAD).round();
     let tag_container_x = text_x + text_container_w + TAG_GAP;
     let dots_container_x = tag_container_x + TAG_CONTAINER_W;
 

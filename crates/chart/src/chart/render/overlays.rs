@@ -101,7 +101,7 @@ pub fn draw_legend(
     let font_size = legend.font_size;
 
     // Calculate position based on legend.position
-    let (base_x, base_y, text_align) = match legend.position {
+    let (base_x_raw, base_y_raw, text_align) = match legend.position {
         LegendPosition::TopLeft => (
             rect.x + padding,
             rect.y + padding + font_size,
@@ -123,6 +123,8 @@ pub fn draw_legend(
             TextAlign::Right,
         ),
     };
+    let base_x = base_x_raw.round();
+    let base_y = base_y_raw.round();
 
     // Build legend text
     let mut parts = Vec::new();

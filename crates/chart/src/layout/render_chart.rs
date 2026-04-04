@@ -1056,7 +1056,7 @@ pub fn draw_alert_lines(
         ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
         let price_str = format_price_smart(price);
-        ctx.fill_text(&price_str, label_x + label_width / 2.0, screen_y);
+        ctx.fill_text(&price_str, label_x + label_width / 2.0, screen_y.round());
 
         let icon_size = 12.0;
         let icon_x = rect.x + 4.0;
@@ -1530,7 +1530,7 @@ pub fn draw_sub_pane_price_scale(
     // No separate border - will be drawn by content borders
 
     // Center text horizontally in price scale (same as main chart)
-    let text_x = x + width / 2.0;
+    let text_x = (x + width / 2.0).round();
 
     // Generate price labels (fewer for small pane)
     let num_labels = if height > 80.0 { 3 } else { 2 };
@@ -1549,7 +1549,7 @@ pub fn draw_sub_pane_price_scale(
 
     for i in 0..=num_labels {
         let ratio = i as f64 / num_labels as f64;
-        let label_y = y + height - (ratio * height);
+        let label_y = (y + height - (ratio * height)).round();
         let price = price_min + ratio * price_range;
 
         let label = if price_range < 1.0 {
@@ -1568,7 +1568,7 @@ pub fn draw_sub_pane_price_scale(
     // Draw a "0" label when zero is within the visible range.
     if price_min < 0.0 && price_max > 0.0 && price_range > 0.0 {
         let zero_ratio = (0.0_f64 - price_min) / price_range;
-        let zero_y = y + height - (zero_ratio * height);
+        let zero_y = (y + height - (zero_ratio * height)).round();
         ctx.fill_text("0", text_x, zero_y);
     }
 
@@ -1650,7 +1650,7 @@ fn draw_sub_pane_crosshair_price_label(
     ctx.set_fill_color(&theme.crosshair_label_text);
     ctx.set_text_align(crate::render::TextAlign::Center);
     ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-    ctx.fill_text(&label, scale_x + scale_width / 2.0, screen_y);
+    ctx.fill_text(&label, scale_x + scale_width / 2.0, screen_y.round());
 
     ctx.restore();
 }

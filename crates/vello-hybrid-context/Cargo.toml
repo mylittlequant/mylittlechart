@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uzor = "1.0.25"
-uzor-backend-vello-hybrid = "1.0.25"
+uzor = "1.0.26"
+uzor-backend-vello-hybrid = "1.0.26"
 zengeld-chart = { path = "../chart" }
