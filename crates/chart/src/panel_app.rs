@@ -1343,19 +1343,16 @@ impl ChartToolbarState {
             if active_symbol.is_some() || active_timeframe.is_some() {
                 for section in &mut control_sections {
                     for item in &mut section.items {
-                        match item {
-                            TcToolbarItem::Dropdown { id, text, .. } => {
-                                if id == "symbol_selector" {
-                                    if let Some(sym) = active_symbol {
-                                        *text = Some(sym.to_string());
-                                    }
-                                } else if id == "timeframe_selector" {
-                                    if let Some(tf) = active_timeframe {
-                                        *text = Some(tf.to_string());
-                                    }
+                        if let TcToolbarItem::Dropdown { id, text, .. } = item {
+                            if id == "symbol_selector" {
+                                if let Some(sym) = active_symbol {
+                                    *text = Some(sym.to_string());
+                                }
+                            } else if id == "timeframe_selector" {
+                                if let Some(tf) = active_timeframe {
+                                    *text = Some(tf.to_string());
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -1841,7 +1838,7 @@ impl ChartToolbarState {
             ctx,
             &config,
             origin,
-            &theme,
+            theme,
             self.hovered_dropdown_item.as_deref(),
             chart_icon_renderer,
         );
@@ -1882,7 +1879,7 @@ impl ChartToolbarState {
                                 ctx,
                                 &grid_config,
                                 sub_origin,
-                                &theme,
+                                theme,
                                 self.hovered_dropdown_item.as_deref(),
                                 chart_icon_renderer,
                             )
@@ -1892,7 +1889,7 @@ impl ChartToolbarState {
                                 ctx,
                                 &list_config,
                                 sub_origin,
-                                &theme,
+                                theme,
                                 self.hovered_dropdown_item.as_deref(),
                                 chart_icon_renderer,
                             )
@@ -1993,14 +1990,14 @@ impl ChartToolbarState {
         // Determine whether there is enough room below the button.
         // If not, open the dropdown upward above the button instead.
         let dropdown_height = config.calculate_height();
-        let button_bottom = (button_rect.y + button_rect.height) as f64;
+        let button_bottom = button_rect.y + button_rect.height;
         let space_below = panel_height - button_bottom;
         let open_upward = space_below < dropdown_height + 4.0;
 
         let origin = if open_upward {
-            (button_rect.x as f64, button_rect.y as f64 - dropdown_height - 2.0)
+            (button_rect.x, button_rect.y - dropdown_height - 2.0)
         } else {
-            (button_rect.x as f64, button_bottom + 2.0)
+            (button_rect.x, button_bottom + 2.0)
         };
 
         let result = crate::ui::dropdown::draw_dropdown(
@@ -2165,13 +2162,13 @@ impl ChartToolbarState {
 
         // Search in left toolbar
         let drawing_def = toolbar_config.left.as_ref().cloned()
-            .unwrap_or_else(|| crate::toolbar::left_toolbar());
+            .unwrap_or_else(crate::toolbar::left_toolbar);
         if let Some(items) = find_items_in_def(&drawing_def, dropdown_id) {
             return Some(items);
         }
         // Search in top toolbar
         let control_def = toolbar_config.top.as_ref().cloned()
-            .unwrap_or_else(|| crate::toolbar::top_toolbar());
+            .unwrap_or_else(crate::toolbar::top_toolbar);
         find_items_in_def(&control_def, dropdown_id)
     }
 
@@ -2181,12 +2178,12 @@ impl ChartToolbarState {
     /// falling back to the default definitions when a slot is `None`.
     fn find_submenu_items(&self, submenu_id: &str, toolbar_config: &ToolbarConfig) -> Option<(Vec<DropdownItemDef>, Option<u8>)> {
         let drawing_def = toolbar_config.left.as_ref().cloned()
-            .unwrap_or_else(|| crate::toolbar::left_toolbar());
+            .unwrap_or_else(crate::toolbar::left_toolbar);
         if let Some(result) = find_submenu_in_def(&drawing_def, submenu_id) {
             return Some(result);
         }
         let control_def = toolbar_config.top.as_ref().cloned()
-            .unwrap_or_else(|| crate::toolbar::top_toolbar());
+            .unwrap_or_else(crate::toolbar::top_toolbar);
         find_submenu_in_def(&control_def, submenu_id)
     }
 }
@@ -2558,7 +2555,7 @@ impl ChartPanelApp {
     ) -> &mut IndicatorOverlayState {
         self.indicator_overlay_states
             .entry(leaf_id)
-            .or_insert_with(IndicatorOverlayState::default)
+            .or_default()
     }
 
     /// Return a shared reference to the per-leaf indicator overlay state.
@@ -2654,7 +2651,7 @@ impl ChartPanelApp {
             item_text_disabled:    rt.colors.text_muted.clone(),
             item_bg_hover:         rt.colors.button_bg_hover.clone(),
             item_danger:           rt.colors.danger.clone(),
-            item_danger_bg_hover:  format!("rgba(0,0,0,0.15)"), // always semi-transparent overlay
+            item_danger_bg_hover:  "rgba(0,0,0,0.15)".to_string(), // always semi-transparent overlay
             header_text:           rt.colors.text_primary.clone(),
             header_border:         rt.colors.border.clone(),
             separator:             rt.colors.divider.clone(),

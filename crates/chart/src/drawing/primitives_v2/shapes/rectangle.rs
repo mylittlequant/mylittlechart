@@ -323,7 +323,7 @@ impl Primitive for Rectangle {
             let corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)];
             for (cx, cy) in corners {
                 ctx.begin_path();
-                ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -331,7 +331,7 @@ impl Primitive for Rectangle {
             let edges = [((x1 + x2) / 2.0, y1), (x2, (y1 + y2) / 2.0), ((x1 + x2) / 2.0, y2), (x1, (y1 + y2) / 2.0)];
             for (ex, ey) in edges {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -339,7 +339,7 @@ impl Primitive for Rectangle {
             let cx = (x1 + x2) / 2.0;
             let cy = (y1 + y2) / 2.0;
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -376,7 +376,7 @@ impl Primitive for Rectangle {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -384,7 +384,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_rectangle(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.get(0).copied().unwrap_or((0.0, 0.0));
+    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
     let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 10.0, price1 * 1.05));
     Box::new(Rectangle::new(bar1, price1, bar2, price2, color))
 }

@@ -181,7 +181,7 @@ impl Primitive for VerticalLine {
             ctx.set_fill_color(CONTROL_POINT_FILL);
             ctx.set_stroke_width(1.5);
             ctx.begin_path();
-            ctx.arc(x, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

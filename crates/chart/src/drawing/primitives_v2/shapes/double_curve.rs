@@ -312,7 +312,7 @@ impl Primitive for DoubleCurve {
             ctx.set_stroke_color(CONTROL_POINT_STROKE);
             for (x, y) in [(sx1, sy1), (sx2, sy2), (sc1x, sc1y), (sc2x, sc2y)] {
                 ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -361,7 +361,7 @@ impl Primitive for DoubleCurve {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 fn point_to_segment_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
@@ -387,7 +387,7 @@ fn point_to_segment_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f6
 // =============================================================================
 
 fn create_double_curve(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (start_bar, start_price) = points.get(0).copied().unwrap_or((0.0, 100.0));
+    let (start_bar, start_price) = points.first().copied().unwrap_or((0.0, 100.0));
     let (end_bar, end_price) = points.get(1).copied().unwrap_or((start_bar + 30.0, start_price));
 
     let dx = end_bar - start_bar;

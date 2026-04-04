@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(tester.hit_test(100.0, main_chart_y), HitResult::Chart);
 
         // First sub-pane content should return SubPaneChart
-        if let Some(pane) = layout.sub_panes.get(0) {
+        if let Some(pane) = layout.sub_panes.first() {
             let sub_pane_y = pane.content.y + 50.0;
             assert_eq!(
                 tester.hit_test(100.0, sub_pane_y),

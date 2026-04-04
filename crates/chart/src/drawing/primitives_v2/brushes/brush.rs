@@ -115,7 +115,7 @@ impl Primitive for Brush {
                 let x = ctx.bar_to_x(bar);
                 let y = ctx.price_to_y(price);
                 ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }

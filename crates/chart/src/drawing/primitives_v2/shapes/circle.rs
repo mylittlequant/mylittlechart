@@ -286,14 +286,14 @@ impl Primitive for Circle {
             ];
             for (ex, ey) in edges {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
 
             // Draw center move handle
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -335,7 +335,7 @@ impl Primitive for Circle {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -343,7 +343,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_circle(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (center_bar, center_price) = points.get(0).copied().unwrap_or((0.0, 0.0));
+    let (center_bar, center_price) = points.first().copied().unwrap_or((0.0, 0.0));
     if points.len() >= 2 {
         let radius_bars = (points[1].0 - center_bar).abs().max(1.0);
         let radius_price = (points[1].1 - center_price).abs().max(1.0);

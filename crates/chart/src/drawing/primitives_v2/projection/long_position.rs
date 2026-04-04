@@ -141,19 +141,19 @@ impl Primitive for LongPosition {
 
             // Entry point
             ctx.begin_path();
-            ctx.arc(x1, entry_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x1, entry_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Stop loss point
             ctx.begin_path();
-            ctx.arc(x1, stop_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x1, stop_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Take profit point
             ctx.begin_path();
-            ctx.arc(x1, target_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x1, target_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

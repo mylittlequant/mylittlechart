@@ -269,7 +269,7 @@ impl Primitive for Triangle {
 
             for (px, py) in [(x1, y1), (x2, y2), (x3, y3)] {
                 ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -277,7 +277,7 @@ impl Primitive for Triangle {
             let cx = (x1 + x2 + x3) / 3.0;
             let cy = (y1 + y2 + y3) / 3.0;
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -319,7 +319,7 @@ impl Primitive for Triangle {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 /// Check if point is inside triangle using barycentric coordinates
@@ -341,7 +341,7 @@ fn point_in_triangle(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, x3: f
 // =============================================================================
 
 fn create_triangle(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.get(0).copied().unwrap_or((0.0, 100.0));
+    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 100.0));
     let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 10.0, price1 * 1.05));
     let (bar3, price3) = points.get(2).copied().unwrap_or((bar1 + 5.0, price1 * 0.95));
     Box::new(Triangle::new(bar1, price1, bar2, price2, bar3, price3, color))

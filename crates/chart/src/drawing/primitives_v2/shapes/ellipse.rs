@@ -268,20 +268,20 @@ impl Primitive for Ellipse {
             ctx.set_stroke_width(1.5);
 
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             let edge_points = [(cx, cy - ry), (cx + rx, cy), (cx, cy + ry), (cx - rx, cy)];
             for (ex, ey) in edge_points {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
 
             ctx.begin_path();
-            ctx.arc(cx + rx, cy + ry, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx + rx, cy + ry, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -323,7 +323,7 @@ impl Primitive for Ellipse {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -331,7 +331,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_ellipse(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (center_bar, center_price) = points.get(0).copied().unwrap_or((0.0, 100.0));
+    let (center_bar, center_price) = points.first().copied().unwrap_or((0.0, 100.0));
     if points.len() >= 2 {
         Box::new(Ellipse::from_points(center_bar, center_price, points[1].0, points[1].1, color))
     } else {

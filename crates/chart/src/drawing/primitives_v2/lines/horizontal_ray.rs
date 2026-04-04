@@ -197,7 +197,7 @@ impl Primitive for HorizontalRay {
             ctx.set_fill_color(CONTROL_POINT_FILL);
             ctx.set_stroke_width(1.5);
             ctx.begin_path();
-            ctx.arc(x, y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -213,7 +213,7 @@ impl Primitive for HorizontalRay {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -221,7 +221,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_horizontal_ray(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar, price) = points.get(0).copied().unwrap_or((0.0, 0.0));
+    let (bar, price) = points.first().copied().unwrap_or((0.0, 0.0));
     Box::new(HorizontalRay::new(bar, price, color))
 }
 

@@ -153,19 +153,19 @@ impl Primitive for PriceProjection {
 
             // Point 1
             ctx.begin_path();
-            ctx.arc(x1, y1, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x1, y1, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Point 2
             ctx.begin_path();
-            ctx.arc(x2, y2, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x2, y2, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Point 3
             ctx.begin_path();
-            ctx.arc(x3, y3, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x3, y3, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

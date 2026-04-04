@@ -437,7 +437,7 @@ impl Primitive for GannBox {
 
             for (px, py) in [(x1, y1), (x2, y2)] {
                 ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }

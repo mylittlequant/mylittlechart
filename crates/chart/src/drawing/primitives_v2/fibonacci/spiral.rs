@@ -499,7 +499,7 @@ impl Primitive for FibSpiral {
 
             for (px, py) in [(cx, cy), (ex, ey)] {
                 ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }

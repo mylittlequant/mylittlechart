@@ -298,7 +298,7 @@ pub fn draw_chart_legend(
     // Get the bar to display (under cursor or last bar)
     let bar_idx = state.crosshair.bar_idx.unwrap_or(state.bars.len().saturating_sub(1));
     let bar = match state.bars.get(bar_idx) {
-        Some(b) => b.clone(),
+        Some(b) => *b,
         None => return,
     };
 
@@ -428,9 +428,7 @@ pub fn format_price_smart(price: f64) -> String {
         return format!("{:.2}e{}", mantissa, exp);
     }
 
-    let precision = if price >= 10000.0 {
-        2
-    } else if price >= 1000.0 {
+    let precision = if price >= 1000.0 {
         2
     } else if price >= 100.0 {
         3
@@ -471,11 +469,11 @@ pub fn draw_indicator_line(
 
     let (start_bar, end_bar) = if state.disable_clip {
         let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
-        let start = (visible.0.max(0) as usize).saturating_sub(extra_bars);
-        let end = ((visible.1 as usize) + extra_bars).min(values.len());
+        let start = visible.0.max(0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(values.len());
         (start, end)
     } else {
-        (visible.0.max(0) as usize, (visible.1 as usize).min(values.len()))
+        (visible.0.max(0), visible.1.min(values.len()))
     };
 
     if start_bar >= end_bar {
@@ -487,8 +485,7 @@ pub fn draw_indicator_line(
     ctx.begin_path();
 
     let mut started = false;
-    for i in start_bar..end_bar {
-        let value = values[i];
+    for (i, &value) in values.iter().enumerate().take(end_bar).skip(start_bar) {
         if value.is_nan() || value.is_infinite() {
             started = false;
             continue;
@@ -525,11 +522,11 @@ pub fn draw_indicator_band(
 
     let (start_bar, end_bar) = if state.disable_clip {
         let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
-        let start = (visible.0.max(0) as usize).saturating_sub(extra_bars);
-        let end = ((visible.1 as usize) + extra_bars).min(len);
+        let start = visible.0.max(0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(len);
         (start, end)
     } else {
-        (visible.0.max(0) as usize, (visible.1 as usize).min(len))
+        (visible.0.max(0), visible.1.min(len))
     };
 
     if start_bar >= end_bar {
@@ -540,8 +537,7 @@ pub fn draw_indicator_band(
     ctx.begin_path();
 
     let mut started = false;
-    for i in start_bar..end_bar {
-        let value = upper[i];
+    for (i, &value) in upper.iter().enumerate().take(end_bar).skip(start_bar) {
         if value.is_nan() || value.is_infinite() {
             continue;
         }
@@ -595,11 +591,11 @@ pub fn draw_volume_overlay(
 
     let (start, end) = if state.disable_clip {
         let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
-        let s = (visible.0.max(0) as usize).saturating_sub(extra_bars);
-        let e = ((visible.1 as usize) + extra_bars).min(len);
+        let s = visible.0.max(0).saturating_sub(extra_bars);
+        let e = (visible.1 + extra_bars).min(len);
         (s, e)
     } else {
-        (visible.0.max(0) as usize, (visible.1 as usize).min(len))
+        (visible.0.max(0), visible.1.min(len))
     };
 
     if start >= end {
@@ -607,8 +603,7 @@ pub fn draw_volume_overlay(
     }
 
     let mut max_volume = 0.0f64;
-    for i in start..end {
-        let v = values[i];
+    for &v in values.iter().take(end).skip(start) {
         if !v.is_nan() && !v.is_infinite() && v > max_volume {
             max_volume = v;
         }
@@ -622,8 +617,7 @@ pub fn draw_volume_overlay(
     let base_y = state.chart_rect.y + state.chart_rect.height;
     let bar_width = (state.viewport.bar_width() * 0.7).max(2.0);
 
-    for i in start..end {
-        let v = values[i];
+    for (i, &v) in values.iter().enumerate().take(end).skip(start) {
         if v.is_nan() || v.is_infinite() {
             continue;
         }
@@ -795,11 +789,11 @@ pub fn draw_indicator_selection_markers(
 
     let (visible_start, visible_end) = if state.disable_clip {
         let extra_bars = (100.0 / viewport.bar_spacing).ceil() as usize;
-        let start = (visible.0 as usize).saturating_sub(extra_bars);
-        let end = ((visible.1 as usize) + extra_bars).min(values.len());
+        let start = (visible.0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(values.len());
         (start, end)
     } else {
-        (visible.0 as usize, (visible.1 as usize).min(values.len()))
+        (visible.0, visible.1.min(values.len()))
     };
 
     if visible_start >= visible_end {
@@ -865,8 +859,6 @@ pub fn draw_indicator_signals(
 
     let viewport = state.viewport;
     let (visible_start, visible_end) = viewport.visible_range();
-    let visible_start = visible_start as usize;
-    let visible_end = visible_end as usize;
 
     let price_range = price_max - price_min;
     if price_range <= 0.0 {
@@ -1090,11 +1082,11 @@ pub fn draw_sub_pane_line(
 
     let (start_bar, end_bar) = if state.disable_clip {
         let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
-        let start = (visible.0.max(0) as usize).saturating_sub(extra_bars);
-        let end = ((visible.1 as usize) + extra_bars).min(values.len());
+        let start = visible.0.max(0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(values.len());
         (start, end)
     } else {
-        (visible.0.max(0) as usize, (visible.1 as usize).min(values.len()))
+        (visible.0.max(0), visible.1.min(values.len()))
     };
 
     if start_bar >= end_bar {
@@ -1106,8 +1098,7 @@ pub fn draw_sub_pane_line(
     ctx.begin_path();
 
     let mut started = false;
-    for i in start_bar..end_bar {
-        let v = values[i];
+    for (i, &v) in values.iter().enumerate().take(end_bar).skip(start_bar) {
         if v.is_nan() || v.is_infinite() {
             started = false;
             continue;
@@ -1152,11 +1143,11 @@ pub fn draw_sub_pane_histogram(
 
     let (start_bar, end_bar) = if state.disable_clip {
         let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
-        let start = (visible.0.max(0) as usize).saturating_sub(extra_bars);
-        let end = ((visible.1 as usize) + extra_bars).min(values.len());
+        let start = visible.0.max(0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(values.len());
         (start, end)
     } else {
-        (visible.0.max(0) as usize, (visible.1 as usize).min(values.len()))
+        (visible.0.max(0), visible.1.min(values.len()))
     };
 
     if start_bar >= end_bar {
@@ -1178,8 +1169,7 @@ pub fn draw_sub_pane_histogram(
             let zero_ratio = (zero_clamped - pane_min) / pane_range;
             let zero_y = pane_y + pane_height - (zero_ratio * pane_height);
 
-            for i in start_bar..end_bar {
-                let v = values[i];
+            for (i, &v) in values.iter().enumerate().take(end_bar).skip(start_bar) {
                 if v.is_nan() || v.is_infinite() {
                     continue;
                 }
@@ -1209,8 +1199,7 @@ pub fn draw_sub_pane_histogram(
         HistogramStyle::FromBottom => {
             ctx.set_fill_color(color);
 
-            for i in start_bar..end_bar {
-                let v = values[i];
+            for (i, &v) in values.iter().enumerate().take(end_bar).skip(start_bar) {
                 if v.is_nan() || v.is_infinite() {
                     continue;
                 }
@@ -1287,7 +1276,7 @@ pub fn render_sub_pane(
         (sub_pane_price_min, sub_pane_price_max)
     } else {
         indicator_source
-            .calculate_pane_range(instance.id, visible_start as usize, visible_end)
+            .calculate_pane_range(instance.id, visible_start, visible_end)
             .unwrap_or((0.0, 100.0))
     };
 
@@ -1399,7 +1388,7 @@ pub fn render_sub_pane(
         use std::f64::consts::TAU;
         let viewport = state.viewport;
         let visible = viewport.visible_range();
-        let (vis_s, vis_e) = (visible.0 as usize, (visible.1 as usize).min(state.bars.len()));
+        let (vis_s, vis_e) = (visible.0, visible.1.min(state.bars.len()));
         let pane_range = pane_max - pane_min;
         if vis_s < vis_e && pane_range > 0.0 {
             let interval = ((200.0 / viewport.bar_spacing).ceil() as usize).max(20);
@@ -3179,7 +3168,7 @@ pub fn render_full_chart_panel(
                 .unwrap_or_default();
             // is_hidden is always false here — hidden panes are filtered out of
             // sub_pane_ids via instance.visible check, so only visible panes render.
-            let is_maximized = sub_pane_state.map_or(false, |sp| sp.maximized);
+            let is_maximized = sub_pane_state.is_some_and(|sp| sp.maximized);
             let overlay_result = render_sub_pane_overlay(
                 ctx,
                 &pane_layout.content,
@@ -3192,7 +3181,7 @@ pub fn render_full_chart_panel(
             );
             // Render the LEFT-side per-indicator control buttons.
             let render_inst = im.get_render_instance(pane_layout.instance_id);
-            let ind_visible = render_inst.as_ref().map_or(true, |ri| ri.visible);
+            let ind_visible = render_inst.as_ref().is_none_or(|ri| ri.visible);
             let ind_title = render_inst.as_ref().map_or("", |ri| ri.title.as_str());
             let (left_eye, left_alert, left_settings, left_delete) =
                 render_sub_pane_left_overlay(

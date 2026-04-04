@@ -409,14 +409,14 @@ impl MarkerManager {
     /// Find marker by ID
     pub fn find_by_id(&self, id: &str) -> Option<&Marker> {
         self.markers.iter().find(|m| {
-            m.id.as_ref().map(|i| i.as_str()) == Some(id)
+            m.id.as_deref() == Some(id)
         })
     }
 
     /// Remove marker by ID
     pub fn remove_by_id(&mut self, id: &str) -> bool {
         if let Some(pos) = self.markers.iter().position(|m| {
-            m.id.as_ref().map(|i| i.as_str()) == Some(id)
+            m.id.as_deref() == Some(id)
         }) {
             self.markers.remove(pos);
             self.recalculation_required = true;

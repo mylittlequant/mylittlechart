@@ -424,7 +424,7 @@ impl Primitive for FibTimeZones {
             ctx.set_stroke_width(1.5);
 
             ctx.begin_path();
-            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

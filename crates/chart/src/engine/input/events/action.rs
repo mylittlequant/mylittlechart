@@ -29,7 +29,7 @@ use super::drag_mode::DragMode;
 ///     _ => {}
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ChartInputAction {
     /// Pan the chart by a delta amount.
     ///
@@ -169,6 +169,7 @@ pub enum ChartInputAction {
     ///
     /// Used as a placeholder when processing events that
     /// don't result in any chart action.
+    #[default]
     None,
 }
 
@@ -204,16 +205,11 @@ impl ChartInputAction {
     }
 }
 
-impl Default for ChartInputAction {
-    fn default() -> Self {
-        ChartInputAction::None
-    }
-}
-
 /// Mouse button identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MouseButton {
     /// Left mouse button (primary).
+    #[default]
     Left,
     /// Right mouse button (secondary/context).
     Right,
@@ -221,17 +217,11 @@ pub enum MouseButton {
     Middle,
 }
 
-impl Default for MouseButton {
-    fn default() -> Self {
-        MouseButton::Left
-    }
-}
-
 /// Keyboard key codes.
 ///
 /// This enum covers the common keys needed for chart shortcuts.
 /// Applications should map their platform key codes to these values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum KeyCode {
     // Letters
     /// A key
@@ -382,13 +372,8 @@ pub enum KeyCode {
     BracketRight,
 
     /// Unknown or unmapped key
+    #[default]
     Unknown,
-}
-
-impl Default for KeyCode {
-    fn default() -> Self {
-        KeyCode::Unknown
-    }
 }
 
 /// Modifier key state.

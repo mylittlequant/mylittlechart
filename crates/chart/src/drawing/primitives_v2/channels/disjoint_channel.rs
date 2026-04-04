@@ -377,7 +377,7 @@ impl Primitive for DisjointChannel {
 
             for (px, py) in [(l1_x1, l1_y1), (l1_x2, l1_y2), (l2_x1, l2_y1), (l2_x2, l2_y2)] {
                 ctx.begin_path();
-                ctx.arc(px, py, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(px, py, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -386,7 +386,7 @@ impl Primitive for DisjointChannel {
             let cx = (l1_x1 + l1_x2 + l2_x1 + l2_x2) / 4.0;
             let cy = (l1_y1 + l1_y2 + l2_y1 + l2_y2) / 4.0;
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -442,7 +442,7 @@ impl Primitive for DisjointChannel {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -450,7 +450,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_disjoint_channel(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.get(0).copied().unwrap_or((0.0, 100.0));
+    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 100.0));
     let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 20.0, price1 * 1.05));
 
     if points.len() >= 4 {

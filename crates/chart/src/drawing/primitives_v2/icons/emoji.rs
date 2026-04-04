@@ -1103,7 +1103,7 @@ impl Primitive for Emoji {
             (cx - rx, cy + ry, 3), // bottom-left
         ];
         for (corner_x, corner_y, idx) in corners {
-            if ((sx - corner_x).powi(2) + (sy - corner_y).powi(2)).sqrt() < CONTROL_POINT_RADIUS as f64 + 4.0 {
+            if ((sx - corner_x).powi(2) + (sy - corner_y).powi(2)).sqrt() < CONTROL_POINT_RADIUS + 4.0 {
                 return HitTestResult::ControlPoint(ControlPointType::Corner(idx));
             }
         }
@@ -1116,13 +1116,13 @@ impl Primitive for Emoji {
             (cx - rx, cy, 3), // left
         ];
         for (ex, ey, idx) in edges {
-            if ((sx - ex).powi(2) + (sy - ey).powi(2)).sqrt() < CONTROL_POINT_RADIUS as f64 + 4.0 {
+            if ((sx - ex).powi(2) + (sy - ey).powi(2)).sqrt() < CONTROL_POINT_RADIUS + 4.0 {
                 return HitTestResult::ControlPoint(ControlPointType::Edge(idx));
             }
         }
 
         // Check center (move point)
-        if ((sx - cx).powi(2) + (sy - cy).powi(2)).sqrt() < CONTROL_POINT_RADIUS as f64 + 4.0 {
+        if ((sx - cx).powi(2) + (sy - cy).powi(2)).sqrt() < CONTROL_POINT_RADIUS + 4.0 {
             return HitTestResult::ControlPoint(ControlPointType::Move);
         }
 
@@ -1197,7 +1197,7 @@ impl Primitive for Emoji {
             ];
             for (corner_x, corner_y) in corners {
                 ctx.begin_path();
-                ctx.arc(corner_x, corner_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(corner_x, corner_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -1211,14 +1211,14 @@ impl Primitive for Emoji {
             ];
             for (ex, ey) in edges {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
 
             // Draw center move handle
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

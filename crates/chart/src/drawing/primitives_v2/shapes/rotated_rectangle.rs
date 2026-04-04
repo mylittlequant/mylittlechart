@@ -308,7 +308,7 @@ impl Primitive for RotatedRectangle {
             // Corner control points
             for (x, y) in &screen_corners {
                 ctx.begin_path();
-                ctx.arc(*x, *y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(*x, *y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -317,7 +317,7 @@ impl Primitive for RotatedRectangle {
             let cx = ctx.bar_to_x(self.center_bar);
             let cy = ctx.price_to_y(self.center_price);
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -362,7 +362,7 @@ impl Primitive for RotatedRectangle {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 /// Check if point is inside a quadrilateral
@@ -400,7 +400,7 @@ fn create_rotated_rectangle(points: &[(f64, f64)], color: &str) -> Box<dyn Primi
     if points.len() >= 3 {
         Box::new(RotatedRectangle::from_points(points[0], points[1], points[2], color))
     } else {
-        let (center_bar, center_price) = points.get(0).copied().unwrap_or((0.0, 100.0));
+        let (center_bar, center_price) = points.first().copied().unwrap_or((0.0, 100.0));
         Box::new(RotatedRectangle::new(center_bar, center_price, 10.0, center_price * 0.03, 0.0, color))
     }
 }

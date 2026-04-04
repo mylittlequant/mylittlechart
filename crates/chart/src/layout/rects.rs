@@ -304,7 +304,7 @@ impl ChartAreaLayout {
 /// SubPane is a special case - it's like Chart but with its own Y-axis coordinate system.
 /// The X-axis (bar index) is shared with the main chart, but Y-axis (price/value)
 /// uses the sub-pane's own price scale.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ChartHitZone {
     /// Main chart area (candles/series)
     Chart,
@@ -320,13 +320,8 @@ pub enum ChartHitZone {
     /// Scale corner (A/M, lin/log/% buttons)
     ScaleCorner,
     /// Outside all areas
+    #[default]
     None,
-}
-
-impl Default for ChartHitZone {
-    fn default() -> Self {
-        ChartHitZone::None
-    }
 }
 
 impl ChartHitZone {

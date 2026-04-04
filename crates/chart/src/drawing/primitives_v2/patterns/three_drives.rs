@@ -65,7 +65,7 @@ impl Primitive for ThreeDrives {
     fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let screen: Vec<_> = self.points.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
         for (i, &(x, y)) in screen.iter().enumerate() {
-            if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64 { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
+            if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
         for i in 0..6 {
             if point_to_line_dist(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
@@ -190,7 +190,7 @@ impl Primitive for ThreeDrives {
             ctx.set_stroke_width(1.5);
             for (x, y) in &screen {
                 ctx.begin_path();
-                ctx.arc(*x, *y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(*x, *y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }

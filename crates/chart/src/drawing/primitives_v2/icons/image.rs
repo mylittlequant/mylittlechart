@@ -152,7 +152,7 @@ impl Primitive for Image {
         let rx = (vp.bar_to_x_f64(self.center_bar + self.radius_bars) - cx).abs();
         let ry = (vp.price_to_y(self.center_price + self.radius_price, ps.price_min, ps.price_max) - cy).abs();
 
-        let hit_radius = CONTROL_POINT_RADIUS as f64 + 4.0;
+        let hit_radius = CONTROL_POINT_RADIUS + 4.0;
 
         // Check corner control points first (higher priority for diagonal resize)
         let corners = [
@@ -287,7 +287,7 @@ impl Primitive for Image {
             ];
             for (ex, ey) in corners {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
@@ -301,14 +301,14 @@ impl Primitive for Image {
             ];
             for (ex, ey) in edges {
                 ctx.begin_path();
-                ctx.arc(ex, ey, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(ex, ey, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }
 
             // Draw center move handle
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

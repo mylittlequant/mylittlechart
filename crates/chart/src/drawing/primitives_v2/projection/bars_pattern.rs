@@ -143,19 +143,19 @@ impl Primitive for BarsPattern {
 
             // Source bar 1
             ctx.begin_path();
-            ctx.arc(x1, mid_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x1, mid_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Source bar 2
             ctx.begin_path();
-            ctx.arc(x2, mid_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x2, mid_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
             // Target bar
             ctx.begin_path();
-            ctx.arc(x3, mid_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(x3, mid_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }

@@ -232,7 +232,7 @@ impl Primitive for Arc {
 
             // Center point
             ctx.begin_path();
-            ctx.arc(cx, cy, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(cx, cy, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
@@ -240,7 +240,7 @@ impl Primitive for Arc {
             let start_x = cx + radius * start_rad.cos();
             let start_y = cy + radius * start_rad.sin();
             ctx.begin_path();
-            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(start_x, start_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
 
@@ -248,7 +248,7 @@ impl Primitive for Arc {
             let end_x = cx + radius * end_rad.cos();
             let end_y = cy + radius * end_rad.sin();
             ctx.begin_path();
-            ctx.arc(end_x, end_y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+            ctx.arc(end_x, end_y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
             ctx.fill();
             ctx.stroke();
         }
@@ -290,7 +290,7 @@ impl Primitive for Arc {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
@@ -298,7 +298,7 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // =============================================================================
 
 fn create_arc(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (center_bar, center_price) = points.get(0).copied().unwrap_or((0.0, 100.0));
+    let (center_bar, center_price) = points.first().copied().unwrap_or((0.0, 100.0));
     let radius_bars = if points.len() >= 2 {
         (points[1].0 - center_bar).abs().max(1.0)
     } else {

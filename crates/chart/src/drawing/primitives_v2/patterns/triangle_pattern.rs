@@ -44,7 +44,7 @@ impl Primitive for TrianglePattern {
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar1, self.price1_top), (self.bar1, self.price1_bottom), (self.bar2, self.price2_top), (self.bar2, self.price2_bottom)] }
     fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.get(0) { self.bar1 = b; self.price1_top = p; }
+        if let Some(&(b, p)) = pts.first() { self.bar1 = b; self.price1_top = p; }
         if let Some(&(_, p)) = pts.get(1) { self.price1_bottom = p; }
         if let Some(&(b, p)) = pts.get(2) { self.bar2 = b; self.price2_top = p; }
         if let Some(&(_, p)) = pts.get(3) { self.price2_bottom = p; }
@@ -67,7 +67,7 @@ impl Primitive for TrianglePattern {
         let pts = [(self.bar1, self.price1_top), (self.bar1, self.price1_bottom), (self.bar2, self.price2_top), (self.bar2, self.price2_bottom)];
         let screen: Vec<_> = pts.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
         for (i, &(x, y)) in screen.iter().enumerate() {
-            if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) as f64 { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
+            if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
         // Check top and bottom lines
         if point_to_line_dist(sx, sy, screen[0].0, screen[0].1, screen[2].0, screen[2].1) < HIT_TOLERANCE { return HitTestResult::Body; }
@@ -183,7 +183,7 @@ impl Primitive for TrianglePattern {
             ctx.set_stroke_width(1.5);
             for (x, y) in [(x1, y1_top), (x1, y1_bot), (x2, y2_top), (x2, y2_bot)] {
                 ctx.begin_path();
-                ctx.arc(x, y, CONTROL_POINT_RADIUS as f64, 0.0, std::f64::consts::TAU);
+                ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
                 ctx.fill();
                 ctx.stroke();
             }

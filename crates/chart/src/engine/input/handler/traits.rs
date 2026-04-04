@@ -28,7 +28,7 @@ use crate::ui::modal_settings::SubPaneButton;
 ///     _ => {}
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum HitResult {
     /// Main chart area.
     ///
@@ -110,13 +110,8 @@ pub enum HitResult {
     /// No interactive element hit.
     ///
     /// Outside all interactive regions.
+    #[default]
     None,
-}
-
-impl Default for HitResult {
-    fn default() -> Self {
-        HitResult::None
-    }
 }
 
 impl HitResult {

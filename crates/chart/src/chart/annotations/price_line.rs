@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 /// Line style for price lines
 ///
 /// Each style has a specific dash pattern that scales with line width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[repr(u8)]
 #[serde(rename_all = "lowercase")]
 pub enum LineStyle {
     /// Solid continuous line
+    #[default]
     Solid = 0,
     /// Dotted line: [lineWidth, lineWidth]
     Dotted = 1,
@@ -22,12 +23,6 @@ pub enum LineStyle {
     LargeDashed = 3,
     /// Sparse dotted line: [lineWidth, 4×lineWidth]
     SparseDotted = 4,
-}
-
-impl Default for LineStyle {
-    fn default() -> Self {
-        Self::Solid
-    }
 }
 
 impl LineStyle {

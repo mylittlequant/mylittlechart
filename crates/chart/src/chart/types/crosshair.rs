@@ -14,10 +14,11 @@ pub use super::super::annotations::price_line::LineStyle;
 // =============================================================================
 
 /// Crosshair behavior mode
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum CrosshairMode {
     /// Follows mouse exactly (no magnet)
+    #[default]
     Normal = 0,
     /// Strong magnet: snaps to candle body (open + close)
     Magnet = 1,
@@ -25,12 +26,6 @@ pub enum CrosshairMode {
     Hidden = 2,
     /// Light magnet: snaps to nearest OHLC value (body + pivots)
     MagnetOHLC = 3,
-}
-
-impl Default for CrosshairMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 // =============================================================================
