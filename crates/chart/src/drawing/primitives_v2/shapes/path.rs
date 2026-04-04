@@ -103,14 +103,11 @@ impl Primitive for Path {
     }
 
     fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
-        match point_type {
-            ControlPointType::Index(i) => {
-                if let Some(p) = self.points_data.get_mut(i as usize) {
-                    p.0 = bar;
-                    p.1 = price;
-                }
+        if let ControlPointType::Index(i) = point_type {
+            if let Some(p) = self.points_data.get_mut(i as usize) {
+                p.0 = bar;
+                p.1 = price;
             }
-            _ => {}
         }
     }
 

@@ -11,6 +11,12 @@ pub struct DarkCloudCover {
     value: f64,
 }
 
+impl Default for DarkCloudCover {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DarkCloudCover {
     pub fn new() -> Self {
         Self {

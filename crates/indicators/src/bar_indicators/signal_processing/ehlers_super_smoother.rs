@@ -183,7 +183,7 @@ impl EhlersSuperSmoother {
             current_price
         };
         
-        let prev_ss = if self.values.len() >= 1 {
+        let prev_ss = if !self.values.is_empty() {
             self.values[self.values.len() - 1]
         } else {
             current_price
@@ -196,12 +196,12 @@ impl EhlersSuperSmoother {
         };
         
         // Применяем формулу Super Smoother
-        let ss = self.a1 * current_price 
+        
+        
+        self.a1 * current_price 
                + self.a2 * prev_price 
                + self.b1 * prev_ss 
-               + self.b2 * prev2_ss;
-        
-        ss
+               + self.b2 * prev2_ss
     }
     
     /// Рассчитать производные (наклон и ускорение)

@@ -186,7 +186,7 @@ impl MasterIndicatorCatalog {
                 // Register main ID
                 id_to_categories
                     .entry(id.to_string())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(category);
 
                 // Register all aliases from signature
@@ -194,7 +194,7 @@ impl MasterIndicatorCatalog {
                     for alias in &sig.aliases {
                         id_to_categories
                             .entry(alias.clone())
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(category);
                     }
                 }

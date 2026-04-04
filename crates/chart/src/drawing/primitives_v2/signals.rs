@@ -18,6 +18,7 @@ use super::annotations::triangle_down::TriangleDown;
 
 /// Signal type for strategy markers
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum SignalType {
     /// Buy signal (bullish)
     Buy,
@@ -32,14 +33,10 @@ pub enum SignalType {
     /// Exit point
     Exit,
     /// Custom marker
+    #[default]
     Custom,
 }
 
-impl Default for SignalType {
-    fn default() -> Self {
-        Self::Custom
-    }
-}
 
 impl SignalType {
     pub fn as_str(&self) -> &'static str {

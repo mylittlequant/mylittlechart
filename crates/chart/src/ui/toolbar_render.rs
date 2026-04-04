@@ -482,7 +482,7 @@ fn fill_rounded_rect(ctx: &mut dyn RenderContext, r: &ToolbarRect, radius: f64) 
 }
 
 /// Choose the appropriate text/icon colour based on state.
-fn pick_color<'a>(is_hovered: bool, is_active: bool, theme: &'a ToolbarTheme) -> &'a str {
+fn pick_color(is_hovered: bool, is_active: bool, theme: &ToolbarTheme) -> &str {
     if is_active {
         &theme.item_text_active
     } else if is_hovered {

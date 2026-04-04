@@ -11,6 +11,12 @@ pub struct EveningStar {
     value: f64,
 }
 
+impl Default for EveningStar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EveningStar {
     pub fn new() -> Self {
         Self {

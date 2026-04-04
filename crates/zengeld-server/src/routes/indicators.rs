@@ -38,7 +38,7 @@ async fn get_indicators(
             "indicators": instances,
         }))
     } else {
-        Json(serde_json::to_value(&*snapshot).unwrap_or_else(|_| serde_json::Value::Null))
+        Json(serde_json::to_value(&*snapshot).unwrap_or(serde_json::Value::Null))
     }
 }
 

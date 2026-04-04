@@ -134,7 +134,7 @@ impl TextInputManager {
     /// Whether the cursor should be visible right now (500 ms blink).
     pub fn cursor_visible(&self, now_ms: u64) -> bool {
         let elapsed = now_ms.wrapping_sub(self.blink_reset_time);
-        (elapsed / 500) % 2 == 0
+        (elapsed / 500).is_multiple_of(2)
     }
 
     // =========================================================================

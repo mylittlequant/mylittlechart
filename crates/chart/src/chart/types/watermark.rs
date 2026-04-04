@@ -12,37 +12,33 @@ use serde::{Deserialize, Serialize};
 /// Horizontal alignment of watermark
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum HorzAlign {
     Left,
+    #[default]
     Center,
     Right,
 }
 
-impl Default for HorzAlign {
-    fn default() -> Self {
-        Self::Center
-    }
-}
 
 /// Vertical alignment of watermark
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum VertAlign {
     Top,
+    #[default]
     Center,
     Bottom,
 }
 
-impl Default for VertAlign {
-    fn default() -> Self {
-        Self::Center
-    }
-}
 
 /// Font style for watermark text
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FontStyle {
+    #[default]
     Normal,
     Italic,
     Bold,
@@ -50,11 +46,6 @@ pub enum FontStyle {
     BoldItalic,
 }
 
-impl Default for FontStyle {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 // =============================================================================
 // Watermark Line

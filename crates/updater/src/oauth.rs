@@ -52,7 +52,7 @@ fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(&["/c", "start", "", url])
+            .args(["/c", "start", "", url])
             .spawn()
             .map_err(|e| format!("Failed to open browser: {}", e))?;
     }

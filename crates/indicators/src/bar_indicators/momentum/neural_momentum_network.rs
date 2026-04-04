@@ -248,7 +248,7 @@ impl NeuralMomentumNetwork {
         let target = self.calculate_target(close);
         
         // 4. Обратное распространение ошибки
-        if self.targets.len() > 0 {
+        if !self.targets.is_empty() {
             self.backward_pass(&features, target);
         }
         
@@ -622,7 +622,7 @@ mod rand {
     use std::cell::Cell;
     
     thread_local! {
-        static SEED: Cell<u64> = Cell::new(1);
+        static SEED: Cell<u64> = const { Cell::new(1) };
     }
     
     pub fn random<T>() -> T 

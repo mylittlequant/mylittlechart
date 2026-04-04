@@ -63,7 +63,7 @@ impl VolumeRateOfChange {
         self.volume_buffer.push(volume);
         
         // Проверяем, можем ли рассчитать VROC
-        if self.volume_buffer.len() >= self.period + 1 {
+        if self.volume_buffer.len() > self.period {
             let current_volume = volume;
             let past_volume = self.volume_buffer[self.volume_buffer.len() - self.period - 1];
             

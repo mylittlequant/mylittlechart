@@ -522,7 +522,7 @@ impl TimeScale {
         let mut step_days: i32 = 0;
         for &step in Self::DAY_STEPS.iter().rev() {
             let cell_width = day_width_px * step as f64;
-            if cell_width >= Self::MIN_CELL_WIDTH && cell_width <= Self::MAX_CELL_WIDTH {
+            if (Self::MIN_CELL_WIDTH..=Self::MAX_CELL_WIDTH).contains(&cell_width) {
                 step_days = step;
                 break;
             }

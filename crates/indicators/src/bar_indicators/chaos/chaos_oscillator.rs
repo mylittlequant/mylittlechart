@@ -165,7 +165,7 @@ impl ChaosOscillator {
     /// Определить режим рынка
     fn determine_market_regime(&mut self) {
         let hurst = self.hurst_exponent.hurst_exponent();
-        let is_trending = hurst > 0.55 || hurst < 0.45;
+        let is_trending = !(0.45..=0.55).contains(&hurst);
         let is_chaotic = self.chaos_index > 0.6;
         
         self.market_regime = match (is_trending, is_chaotic) {

@@ -119,7 +119,7 @@ impl ButterworthFilter {
         }
         
         // Добавляем новое входное значение
-        if self.x_buffer.len() >= self.order + 1 {
+        if self.x_buffer.len() > self.order {
             self.x_buffer.remove(0);
         }
         if !self.x_buffer.is_full() {
@@ -295,7 +295,7 @@ impl ButterworthFilter {
     /// Проектирование низкочастотного фильтра высокого порядка
     fn design_higher_order_lowpass(&mut self) {
         // Используем каскад секций второго порядка
-        let sections = (self.order + 1) / 2;
+        let sections = self.order.div_ceil(2);
         
         // Для простоты используем один эквивалентный фильтр второго порядка
         let wc = 2.0 * PI * self.cutoff_frequency;
@@ -317,7 +317,7 @@ impl ButterworthFilter {
     
     /// Проектирование высокочастотного фильтра высокого порядка
     fn design_higher_order_highpass(&mut self) {
-        let sections = (self.order + 1) / 2;
+        let sections = self.order.div_ceil(2);
         let wc = 2.0 * PI * self.cutoff_frequency;
         let wc_tan = (wc / 2.0).tan();
         let k = wc_tan;

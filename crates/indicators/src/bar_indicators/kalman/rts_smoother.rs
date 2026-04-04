@@ -9,6 +9,12 @@ pub struct RtsSmoother {
     last_value: f64,
 }
 
+impl Default for RtsSmoother {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RtsSmoother {
     pub fn new() -> Self {
         Self {

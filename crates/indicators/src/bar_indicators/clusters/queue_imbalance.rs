@@ -6,6 +6,12 @@ pub struct QueueImbalance {
     value: f64,
 }
 
+impl Default for QueueImbalance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QueueImbalance {
     pub fn new() -> Self {
         Self { value: 0.0 }

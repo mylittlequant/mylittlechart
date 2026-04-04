@@ -686,8 +686,7 @@ fn draw_visibility_tab(
             let slider_field_id = format!("tf_{}_slider", i);
             let hovered = state.slider_drag.as_ref()
                 .map(|d| d.field_id == slider_field_id)
-                .unwrap_or_else(|| state.hovered_item_id.as_ref()
-                    .map(|s| s.as_str()) == Some(slider_field_id.as_str()));
+                .unwrap_or_else(|| state.hovered_item_id.as_deref() == Some(slider_field_id.as_str()));
 
             // Apply floating preview during drag
             let (display_min, display_max) = if let Some(ref drag) = state.slider_drag {

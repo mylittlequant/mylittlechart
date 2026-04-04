@@ -6,6 +6,12 @@ pub struct TrueRange {
     value: f64,
 }
 
+impl Default for TrueRange {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrueRange {
     pub fn new() -> Self {
         Self {

@@ -44,6 +44,12 @@ pub struct UkfResult {
     pub effective_sample_size: f64, // Эффективный размер выборки
 }
 
+impl Default for UkfResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UkfResult {
     pub fn new() -> Self {
         Self {

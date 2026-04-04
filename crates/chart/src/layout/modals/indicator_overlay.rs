@@ -56,14 +56,14 @@ pub fn render_indicator_overlay(
             frame_theme,
             toolbar_theme,
         );
-        result.dropdown_rect = Some(dropdown_result.0.clone());
+        result.dropdown_rect = Some(dropdown_result.0);
         result.indicator_rows = dropdown_result.1;
 
         let close_button_y = dropdown_result.0.y + dropdown_result.0.height + 4.0;
         let close_button_width = button_padding_h * 2.0 + chevron_size;
 
         let close_button_rect = WidgetRect::new(button_x, close_button_y, close_button_width, button_height);
-        result.close_button_rect = Some(close_button_rect.clone());
+        result.close_button_rect = Some(close_button_rect);
 
         // Background matching overlay tab style
         let bg_color = apply_opacity(&toolbar_theme.background, 0.75);
@@ -98,7 +98,7 @@ pub fn render_indicator_overlay(
         let button_width = button_padding_h * 2.0 + chevron_size + gap + count_width;
 
         let button_rect = WidgetRect::new(button_x, button_y, button_width, button_height);
-        result.button_rect = button_rect.clone();
+        result.button_rect = button_rect;
 
         // Background matching overlay tab style
         let bg_color = apply_opacity(&toolbar_theme.background, 0.75);

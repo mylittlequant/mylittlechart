@@ -13,8 +13,10 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы Fibonacci Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum FibonacciChannelMode {
     /// Retracement - каналы на откатных уровнях (23.6-38.2%, 38.2-61.8%)
+    #[default]
     Retracement,
     /// Extension - каналы на расширяющих уровнях (100-161.8%, 161.8-261.8%)
     Extension,
@@ -22,11 +24,6 @@ pub enum FibonacciChannelMode {
     Combined,
 }
 
-impl Default for FibonacciChannelMode {
-    fn default() -> Self {
-        FibonacciChannelMode::Retracement
-    }
-}
 
 /// Fibonacci Channel - канал между двумя уровнями Фибоначчи
 #[derive(Debug, Clone, Copy)]
@@ -180,7 +177,7 @@ impl FibonacciChannels {
         self.channels.clear();
         
         // Клонируем levels чтобы избежать проблем с заимствованием
-        let levels_copy = self.current_levels.clone();
+        let levels_copy = self.current_levels;
         
         if let Some(levels) = levels_copy {
             match self.mode {
@@ -271,12 +268,11 @@ impl FibonacciChannels {
     fn set_primary_channel(&mut self) {
         // Приоритет каналам с золотым сечением (61.8%, 38.2%)
         for channel in &self.channels {
-            if channel.level_name.contains("61.8") || channel.level_name.contains("38.2") {
-                if channel.is_active {
+            if (channel.level_name.contains("61.8") || channel.level_name.contains("38.2"))
+                && channel.is_active {
                     self.primary_channel = *channel;
                     return;
                 }
-            }
         }
         
         // Если нет золотого сечения, берем первый активный канал

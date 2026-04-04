@@ -605,22 +605,22 @@ impl TimeframeVisibilityConfig {
         match timeframe {
             "tick" | "ticks" => self.ticks,
             "second" | "seconds" | "s" => {
-                self.seconds.map_or(false, |(min, max)| value >= min && value <= max)
+                self.seconds.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "minute" | "minutes" | "m" => {
-                self.minutes.map_or(false, |(min, max)| value >= min && value <= max)
+                self.minutes.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "hour" | "hours" | "h" => {
-                self.hours.map_or(false, |(min, max)| value >= min && value <= max)
+                self.hours.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "day" | "days" | "d" | "D" => {
-                self.days.map_or(false, |(min, max)| value >= min && value <= max)
+                self.days.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "week" | "weeks" | "w" | "W" => {
-                self.weeks.map_or(false, |(min, max)| value >= min && value <= max)
+                self.weeks.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "month" | "months" | "M" => {
-                self.months.map_or(false, |(min, max)| value >= min && value <= max)
+                self.months.is_some_and(|(min, max)| value >= min && value <= max)
             }
             "range" | "ranges" => self.ranges,
             _ => true
@@ -1417,6 +1417,7 @@ pub struct SettingsTemplate {
 
 /// Style portion of a template
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct TemplateStyle {
     /// Main color
     pub color: Option<String>,
@@ -1439,20 +1440,6 @@ pub struct TemplateStyle {
     pub style_properties: Vec<(String, PropertyValue)>,
 }
 
-impl Default for TemplateStyle {
-    fn default() -> Self {
-        Self {
-            color: None,
-            width: None,
-            line_style: None,
-            fill_color: None,
-            fill_opacity: None,
-            show_labels: None,
-            show_prices: None,
-            style_properties: Vec::new(),
-        }
-    }
-}
 
 impl SettingsTemplate {
     /// Create a new template with given name and type

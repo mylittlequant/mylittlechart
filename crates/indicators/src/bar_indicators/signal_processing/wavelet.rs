@@ -27,6 +27,12 @@ pub struct WaveletCoefficients {
     pub wavelet_entropy: f64,                           // Вейвлет-энтропия
 }
 
+impl Default for WaveletCoefficients {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WaveletCoefficients {
     pub fn new() -> Self {
         Self {
@@ -124,10 +130,10 @@ impl WaveletTransform {
         match self.wavelet_type {
             WaveletType::Haar => {
                 // Фильтры Хаара
-                self.low_pass_filter.push(0.7071067811865476);
-                self.low_pass_filter.push(0.7071067811865476);
-                self.high_pass_filter.push(-0.7071067811865476);
-                self.high_pass_filter.push(0.7071067811865476);
+                self.low_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
+                self.low_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
+                self.high_pass_filter.push(-std::f64::consts::FRAC_1_SQRT_2);
+                self.high_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
             },
             
             WaveletType::Daubechies4 => {
@@ -194,10 +200,10 @@ impl WaveletTransform {
             
             _ => {
                 // По умолчанию используем Хаара
-                self.low_pass_filter.push(0.7071067811865476);
-                self.low_pass_filter.push(0.7071067811865476);
-                self.high_pass_filter.push(-0.7071067811865476);
-                self.high_pass_filter.push(0.7071067811865476);
+                self.low_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
+                self.low_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
+                self.high_pass_filter.push(-std::f64::consts::FRAC_1_SQRT_2);
+                self.high_pass_filter.push(std::f64::consts::FRAC_1_SQRT_2);
             }
         }
     }
@@ -323,8 +329,8 @@ impl WaveletTransform {
         match self.wavelet_type {
             WaveletType::Morlet => {
                 // Вейвлет Морле: e^(iωt) * e^(-t²/2)
-                let real_part = (self.morlet_omega * t).cos() * (-t * t / 2.0).exp();
-                real_part
+                
+                (self.morlet_omega * t).cos() * (-t * t / 2.0).exp()
             },
             
             WaveletType::Mexican => {

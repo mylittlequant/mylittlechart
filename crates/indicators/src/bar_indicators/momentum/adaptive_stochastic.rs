@@ -417,11 +417,10 @@ impl AdaptiveStochastic {
             if result.trend_bias >= 0 {
                 return 1; // Покупка в перепроданности
             }
-        } else if result.k_percent >= result.overbought_level && result.d_percent >= result.overbought_level {
-            if result.trend_bias <= 0 {
+        } else if result.k_percent >= result.overbought_level && result.d_percent >= result.overbought_level
+            && result.trend_bias <= 0 {
                 return -1; // Продажа в перекупленности
             }
-        }
         
         0
     }

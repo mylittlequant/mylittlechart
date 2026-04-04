@@ -15,18 +15,15 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Price Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum PriceChannelMode {
     /// Raw - сырые max/min без сглаживания (как Donchian)
+    #[default]
     Raw,
     /// Smoothed - с MA сглаживанием max/min
     Smoothed,
 }
 
-impl Default for PriceChannelMode {
-    fn default() -> Self {
-        PriceChannelMode::Raw
-    }
-}
 
 /// High-Performance Price Channels
 #[derive(Debug, Clone)]

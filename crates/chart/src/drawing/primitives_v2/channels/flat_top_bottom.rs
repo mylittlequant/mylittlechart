@@ -17,18 +17,15 @@ use super::super::{
 
 /// Type of flat line
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum FlatType {
     /// Flat line on top (descending triangle)
+    #[default]
     Top,
     /// Flat line on bottom (ascending triangle)
     Bottom,
 }
 
-impl Default for FlatType {
-    fn default() -> Self {
-        FlatType::Top
-    }
-}
 
 /// Flat Top/Bottom - channel with one horizontal line
 #[derive(Clone, Debug, Serialize, Deserialize)]

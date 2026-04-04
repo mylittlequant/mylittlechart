@@ -849,9 +849,7 @@ impl ChartApp {
                                 } else {
                                     DualSliderHandle::Max
                                 }
-                            } else {
-                                if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
-                            };
+                            } else if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max };
 
                             self.panel_app.compare_settings_state.start_dual_slider_drag(
                                 &field_id, track_x, track_width, min_val, max_val, handle, x,
@@ -2369,7 +2367,7 @@ impl ChartApp {
         }
         if self.panel_app.preset_name_input.text_select_dragging {
             // Update text selection cursor from mouse X position.
-            if let Some(ref pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
+            if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
                 let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(
                     &pni.char_x_positions,
                     x,
@@ -2385,7 +2383,7 @@ impl ChartApp {
         }
         if self.panel_app.chart_browser.search_text_select_dragging {
             // Update search text selection cursor from mouse X position.
-            if let Some(ref br) = self.frame_result.as_ref().and_then(|r| r.chart_browser.as_ref()) {
+            if let Some(br) = self.frame_result.as_ref().and_then(|r| r.chart_browser.as_ref()) {
                 let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(
                     &br.search_char_positions,
                     x,
@@ -4046,28 +4044,28 @@ impl ChartApp {
                                 if layout_idx < overlay_results_split.len() {
                                     use zengeld_chart::ui::modal_settings::SubPaneButton;
                                     let overlay = &overlay_results_split[layout_idx];
-                                    let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::Delete)
-                                    } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.hide_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::Hide)
-                                    } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.move_up_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::MoveUp)
-                                    } else if overlay.move_down_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.move_down_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::MoveDown)
-                                    } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.expand_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::Expand)
-                                    } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.restore_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::Restore)
                                     } else {
                                         None
                                     };
-                                    let hovered_left = if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    let hovered_left = if overlay.left_eye_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorEye)
-                                    } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.left_alert_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorAlert)
-                                    } else if overlay.left_settings_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.left_settings_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorSettings)
-                                    } else if overlay.left_delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                                    } else if overlay.left_delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                                         Some(SubPaneButton::IndicatorDelete)
                                     } else {
                                         None
@@ -4382,28 +4380,28 @@ impl ChartApp {
                     if layout_idx < overlay_results_mm.len() {
                         use zengeld_chart::ui::modal_settings::SubPaneButton;
                         let overlay = &overlay_results_mm[layout_idx];
-                        let hovered = if overlay.delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::Delete)
-                        } else if overlay.hide_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.hide_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::Hide)
-                        } else if overlay.move_up_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.move_up_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::MoveUp)
-                        } else if overlay.move_down_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.move_down_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::MoveDown)
-                        } else if overlay.expand_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.expand_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::Expand)
-                        } else if overlay.restore_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.restore_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::Restore)
                         } else {
                             None
                         };
-                        let hovered_left = if overlay.left_eye_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        let hovered_left = if overlay.left_eye_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorEye)
-                        } else if overlay.left_alert_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.left_alert_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorAlert)
-                        } else if overlay.left_settings_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.left_settings_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorSettings)
-                        } else if overlay.left_delete_rect.as_ref().map_or(false, |r| r.contains(x, y)) {
+                        } else if overlay.left_delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
                             Some(SubPaneButton::IndicatorDelete)
                         } else {
                             None
@@ -4576,7 +4574,7 @@ impl ChartApp {
                 let action: OpacityScrollAction = if let Some(ref fr) = self.frame_result {
                     if let Some(ref cp) = fr.color_picker {
                         let slider_hit = if let Some(ref l1) = cp.l1_result {
-                            l1.opacity_slider_rect.as_ref().map_or(false, |r| r.contains(x, y))
+                            l1.opacity_slider_rect.as_ref().is_some_and(|r| r.contains(x, y))
                         } else if let Some(ref l2) = cp.l2_result {
                             l2.opacity_slider_rect.contains(x, y)
                         } else {
@@ -4875,8 +4873,8 @@ impl ChartApp {
                             }
                         }
                         // Check line_width slider when style tab is active
-                        if matches!(found, CmpScrollAction::Swallow) {
-                            if self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Style {
+                        if matches!(found, CmpScrollAction::Swallow)
+                            && self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Style {
                                 if let Some(ref lw_track) = cs.line_width_slider {
                                     let hit_x0 = lw_track.track_x - 6.0;
                                     let hit_x1 = lw_track.track_x + lw_track.track_width + 6.0;
@@ -4891,7 +4889,6 @@ impl ChartApp {
                                     }
                                 }
                             }
-                        }
                         found
                     } else {
                         CmpScrollAction::Swallow
@@ -6491,12 +6488,11 @@ impl ChartApp {
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
             // Allow Ctrl+A (SelectAll) to reach the recovery key display box.
-            if self.panel_app.user_settings_state.recovery_key_display_focused {
-                if matches!(key, KeyPress::SelectAll) {
+            if self.panel_app.user_settings_state.recovery_key_display_focused
+                && matches!(key, KeyPress::SelectAll) {
                     self.panel_app.user_settings_state.recovery_key_display_editing.select_all();
                     return;
                 }
-            }
             return;
         }
 
@@ -6843,7 +6839,6 @@ impl ChartApp {
                 self.modal_state.symbol_search_results =
                     crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
             }
-            return;
         }
     }
 
@@ -6973,10 +6968,8 @@ impl ChartApp {
                             }
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.insert_at(*index, type_id, points, data);
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.insert_at(*index, type_id, points, data);
                 }
             }
             Command::DeletePrimitive { index, .. } => {
@@ -6986,10 +6979,8 @@ impl ChartApp {
                             group.primitives.remove(*index);
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.delete_at(*index);
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.delete_at(*index);
                 }
             }
             Command::DeleteAllPrimitives { .. } => {
@@ -6997,10 +6988,8 @@ impl ChartApp {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
                         group.primitives.clear();
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.clear();
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.clear();
                 }
             }
             Command::RestoreAllPrimitives { primitives } => {
@@ -7016,12 +7005,10 @@ impl ChartApp {
                             }
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.clear();
-                        for (i, (type_id, points, data)) in primitives.iter().enumerate() {
-                            w.drawing_manager.insert_at(i, type_id, points, data);
-                        }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.clear();
+                    for (i, (type_id, points, data)) in primitives.iter().enumerate() {
+                        w.drawing_manager.insert_at(i, type_id, points, data);
                     }
                 }
             }
@@ -7049,10 +7036,8 @@ impl ChartApp {
                             prim.data_mut().visible = *visible;
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.set_visibility_at(*index, *visible);
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.set_visibility_at(*index, *visible);
                 }
             }
             Command::SetPrimitiveLock { index, locked, .. } => {
@@ -7062,10 +7047,8 @@ impl ChartApp {
                             prim.data_mut().locked = *locked;
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.set_lock_at(*index, *locked);
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.set_lock_at(*index, *locked);
                 }
             }
             Command::ModifyPrimitiveData { index, new_data, .. } => {
@@ -7091,10 +7074,8 @@ impl ChartApp {
                             group.primitives.insert(insert_pos, prim);
                         }
                     }
-                } else {
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        w.drawing_manager.move_to_index(*old_index, *new_index);
-                    }
+                } else if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                    w.drawing_manager.move_to_index(*old_index, *new_index);
                 }
             }
             // Non-primitive commands: viewport, symbol, timeframe, chart type, indicators.
@@ -7740,13 +7721,11 @@ impl ChartApp {
                 // Toggle: close if same row already open, otherwise open.
                 if self.sidebar_state.watchlist_color_picker_open.map(|(i, _, _)| i) == Some(idx) {
                     self.sidebar_state.watchlist_color_picker_open = None;
-                } else {
-                    if let Some(ref sidebar_result) = self.last_sidebar_result {
-                        if let Some((_, row_rect)) = sidebar_result.watchlist_row_rects.get(idx) {
-                            let popup_x = row_rect.x;
-                            let popup_y = row_rect.y + row_rect.height;
-                            self.sidebar_state.watchlist_color_picker_open = Some((idx, popup_x, popup_y));
-                        }
+                } else if let Some(ref sidebar_result) = self.last_sidebar_result {
+                    if let Some((_, row_rect)) = sidebar_result.watchlist_row_rects.get(idx) {
+                        let popup_x = row_rect.x;
+                        let popup_y = row_rect.y + row_rect.height;
+                        self.sidebar_state.watchlist_color_picker_open = Some((idx, popup_x, popup_y));
                     }
                 }
             }
@@ -7949,7 +7928,7 @@ impl ChartApp {
             let current = &self.sidebar_state.performance_data.render_backend;
             let all = RenderBackend::all();
             let idx = all.iter().position(|b| b == current).unwrap_or(0);
-            let next = all[(idx + 1) % all.len()].clone();
+            let next = all[(idx + 1) % all.len()];
             eprintln!("[ChartApp] perf: backend -> {}", next.label());
             self.perf_actions.push(crate::PerfAction::SetBackend(next.label().to_string()));
             return;
@@ -9044,8 +9023,7 @@ impl ChartApp {
         }
 
         // === Preset name input modal clicks ===
-        if widget_id.starts_with("preset_name_input:") {
-            let rest = &widget_id["preset_name_input:".len()..];
+        if let Some(rest) = widget_id.strip_prefix("preset_name_input:") {
             match rest {
                 "save" => {
                     let name = self.panel_app.preset_name_input.name().to_string();
@@ -9088,7 +9066,7 @@ impl ChartApp {
                 }
                 "input" => {
                     // Click-to-cursor using pre-computed character positions
-                    if let Some(ref pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
+                    if let Some(pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
                         let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(
                             &pni.char_x_positions,
                             x,
@@ -9108,8 +9086,7 @@ impl ChartApp {
         }
 
         // === Chart browser modal clicks ===
-        if widget_id.starts_with("chart_browser:") {
-            let action = &widget_id["chart_browser:".len()..];
+        if let Some(action) = widget_id.strip_prefix("chart_browser:") {
             if action == "close" {
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = zengeld_chart::modal::ChartOpenModal::None;
@@ -9205,9 +9182,8 @@ impl ChartApp {
         }
 
         // === User settings modal clicks ===
-        if widget_id.starts_with("user_settings:") {
+        if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use zengeld_chart::ui::modal_settings::UserSettingsTab;
-            let action = &widget_id["user_settings:".len()..];
             match action {
                 "close" => {
                     self.panel_app.user_settings_state.close();
@@ -10343,8 +10319,7 @@ impl ChartApp {
         let screen_h = self.height as f64;
 
         // ── Instrument tab ────────────────────────────────────────────────────
-        if item_id.starts_with("instrument:") {
-            let field = &item_id["instrument:".len()..];
+        if let Some(field) = item_id.strip_prefix("instrument:") {
             match field {
                 "use_prev_close" => {
                     self.panel_app.chart_settings_state.instrument_use_prev_close =
@@ -10424,8 +10399,7 @@ impl ChartApp {
         }
 
         // ── Scales tab ────────────────────────────────────────────────────────
-        if item_id.starts_with("scales:") {
-            let field = &item_id["scales:".len()..];
+        if let Some(field) = item_id.strip_prefix("scales:") {
             match field {
                 "show_grid" => {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
@@ -10576,8 +10550,7 @@ impl ChartApp {
         }
 
         // ── Status Line tab ───────────────────────────────────────────────────
-        if item_id.starts_with("status:") {
-            let field = &item_id["status:".len()..];
+        if let Some(field) = item_id.strip_prefix("status:") {
             match field {
                 "dropdown_cycle:legend_position" => {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
@@ -10714,12 +10687,9 @@ impl ChartApp {
         }
 
         // ── Appearance tab ────────────────────────────────────────────────────
-        if item_id.starts_with("appearance:") {
-            let field = &item_id["appearance:".len()..];
-
+        if let Some(field) = item_id.strip_prefix("appearance:") {
             // Theme preset buttons
-            if field.starts_with("theme_") {
-                let theme_id = &field["theme_".len()..];
+            if let Some(theme_id) = field.strip_prefix("theme_") {
                 self.panel_app.theme_manager.set_preset(theme_id);
                 // Signal the App-level coordinator to propagate this change to all windows.
                 self.theme_changed = Some(theme_id.to_string());
@@ -10757,8 +10727,7 @@ impl ChartApp {
         }
 
         // ── Dropdown option selection ─────────────────────────────────────────
-        if item_id.starts_with("dropdown_option:") {
-            let rest = &item_id["dropdown_option:".len()..];
+        if let Some(rest) = item_id.strip_prefix("dropdown_option:") {
             let mut parts = rest.splitn(2, ':');
             let field = parts.next().unwrap_or("").to_string();
             let value = parts.next().unwrap_or("").to_string();
@@ -10875,8 +10844,7 @@ impl ChartApp {
         }
 
         // ── Top-level dropdown controls ───────────────────────────────────────
-        if item_id.starts_with("dropdown_cycle:") {
-            let name = &item_id["dropdown_cycle:".len()..];
+        if let Some(name) = item_id.strip_prefix("dropdown_cycle:") {
             match name {
                 "precision" => {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
@@ -10943,8 +10911,7 @@ impl ChartApp {
             return;
         }
 
-        if item_id.starts_with("dropdown_menu:") {
-            let name = &item_id["dropdown_menu:".len()..];
+        if let Some(name) = item_id.strip_prefix("dropdown_menu:") {
             self.panel_app.chart_settings_state.toggle_dropdown(name);
             eprintln!("[ChartApp] chart_settings dropdown_menu toggled: {}", name);
             return;
@@ -11810,8 +11777,7 @@ impl ChartApp {
         }
 
         // ── Style properties: style_prop:{id} ────────────────────────────────
-        if item_id.starts_with("style_prop:") {
-            let prop_id = &item_id["style_prop:".len()..];
+        if let Some(prop_id) = item_id.strip_prefix("style_prop:") {
             // Collect property info under immutable borrow
             let prop_info: Option<(PropertyType, PropertyValue)> = self.panel_app.panel_grid.active_window()
                 .and_then(|win| {
@@ -11890,8 +11856,7 @@ impl ChartApp {
         }
 
         // ── Level properties: level_prop:{id} ────────────────────────────────
-        if item_id.starts_with("level_prop:") {
-            let prop_id = &item_id["level_prop:".len()..];
+        if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
             let prop_info: Option<(PropertyType, PropertyValue)> = self.panel_app.panel_grid.active_window()
                 .and_then(|win| {
                     let prims = win.drawing_manager.primitives();
@@ -11948,8 +11913,7 @@ impl ChartApp {
         }
 
         // ── Text properties: text_prop:{id} ───────────────────────────────────
-        if item_id.starts_with("text_prop:") {
-            let prop_id = &item_id["text_prop:".len()..];
+        if let Some(prop_id) = item_id.strip_prefix("text_prop:") {
             let prop_info: Option<(PropertyType, PropertyValue)> = self.panel_app.panel_grid.active_window()
                 .and_then(|win| {
                     let prims = win.drawing_manager.primitives();
@@ -12834,8 +12798,7 @@ impl ChartApp {
         self.panel_app.indicator_settings_state.template_dropdown_open = false;
 
         // ── Color swatch ─────────────────────────────────────────────────────
-        if item_id.starts_with("color:") {
-            let output_name = &item_id["color:".len()..];
+        if let Some(output_name) = item_id.strip_prefix("color:") {
             let screen_w = self.width as f64;
             let screen_h = self.height as f64;
             let current_color: Option<String> = if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
@@ -12865,8 +12828,7 @@ impl ChartApp {
         }
 
         // ── Dropdown menu toggle ──────────────────────────────────────────────
-        if item_id.starts_with("dropdown_menu:") {
-            let param_name = &item_id["dropdown_menu:".len()..];
+        if let Some(param_name) = item_id.strip_prefix("dropdown_menu:") {
             if self.panel_app.indicator_settings_state.open_param_dropdown.as_deref() == Some(param_name) {
                 self.panel_app.indicator_settings_state.open_param_dropdown = None;
             } else {
@@ -12877,8 +12839,7 @@ impl ChartApp {
         }
 
         // ── Dropdown cycle ────────────────────────────────────────────────────
-        if item_id.starts_with("dropdown_cycle:") {
-            let param_name = &item_id["dropdown_cycle:".len()..];
+        if let Some(param_name) = item_id.strip_prefix("dropdown_cycle:") {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 // Collect what we need with an immutable borrow first.
                 let cycle_info: Option<(String, Vec<String>)> = {
@@ -12925,8 +12886,7 @@ impl ChartApp {
         }
 
         // ── Dropdown option selected: "param_option:{param_name}:{value}" ────
-        if item_id.starts_with("param_option:") {
-            let rest = &item_id["param_option:".len()..];
+        if let Some(rest) = item_id.strip_prefix("param_option:") {
             let mut parts = rest.splitn(2, ':');
             let param_name = parts.next().unwrap_or("").to_string();
             let value = parts.next().unwrap_or("").to_string();
@@ -12951,8 +12911,7 @@ impl ChartApp {
         }
 
         // ── Toggle boolean parameter ──────────────────────────────────────────
-        if item_id.starts_with("toggle:") {
-            let param_name = &item_id["toggle:".len()..];
+        if let Some(param_name) = item_id.strip_prefix("toggle:") {
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
                 let current_bool: Option<bool> = self.indicator_manager
                     .get_instance(ind_id)
@@ -13078,8 +13037,7 @@ impl ChartApp {
         if item_id.starts_with("ind_set:") {
             use zengeld_chart::indicator_source::SignalShape;
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                if item_id.starts_with("ind_set:signal_shape:") {
-                    let shape_str: &str = &item_id["ind_set:signal_shape:".len()..];
+                if let Some(shape_str) = item_id.strip_prefix("ind_set:signal_shape:") {
                     let shape = match shape_str {
                         "arrow"    => SignalShape::Arrow,
                         "triangle" => SignalShape::Triangle,
@@ -13682,7 +13640,7 @@ impl ChartApp {
                 if let Some(&new_color) = colors.get(idx) {
                     if let Some(leaf_id) = self.panel_app.sync_color_grid.target_leaf {
                         let old_color = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
-                        let same_color = old_color.map_or(false, |oc|
+                        let same_color = old_color.is_some_and(|oc|
                             (oc[0] - new_color[0]).abs() < 0.01
                             && (oc[1] - new_color[1]).abs() < 0.01
                             && (oc[2] - new_color[2]).abs() < 0.01
@@ -17424,7 +17382,7 @@ impl ChartApp {
                                     };
 
                                     // Restore sync group membership
-                                    window.group_id = snap.group_id.map(|g| zengeld_chart::tag_manager::SyncGroupId(g));
+                                    window.group_id = snap.group_id.map(zengeld_chart::tag_manager::SyncGroupId);
 
                                     // Restore local drawings
                                     window.drawing_manager.clear_all_primitives();
@@ -17472,7 +17430,7 @@ impl ChartApp {
                                     // so set_bars() can apply it AFTER auto-scale completes. This prevents
                                     // the BarsLoaded handler's `window.price_scale.scale_mode = default_scale_mode`
                                     // from clobbering a Manual scale preference.
-                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode.clone());
+                                    window.restore_scale_mode = Some(snap.price_scale.scale_mode);
 
                                     // Bars arrive asynchronously via BarsLoaded.
                                     window.pending_symbol_load = true;
@@ -17608,7 +17566,7 @@ impl ChartApp {
                                 if snap.viewport.bar_spacing > 0.0 {
                                     window.viewport.bar_spacing = snap.viewport.bar_spacing;
                                 }
-                                window.restore_scale_mode = Some(snap.price_scale.scale_mode.clone());
+                                window.restore_scale_mode = Some(snap.price_scale.scale_mode);
 
                                 // Bars arrive asynchronously via BarsLoaded.
                                 window.pending_symbol_load = true;
@@ -17912,7 +17870,7 @@ impl ChartApp {
                         }
                         let at = crate::account_type_from_label(at_label);
                         self.bridge.ensure_connector(eid);
-                        self.bridge.request_bars(eid, sym, &tf, at, None, Some(bar_count), true);
+                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
@@ -18611,8 +18569,8 @@ impl ChartApp {
     fn apply_slider_value(&mut self, field_id: &str, value: f64) {
 
         // Appearance / style params (glass opacity, blur radius)
-        if field_id.starts_with("appearance:style_") {
-            let param_id = &field_id[17..]; // strip "appearance:style_"
+        if let Some(param_id) = field_id.strip_prefix("appearance:style_") {
+            // strip "appearance:style_"
             let params = &mut self.panel_app.theme_manager.current_mut().style_params;
             match param_id {
                 "toolbar_opacity"         => params.toolbar_bg_opacity = value as f32,
@@ -19005,7 +18963,7 @@ impl ChartApp {
         // Has stashed primitives? (window joined an existing tag)
         let has_stash = self.panel_app.panel_grid
             .window_for_leaf(leaf_id)
-            .map_or(false, |w| !w.stashed_primitives.is_empty());
+            .is_some_and(|w| !w.stashed_primitives.is_empty());
 
         // 1b. Disconnect from TagManager group.
         if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
@@ -19256,7 +19214,6 @@ impl ChartApp {
             self.sync_sub_panes_from_manager();
             self.sidebar_data_dirty = true;
             eprintln!("[TagManager] Join existing group: stashed own state, synced tag content");
-            return;
         }
 
         // Dead fallback removed — TagManager handles all sync join logic above.
@@ -19404,7 +19361,7 @@ impl ChartApp {
             }
             // Determine if this is a truly new group (just created, has no state yet).
             let is_new_group = self.panel_app.tag_manager.group(group_id)
-                .map_or(true, |g| g.members.is_empty() && g.indicator_configs.is_empty() && g.primitives.is_empty());
+                .is_none_or(|g| g.members.is_empty() && g.indicator_configs.is_empty() && g.primitives.is_empty());
             // Collect (leaf_id, chart_id) first to avoid mixed borrow when setting group_id.
             let leaf_chart_ids: Vec<(zengeld_chart::LeafId, zengeld_chart::ChartId)> = new_leaves
                 .iter()
@@ -19822,8 +19779,7 @@ impl ChartApp {
         let prim_id = match self.panel_app.panel_grid
             .windows()
             .get(&source_chart_id)
-            .map(|w| w.drawing_manager.last_original_id())
-            .flatten()
+            .and_then(|w| w.drawing_manager.last_original_id())
         {
             Some(id) => id,
             None => return,

@@ -14,18 +14,15 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета VWAP Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum VwapChannelMode {
     /// Standard - стандартные отклонения от VWAP
+    #[default]
     Standard,
     /// Percentage - процентные отклонения от VWAP  
     Percentage,
 }
 
-impl Default for VwapChannelMode {
-    fn default() -> Self {
-        VwapChannelMode::Standard
-    }
-}
 
 /// High-Performance VWAP Channels
 #[derive(Debug, Clone)]

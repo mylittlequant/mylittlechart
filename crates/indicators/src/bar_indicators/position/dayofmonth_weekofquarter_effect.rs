@@ -12,6 +12,12 @@ pub struct DayOfMonthWeekOfQuarterEffect {
     pub woq_means: [f64; 13],
 }
 
+impl Default for DayOfMonthWeekOfQuarterEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DayOfMonthWeekOfQuarterEffect {
     pub fn new() -> Self {
         Self {

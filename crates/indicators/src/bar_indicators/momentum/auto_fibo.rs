@@ -187,15 +187,13 @@ impl AutoFibo {
 
             // Обновляем соответствующий тип свинга и возвращаем только новые
             if is_high {
-                if self.last_swing_high.map_or(true, |last| last.bar_index != swing_idx) {
+                if self.last_swing_high.is_none_or(|last| last.bar_index != swing_idx) {
                     self.last_swing_high = Some(swing_point);
                     return Some(swing_point);
                 }
-            } else {
-                if self.last_swing_low.map_or(true, |last| last.bar_index != swing_idx) {
-                    self.last_swing_low = Some(swing_point);
-                    return Some(swing_point);
-                }
+            } else if self.last_swing_low.is_none_or(|last| last.bar_index != swing_idx) {
+                self.last_swing_low = Some(swing_point);
+                return Some(swing_point);
             }
         }
 

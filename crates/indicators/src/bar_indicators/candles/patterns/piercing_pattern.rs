@@ -63,8 +63,8 @@ impl PiercingPattern {
         }
 
         // Piercing Pattern: bearish first, bullish second, closes above midpoint
-        if prev_close < prev_open && curr_close > curr_open {
-            if curr_open < prev_close && curr_close > prev_body_mid && curr_close < prev_open {
+        if prev_close < prev_open && curr_close > curr_open
+            && curr_open < prev_close && curr_close > prev_body_mid && curr_close < prev_open {
                 let penetration = (curr_close - prev_body_bottom) / prev_body_size;
                 if penetration >= self.min_penetration {
                     return PiercingPatternResult {
@@ -75,11 +75,10 @@ impl PiercingPattern {
                     };
                 }
             }
-        }
 
         // Dark Cloud Cover: bullish first, bearish second, closes below midpoint
-        if prev_close > prev_open && curr_close < curr_open {
-            if curr_open > prev_close && curr_close < prev_body_mid && curr_close > prev_open {
+        if prev_close > prev_open && curr_close < curr_open
+            && curr_open > prev_close && curr_close < prev_body_mid && curr_close > prev_open {
                 let penetration = (prev_body_top - curr_close) / prev_body_size;
                 if penetration >= self.min_penetration {
                     return PiercingPatternResult {
@@ -90,7 +89,6 @@ impl PiercingPattern {
                     };
                 }
             }
-        }
 
         PiercingPatternResult {
             detected: false,

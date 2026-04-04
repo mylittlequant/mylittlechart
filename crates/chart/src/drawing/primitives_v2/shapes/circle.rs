@@ -106,7 +106,7 @@ impl Primitive for Circle {
     }
 
     fn set_points(&mut self, points: &[(f64, f64)]) {
-        if points.len() >= 1 {
+        if !points.is_empty() {
             self.center_bar = points[0].0;
             self.center_price = points[0].1;
         }

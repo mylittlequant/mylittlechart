@@ -60,7 +60,7 @@ impl TextEditingState {
     pub fn is_cursor_visible(&self, current_time_ms: u64) -> bool {
         // Blink every 500ms
         let elapsed = current_time_ms.wrapping_sub(self.blink_time);
-        (elapsed / 500) % 2 == 0
+        (elapsed / 500).is_multiple_of(2)
     }
 
     /// Reset blink timer (call when cursor moves or text changes)
@@ -3255,7 +3255,9 @@ impl Default for WatchlistGroupNameInputState {
 
 /// Tabs available in the User Settings modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum UserSettingsTab {
+    #[default]
     General,
     Sync,
     Performance,
@@ -3296,11 +3298,6 @@ impl UserSettingsTab {
     }
 }
 
-impl Default for UserSettingsTab {
-    fn default() -> Self {
-        Self::General
-    }
-}
 
 // =============================================================================
 // Profile Manager
@@ -3311,8 +3308,10 @@ impl Default for UserSettingsTab {
 /// Replaces the old vault_unlock overlay and profile picker with a single
 /// full-screen modal that handles all profile-related flows.
 #[derive(Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum ProfileManagerPage {
     /// Main page: list of all profiles with status indicators.
+    #[default]
     ProfileList,
     /// Enter passphrase to unlock a profile that has vault.enc.
     UnlockPassphrase,
@@ -3335,11 +3334,6 @@ pub enum ProfileManagerPage {
     SetNewPassphrase,
 }
 
-impl Default for ProfileManagerPage {
-    fn default() -> Self {
-        Self::ProfileList
-    }
-}
 
 /// Display info for a local agent CLI connector key shown in the key manager list.
 ///

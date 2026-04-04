@@ -15,8 +15,10 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Envelope Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum EnvelopeMode {
     /// Fixed - фиксированные проценты
+    #[default]
     Fixed,
     /// Adaptive - адаптивные проценты на основе волатильности
     Adaptive,
@@ -24,11 +26,6 @@ pub enum EnvelopeMode {
     Multiple,
 }
 
-impl Default for EnvelopeMode {
-    fn default() -> Self {
-        EnvelopeMode::Fixed
-    }
-}
 
 /// High-Performance Envelope Channels
 #[derive(Debug, Clone)]

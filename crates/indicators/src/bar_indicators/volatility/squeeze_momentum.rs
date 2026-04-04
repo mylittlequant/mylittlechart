@@ -421,8 +421,8 @@ impl SqueezeMomentum {
             return 0.0;
         }
 
-        let normalized_momentum = (self.momentum.abs() / bb_middle).min(1.0);
-        normalized_momentum
+        
+        (self.momentum.abs() / bb_middle).min(1.0)
     }
     
     /// Определить потенциал для breakout

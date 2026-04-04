@@ -129,7 +129,7 @@ impl PrimitiveTemplate {
             type_id: data.type_id.clone(),
             color: data.color.clone(),
             width: data.width,
-            style: data.style.clone(),
+            style: data.style,
             text_font_size,
             text_color,
             text_bold,
@@ -153,7 +153,7 @@ impl PrimitiveTemplate {
     pub fn apply_to_primitive_data(&self, data: &mut PrimitiveData) {
         data.color = self.color.clone();
         data.width = self.width;
-        data.style = self.style.clone();
+        data.style = self.style;
 
         // Apply text formatting if the primitive already has a text block.
         if let Some(text) = &mut data.text {

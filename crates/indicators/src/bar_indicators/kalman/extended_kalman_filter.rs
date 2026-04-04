@@ -79,7 +79,7 @@ impl ObservationFunction for NonlinearObservationModel {
                 if position > 0.0 {
                     position.ln()
                 } else {
-                    (-position).ln() * -1.0
+                    -(-position).ln()
                 }
             },
             ObservationType::Square => position * position,
@@ -204,6 +204,12 @@ pub struct EkfResult {
     pub linearization_error: f64,   // Ошибка линеаризации
     pub condition_number: f64,      // Число обусловленности
     pub nonlinearity_measure: f64,  // Мера нелинейности
+}
+
+impl Default for EkfResult {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EkfResult {

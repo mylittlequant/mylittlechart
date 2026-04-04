@@ -27,6 +27,12 @@ pub struct DivergenceDetector {
     pub last_signal: Option<DivergenceSignal>,
 }
 
+impl Default for DivergenceDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DivergenceDetector {
     pub fn new() -> Self {
         Self {

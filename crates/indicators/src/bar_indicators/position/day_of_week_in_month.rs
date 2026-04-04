@@ -6,6 +6,12 @@ pub struct DayOfWeekInMonthEffect {
     current_value: f64,
 }
 
+impl Default for DayOfWeekInMonthEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DayOfWeekInMonthEffect {
     pub fn new() -> Self {
         Self { current_value: 0.0 }
@@ -61,8 +67,8 @@ impl DayOfWeekInMonthEffect {
         let y = if month < 3 { year - 1 } else { year };
         let m = if month < 3 { month + 12 } else { month } as i32;
         let d = day as i32;
-        let k = (y % 100) as i32;
-        let j = (y / 100) as i32;
+        let k = y % 100;
+        let j = y / 100;
         let h = (d + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7; // 0=Sat..6=Fri
         let dow = ((h + 6) % 7) as u32; // 0=Sun..6=Sat
         (dow + 6) % 7 // 0=Mon..6=Sun

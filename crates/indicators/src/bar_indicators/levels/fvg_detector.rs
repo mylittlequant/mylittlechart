@@ -9,6 +9,12 @@ pub struct FvgDetector {
     buffer: VecDeque<(f64, f64, f64, f64)>,  // (open, high, low, close)
 }
 
+impl Default for FvgDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FvgDetector {
     pub fn new() -> Self {
         Self {

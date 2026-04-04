@@ -32,6 +32,12 @@ pub struct DemandIndex {
     is_ready: bool,
 }
 
+impl Default for DemandIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DemandIndex {
     pub fn new() -> Self {
         Self::with_period(14)

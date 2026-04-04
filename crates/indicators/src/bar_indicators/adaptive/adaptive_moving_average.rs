@@ -38,6 +38,12 @@ pub struct AdaptationParameters {
     pub noise_floor: f64,           // Минимальный уровень шума
 }
 
+impl Default for AdaptationParameters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdaptationParameters {
     pub fn new() -> Self {
         Self {
@@ -87,6 +93,12 @@ pub struct AdaptationResult {
     pub trend_factor: f64,          // Фактор тренда
     pub noise_level: f64,           // Уровень шума
     pub market_regime: String,      // Рыночный режим
+}
+
+impl Default for AdaptationResult {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdaptationResult {

@@ -251,7 +251,7 @@ pub fn render_primitive_settings_modal(
         PrimitiveSettingsTab::Levels => {
             let level_props_rows = level_props.len();
             let level_configs_rows = if let Some(configs) = prim.level_configs() {
-                ((configs.len() + 2) / 3).max(1) as f64 * (row_height + row_gap)
+                configs.len().div_ceil(3).max(1) as f64 * (row_height + row_gap)
             } else {
                 0.0
             };
@@ -276,7 +276,7 @@ pub fn render_primitive_settings_modal(
 
     // Calculate title width
     ctx.set_font("13px sans-serif");
-    let title_text = format!("{}", prim_name);
+    let title_text = prim_name.to_string();
     let title_width = ctx.measure_text(&title_text);
 
     // Modal width
@@ -321,7 +321,7 @@ pub fn render_primitive_settings_modal(
 
     // === HEADER ===
     let header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-    result.header_rect = header_rect.clone();
+    result.header_rect = header_rect;
 
     // Title (left aligned)
     ctx.set_font("13px sans-serif");
@@ -341,7 +341,7 @@ pub fn render_primitive_settings_modal(
         close_btn_size,
         close_btn_size,
     );
-    result.close_btn_rect = close_rect.clone();
+    result.close_btn_rect = close_rect;
 
     // Register close button with coordinator
     input_coordinator.register_on_layer(
@@ -392,7 +392,7 @@ pub fn render_primitive_settings_modal(
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(tab.label(), tab_rect.x + tab_rect.width / 2.0, tab_rect.y + tab_rect.height / 2.0);
 
-        result.tab_rects.push((tab_id.clone(), tab_rect.clone()));
+        result.tab_rects.push((tab_id.clone(), tab_rect));
 
         // Register tab with coordinator
         input_coordinator.register_on_layer(
@@ -415,7 +415,7 @@ pub fn render_primitive_settings_modal(
     // === CONTENT AREA ===
     let content_y = tab_y + tab_height;
     let content_rect = WidgetRect::new(modal_x, content_y, modal_width, content_height);
-    result.content_rect = content_rect.clone();
+    result.content_rect = content_rect;
 
     // Render tab content
     let content_left = modal_x + modal_padding;
@@ -775,8 +775,7 @@ pub fn render_primitive_settings_modal(
                         let field_id = format!("style_prop:{}", prop.id);
                         let hovered = state.slider_drag.as_ref()
                             .map(|d| d.field_id == field_id)
-                            .unwrap_or_else(|| state.hovered_item_id.as_ref()
-                                .map(|s| s.as_str()) == Some(field_id.as_str()));
+                            .unwrap_or_else(|| state.hovered_item_id.as_deref() == Some(field_id.as_str()));
 
                         // During drag, use floating preview value.
                         let display_value = state.slider_drag.as_ref()
@@ -1410,7 +1409,7 @@ pub fn render_primitive_settings_modal(
 
                     let num_levels = configs.len();
                     let cols = 3;
-                    let rows_needed = (num_levels + cols - 1) / cols;
+                    let rows_needed = num_levels.div_ceil(cols);
 
                     for row_idx in 0..rows_needed {
                         let col1_idx = row_idx * cols;
@@ -1568,7 +1567,7 @@ pub fn render_primitive_settings_modal(
         PrimitiveSettingsTab::Visibility => {
             // === VISIBILITY TAB ===
             let tf_config = prim_data.timeframe_visibility.clone()
-                .unwrap_or_else(|| crate::drawing::TimeframeVisibilityConfig::all());
+                .unwrap_or_else(crate::drawing::TimeframeVisibilityConfig::all);
 
             let timeframes: [(&str, bool, bool, Option<(u32, u32)>, u32, u32); 7] = [
                 ("Тики", true, tf_config.ticks, None, 0, 0),
@@ -1648,8 +1647,7 @@ pub fn render_primitive_settings_modal(
                     let slider_field_id = format!("tf_{}_slider", i);
                     let hovered = state.slider_drag.as_ref()
                         .map(|d| d.field_id == slider_field_id)
-                        .unwrap_or_else(|| state.hovered_item_id.as_ref()
-                            .map(|s| s.as_str()) == Some(slider_field_id.as_str()));
+                        .unwrap_or_else(|| state.hovered_item_id.as_deref() == Some(slider_field_id.as_str()));
 
                     // During drag, apply floating preview to the dragged handle.
                     let (display_min, display_max) = if let Some(ref drag) = state.slider_drag {
@@ -1817,7 +1815,7 @@ pub fn render_primitive_settings_modal(
             // Register background FIRST with coordinator (last-registered wins, so
             // items registered AFTER will override this in hit_test_at)
             input_coordinator.register_on_layer(
-                format!("prim_settings:item:template_dropdown_menu"),
+                "prim_settings:item:template_dropdown_menu".to_string(),
                 uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
                 uzor::input::sense::Sense::CLICK,
                 &layer_id,

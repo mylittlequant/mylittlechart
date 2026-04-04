@@ -15,6 +15,12 @@ pub struct AnalyticSignal {
     pub instantaneous_frequency: f64, // Мгновенная частота
 }
 
+impl Default for AnalyticSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnalyticSignal {
     pub fn new() -> Self {
         Self {

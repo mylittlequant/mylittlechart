@@ -456,6 +456,12 @@ pub struct ParameterGridBuilder {
     grid: ParameterGrid,
 }
 
+impl Default for ParameterGridBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParameterGridBuilder {
     pub fn new() -> Self {
         Self {

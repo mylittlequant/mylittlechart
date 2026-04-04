@@ -12,6 +12,12 @@ pub struct MonthQuarterEffect {
     pub quarter_means: [f64; 4],
 }
 
+impl Default for MonthQuarterEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MonthQuarterEffect {
     pub fn new() -> Self {
         Self {

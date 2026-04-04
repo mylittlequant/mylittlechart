@@ -1613,7 +1613,7 @@ fn register_channel_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     // Channel position metrics (sub-pane)
     for id in [BarIndicatorId::Dcpos, BarIndicatorId::Keltpos, BarIndicatorId::Medchanpos] {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("position", "Position", COLOR_PURPLE)
                 .bounds(0.0, 1.0)
@@ -1626,7 +1626,7 @@ fn register_channel_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     // Channel width metrics (sub-pane)
     for id in [BarIndicatorId::Dcwidth, BarIndicatorId::Pchwidth, BarIndicatorId::Regchanwidth, BarIndicatorId::Stddevwidth, BarIndicatorId::Keltbw, BarIndicatorId::Envbw, BarIndicatorId::Vwapchanwidth] {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("width", "Width", COLOR_BLUE)
                 .precision(4)
@@ -3257,9 +3257,9 @@ fn register_signal_processing_indicators(catalog: &mut HashMap<BarIndicatorId, R
     // Logic gates
     for id in [BarIndicatorId::Logicand, BarIndicatorId::Logicor, BarIndicatorId::Logicxor, BarIndicatorId::Logicsign] {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
-                .line_output("value", &format!("{:?}", id), COLOR_BLUE)
+                .line_output("value", format!("{:?}", id), COLOR_BLUE)
                 .bounds(-1.0, 1.0)
                 .precision(0)
                 .build()
@@ -5161,7 +5161,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     // Anchored VWAP variants
     for id in [BarIndicatorId::Avwap, BarIndicatorId::Avwaprev, BarIndicatorId::Avwaptouch] {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .overlay()
                 .line_output("avwap", "AVWAP", COLOR_PURPLE)
                 .precision(4)
@@ -5190,7 +5190,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     // Fair Value Gap variants
     for id in [BarIndicatorId::Fvg, BarIndicatorId::Fvgalt, BarIndicatorId::Fvgdur, BarIndicatorId::Fvgrev] {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .overlay()
                 .line_output("fvg", "FVG", COLOR_CYAN)
                 .precision(4)
@@ -5221,7 +5221,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in candle_patterns {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .output(OutputSpec::histogram("pattern", "Pattern", COLOR_GREEN, ValueExtractor::Main))
                 .bounds(-1.0, 1.0)
@@ -5293,7 +5293,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in entropy_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("entropy", "Entropy", COLOR_PURPLE)
                 .precision(4)
@@ -5310,7 +5310,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in kalman_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("kalman", "Kalman", COLOR_BLUE)
                 .precision(4)
@@ -5327,7 +5327,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in trend_stop_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .overlay()
                 .line_output("stop", "Stop", COLOR_RED)
                 .precision(4)
@@ -5344,7 +5344,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in chaos_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("chaos", "Chaos", COLOR_PURPLE)
                 .precision(4)
@@ -5361,7 +5361,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in divergence_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("divergence", "Divergence", COLOR_PURPLE)
                 .bounds(-1.0, 1.0)
@@ -5396,7 +5396,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in cluster_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("cluster", "Cluster", COLOR_BLUE)
                 .precision(4)
@@ -5413,7 +5413,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in position_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("position", "Position", COLOR_PURPLE)
                 .precision(4)
@@ -5430,7 +5430,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in book_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .sub_pane()
                 .line_output("book", "Book", COLOR_TEAL)
                 .zero_baseline()
@@ -5448,7 +5448,7 @@ fn register_missing_indicators(catalog: &mut HashMap<BarIndicatorId, RenderingMe
     ];
     for id in zigzag_ids {
         catalog.insert(id,
-            RenderingMetadata::builder(&format!("{:?}", id))
+            RenderingMetadata::builder(format!("{:?}", id))
                 .overlay()
                 .line_output("zigzag", "Zigzag", COLOR_PURPLE)
                 .precision(4)

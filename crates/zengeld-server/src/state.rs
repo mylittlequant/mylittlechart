@@ -90,19 +90,16 @@ impl Permissions {
 
 /// Origin of a local agent CLI connector key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum AgentKeySource {
     /// Generated locally via the terminal UI or the Agent API `/api/v1/keys`
     /// endpoint.  These keys are local-only and never managed by cloud sync.
+    #[default]
     Local,
     /// Reserved for future use (previously used by cloud sync).
     Cloud,
 }
 
-impl Default for AgentKeySource {
-    fn default() -> Self {
-        AgentKeySource::Local
-    }
-}
 
 // Backward-compatible type alias so callers using the old name still compile.
 #[allow(dead_code)]

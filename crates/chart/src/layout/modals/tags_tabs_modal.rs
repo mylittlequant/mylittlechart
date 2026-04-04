@@ -494,9 +494,7 @@ fn render_tree_nodes(
                 let is_hovered = overlay_state.hovered_item_id.as_deref() == Some(wid.as_str());
                 let bg = if l.hidden {
                     if is_hovered { colors.success.as_str() } else { toolbar_theme.item_bg_hover.as_str() }
-                } else {
-                    if is_hovered { toolbar_theme.item_bg_active.as_str() } else { toolbar_theme.accent.as_str() }
-                };
+                } else if is_hovered { toolbar_theme.item_bg_active.as_str() } else { toolbar_theme.accent.as_str() };
                 ctx.set_fill_color(bg);
                 ctx.fill_rounded_rect(btn_x, btn_y, btn_size, btn_size, 3.0);
                 let icon_color = if is_hovered { &toolbar_theme.item_text_active } else if l.hidden { &toolbar_theme.item_text_muted } else { &toolbar_theme.item_text_active };
@@ -934,7 +932,7 @@ fn render_map_section(
         // Leaf rectangles
         let leaf_rects = tree.layout_rects(panel_w, panel_h);
 
-        for (_i, (leaf_id, rect)) in leaf_rects.iter().enumerate() {
+        for (leaf_id, rect) in leaf_rects.iter() {
             let mx = minimap_x + rect.x as f64 * scale_x;
             let my = minimap_y + rect.y as f64 * scale_y;
             let mw = (rect.width as f64 * scale_x).max(2.0);

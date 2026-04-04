@@ -219,8 +219,8 @@ impl Chart {
         }
 
         let (start, end) = self.viewport.visible_range();
-        let start = start.max(0) as usize;
-        let end = (end as usize).min(self.bars.len());
+        let start = start.max(0);
+        let end = end.min(self.bars.len());
 
         if start >= end {
             return;

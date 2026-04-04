@@ -5,6 +5,12 @@ pub struct Bop {
     value: f64,
 }
 
+impl Default for Bop {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bop {
     pub fn new() -> Self {
         Self { value: 0.0 }

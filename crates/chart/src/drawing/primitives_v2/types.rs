@@ -273,7 +273,7 @@ impl TextAnchor {
 pub fn normalize_text_rotation(raw_angle: f64) -> (f64, bool) {
     use std::f64::consts::{FRAC_PI_2, PI};
 
-    let was_flipped = raw_angle > FRAC_PI_2 || raw_angle < -FRAC_PI_2;
+    let was_flipped = !(-FRAC_PI_2..=FRAC_PI_2).contains(&raw_angle);
     let normalized = if raw_angle > FRAC_PI_2 {
         raw_angle - PI
     } else if raw_angle < -FRAC_PI_2 {

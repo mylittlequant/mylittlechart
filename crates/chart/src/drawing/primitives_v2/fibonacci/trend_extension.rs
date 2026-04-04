@@ -235,7 +235,7 @@ impl Primitive for FibTrendExtension {
             let in_bounds = if self.extend_right {
                 screen_x >= min_x
             } else {
-                screen_x >= min_x && screen_x <= viewport.chart_width as f64
+                screen_x >= min_x && screen_x <= viewport.chart_width
             };
 
             if in_bounds && (screen_y - level_y).abs() < HIT_TOLERANCE {

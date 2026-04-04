@@ -1308,7 +1308,7 @@ impl IndicatorInstance {
     fn derive_session(timestamp: Option<i64>) -> u8 {
         timestamp.map(|ts| {
             let secs = ts.rem_euclid(86_400);
-            let hour = (secs / 3600) as i64;
+            let hour = secs / 3600;
             if hour < 6 { 3 } else if hour < 12 { 0 } else if hour < 18 { 1 } else { 2 }
         }).unwrap_or(0)
     }
@@ -1334,7 +1334,7 @@ impl IndicatorInstance {
     #[inline]
     fn derive_ymd(timestamp: Option<i64>) -> (i32, u32, u32) {
         timestamp
-            .map(|ts| CalendarService::ymd_from_timestamp(ts))
+            .map(CalendarService::ymd_from_timestamp)
             .unwrap_or((2024, 1, 1)) // Default date
     }
 
@@ -1408,7 +1408,7 @@ impl IndicatorInstance {
     /// The `uses_configurable_source()` helper determines which indicators accept source selection.
     pub fn create(config: &IndicatorConfig) -> Result<Self, String> {
         // Ensure minimal valid period for all periodized indicators
-        let period = config.periods.get(0).copied().unwrap_or(14).max(2).min(512);
+        let period = config.periods.first().copied().unwrap_or(14).max(2).min(512);
         match config.id {
             // Average indicators
             BarIndicatorId::Sma => Ok(Self::Sma(Sma::with_source(period, config.source))),
@@ -1450,7 +1450,7 @@ impl IndicatorInstance {
             // Core momentum/volatility
             BarIndicatorId::Rsi => Ok(Self::Rsi(Rsi::with_source(period, MovingAverageType::RMA, config.source))),
             BarIndicatorId::Macd => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 let signal = config.periods.get(2).copied().unwrap_or(9);
 
@@ -1479,7 +1479,7 @@ impl IndicatorInstance {
                 )))
             }
             BarIndicatorId::Ppo => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 let signal = config.periods.get(2).copied().unwrap_or(9);
 
@@ -1517,14 +1517,14 @@ impl IndicatorInstance {
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::SMA);
                 Ok(Self::Atr(Atr::new(period, ma_type)))
             }
-            BarIndicatorId::Tr => Ok(Self::TrueRange(Box::new(TrueRange::new()))),
+            BarIndicatorId::Tr => Ok(Self::TrueRange(Box::default())),
             BarIndicatorId::Bpv => {
-                let n = config.periods.get(0).copied().unwrap_or(10).max(2).min(512);
+                let n = config.periods.first().copied().unwrap_or(10).max(2).min(512);
                 let k = config.periods.get(1).copied().unwrap_or(10).max(2).min(512);
                 Ok(Self::ChaikinVolatility(Box::new(ChaikinVolatility::new(n, k))))
             }
             BarIndicatorId::Sqmom => {
-                let bb = config.periods.get(0).copied().unwrap_or(20).clamp(2, 512);
+                let bb = config.periods.first().copied().unwrap_or(20).clamp(2, 512);
                 let kc = config.periods.get(1).copied().unwrap_or(20).clamp(2, 512);
                 let mp = config.periods.get(2).copied().unwrap_or(20).clamp(2, 512);
 
@@ -1552,7 +1552,7 @@ impl IndicatorInstance {
             BarIndicatorId::Chop => Ok(Self::ChoppinessIndex(Box::new(ChoppinessIndex::with_period(period)))),
             BarIndicatorId::Ui => Ok(Self::UlcerIndex(Box::new(UlcerIndex::with_period(period)))),
             BarIndicatorId::VoMi => {
-                let ema_p = config.periods.get(0).copied().unwrap_or(9);
+                let ema_p = config.periods.first().copied().unwrap_or(9);
                 let sum_p = config.periods.get(1).copied().unwrap_or(25);
                 Ok(Self::MassIndex(Box::new(MassIndex::with_params(ema_p, sum_p))))
             }
@@ -1670,33 +1670,33 @@ impl IndicatorInstance {
                 let k = config.additional_params.get("k").copied().unwrap_or(2.0);
                 Ok(Self::StarcBands(Box::new(StarcBands::with_source(period, period, k, MovingAverageType::SMA, config.source))))
             }
-            BarIndicatorId::Ichimoku => Ok(Self::IchimokuCloud(Box::new(IchimokuCloud::new()))),
-            BarIndicatorId::Ichimokuthick => Ok(Self::IchimokuCloudThickness(Box::new(IchimokuCloudThickness::new()))),
-            BarIndicatorId::Ichimokupos => Ok(Self::IchimokuCloudPosition(Box::new(IchimokuCloudPosition::new()))),
+            BarIndicatorId::Ichimoku => Ok(Self::IchimokuCloud(Box::default())),
+            BarIndicatorId::Ichimokuthick => Ok(Self::IchimokuCloudThickness(Box::default())),
+            BarIndicatorId::Ichimokupos => Ok(Self::IchimokuCloudPosition(Box::default())),
             
             // Support/Resistance Levels (Pivots)
             BarIndicatorId::Pivot => {
-                let calc_period = config.periods.get(0).copied().unwrap_or(1).max(1);
+                let calc_period = config.periods.first().copied().unwrap_or(1).max(1);
                 Ok(Self::PivotPoints(Box::new(PivotPoints::with_period(calc_period))))
             }
             BarIndicatorId::Floorpivot => {
-                let period = config.periods.get(0).copied().unwrap_or(24).max(1);
+                let period = config.periods.first().copied().unwrap_or(24).max(1);
                 Ok(Self::FloorTraderPivots(Box::new(FloorTraderPivots::with_period(period))))
             }
             BarIndicatorId::Camarilla => {
-                let period = config.periods.get(0).copied().unwrap_or(24).max(1);
+                let period = config.periods.first().copied().unwrap_or(24).max(1);
                 Ok(Self::CamarillaPivots(Box::new(CamarillaPivots::with_period(period))))
             }
             BarIndicatorId::Woodie => {
-                let period = config.periods.get(0).copied().unwrap_or(24).max(1);
+                let period = config.periods.first().copied().unwrap_or(24).max(1);
                 Ok(Self::WoodiePivots(Box::new(WoodiePivots::with_period(period))))
             }
             BarIndicatorId::Demark => {
-                let calc_period = config.periods.get(0).copied().unwrap_or(1).max(1);
+                let calc_period = config.periods.first().copied().unwrap_or(1).max(1);
                 Ok(Self::DeMarkPivots(Box::new(DeMarkPivots::with_period(calc_period))))
             }
-            BarIndicatorId::Cpr => Ok(Self::CentralPivotRange(Box::new(CentralPivotRange::new()))),
-            BarIndicatorId::Pivotchan => Ok(Self::Pivotchan(Box::new(PivotChannels::new()))),
+            BarIndicatorId::Cpr => Ok(Self::CentralPivotRange(Box::default())),
+            BarIndicatorId::Pivotchan => Ok(Self::Pivotchan(Box::default())),
             // MedianChannels requires period > 2 (asserts inside). Clamp to at least 3.
             BarIndicatorId::Medchan => Ok(Self::Medchan(Box::new(MedianChannels::with_source(period.max(3), crate::bar_indicators::channels::median_channels::MedianMode::Simple, crate::bar_indicators::channels::median_channels::MedianSource::Close, 1.4826, config.source)))),
             BarIndicatorId::Medchanpos => Ok(Self::Medchanpos(Box::new(MedianChannelPosition::new(period)))),
@@ -1707,7 +1707,7 @@ impl IndicatorInstance {
             // Duplicate short form removed; detailed arm below
             // Duplicate short form removed; detailed arm below
             BarIndicatorId::Fibochan => {
-                let zigzag = config.periods.get(0).copied().unwrap_or(20);
+                let zigzag = config.periods.first().copied().unwrap_or(20);
                 let atr_p = config.periods.get(1).copied().unwrap_or(14);
                 let mult = config.additional_params.get("atr_multiplier").copied().unwrap_or(2.0);
                 let mode_code = config.additional_params.get("mode").copied().unwrap_or(0.0) as i32;
@@ -1751,7 +1751,7 @@ impl IndicatorInstance {
                 Ok(Self::Cci(Box::new(Cci::new(period, scalar, None))))
             }
             BarIndicatorId::Stoch => {
-                let period_k = config.periods.get(0).copied().unwrap_or(14).max(2).min(512);
+                let period_k = config.periods.first().copied().unwrap_or(14).max(2).min(512);
                 let period_d = config.periods.get(1).copied().unwrap_or(3).max(1).min(512);
                 Ok(Self::Stochastics(Box::new(Stochastics::new(period_k, period_d))))
             }
@@ -1761,17 +1761,17 @@ impl IndicatorInstance {
             BarIndicatorId::Swings => Ok(Self::Swings(Box::new(Swings::new(period)))),
             BarIndicatorId::Psl => Ok(Self::Psl(Box::new(Psl::new(period)))),
             // BOOK category (4 indicators)
-            BarIndicatorId::BookImb => Ok(Self::BookImb(Box::new(BookImbalanceRatio::new()))),
-            BarIndicatorId::BookSlope => Ok(Self::BookSlope(Box::new(OrderBookSlope::new()))),
+            BarIndicatorId::BookImb => Ok(Self::BookImb(Box::default())),
+            BarIndicatorId::BookSlope => Ok(Self::BookSlope(Box::default())),
             BarIndicatorId::Ofi => {
                 let tick_size = config.additional_params.get("tick_size").copied().unwrap_or(0.01);
                 Ok(Self::Ofi(Box::new(OrderFlowImbalance::new(period, tick_size))))
             }
-            BarIndicatorId::QueueImb => Ok(Self::QueueImb(Box::new(QueueImbalance::new()))),
+            BarIndicatorId::QueueImb => Ok(Self::QueueImb(Box::default())),
             // CLUSTERS category (6 indicators)
-            BarIndicatorId::ClQueueImb => Ok(Self::ClQueueImb(Box::new(QueueImbalance::new()))),
+            BarIndicatorId::ClQueueImb => Ok(Self::ClQueueImb(Box::default())),
             BarIndicatorId::MarketMicro => Ok(Self::MarketMicro(Box::new(MarketMicrostructure::new(period)))),
-            BarIndicatorId::OrderBookSlope => Ok(Self::OrderBookSlope(Box::new(OrderBookSlope::new()))),
+            BarIndicatorId::OrderBookSlope => Ok(Self::OrderBookSlope(Box::default())),
             BarIndicatorId::OrderFlowImb => {
                 let tick_size = config.additional_params.get("tick_size").copied().unwrap_or(0.01);
                 Ok(Self::OrderFlowImb(Box::new(OrderFlowImbalance::new(period, tick_size))))
@@ -1796,7 +1796,7 @@ impl IndicatorInstance {
             BarIndicatorId::Cmo => Ok(Self::Cmo(Box::new(Cmo::new(period, None)))),
             BarIndicatorId::Bias => Ok(Self::Bias(Box::new(Bias::new(period, None)))),
             BarIndicatorId::Amat => {
-                let fast = config.periods.get(0).copied().unwrap_or(10);
+                let fast = config.periods.first().copied().unwrap_or(10);
                 let slow = config.periods.get(1).copied().unwrap_or(21);
                 let signal = config.periods.get(2).copied().unwrap_or(5);
                 let fast_ma = config.ma_types.get("fast_ma").copied().unwrap_or(MovingAverageType::SMA);
@@ -1811,7 +1811,7 @@ impl IndicatorInstance {
                 Ok(Self::VhfMa(Box::new(VhfMa::new(period, ma_type))))
             }
             BarIndicatorId::Stochkd => {
-                let period_k = config.periods.get(0).copied().unwrap_or(14);
+                let period_k = config.periods.first().copied().unwrap_or(14);
                 let period_d = config.periods.get(1).copied().unwrap_or(3);
                 Ok(Self::StochastikD(Box::new(StochastikD::new(period_k, period_d))))
             }
@@ -1829,23 +1829,23 @@ impl IndicatorInstance {
                 Ok(Self::UltimateOscillator(Box::new(UltimateOscillator::with_periods(7, 14, 28))))
             }
             BarIndicatorId::UoSmooth => {
-                let p1 = config.periods.get(0).copied().unwrap_or(7);
+                let p1 = config.periods.first().copied().unwrap_or(7);
                 let p2 = config.periods.get(1).copied().unwrap_or(14);
                 let p3 = config.periods.get(2).copied().unwrap_or(28);
                 let smooth = config.periods.get(3).copied().unwrap_or(9);
                 Ok(Self::UltimateOscillatorSmooth(Box::new(UltimateOscillatorSmooth::new(p1,p2,p3,smooth))))
             }
             BarIndicatorId::Rwi => Ok(Self::Rwi(Box::new(Rwi::new(period)))),
-            BarIndicatorId::Bop => Ok(Self::Bop(Box::new(Bop::new()))),
+            BarIndicatorId::Bop => Ok(Self::Bop(Box::default())),
             BarIndicatorId::Cfo => Ok(Self::Cfo(Box::new(Cfo::new(period)))),
             BarIndicatorId::Rmi => {
-                let momentum_lookback = config.periods.get(0).copied().unwrap_or(5);
+                let momentum_lookback = config.periods.first().copied().unwrap_or(5);
                 let ema_period = config.periods.get(1).copied().unwrap_or(14);
                 Ok(Self::Rmi(Box::new(Rmi::new(momentum_lookback, ema_period))))
             }
             BarIndicatorId::Qstick => Ok(Self::Qstick(Box::new(Qstick::new(period)))),
             BarIndicatorId::Coppock => {
-                let r1 = config.periods.get(0).copied().unwrap_or(11);
+                let r1 = config.periods.first().copied().unwrap_or(11);
                 let r2 = config.periods.get(1).copied().unwrap_or(14);
                 let wma = config.periods.get(2).copied().unwrap_or(10);
 
@@ -1857,18 +1857,18 @@ impl IndicatorInstance {
                 }
             }
             BarIndicatorId::Apo => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 Ok(Self::Apo(Box::new(Apo::new(fast, slow))))
             }
             BarIndicatorId::Pmo => {
-                let roc_p = config.periods.get(0).copied().unwrap_or(10);
+                let roc_p = config.periods.first().copied().unwrap_or(10);
                 let s1 = config.periods.get(1).copied().unwrap_or(10);
                 let s2 = config.periods.get(2).copied().unwrap_or(10);
                 Ok(Self::Pmo(Box::new(Pmo::new(roc_p, s1, s2))))
             }
             BarIndicatorId::Tsi => {
-                let p1 = config.periods.get(0).copied().unwrap_or(25);
+                let p1 = config.periods.first().copied().unwrap_or(25);
                 let p2 = config.periods.get(1).copied().unwrap_or(13);
                 let sig = config.periods.get(2).copied().unwrap_or(13);
 
@@ -1904,7 +1904,7 @@ impl IndicatorInstance {
             BarIndicatorId::Kst => {
                 // KST uses default params: roc=[10,15,20,30], sma=[10,10,10,15], signal=9
                 let roc_periods = [
-                    config.periods.get(0).copied().unwrap_or(10),
+                    config.periods.first().copied().unwrap_or(10),
                     config.periods.get(1).copied().unwrap_or(15),
                     config.periods.get(2).copied().unwrap_or(20),
                     config.periods.get(3).copied().unwrap_or(30),
@@ -1941,24 +1941,24 @@ impl IndicatorInstance {
                 }
             }
             BarIndicatorId::Rvgi => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let sig = config.periods.get(1).copied().unwrap_or(9);
                 Ok(Self::Rvgi(Box::new(Rvgi::new(p, sig))))
             }
             BarIndicatorId::Smi => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let sig = config.periods.get(1).copied().unwrap_or(3);
                 Ok(Self::Smi(Box::new(Smi::new(p, sig))))
             }
             BarIndicatorId::Stc => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 let kp = config.periods.get(2).copied().unwrap_or(10);
                 let dp = config.periods.get(3).copied().unwrap_or(3);
                 Ok(Self::Stc(Box::new(Stc::new(fast, slow, kp, dp))))
             }
             BarIndicatorId::ElderImpulse => {
-                let ema_period = config.periods.get(0).copied().unwrap_or(13);
+                let ema_period = config.periods.first().copied().unwrap_or(13);
 
                 // Check if we have custom MA type or source
                 let has_ma_type = config.ma_types.contains_key("ma_type");
@@ -1979,7 +1979,7 @@ impl IndicatorInstance {
             BarIndicatorId::ElderRay => Ok(Self::ElderRay(Box::new(ElderRay::new(period)))),
             BarIndicatorId::Vortex => Ok(Self::VortexIndicator(Box::new(VortexIndicator::with_period(period)))),
             BarIndicatorId::StochRsi => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(14);
+                let rsi_p = config.periods.first().copied().unwrap_or(14);
                 let stoch_p = config.periods.get(1).copied().unwrap_or(14);
                 let k_p = config.periods.get(2).copied().unwrap_or(3);
                 let d_p = config.periods.get(3).copied().unwrap_or(3);
@@ -2006,31 +2006,31 @@ impl IndicatorInstance {
                 }
             }
             BarIndicatorId::MoFisher => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 let sp = config.periods.get(1).copied().unwrap_or(3);
                 Ok(Self::FisherTransform(Box::new(FisherTransform::new(p, sp))))
             }
             BarIndicatorId::LaguerreRsi => Ok(Self::LaguerreRsi(Box::new(LaguerreRsi::new(period)))),
             BarIndicatorId::Rsx => Ok(Self::Rsx(Box::new(Rsx::new(period)))),
             BarIndicatorId::Qqe => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let sm = config.periods.get(1).copied().unwrap_or(5);
                 let mult = config.additional_params.get("threshold_mult").copied().unwrap_or(1.5);
                 Ok(Self::Qqe(Box::new(Qqe::new(p, sm, mult))))
             }
             BarIndicatorId::Kdj => {
-                let k = config.periods.get(0).copied().unwrap_or(14);
+                let k = config.periods.first().copied().unwrap_or(14);
                 let d = config.periods.get(1).copied().unwrap_or(3);
                 Ok(Self::Kdj(Box::new(Kdj::new(k, d))))
             }
             BarIndicatorId::ConnorsRsi => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(3);
+                let rsi_p = config.periods.first().copied().unwrap_or(3);
                 let up_p = config.periods.get(1).copied().unwrap_or(2);
                 let roc_p = config.periods.get(2).copied().unwrap_or(100);
                 Ok(Self::ConnorsRsi(Box::new(ConnorsRsi::with_periods(rsi_p, up_p, roc_p))))
             }
             BarIndicatorId::Trix => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let sig = config.periods.get(1).copied().unwrap_or(9);
 
                 // Check if we have custom MA types or source
@@ -2058,17 +2058,17 @@ impl IndicatorInstance {
             BarIndicatorId::DpoPct => Ok(Self::DpoPercent(Box::new(DpoPercent::new(period)))),
             BarIndicatorId::Dsp => Ok(Self::DetrendedSyntheticPrice(Box::new(DetrendedSyntheticPrice::new(period)))),
             BarIndicatorId::RsiPctRank => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(14);
+                let rsi_p = config.periods.first().copied().unwrap_or(14);
                 let win = config.periods.get(1).copied().unwrap_or(200);
                 Ok(Self::RsiPercentileRank(Box::new(RsiPercentileRank::new(rsi_p, win))))
             }
             BarIndicatorId::RsiPctBands => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(14);
+                let rsi_p = config.periods.first().copied().unwrap_or(14);
                 let win = config.periods.get(1).copied().unwrap_or(200);
                 Ok(Self::RsiPercentileBands(Box::new(RsiPercentileBands::new(rsi_p, win))))
             }
             BarIndicatorId::Dss => {
-                let k = config.periods.get(0).copied().unwrap_or(13);
+                let k = config.periods.first().copied().unwrap_or(13);
                 let s = config.periods.get(1).copied().unwrap_or(8);
                 Ok(Self::DssBressert(Box::new(DssBressert::new(k, s))))
             }
@@ -2082,31 +2082,31 @@ impl IndicatorInstance {
             }
             BarIndicatorId::Rvi => Ok(Self::Rvi(Box::new(Rvi::new(period)))),
             BarIndicatorId::VoVr => {
-                let fast = config.periods.get(0).copied().unwrap_or(10).max(2).min(512);
+                let fast = config.periods.first().copied().unwrap_or(10).max(2).min(512);
                 let slow = config.periods.get(1).copied().unwrap_or(20).max(fast+1).min(512);
                 Ok(Self::Vr(Box::new(Vr::new(fast, slow))))
             }
             BarIndicatorId::Har => {
-                let d = config.periods.get(0).copied().unwrap_or(5);
+                let d = config.periods.first().copied().unwrap_or(5);
                 let w = config.periods.get(1).copied().unwrap_or(22);
                 let m = config.periods.get(2).copied().unwrap_or(66);
                 let ann = config.additional_params.get("annualize_factor").copied().unwrap_or(252.0_f64.sqrt());
                 Ok(Self::HarRv(Box::new(HarRv::new(d, w, m, ann))))
             }
             BarIndicatorId::Atrpt => {
-                let w = config.periods.get(0).copied().unwrap_or(30);
+                let w = config.periods.first().copied().unwrap_or(30);
                 Ok(Self::BipowerVariance(Box::new(BipowerVariance::new(w))))
             }
             BarIndicatorId::Rq => {
-                let w = config.periods.get(0).copied().unwrap_or(30);
+                let w = config.periods.first().copied().unwrap_or(30);
                 Ok(Self::RealizedQuarticity(Box::new(RealizedQuarticity::new(w))))
             }
             BarIndicatorId::Hvc2c => {
-                let w = config.periods.get(0).copied().unwrap_or(30);
+                let w = config.periods.first().copied().unwrap_or(30);
                 Ok(Self::HistoricalVolatilityC2C(Box::new(HistoricalVolatilityC2C::new(w))))
             }
             BarIndicatorId::Atrchan => {
-                let ma_p = config.periods.get(0).copied().unwrap_or(20);
+                let ma_p = config.periods.first().copied().unwrap_or(20);
                 let atr_p = config.periods.get(1).copied().unwrap_or(14);
                 let k = config.additional_params.get("k").copied().unwrap_or(2.0);
                 let center_ma = config.ma_types.get("center_ma").copied().unwrap_or(MovingAverageType::SMA);
@@ -2114,12 +2114,12 @@ impl IndicatorInstance {
                 Ok(Self::AtrChannels(Box::new(AtrBands::new(ma_p, center_ma, atr_p, atr_ma, k))))
             }
             BarIndicatorId::Kp => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 let k = config.additional_params.get("k").copied().unwrap_or(2.0);
                 Ok(Self::Kp(Box::new(Kp::new(p, k))))
             }
             BarIndicatorId::Fuzzy => {
-                let per = config.periods.get(0).copied().unwrap_or(50);
+                let per = config.periods.first().copied().unwrap_or(50);
                 let t1 = config.additional_params.get("t1").copied().unwrap_or(0.5);
                 let t2 = config.additional_params.get("t2").copied().unwrap_or(1.0);
                 let t3 = config.additional_params.get("t3").copied().unwrap_or(1.5);
@@ -2130,12 +2130,12 @@ impl IndicatorInstance {
             // Accumulation/Volume/Misc
             BarIndicatorId::Ad => Ok(Self::AccumulationDistribution(Box::new(AccumulationDistribution::new()))),
             BarIndicatorId::Mfi => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::Mfi(Box::new(Mfi::new(p))))
             }
-            BarIndicatorId::Wad => Ok(Self::WilliamsAd(Box::new(WilliamsAd::new()))),
+            BarIndicatorId::Wad => Ok(Self::WilliamsAd(Box::default())),
             BarIndicatorId::Vdelta => {
-                let p = config.periods.get(0).copied().unwrap_or(50);
+                let p = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::Vdelta(Box::new(VolumeDelta::new(p))))
             }
             BarIndicatorId::Vprofile => {
@@ -2144,66 +2144,66 @@ impl IndicatorInstance {
                 Ok(Self::VolumeProfile(Box::new(VolumeProfile::new(tick.max(1e-6), sess))))
             }
             BarIndicatorId::Vpt => {
-                let sp = config.periods.get(0).copied().unwrap_or(21);
+                let sp = config.periods.first().copied().unwrap_or(21);
                 Ok(Self::VolumePriceTrend(Box::new(VolumePriceTrend::with_signal_period(sp))))
             }
             BarIndicatorId::Vroc => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let sp = config.periods.get(1).copied().unwrap_or(9);
                 Ok(Self::VolumeRateOfChange(Box::new(VolumeRateOfChange::with_params(p, sp))))
             }
             BarIndicatorId::NviPvi => {
-                let nvi_ma = config.periods.get(0).copied().unwrap_or(255);
+                let nvi_ma = config.periods.first().copied().unwrap_or(255);
                 let pvi_ma = config.periods.get(1).copied().unwrap_or(255);
                 Ok(Self::NviPvi(Box::new(NegativePositiveVolumeIndex::with_params(nvi_ma, pvi_ma))))
             }
             BarIndicatorId::Trin => {
-                let smooth = config.periods.get(0).copied().unwrap_or(10);
+                let smooth = config.periods.first().copied().unwrap_or(10);
                 Ok(Self::Trin(Box::new(TrinIndicator::with_smoothing(smooth))))
             }
             BarIndicatorId::Vpin => {
-                let buckets = config.periods.get(0).copied().unwrap_or(50);
+                let buckets = config.periods.first().copied().unwrap_or(50);
                 let bucket_volume = config.additional_params.get("bucket_volume").copied().unwrap_or(10_000.0);
                 Ok(Self::Vpin(Box::new(Vpin::new(buckets, bucket_volume))))
             }
             BarIndicatorId::Cmf => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Cmf(Box::new(ChaikinMoneyFlow::new(p))))
             }
             BarIndicatorId::Eom => {
-                let smooth = config.periods.get(0).copied().unwrap_or(14);
+                let smooth = config.periods.first().copied().unwrap_or(14);
                 let scale = config.additional_params.get("scale_factor").copied().unwrap_or(100_000_000.0);
                 Ok(Self::EaseOfMovement(Box::new(EaseOfMovement::with_params(smooth, scale))))
             }
             BarIndicatorId::Fi => {
-                let ema = config.periods.get(0).copied().unwrap_or(13);
+                let ema = config.periods.first().copied().unwrap_or(13);
                 Ok(Self::ForceIndex(Box::new(ForceIndex::with_ema(ema))))
             }
             BarIndicatorId::Cho => {
-                let fast = config.periods.get(0).copied().unwrap_or(3);
+                let fast = config.periods.first().copied().unwrap_or(3);
                 let slow = config.periods.get(1).copied().unwrap_or(10);
                 Ok(Self::Cho(Box::new(ChaikinOscillator::new(fast, slow))))
             }
             BarIndicatorId::Ii => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::IntradayIntensity(Box::new(IntradayIntensity::new(p))))
             }
-            BarIndicatorId::Asi => Ok(Self::AccumulativeSwingIndex(Box::new(AccumulativeSwingIndex::new()))),
-            BarIndicatorId::Di => Ok(Self::DemandIndex(Box::new(DemandIndex::new()))),
+            BarIndicatorId::Asi => Ok(Self::AccumulativeSwingIndex(Box::default())),
+            BarIndicatorId::Di => Ok(Self::DemandIndex(Box::default())),
             BarIndicatorId::Kvo => {
-                let fast = config.periods.get(0).copied().unwrap_or(34);
+                let fast = config.periods.first().copied().unwrap_or(34);
                 let slow = config.periods.get(1).copied().unwrap_or(55);
                 let signal = config.periods.get(2).copied().unwrap_or(13);
                 Ok(Self::Kvo(Box::new(Kvo::new(fast, slow, signal))))
             }
             // Duplicate short form removed; detailed arm below
             BarIndicatorId::Supertrend => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(3.0);
                 Ok(Self::Supertrend(Box::new(Supertrend::with_params(p, mult))))
             }
             BarIndicatorId::Ssl => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
 
                 // Check if we have custom MA type
                 let has_ma_type = config.ma_types.contains_key("ma_type");
@@ -2220,41 +2220,41 @@ impl IndicatorInstance {
             }
             BarIndicatorId::Gmma => Ok(Self::GmmaCompression(Box::new(GmmaCompression::new()))),
             BarIndicatorId::Tii => {
-                let w = config.periods.get(0).copied().unwrap_or(20);
+                let w = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Tii(Box::new(TrendIntensityIndex::new(w))))
             }
             BarIndicatorId::Ravi => {
-                let fast = config.periods.get(0).copied().unwrap_or(7);
+                let fast = config.periods.first().copied().unwrap_or(7);
                 let slow = config.periods.get(1).copied().unwrap_or(65);
                 Ok(Self::Ravi(Box::new(RaviTrend::new(fast, slow))))
             }
             BarIndicatorId::Didi => {
-                let s = config.periods.get(0).copied().unwrap_or(3);
+                let s = config.periods.first().copied().unwrap_or(3);
                 let m = config.periods.get(1).copied().unwrap_or(8);
                 let l = config.periods.get(2).copied().unwrap_or(20);
                 Ok(Self::Didi(Box::new(DidiIndex::new(s, m, l))))
             }
-            BarIndicatorId::HaTrend => Ok(Self::HaTrend(Box::new(HeikinAshiTrend::new()))),
+            BarIndicatorId::HaTrend => Ok(Self::HaTrend(Box::default())),
             BarIndicatorId::Er => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 Ok(Self::EfficiencyRatioFullHistory(Box::new(EfficiencyRatioFullHistory::new(p))))
             }
             BarIndicatorId::ErRing => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 Ok(Self::EfficiencyRatioRingWindow(Box::new(EfficiencyRatioRingWindow::new(p))))
             }
             BarIndicatorId::SpreadAnalyzer => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::SpreadAnalyzer(Box::new(SpreadAnalyzer::new(p))))
             }
             BarIndicatorId::Vr => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 let m = config.periods.get(1).copied().unwrap_or(5);
                 Ok(Self::VarianceRatio(Box::new(VarianceRatio::new(w, m))))
             }
             BarIndicatorId::VrAgg => {
                 // simple three-configs default
-                let w1 = config.periods.get(0).copied().unwrap_or(100);
+                let w1 = config.periods.first().copied().unwrap_or(100);
                 let m1 = config.periods.get(1).copied().unwrap_or(2);
                 let w2 = config.periods.get(2).copied().unwrap_or(100);
                 let m2 = config.periods.get(3).copied().unwrap_or(5);
@@ -2264,25 +2264,25 @@ impl IndicatorInstance {
                 Ok(Self::VarianceRatioAggregate(Box::new(VarianceRatioAggregate::new(&cfgs))))
             }
             BarIndicatorId::ArchLm => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 let l = config.periods.get(1).copied().unwrap_or(5);
                 Ok(Self::ArchLmProxy(Box::new(ArchLmProxy::new(w, l))))
             }
             BarIndicatorId::Kpss => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 Ok(Self::KpssProxy(Box::new(KpssProxy::new(w))))
             }
             BarIndicatorId::Adf => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 Ok(Self::AdfProxy(Box::new(AdfProxy::new(w))))
             }
             BarIndicatorId::Pacf => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 let k = config.periods.get(1).copied().unwrap_or(5);
                 Ok(Self::Pacf(Box::new(Pacf::new(w, k))))
             }
             BarIndicatorId::LjungBox => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 let k = config.periods.get(1).copied().unwrap_or(10);
                 Ok(Self::LjungBox(Box::new(LjungBox::new(w, k))))
             }
@@ -2293,22 +2293,22 @@ impl IndicatorInstance {
                 Ok(Self::PSARStop(Box::new(PSARStop::with_params(af_start, af_inc, af_max))))
             }
             BarIndicatorId::Supts => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(3.0);
                 Ok(Self::Supts(Box::new(SuperTrendStop::with_params(p, mult))))
             }
             BarIndicatorId::Atrts => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(2.0);
                 Ok(Self::Atrts(Box::new(ATRTrailingStop::with_params(p, mult))))
             }
             BarIndicatorId::Chand => {
-                let p = config.periods.get(0).copied().unwrap_or(22);
+                let p = config.periods.first().copied().unwrap_or(22);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(3.0);
                 Ok(Self::Chand(Box::new(ChandelierStop::with_params(p, mult))))
             }
             BarIndicatorId::Volts => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(2.0);
                 let vtype_code = config.additional_params.get("volatility_type").copied().unwrap_or(0.0) as i32;
                 let vtype = match vtype_code { 1 => VolatilityType::ATR, 2 => VolatilityType::Range, _ => VolatilityType::StandardDeviation };
@@ -2316,36 +2316,36 @@ impl IndicatorInstance {
                 Ok(Self::VolatilityStop(Box::new(VolatilityStop::with_params(p, mult, vtype, ma_type))))
             }
             BarIndicatorId::Kelts => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(2.0);
                 let center_ma = config.ma_types.get("center_ma").copied().unwrap_or(MovingAverageType::EMA);
                 let atr_ma = config.ma_types.get("atr_ma").copied().unwrap_or(MovingAverageType::RMA);
                 Ok(Self::KeltnerStop(Box::new(KeltnerStop::with_params(p, mult, center_ma, atr_ma))))
             }
             BarIndicatorId::Dons => {
-                let up = config.periods.get(0).copied().unwrap_or(20);
+                let up = config.periods.first().copied().unwrap_or(20);
                 let lo = config.periods.get(1).copied().unwrap_or(up);
                 let offset = config.additional_params.get("offset").copied().unwrap_or(0.0);
                 let use_pct = config.additional_params.get("use_percentage").copied().unwrap_or(0.0) != 0.0;
                 Ok(Self::DonchianStop(Box::new(DonchianStop::with_different_periods(up, lo, offset, use_pct))))
             }
             BarIndicatorId::Cks => {
-                let atr_p = config.periods.get(0).copied().unwrap_or(14);
+                let atr_p = config.periods.first().copied().unwrap_or(14);
                 let k = config.additional_params.get("k").copied().unwrap_or(1.5);
                 let hh = config.periods.get(1).copied().unwrap_or(22);
                 let ll = config.periods.get(2).copied().unwrap_or(22);
                 Ok(Self::ChandeKrollStop(Box::new(ChandeKrollStop::new(atr_p, k, hh, ll))))
             }
             BarIndicatorId::Donbo => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::DonchianBreakout(Box::new(DonchianBreakout::new(p))))
             }
 
             // Chaos (Williams)
-            BarIndicatorId::Alligator => Ok(Self::Alligator(Box::new(Alligator::new()))),
-            BarIndicatorId::Ao => Ok(Self::AwesomeOscillator(Box::new(AwesomeOscillator::new()))),
-            BarIndicatorId::Ac => Ok(Self::Ac(Box::new(AccelerationDeceleration::new()))),
-            BarIndicatorId::WilliamsMfi => Ok(Self::MarketFacilitationIndex(Box::new(MarketFacilitationIndex::new()))),
+            BarIndicatorId::Alligator => Ok(Self::Alligator(Box::default())),
+            BarIndicatorId::Ao => Ok(Self::AwesomeOscillator(Box::default())),
+            BarIndicatorId::Ac => Ok(Self::Ac(Box::default())),
+            BarIndicatorId::WilliamsMfi => Ok(Self::MarketFacilitationIndex(Box::default())),
             // Ehlers / Cycles
             BarIndicatorId::Esine => {
                 let alpha = config.additional_params.get("alpha").copied().unwrap_or(0.2);
@@ -2358,14 +2358,14 @@ impl IndicatorInstance {
 
             // Alias match arms for indicators with value() methods
             BarIndicatorId::TsSwings => {
-                let look = config.periods.get(0).copied().unwrap_or(5);
+                let look = config.periods.first().copied().unwrap_or(5);
                 let min_sz = config.additional_params.get("min_swing_size").copied().unwrap_or(0.0);
                 let offset = config.additional_params.get("offset").copied().unwrap_or(0.0);
                 let use_pct = config.additional_params.get("use_percentage").copied().unwrap_or(0.0) != 0.0;
                 Ok(Self::SwingStop(Box::new(SwingStop::with_params(look, min_sz, offset, use_pct))))
             }
             BarIndicatorId::VoltsAtr => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 let mult = config.additional_params.get("multiplier").copied().unwrap_or(2.0);
                 let vtype = VolatilityType::ATR; // Hardcoded to ATR for VoltsAtr variant
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::SMA);
@@ -2400,7 +2400,7 @@ impl IndicatorInstance {
                 Ok(Self::UnscentedKalmanFilter(Box::new(UnscentedKalmanFilter::new(dt, q_std, r_std, Some(ut)))))
             }
             BarIndicatorId::Particle => {
-                let n = config.periods.get(0).copied().unwrap_or(200).max(10).min(1000);
+                let n = config.periods.first().copied().unwrap_or(200).max(10).min(1000);
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let q_std = config.additional_params.get("process_noise_std").copied().unwrap_or(0.05);
                 let r_std = config.additional_params.get("measurement_noise_std").copied().unwrap_or(0.1);
@@ -2418,19 +2418,19 @@ impl IndicatorInstance {
                 Ok(Self::AdaptiveMovingAverage(Box::new(AdaptiveMovingAverage::new(period, mode, eff))))
             }
             BarIndicatorId::Kama => {
-                let er = config.periods.get(0).copied().unwrap_or(10);
+                let er = config.periods.first().copied().unwrap_or(10);
                 let fast = config.periods.get(1).copied().unwrap_or(2);
                 let slow = config.periods.get(2).copied().unwrap_or(30);
                 Ok(Self::KaufmanAdaptiveMA(Box::new(KaufmanAdaptiveMA::with_source(er, fast, slow, config.source))))
             }
             BarIndicatorId::Vidya => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let cmo_code = config.additional_params.get("cmo_ma_type").copied().unwrap_or(0.0) as i32;
                 let cmo = match cmo_code { 1 => VidyaCmoMaType::Exponential, 2 => VidyaCmoMaType::Linear, 3 => VidyaCmoMaType::Triangular, _ => VidyaCmoMaType::Simple };
                 Ok(Self::Vidya(Box::new(VariableIndexDynamicAverage::new(p, cmo))))
             }
             BarIndicatorId::Framaadv => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 let fm_code = config.additional_params.get("fractal_method").copied().unwrap_or(0.0) as i32;
                 let fm = match fm_code { 1 => FractalMethod::Improved, 2 => FractalMethod::Dynamic, 3 => FractalMethod::Robust, _ => FractalMethod::Standard };
                 Ok(Self::Framaadv(Box::new(FractalAdaptiveMovingAverage::new(p, fm))))
@@ -2438,18 +2438,18 @@ impl IndicatorInstance {
 
             // Entropy
             BarIndicatorId::Shannon => {
-                let p = config.periods.get(0).copied().unwrap_or(100).min(512);
+                let p = config.periods.first().copied().unwrap_or(100).min(512);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(20.0) as usize;
                 Ok(Self::ShannonEntropy(Box::new(ShannonEntropy::new(p, bins))))
             }
             BarIndicatorId::Apen => {
-                let p = config.periods.get(0).copied().unwrap_or(100).min(512);
+                let p = config.periods.first().copied().unwrap_or(100).min(512);
                 let m = config.additional_params.get("m").copied().unwrap_or(2.0) as usize;
                 let r = config.additional_params.get("r").copied().unwrap_or(0.0);
                 Ok(Self::Apen(Box::new(ApproximateEntropy::new(p, m, r))))
             }
             BarIndicatorId::Pe => {
-                let p = config.periods.get(0).copied().unwrap_or(100).min(512);
+                let p = config.periods.first().copied().unwrap_or(100).min(512);
                 let m = config.additional_params.get("m").copied().unwrap_or(2.0) as usize;
                 let r = config.additional_params.get("r").copied().unwrap_or(0.0);
                 Ok(Self::SampleEntropy(Box::new(SampleEntropy::new(p, m, r))))
@@ -2457,35 +2457,35 @@ impl IndicatorInstance {
 
             // Chaos / Fractal / Hurst / DFA
             BarIndicatorId::FractalDim => {
-                let period = config.periods.get(0).copied().unwrap_or(128).min(512);
+                let period = config.periods.first().copied().unwrap_or(128).min(512);
                 let max_k = config.periods.get(1).copied().unwrap_or(period / 8);
                 Ok(Self::FractalDimension(Box::new(FractalDimension::new(period, max_k))))
             }
             BarIndicatorId::Hurst => {
-                let period = config.periods.get(0).copied().unwrap_or(128).min(512);
+                let period = config.periods.first().copied().unwrap_or(128).min(512);
                 Ok(Self::Hurst(Box::new(HurstExponent::new(period))))
             }
             BarIndicatorId::HurstPct => {
-                let window = config.periods.get(0).copied().unwrap_or(200).min(1024);
+                let window = config.periods.first().copied().unwrap_or(200).min(1024);
                 Ok(Self::HurstPct(Box::new(HurstPercentile::new(window))))
             }
             BarIndicatorId::ChaosOsc => {
-                let period = config.periods.get(0).copied().unwrap_or(128).min(512);
+                let period = config.periods.first().copied().unwrap_or(128).min(512);
                 let w1 = config.additional_params.get("complexity_weight").copied().unwrap_or(0.4);
                 let w2 = config.additional_params.get("persistence_weight").copied().unwrap_or(0.4);
                 let w3 = config.additional_params.get("volatility_weight").copied().unwrap_or(0.2);
                 Ok(Self::ChaosOscillator(Box::new(ChaosOscillator::new_with_weights(period, w1, w2, w3))))
             }
-            BarIndicatorId::Fractals => Ok(Self::Fractals(Box::new(WilliamsFractals::new()))),
+            BarIndicatorId::Fractals => Ok(Self::Fractals(Box::default())),
             BarIndicatorId::Dfa => {
-                let s0 = config.periods.get(0).copied().unwrap_or(16);
+                let s0 = config.periods.first().copied().unwrap_or(16);
                 let s1 = config.periods.get(1).copied().unwrap_or(32);
                 let s2 = config.periods.get(2).copied().unwrap_or(64);
                 let s3 = config.periods.get(3).copied().unwrap_or(128);
                 Ok(Self::Dfa(Box::new(Dfa::new([s0, s1, s2, s3]))))
             }
             BarIndicatorId::DfaPct => {
-                let s0 = config.periods.get(0).copied().unwrap_or(16);
+                let s0 = config.periods.first().copied().unwrap_or(16);
                 let s1 = config.periods.get(1).copied().unwrap_or(32);
                 let s2 = config.periods.get(2).copied().unwrap_or(64);
                 let s3 = config.periods.get(3).copied().unwrap_or(128);
@@ -2495,12 +2495,12 @@ impl IndicatorInstance {
 
             // Z-Score & EWMAC
             BarIndicatorId::RsiZscore => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(14);
+                let rsi_p = config.periods.first().copied().unwrap_or(14);
                 let win = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::RsiZscore(Box::new(RsiZscore::new(rsi_p, win))))
             }
             BarIndicatorId::MacdHistZ => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 let signal = config.periods.get(2).copied().unwrap_or(9);
                 let window = config.periods.get(3).copied().unwrap_or(100);
@@ -2508,20 +2508,20 @@ impl IndicatorInstance {
                 Ok(Self::MacdHistZscore(Box::new(MacdHistZscore::new(fast, slow, signal, ma_type, window))))
             }
             BarIndicatorId::PriceZscore => {
-                let p = config.periods.get(0).copied().unwrap_or(100).max(2);
+                let p = config.periods.first().copied().unwrap_or(100).max(2);
                 Ok(Self::PriceZScore(Box::new(PriceZScore::new(p))))
             }
             BarIndicatorId::Zmad => {
-                let win = config.periods.get(0).copied().unwrap_or(100).max(3);
+                let win = config.periods.first().copied().unwrap_or(100).max(3);
                 Ok(Self::PriceMadZscore(Box::new(PriceMadZscore::new(win))))
             }
             BarIndicatorId::MomZscore => {
-                let diff = config.periods.get(0).copied().unwrap_or(1).max(1);
+                let diff = config.periods.first().copied().unwrap_or(1).max(1);
                 let win = config.periods.get(1).copied().unwrap_or(100).max(2);
                 Ok(Self::MomentumZscore(Box::new(MomentumZscore::new(diff, win))))
             }
             BarIndicatorId::Ewmac => {
-                let fast = config.periods.get(0).copied().unwrap_or(16).max(1);
+                let fast = config.periods.first().copied().unwrap_or(16).max(1);
                 let slow = config.periods.get(1).copied().unwrap_or(64).max(2);
                 Ok(Self::Ewmac(Box::new(Ewmac::new(fast, slow))))
             }
@@ -2537,11 +2537,11 @@ impl IndicatorInstance {
                 Ok(Self::Decyc(Box::new(Decycler::new(alpha))))
             }
             BarIndicatorId::Ehlersfa => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::EhlersFractalAdaptiveMa(Box::new(EhlersFractalAdaptiveMa::with_source(p, config.source))))
             }
             BarIndicatorId::Ehlersz => {
-                let p = config.periods.get(0).copied().unwrap_or(21);
+                let p = config.periods.first().copied().unwrap_or(21);
                 Ok(Self::EhlersZeroLagEma(Box::new(EhlersZeroLagEma::with_source(p, config.source))))
             }
             BarIndicatorId::Eit => {
@@ -2558,12 +2558,12 @@ impl IndicatorInstance {
             BarIndicatorId::AtrRsi => Ok(Self::AtrRsi(Box::new(AtrRsi::new()))),
             BarIndicatorId::Vwrsi => Ok(Self::VolumeWeightedRsi(Box::new(VolumeWeightedRsi::new()))),
             BarIndicatorId::Rsioma => {
-                let rsi_p = config.periods.get(0).copied().unwrap_or(14);
+                let rsi_p = config.periods.first().copied().unwrap_or(14);
                 let ema_p = config.periods.get(1).copied().unwrap_or(9);
                 Ok(Self::RsiOma(Box::new(RsiOma::new(rsi_p, ema_p))))
             }
             BarIndicatorId::Tdi => {
-                let rsi_period = config.periods.get(0).copied().unwrap_or(13);
+                let rsi_period = config.periods.first().copied().unwrap_or(13);
                 let signal_period = config.periods.get(1).copied().unwrap_or(2);
                 let band_period = config.periods.get(2).copied().unwrap_or(34);
                 Ok(Self::Tdi(Box::new(Tdi::new(rsi_period, signal_period, band_period))))
@@ -2575,38 +2575,38 @@ impl IndicatorInstance {
                 let upper = config.additional_params.get("upper").copied().unwrap_or(70.0);
                 Ok(Self::Thresh(Box::new(ThresholdGate::new(lower, upper))))
             }
-            BarIndicatorId::Logicand => Ok(Self::AndGate(Box::new(AndGate::new()))),
-            BarIndicatorId::Logicor => Ok(Self::OrGate(Box::new(OrGate::new()))),
-            BarIndicatorId::Logicxor => Ok(Self::XorGate(Box::new(XorGate::new()))),
-            BarIndicatorId::Logicsign => Ok(Self::SignCombiner(Box::new(SignCombiner::new()))),
+            BarIndicatorId::Logicand => Ok(Self::AndGate(Box::default())),
+            BarIndicatorId::Logicor => Ok(Self::OrGate(Box::default())),
+            BarIndicatorId::Logicxor => Ok(Self::XorGate(Box::default())),
+            BarIndicatorId::Logicsign => Ok(Self::SignCombiner(Box::default())),
 
             // Realized Vol / Stats
             BarIndicatorId::Rv => {
-                let win = config.periods.get(0).copied().unwrap_or(21);
+                let win = config.periods.first().copied().unwrap_or(21);
                 let ann = config.additional_params.get("annualize_factor").copied().unwrap_or(252.0_f64.sqrt());
                 Ok(Self::RealizedVol(Box::new(RealizedVol::new(win, ann))))
             }
             BarIndicatorId::Rvz => {
-                let vp = config.periods.get(0).copied().unwrap_or(21);
+                let vp = config.periods.first().copied().unwrap_or(21);
                 let zw = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::RealizedVolZscore(Box::new(RealizedVolZscore::new(vp, zw))))
             }
             BarIndicatorId::Autocorr => {
-                let lag = config.periods.get(0).copied().unwrap_or(1);
+                let lag = config.periods.first().copied().unwrap_or(1);
                 let win = config.periods.get(1).copied().unwrap_or(50);
                 Ok(Self::Autocorr(Box::new(Autocorr::new(lag, win))))
             }
             BarIndicatorId::Hmom => {
-                let win = config.periods.get(0).copied().unwrap_or(50);
+                let win = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::Hmom(Box::new(HigherMoments::new(win))))
             }
             BarIndicatorId::RocPct => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 let win = config.periods.get(1).copied().unwrap_or(200);
                 Ok(Self::RocPercentile(Box::new(RocPercentile::new(p, win))))
             }
             BarIndicatorId::Nr => {
-                let win = config.periods.get(0).copied().unwrap_or(20);
+                let win = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::NrRange(Box::new(NrRange::new(win))))
             }
 
@@ -2627,43 +2627,43 @@ impl IndicatorInstance {
 
             // Entropy / information
             BarIndicatorId::Mi => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 let lag = config.periods.get(1).copied().unwrap_or(1);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(8.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.15);
                 Ok(Self::MutualInformation(Box::new(MutualInformation::new(w, lag, bins, clip))))
             }
             BarIndicatorId::Te => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 let lag = config.periods.get(1).copied().unwrap_or(1);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(8.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.15);
                 Ok(Self::TransferEntropy(Box::new(TransferEntropy::new(w, lag, bins, clip))))
             }
             BarIndicatorId::Kld => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(16.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.05);
                 Ok(Self::KLDivergence(Box::new(KLDivergence::new(w, bins, clip))))
             }
             BarIndicatorId::Jsd => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(16.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.05);
                 Ok(Self::JSDivergence(Box::new(JSDivergence::new(w, bins, clip))))
             }
             BarIndicatorId::Fisher => {
-                let w = config.periods.get(0).copied().unwrap_or(200);
+                let w = config.periods.first().copied().unwrap_or(200);
                 Ok(Self::RollingFisherInformation(Box::new(RollingFisherInformation::new(w))))
             }
             BarIndicatorId::Infog => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(8.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.05);
                 Ok(Self::InformationGain(Box::new(InformationGain::new(w, bins, clip))))
             }
             BarIndicatorId::Lz => {
-                let w = config.periods.get(0).copied().unwrap_or(64);
+                let w = config.periods.first().copied().unwrap_or(64);
                 Ok(Self::Lz(Box::new(LempelZivComplexity::new(w))))
             }
 
@@ -2684,7 +2684,7 @@ impl IndicatorInstance {
 
             // Candles/patterns
             BarIndicatorId::Sfp => {
-                let lb = config.periods.get(0).copied().unwrap_or(20);
+                let lb = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::SfpDetector(Box::new(SfpDetector::new(lb))))
             }
 
@@ -2695,19 +2695,19 @@ impl IndicatorInstance {
                 Ok(Self::EhlersCc(Box::new(EhlersCyberCycle::new(alpha))))
             }
             BarIndicatorId::Zlsma => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::ZlSma(Box::new(ZlSma::new(w))))
             }
             BarIndicatorId::VwapDist => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::VwapDistance(Box::new(VwapDistance::new(p))))
             }
             BarIndicatorId::Hlva => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::HlValueArea(Box::new(HlValueArea::new(w))))
             }
             BarIndicatorId::SweepRev => {
-                let look = config.periods.get(0).copied().unwrap_or(40);
+                let look = config.periods.first().copied().unwrap_or(40);
                 let atr_p = config.periods.get(1).copied().unwrap_or(14);
                 let quart = config.additional_params.get("close_quartile").copied().unwrap_or(0.35);
                 let k = config.additional_params.get("weight_k").copied().unwrap_or(1.0);
@@ -2719,67 +2719,67 @@ impl IndicatorInstance {
 
             // Entropy/statistics/econometrics
             BarIndicatorId::Conden => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 let bins = config.additional_params.get("bins").copied().unwrap_or(8.0) as usize;
                 let clip = config.additional_params.get("clip_abs").copied().unwrap_or(0.05);
                 Ok(Self::Conden(Box::new(ConditionalEntropy::new(w, bins, clip))))
             }
             BarIndicatorId::HalfLifeMr => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::HalfLifeMr(Box::new(HalfLifeMr::new(w))))
             }
             BarIndicatorId::ResidStat => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::ResidStat(Box::new(ResidualStationarity::new(w))))
             }
             BarIndicatorId::Coint => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::Coint(Box::new(CointegrationProxy::new(w))))
             }
             BarIndicatorId::EgCoint => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::EngleGrangerProxy(Box::new(EngleGrangerProxy::new(w))))
             }
             BarIndicatorId::EgAdf => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 let ma = config.periods.get(1).copied().unwrap_or(20);
                 Ok(Self::EngleGrangerAdfProxy(Box::new(EngleGrangerAdfProxy::new(w, ma))))
             }
             BarIndicatorId::EgTrend => {
-                let w = config.periods.get(0).copied().unwrap_or(100);
+                let w = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::EngleGrangerTrendProxy(Box::new(EngleGrangerTrendProxy::new(w))))
             }
 
             // Momentum/trend extras
             BarIndicatorId::MarketCipher => Ok(Self::MultiTimeframeMomentumDivergence(Box::new(MultiTimeframeMomentumDivergence::new()))),
             BarIndicatorId::AdxSlope => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::AdxSlope(Box::new(AdxSlope::new(p))))
             }
             BarIndicatorId::GannHilo => {
-                let p = config.periods.get(0).copied().unwrap_or(10);
+                let p = config.periods.first().copied().unwrap_or(10);
                 Ok(Self::GannHilo(Box::new(GannHiLoActivator::new(p))))
             }
 
             // Filters/channels
             BarIndicatorId::Hampel => {
-                let w = config.periods.get(0).copied().unwrap_or(25);
+                let w = config.periods.first().copied().unwrap_or(25);
                 let k = config.additional_params.get("k").copied().unwrap_or(3.0);
                 Ok(Self::Hampel(Box::new(HampelFilter::new(w, k))))
             }
             BarIndicatorId::Theilsenchan => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 let k = config.additional_params.get("k").copied().unwrap_or(2.0);
                 Ok(Self::TheilSenChannels(Box::new(TheilSenChannels::new(w, k))))
             }
             BarIndicatorId::Projbands => {
-                let w = config.periods.get(0).copied().unwrap_or(50);
+                let w = config.periods.first().copied().unwrap_or(50);
                 let k = config.additional_params.get("k").copied().unwrap_or(2.0);
                 Ok(Self::ProjectionBands(Box::new(ProjectionBands::with_source(w, k, config.source))))
             }
 
             // Patterns/ML-style
-            BarIndicatorId::Patternrec => Ok(Self::AdvancedPatternRecognition(Box::new(AdvancedPatternRecognition::new()))),
+            BarIndicatorId::Patternrec => Ok(Self::AdvancedPatternRecognition(Box::default())),
             BarIndicatorId::Avr => Ok(Self::AdaptiveVolatilityRegime(Box::new(AdaptiveVolatilityRegime::new()))),
             BarIndicatorId::NeuralMom => Ok(Self::NeuralMomentumNetwork(Box::new(NeuralMomentumNetwork::new()))),
             BarIndicatorId::Candleanatomy => {
@@ -2789,38 +2789,38 @@ impl IndicatorInstance {
 
             // Price action / structure helpers
             BarIndicatorId::Swingstr => {
-                let left = config.periods.get(0).copied().unwrap_or(3);
+                let left = config.periods.first().copied().unwrap_or(3);
                 let right = config.periods.get(1).copied().unwrap_or(3);
                 Ok(Self::SwingStrengthScore(Box::new(SwingStrengthScore::new(left, right))))
             }
             BarIndicatorId::Liqgap => {
-                let win = config.periods.get(0).copied().unwrap_or(50);
+                let win = config.periods.first().copied().unwrap_or(50);
                 let thr = config.additional_params.get("threshold").copied().unwrap_or(0.003);
                 Ok(Self::Liqgap(Box::new(LiquidityGapDensity::new(win, thr))))
             }
             BarIndicatorId::Wickspike => {
-                let win = config.periods.get(0).copied().unwrap_or(50);
+                let win = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::WickSpike(Box::new(WickSpike::new(win))))
             }
             BarIndicatorId::SwingAge => {
-                let look = config.periods.get(0).copied().unwrap_or(20);
+                let look = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::SwingAge(Box::new(SwingAge::new(look))))
             }
 
             // Regime/time effects and structures
             BarIndicatorId::Rcb => {
-                let win = config.periods.get(0).copied().unwrap_or(20);
+                let win = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::RangeCompressionBurst(Box::new(RangeCompressionBurst::new(win))))
             }
             BarIndicatorId::Stft => {
-                let window = config.periods.get(0).copied().unwrap_or(64);
+                let window = config.periods.first().copied().unwrap_or(64);
                 let split = config.periods.get(1).copied().unwrap_or(4);
                 Ok(Self::StftBandEnergyRatio(Box::new(StftBandEnergyRatio::new(window, split))))
             }
             // Calendar/time effects excluded from universal constructor
-            BarIndicatorId::Fvg => Ok(Self::FvgDetector(Box::new(FvgDetector::new()))),
+            BarIndicatorId::Fvg => Ok(Self::FvgDetector(Box::default())),
             BarIndicatorId::Bos => {
-                let lb = config.periods.get(0).copied().unwrap_or(20);
+                let lb = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::BosChochDetector(Box::new(BosChochDetector::new(lb))))
             }
 
@@ -2832,70 +2832,70 @@ impl IndicatorInstance {
 
             // Regression models (operate on close stream in update_bar)
             BarIndicatorId::Arima => {
-                let p = config.periods.get(0).copied().unwrap_or(1);
+                let p = config.periods.first().copied().unwrap_or(1);
                 let d = config.periods.get(1).copied().unwrap_or(1);
                 let q = config.periods.get(2).copied().unwrap_or(1);
                 Ok(Self::Arima(Box::new(Arima::new(p, d, q))))
             }
             BarIndicatorId::Arimax => {
-                let p = config.periods.get(0).copied().unwrap_or(1);
+                let p = config.periods.first().copied().unwrap_or(1);
                 let d = config.periods.get(1).copied().unwrap_or(1);
                 let q = config.periods.get(2).copied().unwrap_or(1);
                 let exog = config.periods.get(3).copied().unwrap_or(0);
                 Ok(Self::ArimaX(Box::new(ArimaX::new(p, d, q, exog))))
             }
             BarIndicatorId::Garch => {
-                let p = config.periods.get(0).copied().unwrap_or(1);
+                let p = config.periods.first().copied().unwrap_or(1);
                 let q = config.periods.get(1).copied().unwrap_or(1);
                 Ok(Self::Garch(Box::new(Garch::new(p, q))))
             }
             BarIndicatorId::Egarch => {
-                let p = config.periods.get(0).copied().unwrap_or(1);
+                let p = config.periods.first().copied().unwrap_or(1);
                 let q = config.periods.get(1).copied().unwrap_or(1);
                 Ok(Self::EGarch(Box::new(EGarch::new(p, q))))
             }
             BarIndicatorId::Var => {
-                let p = config.periods.get(0).copied().unwrap_or(1);
+                let p = config.periods.first().copied().unwrap_or(1);
                 // VAR uses [close, volume] so n_vars=2
                 Ok(Self::Var(Box::new(Var::new(p, 2))))
             }
             BarIndicatorId::PolyReg => {
-                let degree = config.periods.get(0).copied().unwrap_or(2);
+                let degree = config.periods.first().copied().unwrap_or(2);
                 Ok(Self::PolyReg(Box::new(PolynomialRegression::with_source(degree, config.source))))
             }
 
             // Momentum extras & helpers
             BarIndicatorId::Aroon => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::Aroon(Box::new(Aroon::new(p))))
             }
             BarIndicatorId::AroonOsc => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::AroonOscillator(Box::new(AroonOscillator::new(p))))
             }
             BarIndicatorId::AroonUp => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::AroonUp(Box::new(AroonUp::new(p))))
             }
             BarIndicatorId::AroonDown => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::AroonDown(Box::new(AroonDown::new(p))))
             }
             BarIndicatorId::Highest => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Highest(Box::new(Highest::new(p))))
             }
             BarIndicatorId::Lowest => {
-                let p = config.periods.get(0).copied().unwrap_or(20);
+                let p = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Lowest(Box::new(Lowest::new(p))))
             }
             BarIndicatorId::Pressure => {
-                let p = config.periods.get(0).copied().unwrap_or(14);
+                let p = config.periods.first().copied().unwrap_or(14);
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::SMA);
                 Ok(Self::Pressure(Box::new(Pressure::new(p, ma_type))))
             }
             BarIndicatorId::MaCross => {
-                let fast = config.periods.get(0).copied().unwrap_or(9);
+                let fast = config.periods.first().copied().unwrap_or(9);
                 let slow = config.periods.get(1).copied().unwrap_or(21);
                 let fast_ma = config.ma_types.get("fast_ma").copied().unwrap_or(MovingAverageType::EMA);
                 let slow_ma = config.ma_types.get("slow_ma").copied().unwrap_or(MovingAverageType::EMA);
@@ -2908,7 +2908,7 @@ impl IndicatorInstance {
 
             // Accumulation
             BarIndicatorId::Tmf => {
-                let p = config.periods.get(0).copied().unwrap_or(21);
+                let p = config.periods.first().copied().unwrap_or(21);
                 Ok(Self::TwiggsMoneyFlow(Box::new(Tmf::new(p))))
             }
 
@@ -2920,7 +2920,7 @@ impl IndicatorInstance {
 
             // Regime composites
             BarIndicatorId::Rc2 => {
-                let win = config.periods.get(0).copied().unwrap_or(128);
+                let win = config.periods.first().copied().unwrap_or(128);
                 let roll_target = config.additional_params.get("roll_target").copied().unwrap_or(0.85);
                 let atr_p = config.periods.get(1).copied().unwrap_or(14);
                 let atr_ma = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::RMA);
@@ -2929,14 +2929,14 @@ impl IndicatorInstance {
                 Ok(Self::RegimeCompositeV2(Box::new(RegimeCompositeV2::new(win, roll_target, atr_p, atr_ma, atr_win, bins))))
             }
             BarIndicatorId::Rc3 => {
-                let win = config.periods.get(0).copied().unwrap_or(128);
+                let win = config.periods.first().copied().unwrap_or(128);
                 let low_cut = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 let vov_win = config.periods.get(1).copied().unwrap_or(100);
                 let bins = config.additional_params.get("shannon_bins").copied().unwrap_or(20.0) as usize;
                 Ok(Self::RegimeCompositeV3(Box::new(RegimeCompositeV3::new(win, low_cut, vov_win, bins))))
             }
             BarIndicatorId::Rc4 => {
-                let hurst_w = config.periods.get(0).copied().unwrap_or(100);
+                let hurst_w = config.periods.first().copied().unwrap_or(100);
                 let dfa1 = config.periods.get(1).copied().unwrap_or(4);
                 let dfa2 = config.periods.get(2).copied().unwrap_or(8);
                 let dfa3 = config.periods.get(3).copied().unwrap_or(16);
@@ -2959,39 +2959,39 @@ impl IndicatorInstance {
                 Ok(Self::AnchoredVwap(Box::new(AnchoredVwap::new(params))))
             }
             BarIndicatorId::Pivavwap => {
-                let look = config.periods.get(0).copied().unwrap_or(20);
+                let look = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::PivotAnchoredVwap(Box::new(PivotAnchoredVwap::new(look))))
             }
 
             // Vol/volatility helpers
             BarIndicatorId::Atrp => {
-                let atr_p = config.periods.get(0).copied().unwrap_or(14);
+                let atr_p = config.periods.first().copied().unwrap_or(14);
                 let win = config.periods.get(1).copied().unwrap_or(100);
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::RMA);
                 Ok(Self::AtrPercentile(Box::new(AtrPercentileInd::new(atr_p, ma_type, win))))
             }
             BarIndicatorId::Atrbw => {
-                let atr_p = config.periods.get(0).copied().unwrap_or(14);
+                let atr_p = config.periods.first().copied().unwrap_or(14);
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::RMA);
                 Ok(Self::AtrBandwidth(Box::new(AtrBandwidth::new(atr_p, ma_type))))
             }
             BarIndicatorId::Atrz => {
-                let atr_p = config.periods.get(0).copied().unwrap_or(14);
+                let atr_p = config.periods.first().copied().unwrap_or(14);
                 let win = config.periods.get(1).copied().unwrap_or(100);
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::RMA);
                 Ok(Self::AtrZscore(Box::new(AtrZscore::new(atr_p, ma_type, win))))
             }
             BarIndicatorId::C2cvp => {
-                let vol_win = config.periods.get(0).copied().unwrap_or(50);
+                let vol_win = config.periods.first().copied().unwrap_or(50);
                 let perc_win = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::CloseVolPercentile(Box::new(CloseVolPercentile::new(vol_win, perc_win))))
             }
             BarIndicatorId::Pvt => {
-                let win = config.periods.get(0).copied().unwrap_or(50);
+                let win = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::RelativeVolume(Box::new(RelativeVolume::new(win))))
             }
             BarIndicatorId::Vz => {
-                let win = config.periods.get(0).copied().unwrap_or(100);
+                let win = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::VolumeZscore(Box::new(VolumeZscore::new(win))))
             }
 
@@ -3000,7 +3000,7 @@ impl IndicatorInstance {
                 Ok(Self::SlopeDirectionLine(Box::new(SlopeDirectionLine::new(period))))
             }
             BarIndicatorId::EmaSlope => {
-                let ema_p = config.periods.get(0).copied().unwrap_or(21);
+                let ema_p = config.periods.first().copied().unwrap_or(21);
                 let look = config.periods.get(1).copied().unwrap_or(20);
                 Ok(Self::EmaSlope(Box::new(EmaSlope::new(ema_p, look))))
             }
@@ -3008,96 +3008,96 @@ impl IndicatorInstance {
                 Ok(Self::Rmid(Box::new(RollingMidline::new(period))))
             }
             BarIndicatorId::Pgry => {
-                let win = config.periods.get(0).copied().unwrap_or(100);
+                let win = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::RangePercentile(Box::new(RangePercentile::new(win))))
             }
             BarIndicatorId::RangeAtr => {
-                let atr_p = config.periods.get(0).copied().unwrap_or(14);
+                let atr_p = config.periods.first().copied().unwrap_or(14);
                 let ma_type = config.ma_types.get("ma_type").copied().unwrap_or(MovingAverageType::RMA);
                 Ok(Self::RangeToAtr(Box::new(RangeToAtr::new(atr_p, ma_type))))
             }
             BarIndicatorId::Rquart => {
-                let win = config.periods.get(0).copied().unwrap_or(100);
+                let win = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::RollingQuartiles(Box::new(RollingQuartiles::new(win))))
             }
 
             // Signal Processing / Spectral
             BarIndicatorId::Fft => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 256);
                 let sr = config.additional_params.get("sampling_rate").copied().unwrap_or(1.0);
                 Ok(Self::FastFourierTransform(Box::new(FastFourierTransform::new(win, sr))))
             }
             BarIndicatorId::Wave => {
-                let max_scales = config.periods.get(0).copied().unwrap_or(16).max(1).min(32);
+                let max_scales = config.periods.first().copied().unwrap_or(16).max(1).min(32);
                 let wtype_code = config.additional_params.get("wavelet_type").copied().unwrap_or(0.0) as i32;
                 let wtype = match wtype_code { 1 => WaveletType::Daubechies4, 2 => WaveletType::Daubechies6, 3 => WaveletType::Morlet, 4 => WaveletType::Mexican, 5 => WaveletType::Biorthogonal, _ => WaveletType::Haar };
                 Ok(Self::Wave(Box::new(WaveletTransform::new(wtype, max_scales))))
             }
             BarIndicatorId::Hilb => {
-                let win = config.periods.get(0).copied().unwrap_or(64).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(64).clamp(16, 256);
                 let sr = config.additional_params.get("sampling_rate").copied().unwrap_or(1.0);
                 Ok(Self::Hilb(Box::new(HilbertTransform::new(win, sr))))
             }
             BarIndicatorId::Sent => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 256);
                 Ok(Self::Sent(Box::new(SpectralEntropy::new(win))))
             }
             BarIndicatorId::Shmpr => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 256);
                 let target = config.additional_params.get("target_fraction").copied().unwrap_or(0.85);
                 Ok(Self::SpectralRolloff(Box::new(SpectralRolloff::new(win, target))))
             }
             BarIndicatorId::Screst => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 256);
                 Ok(Self::Screst(Box::new(SpectralCrest::new(win))))
             }
             BarIndicatorId::Sentent => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 256);
                 let alpha = config.additional_params.get("smoothing_alpha").copied().unwrap_or(0.2);
                 Ok(Self::SpectralEntropyRate(Box::new(SpectralEntropyRate::new(win, alpha))))
             }
             BarIndicatorId::Ser => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(32, 256);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(32, 256);
                 let low_cut = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 Ok(Self::Ser(Box::new(SpectralEnergyRatio::new(win, low_cut))))
             }
             BarIndicatorId::Srollrp => {
-                let win = config.periods.get(0).copied().unwrap_or(256).clamp(32, 512);
+                let win = config.periods.first().copied().unwrap_or(256).clamp(32, 512);
                 Ok(Self::SpectralSlope(Box::new(SpectralSlope::new(win))))
             }
             BarIndicatorId::Sslopez => {
-                let fft_win = config.periods.get(0).copied().unwrap_or(256).clamp(32, 512);
+                let fft_win = config.periods.first().copied().unwrap_or(256).clamp(32, 512);
                 let z_win = config.periods.get(1).copied().unwrap_or(256).max(20).min(2048);
                 Ok(Self::SpectralSlopeZscore(Box::new(SpectralSlopeZscore::new(fft_win, z_win))))
             }
             BarIndicatorId::Sflux => {
-                let win = config.periods.get(0).copied().unwrap_or(256).clamp(32, 1024);
+                let win = config.periods.first().copied().unwrap_or(256).clamp(32, 1024);
                 let low = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 let high = config.additional_params.get("high_cut_fraction").copied().unwrap_or(0.25);
                 Ok(Self::SpectralLowMidPowerRatio(Box::new(SpectralLowMidPowerRatio::new(win, low, high))))
             }
             BarIndicatorId::Sflatp => {
-                let win = config.periods.get(0).copied().unwrap_or(256).clamp(32, 1024);
+                let win = config.periods.first().copied().unwrap_or(256).clamp(32, 1024);
                 let low = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 let high = config.additional_params.get("high_cut_fraction").copied().unwrap_or(0.25);
                 Ok(Self::SpectralHighMidPowerRatio(Box::new(SpectralHighMidPowerRatio::new(win, low, high))))
             }
             BarIndicatorId::Sbprhl => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 512);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 512);
                 Ok(Self::SpectralCentroidFeature(Box::new(SpectralCentroidFeature::new(win))))
             }
             BarIndicatorId::Sbwf => {
-                let win = config.periods.get(0).copied().unwrap_or(128).clamp(16, 512);
+                let win = config.periods.first().copied().unwrap_or(128).clamp(16, 512);
                 Ok(Self::SpectralBandwidthFeature(Box::new(SpectralBandwidthFeature::new(win))))
             }
             BarIndicatorId::Sbp => {
-                let win = config.periods.get(0).copied().unwrap_or(256).clamp(32, 512);
+                let win = config.periods.first().copied().unwrap_or(256).clamp(32, 512);
                 let low = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 let high = config.additional_params.get("high_cut_fraction").copied().unwrap_or(0.3);
                 Ok(Self::SpectralBandpower(Box::new(SpectralBandpower::new(win, low, high))))
             }
             BarIndicatorId::Butter => {
-                let order = config.periods.get(0).copied().unwrap_or(2);
+                let order = config.periods.first().copied().unwrap_or(2);
                 let cutoff_hz = config.additional_params.get("cutoff_hz").copied().unwrap_or(0.1);
                 let sr = config.additional_params.get("sampling_rate").copied().unwrap_or(1.0);
                 let t = match config.additional_params.get("filter_type").copied().unwrap_or(0.0) as i32 { 1 => ButterType::HighPass, 2 => ButterType::BandPass, 3 => ButterType::BandStop, _ => ButterType::LowPass };
@@ -3112,7 +3112,7 @@ impl IndicatorInstance {
                 Ok(Self::ButterworthFilter(Box::new(instance)))
             }
             BarIndicatorId::Cheby => {
-                let order = config.periods.get(0).copied().unwrap_or(2);
+                let order = config.periods.first().copied().unwrap_or(2);
                 let cutoff = config.additional_params.get("cutoff_fraction").copied().unwrap_or(0.1);
                 let ripple = config.additional_params.get("ripple_db").copied().unwrap_or(1.0);
                 let ctype = match config.additional_params.get("cheby_type").copied().unwrap_or(1.0) as i32 { 2 => ChebyshevType::Type2, _ => ChebyshevType::Type1 };
@@ -3121,7 +3121,7 @@ impl IndicatorInstance {
                 Ok(Self::ChebyshevFilter(Box::new(inst)))
             }
             BarIndicatorId::Sg => {
-                let win = config.periods.get(0).copied().unwrap_or(9);
+                let win = config.periods.first().copied().unwrap_or(9);
                 let poly = config.periods.get(1).copied().unwrap_or(3);
                 let d = match config.additional_params.get("derivative").copied().unwrap_or(0.0) as i32 { 1 => SgDerivativeOrder::FirstDerivative, 2 => SgDerivativeOrder::SecondDerivative, 3 => SgDerivativeOrder::ThirdDerivative, _ => SgDerivativeOrder::Smoothing };
                 Ok(Self::Sg(Box::new(SavitzkyGolayFilter::new(win, poly, d))))
@@ -3131,23 +3131,23 @@ impl IndicatorInstance {
             // ========== PHASE 2 ADDITIONS ==========
             // ACCUMULATION (2)
             BarIndicatorId::Iip => {
-                Ok(Self::Iip(Box::new(IntradayIntensityPercent::new())))
+                Ok(Self::Iip(Box::default()))
             }
             BarIndicatorId::Iir => {
-                let window = config.periods.get(0).copied().unwrap_or(14);
+                let window = config.periods.first().copied().unwrap_or(14);
                 Ok(Self::Iir(Box::new(IntradayIntensityRatio::new(window))))
             }
 
             // KALMAN (8)
             BarIndicatorId::Abgfilter => {
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Abgfilter(Box::new(AlphaBetaGammaFilter::new(period))))
             }
             BarIndicatorId::Kcomp => {
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let q = config.additional_params.get("q").copied().unwrap_or(0.01);
                 let r = config.additional_params.get("r").copied().unwrap_or(0.1);
-                let k_window = config.periods.get(0).copied().unwrap_or(20);
+                let k_window = config.periods.first().copied().unwrap_or(20);
                 let decay = config.additional_params.get("decay").copied().unwrap_or(0.95);
                 let atr_period = config.periods.get(1).copied().unwrap_or(14);
                 let atr_ma = config.ma_types.get("atr_ma").copied().unwrap_or(MovingAverageType::SMA);
@@ -3163,14 +3163,14 @@ impl IndicatorInstance {
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let process_noise = config.additional_params.get("process_noise").copied().unwrap_or(0.01);
                 let measurement_noise = config.additional_params.get("measurement_noise").copied().unwrap_or(0.1);
-                let z_window = config.periods.get(0).copied().unwrap_or(20);
+                let z_window = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Kregime(Box::new(KalmanTrendRegime::new(dt, process_noise, measurement_noise, z_window))))
             }
             BarIndicatorId::Kscr => {
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let process_noise = config.additional_params.get("process_noise").copied().unwrap_or(0.01);
                 let measurement_noise = config.additional_params.get("measurement_noise").copied().unwrap_or(0.1);
-                let window = config.periods.get(0).copied().unwrap_or(20);
+                let window = config.periods.first().copied().unwrap_or(20);
                 let decay = config.additional_params.get("decay").copied().unwrap_or(0.95);
                 Ok(Self::Kscr(Box::new(KalmanRegimeScore::new(dt, process_noise, measurement_noise, window, decay))))
             }
@@ -3178,46 +3178,46 @@ impl IndicatorInstance {
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let process_noise = config.additional_params.get("process_noise").copied().unwrap_or(0.01);
                 let measurement_noise = config.additional_params.get("measurement_noise").copied().unwrap_or(0.1);
-                let window = config.periods.get(0).copied().unwrap_or(20);
+                let window = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Kslope(Box::new(KalmanTrendSlope::new(dt, process_noise, measurement_noise, window))))
             }
             BarIndicatorId::Kslopez => {
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let process_noise = config.additional_params.get("process_noise").copied().unwrap_or(0.01);
                 let measurement_noise = config.additional_params.get("measurement_noise").copied().unwrap_or(0.1);
-                let window = config.periods.get(0).copied().unwrap_or(20);
+                let window = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::Kslopez(Box::new(KalmanSlopeZscore::new(dt, process_noise, measurement_noise, window))))
             }
 
             // SIGNALPROCESSING (6 new)
             BarIndicatorId::Screstp => {
-                let fft_window = config.periods.get(0).copied().unwrap_or(32);
+                let fft_window = config.periods.first().copied().unwrap_or(32);
                 let pct_window = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::Screstp(Box::new(SpectralCrestPercentile::new(fft_window, pct_window))))
             }
             BarIndicatorId::Slmpr => {
-                let window = config.periods.get(0).copied().unwrap_or(32);
+                let window = config.periods.first().copied().unwrap_or(32);
                 let low_cut_fraction = config.additional_params.get("low_cut_fraction").copied().unwrap_or(0.1);
                 let high_cut_fraction = config.additional_params.get("high_cut_fraction").copied().unwrap_or(0.5);
                 Ok(Self::Slmpr(Box::new(SpectralLowMidPowerRatio::new(window, low_cut_fraction, high_cut_fraction))))
             }
             BarIndicatorId::Sroll95 => {
-                let window = config.periods.get(0).copied().unwrap_or(32);
+                let window = config.periods.first().copied().unwrap_or(32);
                 Ok(Self::Sroll95(Box::new(SpectralRolloff95::new(window))))
             }
             BarIndicatorId::Srollp => {
-                let fft_window = config.periods.get(0).copied().unwrap_or(32);
+                let fft_window = config.periods.first().copied().unwrap_or(32);
                 let pct_window = config.periods.get(1).copied().unwrap_or(100);
                 let rolloff_percent = config.additional_params.get("rolloff_percent").copied().unwrap_or(0.85);
                 Ok(Self::Srollp(Box::new(SpectralRolloffPercentile::new(fft_window, pct_window, rolloff_percent))))
             }
             BarIndicatorId::Sslopep => {
-                let fft_window = config.periods.get(0).copied().unwrap_or(32);
+                let fft_window = config.periods.first().copied().unwrap_or(32);
                 let pct_window = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::Sslopep(Box::new(SpectralSlopePercentile::new(fft_window, pct_window))))
             }
             BarIndicatorId::Ssloperp => {
-                let fft_window = config.periods.get(0).copied().unwrap_or(32);
+                let fft_window = config.periods.first().copied().unwrap_or(32);
                 let pct_window = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::Ssloperp(Box::new(SpectralSlopeRobustPercentile::new(fft_window, pct_window))))
             }
@@ -3225,50 +3225,50 @@ impl IndicatorInstance {
 
             // STATISTICS (10)
             BarIndicatorId::AdfKpss => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 let ma_period = config.periods.get(1).copied().unwrap_or(20);
                 let use_trend = config.additional_params.get("use_trend").copied().unwrap_or(0.0) > 0.5;
                 Ok(Self::AdfKpss(Box::new(AdfKpssComposite::new(window, ma_period, use_trend))))
             }
             BarIndicatorId::ArchLmPval => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 let lags = config.periods.get(1).copied().unwrap_or(5);
                 Ok(Self::ArchLmPval(Box::new(ArchLmPvalueProxy::new(window, lags))))
             }
             BarIndicatorId::BpCusum => {
                 let threshold = config.additional_params.get("threshold").copied().unwrap_or(1.5);
                 let kappa = config.additional_params.get("kappa").copied().unwrap_or(0.5);
-                let seg_window = config.periods.get(0).copied().unwrap_or(20);
+                let seg_window = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::BpCusum(Box::new(BaiPerronCusum::new(threshold, kappa, seg_window))))
             }
             BarIndicatorId::KpssTrend => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::KpssTrend(Box::new(KpssTrendProxy::new(window))))
             }
             BarIndicatorId::KpssZ => {
-                let window_stat = config.periods.get(0).copied().unwrap_or(50);
+                let window_stat = config.periods.first().copied().unwrap_or(50);
                 let window_z = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::KpssZ(Box::new(KpssZProxy::new(window_stat, window_z))))
             }
             BarIndicatorId::Pp => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::Pp(Box::new(PhillipsPerronProxy::new(window))))
             }
             BarIndicatorId::PvCoherence => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::PvCoherence(Box::new(PriceVolumeCoherenceProxy::new(window))))
             }
             BarIndicatorId::RSquared => {
-                let window = config.periods.get(0).copied().unwrap_or(20);
+                let window = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::RSquared(Box::new(RSquared::new(window))))
             }
             BarIndicatorId::VrZAgg => {
                 let configs_vec: Vec<(usize, usize)> = vec![(2, 10), (5, 10), (10, 20)]; // Default configs
-                let z_window = config.periods.get(0).copied().unwrap_or(100);
+                let z_window = config.periods.first().copied().unwrap_or(100);
                 Ok(Self::VrZAgg(Box::new(VarianceRatioZAggregate::new(&configs_vec, z_window))))
             }
             BarIndicatorId::Za => {
-                let window = config.periods.get(0).copied().unwrap_or(50);
+                let window = config.periods.first().copied().unwrap_or(50);
                 Ok(Self::Za(Box::new(ZivotAndrewsProxy::new(window))))
             }
 
@@ -3307,12 +3307,12 @@ impl IndicatorInstance {
                 Ok(Self::RbvJumpTest(Box::new(RbvJumpTest::new(period, annualize_factor))))
             }
             BarIndicatorId::Vovp => {
-                let vov_window = config.periods.get(0).copied().unwrap_or(20);
+                let vov_window = config.periods.first().copied().unwrap_or(20);
                 let percentile_window = config.periods.get(1).copied().unwrap_or(100);
                 Ok(Self::VolOfVolPercentile(Box::new(VolOfVolPercentile::new(None, vov_window, percentile_window))))
             }
             BarIndicatorId::Vovpt => {
-                let vov_window = config.periods.get(0).copied().unwrap_or(20);
+                let vov_window = config.periods.first().copied().unwrap_or(20);
                 let pct_window = config.periods.get(1).copied().unwrap_or(100);
                 let alpha = config.additional_params.get("alpha").copied().unwrap_or(0.05);
                 Ok(Self::VolOfVolPercentileTrend(Box::new(VolOfVolPercentileTrend::new(None, vov_window, pct_window, alpha))))
@@ -3320,7 +3320,7 @@ impl IndicatorInstance {
 
             // VOLUME indicators
             BarIndicatorId::Pvo => {
-                let fast = config.periods.get(0).copied().unwrap_or(12);
+                let fast = config.periods.first().copied().unwrap_or(12);
                 let slow = config.periods.get(1).copied().unwrap_or(26);
                 let signal = config.periods.get(2).copied().unwrap_or(9);
 
@@ -3355,31 +3355,31 @@ impl IndicatorInstance {
                 Ok(Self::RelativeVolume(Box::new(RelativeVolume::new(period))))
             }
             BarIndicatorId::Vo => {
-                let short = config.periods.get(0).copied().unwrap_or(5);
+                let short = config.periods.first().copied().unwrap_or(5);
                 let long = config.periods.get(1).copied().unwrap_or(10);
                 Ok(Self::VolumeOscillator(Box::new(VolumeOscillator::new(short, long))))
             }
 
             // POSITION indicators
             BarIndicatorId::DistLevels => {
-                let mid_window = config.periods.get(0).copied().unwrap_or(50);
+                let mid_window = config.periods.first().copied().unwrap_or(50);
                 let pct_window = config.periods.get(1).copied().unwrap_or(50);
                 let low_pct = config.additional_params.get("low_pct").copied().unwrap_or(0.1);
                 let high_pct = config.additional_params.get("high_pct").copied().unwrap_or(0.9);
                 Ok(Self::DistLevels(Box::new(DistanceToLevels::new(mid_window, pct_window, low_pct, high_pct))))
             }
             BarIndicatorId::AvwapDist => {
-                Ok(Self::AvwapDistance(Box::new(AvwapDistance::new())))
+                Ok(Self::AvwapDistance(Box::default()))
             }
 
             // LEVELS indicators  
             BarIndicatorId::Avwaprev => {
-                let z_window = config.periods.get(0).copied().unwrap_or(100);
+                let z_window = config.periods.first().copied().unwrap_or(100);
                 let params = vec![AnchoredVwapParams::default()];
                 Ok(Self::AvwapMultiAnchorReversion(Box::new(AvwapMultiAnchorReversion::new(params, z_window))))
             }
             BarIndicatorId::Avwaptouch => {
-                let prob_window = config.periods.get(0).copied().unwrap_or(100);
+                let prob_window = config.periods.first().copied().unwrap_or(100);
                 let touch_threshold = config.additional_params.get("touch_threshold").copied().unwrap_or(0.001);
                 let params = vec![AnchoredVwapParams::default()];
                 Ok(Self::AvwapTouchProbability(Box::new(AvwapTouchProbability::new(params, prob_window, touch_threshold))))
@@ -3437,13 +3437,13 @@ impl IndicatorInstance {
                 Ok(Self::Tweezer(Box::new(Tweezer::new(max_diff_ratio))))
             }
             BarIndicatorId::Darkcloudcover => {
-                Ok(Self::Darkcloudcover(Box::new(DarkCloudCover::new())))
+                Ok(Self::Darkcloudcover(Box::default()))
             }
             BarIndicatorId::Eveningstar => {
-                Ok(Self::Eveningstar(Box::new(EveningStar::new())))
+                Ok(Self::Eveningstar(Box::default()))
             }
             BarIndicatorId::Threeblackcrows => {
-                Ok(Self::Threeblackcrows(Box::new(ThreeBlackCrows::new())))
+                Ok(Self::Threeblackcrows(Box::default()))
             }
 
             // ACCUMULATION (1) - Batch 1
@@ -3455,42 +3455,42 @@ impl IndicatorInstance {
             // VOLATILITY (7 aliases + 1 new) - Batch 2
             BarIndicatorId::Abb => Ok(Self::AdaptiveBollingerBands(Box::new(AdaptiveBollingerBands::new()))),
             BarIndicatorId::Cv => {
-                let n = config.periods.get(0).copied().unwrap_or(10).max(2).min(512);
+                let n = config.periods.first().copied().unwrap_or(10).max(2).min(512);
                 let k = config.periods.get(1).copied().unwrap_or(10).max(2).min(512);
                 Ok(Self::ChaikinVolatility(Box::new(ChaikinVolatility::new(n, k))))
             }
             BarIndicatorId::Rp => {
-                let win = config.periods.get(0).copied().unwrap_or(20).max(2);
+                let win = config.periods.first().copied().unwrap_or(20).max(2);
                 Ok(Self::RangePercentile(Box::new(RangePercentile::new(win))))
             }
             BarIndicatorId::Vov => {
                 let source = VoVSource::AbsReturn;
-                let window = config.periods.get(0).copied().unwrap_or(20).max(2);
+                let window = config.periods.first().copied().unwrap_or(20).max(2);
                 Ok(Self::Vov(Box::new(VolOfVol::new(source, window))))
             }
             BarIndicatorId::Vprb => {
-                let atr_period = config.periods.get(0).copied().unwrap_or(14).max(2);
+                let atr_period = config.periods.first().copied().unwrap_or(14).max(2);
                 let rank_window = config.periods.get(1).copied().unwrap_or(100).max(10);
                 Ok(Self::VolatilityPercentileRankBands(Box::new(VolatilityPercentileRankBands::new(atr_period, rank_window))))
             }
             BarIndicatorId::Wvf => {
-                let lookback = config.periods.get(0).copied().unwrap_or(22).max(2);
+                let lookback = config.periods.first().copied().unwrap_or(22).max(2);
                 Ok(Self::Wvf(Box::new(Wvf::new(lookback))))
             }
 
             // CHANNELS (2 aliases) - Batch 2
             BarIndicatorId::Darvas => {
-                let lookback = config.periods.get(0).copied().unwrap_or(5).max(2);
+                let lookback = config.periods.first().copied().unwrap_or(5).max(2);
                 Ok(Self::DarvasBox(Box::new(DarvasBox::new(lookback))))
             }
 
             // MOMENTUM (2) - Batch 2
             BarIndicatorId::Cog => {
-                let period = config.periods.get(0).copied().unwrap_or(10).max(2);
+                let period = config.periods.first().copied().unwrap_or(10).max(2);
                 Ok(Self::Cog(Box::new(CenterOfGravity::new(period))))
             }
             BarIndicatorId::Pfe => {
-                let window = config.periods.get(0).copied().unwrap_or(10).max(2);
+                let window = config.periods.first().copied().unwrap_or(10).max(2);
                 Ok(Self::Pfe(Box::new(Pfe::new(window))))
             }
 
@@ -3499,17 +3499,17 @@ impl IndicatorInstance {
             // ========================================
             // MOMENTUM (5)
             BarIndicatorId::EwmacRobust => {
-                let fast_period = config.periods.get(0).copied().unwrap_or(32).max(2);
+                let fast_period = config.periods.first().copied().unwrap_or(32).max(2);
                 let slow_period = config.periods.get(1).copied().unwrap_or(128).max(2);
                 let robust_window = config.periods.get(2).copied().unwrap_or(252).max(2);
                 Ok(Self::EwmacRobust(Box::new(EwmacRobust::new(fast_period, slow_period, robust_window))))
             }
             BarIndicatorId::Gapo => {
-                let window = config.periods.get(0).copied().unwrap_or(10).max(2);
+                let window = config.periods.first().copied().unwrap_or(10).max(2);
                 Ok(Self::Gapo(Box::new(Gapo::new(window))))
             }
             BarIndicatorId::Gator => {
-                let fast_period = config.periods.get(0).copied().unwrap_or(5).max(2);
+                let fast_period = config.periods.first().copied().unwrap_or(5).max(2);
                 let slow_period = config.periods.get(1).copied().unwrap_or(8).max(2);
 
                 // Check if we have custom MA type or source
@@ -3529,19 +3529,19 @@ impl IndicatorInstance {
                 }
             }
             BarIndicatorId::MacdHist => {
-                let fast = config.periods.get(0).copied().unwrap_or(12).max(1);
+                let fast = config.periods.first().copied().unwrap_or(12).max(1);
                 let slow = config.periods.get(1).copied().unwrap_or(26).max(1);
                 let signal = config.periods.get(2).copied().unwrap_or(9).max(1);
                 Ok(Self::MacdHist(Box::new(MacdHistogram::new(fast, slow, signal))))
             }
             BarIndicatorId::MacdSignal => {
-                let fast = config.periods.get(0).copied().unwrap_or(12).max(2);
+                let fast = config.periods.first().copied().unwrap_or(12).max(2);
                 let slow = config.periods.get(1).copied().unwrap_or(26).max(2);
                 let signal = config.periods.get(2).copied().unwrap_or(9).max(2);
                 Ok(Self::MacdSignal(Box::new(MacdSignal::new(fast, slow, signal))))
             }
             BarIndicatorId::PpoSignal => {
-                let fast = config.periods.get(0).copied().unwrap_or(12).max(2);
+                let fast = config.periods.first().copied().unwrap_or(12).max(2);
                 let slow = config.periods.get(1).copied().unwrap_or(26).max(2);
                 let signal = config.periods.get(2).copied().unwrap_or(9).max(2);
                 Ok(Self::PpoSignal(Box::new(PpoSignal::new(fast, slow, signal))))
@@ -3552,48 +3552,48 @@ impl IndicatorInstance {
             // ========================================
             // SIGNAL_PROCESSING (7)
             BarIndicatorId::Scf => {
-                let window = config.periods.get(0).copied().unwrap_or(64).max(16);
+                let window = config.periods.first().copied().unwrap_or(64).max(16);
                 Ok(Self::Scf(Box::new(SpectralCentroidFeature::new(window))))
             }
             BarIndicatorId::Sentr => {
-                let window = config.periods.get(0).copied().unwrap_or(64).max(16);
+                let window = config.periods.first().copied().unwrap_or(64).max(16);
                 let smoothing_alpha = config.additional_params.get("smoothing_alpha").copied().unwrap_or(0.2);
                 Ok(Self::Sentr(Box::new(SpectralEntropyRate::new(window, smoothing_alpha))))
             }
             BarIndicatorId::Sflat => {
-                let window = config.periods.get(0).copied().unwrap_or(64).max(16);
+                let window = config.periods.first().copied().unwrap_or(64).max(16);
                 Ok(Self::Sflat(Box::new(SpectralFlatness::new(window))))
             }
             BarIndicatorId::Sroll => {
-                let window = config.periods.get(0).copied().unwrap_or(64).max(16);
+                let window = config.periods.first().copied().unwrap_or(64).max(16);
                 let target_fraction = config.additional_params.get("target_fraction").copied().unwrap_or(0.85);
                 Ok(Self::Sroll(Box::new(SpectralRolloff::new(window, target_fraction))))
             }
             BarIndicatorId::Sslope => {
-                let window = config.periods.get(0).copied().unwrap_or(64).max(32);
+                let window = config.periods.first().copied().unwrap_or(64).max(32);
                 Ok(Self::Sslope(Box::new(SpectralSlope::new(window))))
             }
 
             // TREND (2)
             BarIndicatorId::KamaSlope => {
-                let period = config.periods.get(0).copied().unwrap_or(10).max(2);
+                let period = config.periods.first().copied().unwrap_or(10).max(2);
                 Ok(Self::KamaSlope(Box::new(KamaSlope::new(period))))
             }
             BarIndicatorId::LrSlope => {
-                let window = config.periods.get(0).copied().unwrap_or(14).max(2);
+                let window = config.periods.first().copied().unwrap_or(14).max(2);
                 Ok(Self::LrSlope(Box::new(LrSlope::new(window))))
             }
 
             // KALMAN (1)
-            BarIndicatorId::Rts => Ok(Self::Rts(Box::new(RtsSmoother::new()))),
+            BarIndicatorId::Rts => Ok(Self::Rts(Box::default())),
 
             // VOLUME (2)
             BarIndicatorId::Vfi => {
-                let window = config.periods.get(0).copied().unwrap_or(130).max(1);
+                let window = config.periods.first().copied().unwrap_or(130).max(1);
                 Ok(Self::Vfi(Box::new(Vfi::new(window))))
             }
             BarIndicatorId::Vzo => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(2);
+                let period = config.periods.first().copied().unwrap_or(14).max(2);
                 Ok(Self::Vzo(Box::new(Vzo::new(period))))
             }
 
@@ -3602,68 +3602,68 @@ impl IndicatorInstance {
             // ========================================
             // DIVERGENCE (13)
             BarIndicatorId::RsiDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::RsiDiv(Box::new(RsiDivergence::new(period, lookback))))
             }
             BarIndicatorId::CciDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::CciDiv(Box::new(CciDivergence::new(period, lookback))))
             }
             BarIndicatorId::MacdDiv => {
-                let fast = config.periods.get(0).copied().unwrap_or(12).max(1);
+                let fast = config.periods.first().copied().unwrap_or(12).max(1);
                 let slow = config.periods.get(1).copied().unwrap_or(26).max(2);
                 let lookback = config.periods.get(2).copied().unwrap_or(14).max(5);
                 Ok(Self::MacdDiv(Box::new(MacdDivergence::new(fast, slow, lookback))))
             }
             BarIndicatorId::MacdHistDiv => {
-                let fast = config.periods.get(0).copied().unwrap_or(12).max(1);
+                let fast = config.periods.first().copied().unwrap_or(12).max(1);
                 let slow = config.periods.get(1).copied().unwrap_or(26).max(2);
                 let signal = config.periods.get(2).copied().unwrap_or(9).max(1);
                 let lookback = config.periods.get(3).copied().unwrap_or(14).max(5);
                 Ok(Self::MacdHistDiv(Box::new(MacdHistogramDivergence::new(fast, slow, signal, lookback))))
             }
             BarIndicatorId::StochDiv => {
-                let period_k = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period_k = config.periods.first().copied().unwrap_or(14).max(1);
                 let period_d = config.periods.get(1).copied().unwrap_or(3).max(1);
                 let lookback = config.periods.get(2).copied().unwrap_or(14).max(5);
                 Ok(Self::StochDiv(Box::new(StochasticDivergence::new(period_k, period_d, lookback))))
             }
             BarIndicatorId::WilliamsDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::WilliamsDiv(Box::new(WilliamsDivergence::new(period, lookback))))
             }
             BarIndicatorId::ObvDiv => {
-                let lookback = config.periods.get(0).copied().unwrap_or(14).max(5);
+                let lookback = config.periods.first().copied().unwrap_or(14).max(5);
                 Ok(Self::ObvDiv(Box::new(ObvDivergence::new(lookback))))
             }
             BarIndicatorId::VolDiv => {
-                let lookback = config.periods.get(0).copied().unwrap_or(14).max(5);
+                let lookback = config.periods.first().copied().unwrap_or(14).max(5);
                 Ok(Self::VolumeDiv(Box::new(VolumeDivergence::new(lookback))))
             }
             BarIndicatorId::ClassicDiv => {
-                let lookback = config.periods.get(0).copied().unwrap_or(14).max(5);
+                let lookback = config.periods.first().copied().unwrap_or(14).max(5);
                 Ok(Self::ClassicDiv(Box::new(ClassicDivergence::new(lookback))))
             }
             BarIndicatorId::HiddenDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::HiddenDiv(Box::new(HiddenDivergence::new(period, lookback))))
             }
             BarIndicatorId::DivStrength => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::DivStrength(Box::new(DivergenceStrength::new(period, lookback))))
             }
             BarIndicatorId::MultiDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::MultiDiv(Box::new(MultiDivergence::new(period, lookback))))
             }
             BarIndicatorId::MtfMomDiv => {
-                let period = config.periods.get(0).copied().unwrap_or(14).max(1);
+                let period = config.periods.first().copied().unwrap_or(14).max(1);
                 let lookback = config.periods.get(1).copied().unwrap_or(14).max(5);
                 Ok(Self::MomentumDiv(Box::new(MomentumDivergence::new(period, lookback))))
             }
@@ -3672,34 +3672,34 @@ impl IndicatorInstance {
             // BATCH 6 - Timestamp-dependent indicators
             // ========================================
             BarIndicatorId::HourDay => {
-                Ok(Self::HourDay(Box::new(HourOfDayEffect::new())))
+                Ok(Self::HourDay(Box::default()))
             }
             BarIndicatorId::WeekMonth => {
-                Ok(Self::WeekMonth(Box::new(WeekInMonthEffect::new())))
+                Ok(Self::WeekMonth(Box::default()))
             }
             BarIndicatorId::SoqEoq => {
-                let window_days = config.periods.get(0).copied().unwrap_or(7) as u32;
+                let window_days = config.periods.first().copied().unwrap_or(7) as u32;
                 Ok(Self::SoqEoq(Box::new(StartEndOfQuarterFlags::new(window_days))))
             }
 
             // ========================================
             // Phase 2 - Additional timestamp indicators
             // ========================================
-            BarIndicatorId::Tenc => Ok(Self::Tenc(Box::new(TimeEncoders::new()))),
-            BarIndicatorId::Weekday => Ok(Self::Weekday(Box::new(WeekdayEffect::new()))),
-            BarIndicatorId::Session => Ok(Self::Session(Box::new(SessionEffect::new()))),
-            BarIndicatorId::MonthQtr => Ok(Self::MonthQtr(Box::new(MonthQuarterEffect::new()))),
-            BarIndicatorId::DomWoq => Ok(Self::DomWoq(Box::new(DayOfMonthWeekOfQuarterEffect::new()))),
+            BarIndicatorId::Tenc => Ok(Self::Tenc(Box::default())),
+            BarIndicatorId::Weekday => Ok(Self::Weekday(Box::default())),
+            BarIndicatorId::Session => Ok(Self::Session(Box::default())),
+            BarIndicatorId::MonthQtr => Ok(Self::MonthQtr(Box::default())),
+            BarIndicatorId::DomWoq => Ok(Self::DomWoq(Box::default())),
             BarIndicatorId::RelTrendPos => {
-                let sma_period = config.periods.get(0).copied().unwrap_or(200);
+                let sma_period = config.periods.first().copied().unwrap_or(200);
                 Ok(Self::RelTrendPos(Box::new(RelativeTrendPosition::new(sma_period))))
             }
             BarIndicatorId::MonthTurn => {
-                let window = config.periods.get(0).copied().unwrap_or(5) as u32;
+                let window = config.periods.first().copied().unwrap_or(5) as u32;
                 Ok(Self::MonthTurn(Box::new(MonthTurnEffect::new(window))))
             }
             BarIndicatorId::QtrTurn => {
-                let window = config.periods.get(0).copied().unwrap_or(10) as u32;
+                let window = config.periods.first().copied().unwrap_or(10) as u32;
                 Ok(Self::QtrTurn(Box::new(QuarterTurnEffect::new(window))))
             }
 
@@ -3707,15 +3707,15 @@ impl IndicatorInstance {
             // PHASE 3 ADDITIONS
             // ========================================
             BarIndicatorId::SomEom => {
-                let window = config.periods.get(0).copied().unwrap_or(5) as u32;
+                let window = config.periods.first().copied().unwrap_or(5) as u32;
                 Ok(Self::SomEom(Box::new(StartEndOfMonthFlags::new(window))))
             }
             BarIndicatorId::SowEow => {
-                let window = config.periods.get(0).copied().unwrap_or(3) as u32;
+                let window = config.periods.first().copied().unwrap_or(3) as u32;
                 Ok(Self::SowEow(Box::new(StartEndOfWeekFlags::new(window))))
             }
             BarIndicatorId::HolidayProx => {
-                let window = config.periods.get(0).copied().unwrap_or(2) as u32;
+                let window = config.periods.first().copied().unwrap_or(2) as u32;
                 Ok(Self::HolidayProx(Box::new(HolidayWeekendProximityEffect::new(window))))
             }
             BarIndicatorId::Vbd => {
@@ -3730,9 +3730,8 @@ impl IndicatorInstance {
             // PHASE 4 ADDITIONS (9 indicators)
             // ========================================
             BarIndicatorId::Poc => {
-                let price_precision = config.periods.get(0).copied().unwrap_or(2) as u32;
-                let min_volume_threshold = config.additional_params.get("min_volume_threshold")
-                    .and_then(|v| Some(*v))
+                let price_precision = config.periods.first().copied().unwrap_or(2) as u32;
+                let min_volume_threshold = config.additional_params.get("min_volume_threshold").copied()
                     .unwrap_or(100.0);
                 let rolling_period = config.periods.get(1).copied().unwrap_or(20);
 
@@ -3742,10 +3741,9 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::AutoFibo => {
-                let zigzag_period = config.periods.get(0).copied().unwrap_or(20);
+                let zigzag_period = config.periods.first().copied().unwrap_or(20);
                 let atr_period = config.periods.get(1).copied().unwrap_or(14);
-                let atr_multiplier = config.additional_params.get("atr_multiplier")
-                    .and_then(|v| Some(*v))
+                let atr_multiplier = config.additional_params.get("atr_multiplier").copied()
                     .unwrap_or(1.5);
 
                 Ok(Self::AutoFibo(Box::new(
@@ -3755,7 +3753,7 @@ impl IndicatorInstance {
 
             BarIndicatorId::Zigzag => {
                 // Zigzag uses deviation parameter (0.01-1.0, converted to percent)
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 let deviation = config.additional_params.get("deviation")
                     .copied()
                     .unwrap_or(0.05);
@@ -3769,7 +3767,7 @@ impl IndicatorInstance {
 
             BarIndicatorId::ZigzagClassic => {
                 // ZigzagClassic uses threshold_percent or threshold_abs directly
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 let threshold_percent = config.additional_params.get("threshold_percent")
                     .copied();
                 let threshold_abs = config.additional_params.get("threshold_abs")
@@ -3788,10 +3786,9 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::ZigzagAtr => {
-                let zigzag_period = config.periods.get(0).copied().unwrap_or(20);
+                let zigzag_period = config.periods.first().copied().unwrap_or(20);
                 let atr_period = config.periods.get(1).copied().unwrap_or(14);
-                let atr_multiplier = config.additional_params.get("atr_multiplier")
-                    .and_then(|v| Some(*v))
+                let atr_multiplier = config.additional_params.get("atr_multiplier").copied()
                     .unwrap_or(1.5);
 
                 Ok(Self::ZigzagAtr(Box::new(
@@ -3800,7 +3797,7 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::ZigzagCandle => {
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 let swing_bars = config.periods.get(1).copied().unwrap_or(3);
 
                 Ok(Self::ZigzagCandle(Box::new(
@@ -3809,7 +3806,7 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::ZigzagLookahead => {
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 let lookahead = config.periods.get(1).copied().unwrap_or(5);
 
                 Ok(Self::ZigzagLookahead(Box::new(
@@ -3818,7 +3815,7 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::ZigzagTime => {
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 let min_bars = config.periods.get(1).copied().unwrap_or(10);
 
                 Ok(Self::ZigzagTime(Box::new(
@@ -3828,7 +3825,7 @@ impl IndicatorInstance {
 
             BarIndicatorId::ZigzagDiv => {
                 // FIXME: ZigzagDiv implementation not found - using ZigzagClassic as fallback
-                let period = config.periods.get(0).copied().unwrap_or(20);
+                let period = config.periods.first().copied().unwrap_or(20);
                 Ok(Self::ZigzagClassic(Box::new(
                     ZigZagClassic::new(period, Some(5.0), None)
                 )))
@@ -3847,7 +3844,7 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::Fvgdur => {
-                let lookback = config.periods.get(0).copied().unwrap_or(20);
+                let lookback = config.periods.first().copied().unwrap_or(20);
                 let agg_window = config.periods.get(1).copied().unwrap_or(50);
 
                 Ok(Self::Fvgdur(Box::new(
@@ -3856,13 +3853,13 @@ impl IndicatorInstance {
             }
 
             BarIndicatorId::Fvgrev => {
-                let horizon = config.periods.get(0).copied().unwrap_or(10);
+                let horizon = config.periods.first().copied().unwrap_or(10);
 
                 Ok(Self::Fvgrev(Box::new(
                     FvgReversionProbability::new(horizon)
                 )))
             }
-            BarIndicatorId::DayWeekMonth => Ok(Self::DayWeekMonth(Box::new(DayOfWeekInMonthEffect::new()))),
+            BarIndicatorId::DayWeekMonth => Ok(Self::DayWeekMonth(Box::default())),
         }
     }
 

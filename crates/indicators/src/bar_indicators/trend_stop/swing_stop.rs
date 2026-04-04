@@ -136,14 +136,13 @@ impl SwingStop {
         }
         
         // Проверяем минимальный размер свинга
-        if is_swing_high && self.min_swing_size > 0.0 {
-            if self.last_swing_high > 0.0 {
+        if is_swing_high && self.min_swing_size > 0.0
+            && self.last_swing_high > 0.0 {
                 let swing_size = (candidate_high - self.last_swing_high).abs();
                 if swing_size < self.min_swing_size {
                     is_swing_high = false;
                 }
             }
-        }
         
         if is_swing_high {
             self.last_swing_high = candidate_high;
@@ -171,14 +170,13 @@ impl SwingStop {
         }
         
         // Проверяем минимальный размер свинга
-        if is_swing_low && self.min_swing_size > 0.0 {
-            if self.last_swing_low < f64::MAX {
+        if is_swing_low && self.min_swing_size > 0.0
+            && self.last_swing_low < f64::MAX {
                 let swing_size = (self.last_swing_low - candidate_low).abs();
                 if swing_size < self.min_swing_size {
                     is_swing_low = false;
                 }
             }
-        }
         
         if is_swing_low {
             self.last_swing_low = candidate_low;

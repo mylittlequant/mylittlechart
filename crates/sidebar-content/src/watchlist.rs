@@ -170,6 +170,7 @@ pub struct WatchlistGroup {
 
 /// A single named watchlist (preset).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct WatchlistList {
     pub id: u64,
     pub name: String,
@@ -307,19 +308,6 @@ impl WatchlistList {
     }
 }
 
-impl Default for WatchlistList {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            name: String::new(),
-            groups: Vec::new(),
-            ungrouped: Vec::new(),
-            column_config: WatchlistColumnConfig::default(),
-            color_flags: HashMap::new(),
-            order_snapshot: None,
-        }
-    }
-}
 
 // =============================================================================
 // WatchlistManager

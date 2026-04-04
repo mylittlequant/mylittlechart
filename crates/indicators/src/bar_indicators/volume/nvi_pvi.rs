@@ -85,13 +85,13 @@ impl NegativePositiveVolumeIndex {
         
         // Обновляем NVI только когда объем падает
         if volume < self.prev_volume {
-            self.nvi_value = self.nvi_value * (1.0 + price_change_pct);
+            self.nvi_value *= 1.0 + price_change_pct;
         }
         // Иначе NVI остается неизменным
         
         // Обновляем PVI только когда объем растет
         if volume > self.prev_volume {
-            self.pvi_value = self.pvi_value * (1.0 + price_change_pct);
+            self.pvi_value *= 1.0 + price_change_pct;
         }
         // Иначе PVI остается неизменным
         

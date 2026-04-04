@@ -183,7 +183,7 @@ impl ConnorsRsi {
     
     /// Calculates the RSI component.
     fn calculate_rsi_component(&mut self) -> f64 {
-        if self.prices.len() < 1 {
+        if self.prices.is_empty() {
             return 50.0;
         }
 

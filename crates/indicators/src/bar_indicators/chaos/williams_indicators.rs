@@ -27,6 +27,12 @@ pub struct Alligator {
     is_ready: bool,
 }
 
+impl Default for Alligator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Alligator {
     pub fn new() -> Self {
         Self {
@@ -169,6 +175,12 @@ pub struct AwesomeOscillator {
     is_ready: bool,
 }
 
+impl Default for AwesomeOscillator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AwesomeOscillator {
     pub fn new() -> Self {
         Self {
@@ -287,6 +299,12 @@ pub struct AccelerationDeceleration {
     is_ready: bool,
 }
 
+impl Default for AccelerationDeceleration {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AccelerationDeceleration {
     pub fn new() -> Self {
         Self {
@@ -368,6 +386,12 @@ pub struct MarketFacilitationIndex {
     mfi_value: f64,
     
     is_ready: bool,
+}
+
+impl Default for MarketFacilitationIndex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MarketFacilitationIndex {

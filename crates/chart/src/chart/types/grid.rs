@@ -47,6 +47,7 @@ impl Default for GridLineOptions {
 
 /// Complete grid configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GridOptions {
     /// Vertical lines (time axis)
     #[serde(default)]
@@ -57,14 +58,6 @@ pub struct GridOptions {
     pub horz_lines: GridLineOptions,
 }
 
-impl Default for GridOptions {
-    fn default() -> Self {
-        Self {
-            vert_lines: GridLineOptions::default(),
-            horz_lines: GridLineOptions::default(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -548,7 +548,7 @@ fn render_watchlist_config_dropdown(
     // are consumed (not forwarded to the watchlist rows underneath).
     input_coordinator.register(
         "watchlist_cfg_backdrop",
-        dropdown_rect.clone(),
+        dropdown_rect,
         uzor::input::Sense::CLICK,
     );
 
@@ -613,7 +613,7 @@ fn render_watchlist_config_dropdown(
         // Register the row for click detection.
         input_coordinator.register(
             widget_id.as_str(),
-            row_rect.clone(),
+            row_rect,
             uzor::input::Sense::CLICK,
         );
         result.item_rects.push((widget_id, row_rect));
@@ -762,7 +762,7 @@ fn render_watchlist_column_header(
         }
 
         let flag_btn_rect = WidgetRect::new(flag_x, flag_y, flag_w, flag_h);
-        input_coordinator.register("watchlist_sort_color", flag_btn_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register("watchlist_sort_color", flag_btn_rect, uzor::input::Sense::CLICK);
         result.item_rects.push(("watchlist_sort_color".to_string(), flag_btn_rect));
     }
 
@@ -797,7 +797,7 @@ fn render_watchlist_column_header(
         ctx.line_to(sep_x, header_y + header_row_h - 3.0);
         ctx.stroke();
         let hit_rect = WidgetRect::new(sep_x - sep_hit_w / 2.0, header_y, sep_hit_w, header_row_h);
-        input_coordinator.register(sep_id.as_str(), hit_rect.clone(), uzor::input::Sense::CLICK_AND_DRAG);
+        input_coordinator.register(sep_id.as_str(), hit_rect, uzor::input::Sense::CLICK_AND_DRAG);
         result.watchlist_separator_rects.push((sep_i + 1, hit_rect));
     }
 
@@ -1028,11 +1028,11 @@ fn render_watchlist_items(
         // Use CLICK_AND_DRAG so both row selection and drag-to-reorder are supported.
         input_coordinator.register(
             row_id.as_str(),
-            row_rect.clone(),
+            row_rect,
             uzor::input::Sense::CLICK_AND_DRAG,
         );
-        result.item_rects.push((row_id.clone(), row_rect.clone()));
-        result.watchlist_row_rects.push((i, row_rect.clone()));
+        result.item_rects.push((row_id.clone(), row_rect));
+        result.watchlist_row_rects.push((i, row_rect));
 
         // Hover detection: row OR delete button hovered.
         let is_hovered = input_coordinator
@@ -1057,7 +1057,7 @@ fn render_watchlist_items(
             let del_icon_x = rect.x + content_width - delete_icon_right_pad - delete_icon_size;
             let del_icon_y = current_y + (data_row_h - delete_icon_size) / 2.0;
             let del_rect = WidgetRect::new(del_icon_x, del_icon_y, delete_icon_size, delete_icon_size);
-            input_coordinator.register(del_id.as_str(), del_rect.clone(), uzor::input::Sense::CLICK);
+            input_coordinator.register(del_id.as_str(), del_rect, uzor::input::Sense::CLICK);
             result.delete_button_rects.push((del_id, del_rect));
             current_y += data_row_h;
             continue;
@@ -1102,7 +1102,7 @@ fn render_watchlist_items(
         let del_icon_y = current_y + (data_row_h - delete_icon_size) / 2.0;
         let del_rect = WidgetRect::new(del_icon_x, del_icon_y, delete_icon_size, delete_icon_size);
         // Register delete button after row so it wins the hit-test.
-        input_coordinator.register(del_id.as_str(), del_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register(del_id.as_str(), del_rect, uzor::input::Sense::CLICK);
         result.delete_button_rects.push((del_id.clone(), del_rect));
 
         // --- Column data, each cell clipped to its separator region ---
@@ -1526,7 +1526,7 @@ fn render_alert_items(
         // -----------------------------------------------------------------
         let hdr_id = format!("alert_grp:{}", grp_suffix);
         let hdr_rect = WidgetRect::new(rect.x, current_y, content_width, section_h);
-        input_coordinator.register(hdr_id.as_str(), hdr_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register(hdr_id.as_str(), hdr_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((hdr_id, hdr_rect));
 
         // Triangle indicator.
@@ -1557,8 +1557,8 @@ fn render_alert_items(
             );
 
             // Register row FIRST so delete button (registered after) wins hit-test.
-            result.item_rects.push((row_id.clone(), item_rect.clone()));
-            input_coordinator.register(row_id.as_str(), item_rect.clone(), uzor::input::Sense::CLICK);
+            result.item_rects.push((row_id.clone(), item_rect));
+            input_coordinator.register(row_id.as_str(), item_rect, uzor::input::Sense::CLICK);
 
             let is_hovered = input_coordinator
                 .is_hovered(&uzor::types::WidgetId::new(&row_id))
@@ -1638,7 +1638,7 @@ fn render_alert_items(
             let icon_x = rect.x + content_width - item_padding - icon_size - 4.0;
             let icon_y = current_y + (item_height - icon_size) / 2.0;
             let delete_rect = WidgetRect::new(icon_x, icon_y, icon_size, icon_size);
-            result.delete_button_rects.push((del_id.clone(), delete_rect.clone()));
+            result.delete_button_rects.push((del_id.clone(), delete_rect));
             input_coordinator.register(del_id.as_str(), delete_rect, uzor::input::Sense::CLICK);
 
             let delete_color = if is_hovered {
@@ -1852,11 +1852,11 @@ fn render_object_tree_items(
                     let vis_id = format!("{}_vis_{}", widget_prefix, item.id);
 
                     // Register row FIRST, then buttons (buttons win hit-test for clicks).
-                    input_coordinator.register(item_id.as_str(), item_rect.clone(), uzor::input::Sense::CLICK);
+                    input_coordinator.register(item_id.as_str(), item_rect, uzor::input::Sense::CLICK);
                     let delete_rect = WidgetRect::new(del_x, icon_y, icon_size, icon_size);
-                    input_coordinator.register(del_id.as_str(), delete_rect.clone(), uzor::input::Sense::CLICK);
+                    input_coordinator.register(del_id.as_str(), delete_rect, uzor::input::Sense::CLICK);
                     let settings_rect = WidgetRect::new(set_x, icon_y, icon_size, icon_size);
-                    input_coordinator.register(set_id.as_str(), settings_rect.clone(), uzor::input::Sense::CLICK);
+                    input_coordinator.register(set_id.as_str(), settings_rect, uzor::input::Sense::CLICK);
                     let alert_rect = WidgetRect::new(alert_x, icon_y, icon_size, icon_size);
                     input_coordinator.register(alert_id.as_str(), alert_rect, uzor::input::Sense::CLICK);
                     let vis_rect = WidgetRect::new(vis_x, icon_y, icon_size, icon_size);
@@ -1878,7 +1878,7 @@ fn render_object_tree_items(
                         || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&set_id))
                         || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&alert_id))
                         || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&vis_id))
-                        || lock_id.as_ref().map_or(false, |lid|
+                        || lock_id.as_ref().is_some_and(|lid|
                             input_coordinator.is_hovered(&uzor::types::WidgetId::new(lid)));
                     let del_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id));
 
@@ -1978,7 +1978,7 @@ fn render_object_tree_items(
                         };
                         draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
                         let delete_rect = WidgetRect::new(del_x, icon_y, icon_size, icon_size);
-                        input_coordinator.register(del_id.as_str(), delete_rect.clone(), uzor::input::Sense::CLICK);
+                        input_coordinator.register(del_id.as_str(), delete_rect, uzor::input::Sense::CLICK);
                         result.delete_button_rects.push((del_id, delete_rect));
                     }
 
@@ -2061,7 +2061,7 @@ fn render_indicator_signals(
         let group_id = format!("signal_group_{}", group.instance_id);
         input_coordinator.register(
             group_id.as_str(),
-            header_rect.clone(),
+            header_rect,
             uzor::input::Sense::CLICK,
         );
         let is_hovered = input_coordinator
@@ -2136,7 +2136,7 @@ fn render_indicator_signals(
             );
 
             // Record the content rect so input.rs can route wheel events here.
-            result.signal_group_content_rects.push((group.instance_id, group_viewport.clone()));
+            result.signal_group_content_rects.push((group.instance_id, group_viewport));
 
             // Subtle container background (drawn before clip, covers full viewport).
             ctx.set_fill_color(&format!("{}20", theme.item_bg_hover));
@@ -2170,7 +2170,7 @@ fn render_indicator_signals(
                 let sig_id = format!("signal_{}_{}", group.instance_id, signal.bar_index);
 
                 // Register for click detection.
-                input_coordinator.register(sig_id.as_str(), signal_rect.clone(), uzor::input::Sense::CLICK);
+                input_coordinator.register(sig_id.as_str(), signal_rect, uzor::input::Sense::CLICK);
 
                 // Hover highlight (drawn before text so text renders on top).
                 let is_row_hovered = input_coordinator
@@ -2427,7 +2427,7 @@ fn render_connectors_panel(
         let header_rect = WidgetRect::new(rect.x, current_y, content_width, header_h);
         input_coordinator.register(
             group_header_id.as_str(),
-            header_rect.clone(),
+            header_rect,
             uzor::input::Sense::CLICK,
         );
         result.item_rects.push((group_header_id, header_rect));
@@ -2467,7 +2467,7 @@ fn render_connectors_panel(
 
         if is_any_hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
-        } else if idx % 2 == 0 {
+        } else if idx.is_multiple_of(2) {
             ctx.set_fill_color(&format!("{}08", theme.separator));
         } else {
             ctx.set_fill_color("transparent");
@@ -2519,7 +2519,7 @@ fn render_connectors_panel(
             toggle_zone_w,
             row_h,
         );
-        input_coordinator.register(toggle_id.as_str(), toggle_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register(toggle_id.as_str(), toggle_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((toggle_id, toggle_rect));
 
         // -----------------------------------------------------------------
@@ -2547,7 +2547,7 @@ fn render_connectors_panel(
             content_width - toggle_zone_w,
             row_h,
         );
-        input_coordinator.register(row_id.as_str(), expand_zone_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register(row_id.as_str(), expand_zone_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((row_id, expand_zone_rect));
 
         current_y += row_h;
@@ -3246,7 +3246,7 @@ fn render_performance_panel(
         ctx.set_fill_color(accent);
         ctx.set_text_align(TextAlign::Right);
         ctx.fill_text(value, value_x, *y + row_h / 2.0);
-        input_coordinator.register(wid, row_rect.clone(), uzor::input::Sense::CLICK);
+        input_coordinator.register(wid, row_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((wid.to_string(), row_rect));
         *y += row_h;
     };
@@ -3312,7 +3312,7 @@ fn render_performance_panel(
         let bar_gap = 2.0;
         let bar_row_h = bar_h + bar_gap;
         let cores_per_row = 4usize;
-        let num_rows = (cores_to_show + cores_per_row - 1) / cores_per_row;
+        let num_rows = cores_to_show.div_ceil(cores_per_row);
         let cell_w = bar_max_w / cores_per_row as f64;
 
         y += 2.0;

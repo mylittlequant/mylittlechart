@@ -340,7 +340,7 @@ impl Primitive for GannBox {
                 }
                 let level = config.level;
                 // Skip edges (0.0 and 1.0) - they're drawn as box outline
-                if level < 0.01 || level > 0.99 {
+                if !(0.01..=0.99).contains(&level) {
                     continue;
                 }
 

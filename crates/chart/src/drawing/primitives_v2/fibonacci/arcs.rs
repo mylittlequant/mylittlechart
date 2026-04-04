@@ -368,7 +368,7 @@ impl Primitive for FibArcs {
                 "dotted" => LineStyle::Dotted,
                 "large_dashed" => LineStyle::LargeDashed,
                 "sparse_dotted" => LineStyle::SparseDotted,
-                _ => self.data.style.clone(),
+                _ => self.data.style,
             };
 
             match line_style {

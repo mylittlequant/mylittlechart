@@ -147,7 +147,7 @@ pub fn validate_passphrase_at(
 /// Load salt from a hex file, or generate and save a new one.
 pub fn load_or_create_salt(salt_path: &std::path::Path) -> Result<[u8; 16], VaultError> {
     crypto::load_or_create_salt(salt_path)
-        .map_err(|e| VaultError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+        .map_err(|e| VaultError::Io(std::io::Error::other(e)))
 }
 
 #[cfg(test)]

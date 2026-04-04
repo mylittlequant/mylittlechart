@@ -756,7 +756,7 @@ impl SwingDetector {
     }
 
     pub fn update(&mut self, high: f64, low: f64) -> Option<(SignalKind, Direction)> {
-        if self.highs.len() >= self.lookback * 2 + 1 {
+        if self.highs.len() > self.lookback * 2 {
             self.highs.remove(0);
             self.lows.remove(0);
         }

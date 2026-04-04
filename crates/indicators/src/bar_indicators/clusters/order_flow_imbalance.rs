@@ -106,7 +106,7 @@ impl OrderFlowImbalance {
         if self.volume_bars.len() >= self.period {
             self.volume_bars.remove(0);
         }
-        self.volume_bars.push(volume_bar.clone());
+        self.volume_bars.push(*volume_bar);
         
         // Анализируем ценовые уровни
         self.analyze_price_levels(volume_bar);

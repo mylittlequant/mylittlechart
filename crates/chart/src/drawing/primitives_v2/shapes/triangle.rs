@@ -109,7 +109,7 @@ impl Primitive for Triangle {
     }
 
     fn set_points(&mut self, points: &[(f64, f64)]) {
-        if points.len() >= 1 {
+        if !points.is_empty() {
             self.bar1 = points[0].0;
             self.price1 = points[0].1;
         }
@@ -333,7 +333,7 @@ fn point_in_triangle(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, x3: f
     let b = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denom;
     let c = 1.0 - a - b;
 
-    a >= 0.0 && a <= 1.0 && b >= 0.0 && b <= 1.0 && c >= 0.0 && c <= 1.0
+    (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c)
 }
 
 // =============================================================================

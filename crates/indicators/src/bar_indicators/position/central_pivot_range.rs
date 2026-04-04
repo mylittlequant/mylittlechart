@@ -10,6 +10,12 @@ pub struct CentralPivotRange {
     ready: bool,
 }
 
+impl Default for CentralPivotRange {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CentralPivotRange {
     pub fn new() -> Self {
         Self {

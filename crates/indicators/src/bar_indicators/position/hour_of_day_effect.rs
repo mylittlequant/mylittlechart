@@ -7,6 +7,12 @@ pub struct HourOfDayEffect {
     pub value: f64,
 }
 
+impl Default for HourOfDayEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HourOfDayEffect {
     pub fn new() -> Self {
         Self { value: 0.0 }

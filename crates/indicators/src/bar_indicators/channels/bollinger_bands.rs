@@ -16,10 +16,12 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Bollinger Bands
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum BollingerMode {
     /// Typical - использует Typical Price (HLC/3)
     Typical,
     /// Close - использует только Close цену
+    #[default]
     Close,
     /// OHLC - использует (Open + High + Low + Close) / 4
     OHLC,
@@ -27,11 +29,6 @@ pub enum BollingerMode {
     HL,
 }
 
-impl Default for BollingerMode {
-    fn default() -> Self {
-        BollingerMode::Close // Классические BB используют Close
-    }
-}
 
 /// High-Performance Bollinger Bands
 /// Архитектура: MovingAverageProvider для центральной линии + circular buffer для std dev

@@ -600,8 +600,7 @@ pub fn render_indicator_settings_modal(
                     let slider_field_id = format!("tf_{}_slider", i);
                     let hovered = indicator_state.slider_drag.as_ref()
                         .map(|d| d.field_id == slider_field_id)
-                        .unwrap_or_else(|| indicator_state.hovered_item_id.as_ref()
-                            .map(|s| s.as_str()) == Some(slider_field_id.as_str()));
+                        .unwrap_or_else(|| indicator_state.hovered_item_id.as_deref() == Some(slider_field_id.as_str()));
 
                     // During drag, apply floating preview to the dragged handle.
                     let (display_min, display_max) = if let Some(ref drag) = indicator_state.slider_drag {
@@ -1051,7 +1050,7 @@ pub fn render_indicator_settings_modal(
                 } else {
                     let max_width = content_width - content_padding * 2.0 - scrollbar_width - 10.0;
                     let chars_per_line = (max_width / 7.0) as usize;
-                    let num_lines = (def.description.len() + chars_per_line - 1) / chars_per_line;
+                    let num_lines = def.description.len().div_ceil(chars_per_line);
                     total_content_height += num_lines as f64 * row_height * 0.7;
                 }
                 total_content_height += row_height * 0.3; // gap
@@ -1356,7 +1355,7 @@ pub fn render_indicator_settings_modal(
         // Register background FIRST with coordinator (last-registered wins, so
         // items registered AFTER will override this in hit_test_at)
         input_coordinator.register_on_layer(
-            format!("ind_settings:footer:template_dropdown_menu"),
+            "ind_settings:footer:template_dropdown_menu".to_string(),
             uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
             uzor::input::sense::Sense::CLICK,
             &layer_id,

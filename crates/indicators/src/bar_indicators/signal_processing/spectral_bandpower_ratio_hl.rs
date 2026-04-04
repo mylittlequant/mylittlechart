@@ -47,7 +47,7 @@ impl SpectralBandpowerRatioHL {
         let fd = self.fft.update(c);
         let freqs = &fd.frequencies;
         let power = &fd.power_spectrum;
-        if freqs.len() == 0 || power.len() == 0 {
+        if freqs.is_empty() || power.is_empty() {
             return self.value;
         }
         let mut low = 0.0;

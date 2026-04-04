@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 /// Position of legend on chart
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum LegendPosition {
     #[serde(rename = "topleft")]
+    #[default]
     TopLeft,
     #[serde(rename = "topright")]
     TopRight,
@@ -23,11 +25,6 @@ pub enum LegendPosition {
     BottomRight,
 }
 
-impl Default for LegendPosition {
-    fn default() -> Self {
-        Self::TopLeft
-    }
-}
 
 // =============================================================================
 // Legend Configuration

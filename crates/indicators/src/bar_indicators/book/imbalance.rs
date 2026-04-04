@@ -9,6 +9,12 @@ pub struct BookImbalanceRatio {
     ready: bool,
 }
 
+impl Default for BookImbalanceRatio {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BookImbalanceRatio {
     pub fn new() -> Self {
         Self {

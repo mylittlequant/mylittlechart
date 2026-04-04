@@ -9,8 +9,10 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета ATR Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum AtrChannelMode {
     /// Close - использует Close цену для средней линии
+    #[default]
     Close,
     /// Typical - использует Typical Price (HLC/3) для средней линии
     Typical,
@@ -20,11 +22,6 @@ pub enum AtrChannelMode {
     HL,
 }
 
-impl Default for AtrChannelMode {
-    fn default() -> Self {
-        AtrChannelMode::Close
-    }
-}
 
 /// High-Performance ATR Channels
 #[derive(Debug, Clone)]

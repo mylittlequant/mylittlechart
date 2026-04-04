@@ -48,12 +48,12 @@ impl ZigZagCandle {
             self.buffer.push(close);
         }
         // Проверка swing high/low по N-барам (только swing_bars соседей с каждой стороны)
-        if self.buffer.len() >= self.swing_bars * 2 + 1 {
+        if self.buffer.len() > self.swing_bars * 2 {
             let mid = self.buffer.len() - self.swing_bars - 1;
             let val = self.buffer[mid];
 
             // Сравниваем только с swing_bars соседями, не со всем буфером
-            let left_start = if mid >= self.swing_bars { mid - self.swing_bars } else { 0 };
+            let left_start = mid.saturating_sub(self.swing_bars);
             let right_end = (mid + 1 + self.swing_bars).min(self.buffer.len());
 
             let is_high = self.buffer[(mid + 1)..right_end].iter().all(|&x| val > x)

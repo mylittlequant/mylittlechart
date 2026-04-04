@@ -10,6 +10,12 @@ pub struct AvwapDistance {
     pub value: f64,
 }
 
+impl Default for AvwapDistance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AvwapDistance {
     pub fn new() -> Self {
         let params = AnchoredVwapParams {

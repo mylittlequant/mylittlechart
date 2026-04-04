@@ -307,7 +307,7 @@ impl Primitive for TrendAngle {
         // Calculate angle for display
         let dx = x2 - x1;
         let dy = y1 - y2; // Inverted because screen Y is flipped
-        let angle_rad = if dx.abs() > 0.001 { (dy / dx).atan() } else { if dy >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 } };
+        let angle_rad = if dx.abs() > 0.001 { (dy / dx).atan() } else if dy >= 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 };
         let angle_deg = angle_rad.to_degrees();
 
         // Draw angle arc if enabled

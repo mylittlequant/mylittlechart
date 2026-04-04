@@ -39,8 +39,8 @@ impl MonthTurnEffect {
         day: u32,
     ) -> f64 {
         let days_in_month = Self::days_in_month(year, month);
-        let dist_start = (day as i32 - 1).abs() as u32;
-        let dist_end = (days_in_month as i32 - day as i32).abs() as u32;
+        let dist_start = (day as i32 - 1).unsigned_abs();
+        let dist_end = (days_in_month as i32 - day as i32).unsigned_abs();
         let near = dist_start.min(dist_end);
         self.value = if near <= self.window {
             1.0 - (near as f64 / self.window as f64)

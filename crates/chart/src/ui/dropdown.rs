@@ -700,7 +700,7 @@ impl GridDropdownConfig {
         }
 
         let cols = self.columns as usize;
-        let rows = (count + cols - 1) / cols; // ceiling division
+        let rows = count.div_ceil(cols); // ceiling division
 
         let width = self.padding * 2.0
             + (cols as f64 * self.cell_size)
@@ -885,7 +885,7 @@ impl LayoutDropdownConfig {
         for item in &self.layout_items {
             if let DropdownItem::Item { id, .. } = item {
                 let count = get_layout_window_count(id);
-                if count >= 1 && count <= 4 {
+                if (1..=4).contains(&count) {
                     groups[(count - 1) as usize].1.push(item);
                 }
             }

@@ -1943,10 +1943,10 @@ impl ChartApp {
                             .collect();
                         for cid_val in matched_cids {
                             let handle_key = (cid_val, bs_key.clone());
-                            if !self.series_handles.contains_key(&handle_key) {
+                            self.series_handles.entry(handle_key).or_insert_with(|| {
                                 let arc = bar_svc.get_or_create(bs_key.clone(), period_secs);
-                                self.series_handles.insert(handle_key, bar_service::TrackedSeriesHandle::new(arc));
-                            }
+                                bar_service::TrackedSeriesHandle::new(arc)
+                            });
                         }
                     }
 
@@ -3648,7 +3648,7 @@ impl ChartApp {
                     use sidebar_content::MetricsSnapshot;
                     let now = std::time::Instant::now();
                     let should_sample = self.sidebar_state.metrics_last_sample
-                        .map_or(true, |last| now.duration_since(last).as_secs_f64() >= 1.0);
+                        .is_none_or(|last| now.duration_since(last).as_secs_f64() >= 1.0);
                     if should_sample {
                         self.sidebar_state.metrics_last_sample = Some(now);
                         for (exchange_id, (stats, ws_count)) in &metrics_map {
@@ -4500,7 +4500,7 @@ impl ChartApp {
                                 let prefix = format!("ind_overlay:leaf{}:", leaf_id.0);
                                 let cmp_prefix = format!("cmp_overlay:leaf{}:", leaf_id.0);
                                 let ov_layer = ZLayer::Toolbar.push_named(
-                                    &mut *self.input_coordinator.borrow_mut(),
+                                    &mut self.input_coordinator.borrow_mut(),
                                     &format!("ind_overlay_leaf{}", leaf_id.0),
                                 );
 
@@ -5015,7 +5015,7 @@ impl ChartApp {
                         use uzor::input::Sense;
                         use zengeld_chart::ui::z_order::ZLayer;
 
-                        let ov_layer = ZLayer::Toolbar.push_named(&mut *self.input_coordinator.borrow_mut(), "ind_overlay");
+                        let ov_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "ind_overlay");
 
                         // Main toggle button (when dropdown is closed)
                         let br = &overlay_result.button_rect;
@@ -5127,7 +5127,7 @@ impl ChartApp {
             use uzor::input::Sense;
             use zengeld_chart::ui::z_order::ZLayer;
 
-            let tb_layer = ZLayer::Toolbar.push(&mut *self.input_coordinator.borrow_mut());
+            let tb_layer = ZLayer::Toolbar.push(&mut self.input_coordinator.borrow_mut());
 
             // Drawing toolbar (left side)
             for (id, rect) in &toolbar_result.left_toolbar.item_rects {
@@ -5257,7 +5257,7 @@ impl ChartApp {
                 use uzor::input::Sense;
                 use zengeld_chart::ui::z_order::ZLayer;
 
-                let dd_layer = ZLayer::Dropdown.push_named(&mut *self.input_coordinator.borrow_mut(), "chart_dropdown");
+                let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "chart_dropdown");
 
                 // Menu background
                 self.input_coordinator.borrow_mut().register_on_layer(
@@ -5355,7 +5355,7 @@ impl ChartApp {
             &toolbar_theme,
             &toolbar_state,
             current_time_ms,
-            &mut *self.input_coordinator.borrow_mut(),
+            &mut self.input_coordinator.borrow_mut(),
         );
         let mut out_frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
@@ -5378,7 +5378,7 @@ impl ChartApp {
                 &frame_theme,
                 &toolbar_theme_search,
                 current_time_ms,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             ));
         } else {
             out_search_modal_result = None;
@@ -5398,7 +5398,7 @@ impl ChartApp {
                 &frame_theme,
                 &toolbar_theme,
                 current_time_ms,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             );
             // Store in frame_result so click handlers can access it
             if let Some(ref mut fr) = out_frame_result {
@@ -5416,7 +5416,7 @@ impl ChartApp {
                 &self.panel_app.context_menu_state,
                 &dropdown_theme,
                 hovered_id,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             ));
         } else {
             out_context_menu_result = None;
@@ -5456,7 +5456,7 @@ impl ChartApp {
                 &sidebar_rect,
                 &self.sidebar_state,
                 &sidebar_toolbar_theme,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             );
 
             out_last_sidebar_result = Some(sidebar_result);
@@ -5517,7 +5517,7 @@ impl ChartApp {
                 &frame_theme,
                 &toolbar_theme,
                 current_time_ms,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             );
             out_last_watchlist_modal_result = Some(wl_modal_result);
         } else {
@@ -5535,7 +5535,7 @@ impl ChartApp {
                 &frame_theme,
                 &toolbar_theme,
                 current_time_ms,
-                &mut *self.input_coordinator.borrow_mut(),
+                &mut self.input_coordinator.borrow_mut(),
             );
             out_last_wl_group_name_result = Some(result);
         } else {
@@ -5738,7 +5738,7 @@ impl ChartApp {
             &sidebar_rect,
             &self.sidebar_state,
             &sidebar_toolbar_theme,
-            &mut *self.input_coordinator.borrow_mut(),
+            &mut self.input_coordinator.borrow_mut(),
         );
 
         self.last_sidebar_result = Some(sidebar_result);
@@ -5786,7 +5786,7 @@ impl ChartApp {
             // Visibility filtering happens in the render pipeline, not here.
             let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = self
                 .indicator_manager
-                .get_instances_for_symbol_in_window(&symbol, *chart_id_val)
+                .get_instances_for_symbol_in_window(symbol, *chart_id_val)
                 .into_iter()
                 .filter(|i| i.pane > 0)
                 .map(|i| {

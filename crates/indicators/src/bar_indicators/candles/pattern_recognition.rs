@@ -206,6 +206,12 @@ impl Clone for AdvancedPatternRecognition {
     }
 }
 
+impl Default for AdvancedPatternRecognition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdvancedPatternRecognition {
     pub fn new() -> Self {
         Self::new_with_config(PatternConfig::default())
@@ -245,7 +251,7 @@ impl AdvancedPatternRecognition {
         self.volume_ma.update_bar(0.0, 0.0, 0.0, volume, 0.0);
         
         // Анализируем паттерны
-        if self.ohlc_history.len() >= 1 {
+        if !self.ohlc_history.is_empty() {
             self.analyze_patterns();
             self.is_ready = true;
         }

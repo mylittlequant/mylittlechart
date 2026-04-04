@@ -98,18 +98,15 @@ impl DrawingState {
 
 /// Type of drag operation in progress
 #[derive(Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum DragType {
     /// Dragging the whole primitive (translate)
+    #[default]
     Move,
     /// Dragging a specific control point (resize/reshape)
     ControlPoint(ControlPointType),
 }
 
-impl Default for DragType {
-    fn default() -> Self {
-        DragType::Move
-    }
-}
 
 /// Drawing manager - complete drawing system using PrimitiveRegistry
 ///
@@ -1290,14 +1287,8 @@ impl DrawingManager {
             return None;
         }
 
-        let idx = match self.selected {
-            Some(i) => i,
-            None => return None,
-        };
-        let prim = match self.primitives.get(idx) {
-            Some(p) => p,
-            None => return None,
-        };
+        let idx = self.selected?;
+        let prim = self.primitives.get(idx)?;
 
         if prim.data().pane_id != Some(pane_id) {
             return None;
@@ -1384,7 +1375,7 @@ impl DrawingManager {
                         }
                     }
                     DragType::ControlPoint(point_type) => {
-                        self.primitives[idx].move_control_point(point_type.clone(), current_bar, current_price);
+                        self.primitives[idx].move_control_point(*point_type, current_bar, current_price);
                         self.drag_start = Some((current_bar, current_price));
                     }
                 }
@@ -1418,7 +1409,7 @@ impl DrawingManager {
                     DragType::ControlPoint(point_type) => {
                         // Use screen coordinates for control point drag
                         self.primitives[idx].move_control_point_screen(
-                            point_type.clone(),
+                            *point_type,
                             screen_x,
                             screen_y,
                             viewport,
@@ -1950,7 +1941,7 @@ impl DrawingManager {
             let prim_data = prim.data_mut();
             prim_data.color = data.color.clone();
             prim_data.width = data.width;
-            prim_data.style = data.style.clone();
+            prim_data.style = data.style;
             prim_data.visible = data.visible;
             prim_data.locked = data.locked;
             prim_data.display_name = data.display_name.clone();

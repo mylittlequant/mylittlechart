@@ -607,11 +607,10 @@ impl AdaptiveChannels {
             } else if current_price < self.lower_channel {
                 return AdaptiveSignal::HighAdaptiveBreakout;
             }
-        } else if self.adaptation_level < 0.3 || efficiency_ratio < 0.2 {
-            if current_price > self.upper_channel || current_price < self.lower_channel {
+        } else if (self.adaptation_level < 0.3 || efficiency_ratio < 0.2)
+            && (current_price > self.upper_channel || current_price < self.lower_channel) {
                 return AdaptiveSignal::LowAdaptiveBreakout;
             }
-        }
         
         // Проверяем возврат к центру
         let prev_distance = (previous_price - center).abs();
@@ -659,7 +658,7 @@ impl AdaptiveChannels {
     pub fn is_ready(&self) -> bool {
         match self.center_line_type {
             CenterLineType::AdaptiveLinReg => {
-                self.regression_ma.as_ref().map_or(false, |r| r.is_ready()) && 
+                self.regression_ma.as_ref().is_some_and(|r| r.is_ready()) && 
                 self.adaptive_atr.is_ready()
             }
             _ => self.kama.is_ready() && self.adaptive_atr.is_ready(),  // ✅ Готовность KAMA

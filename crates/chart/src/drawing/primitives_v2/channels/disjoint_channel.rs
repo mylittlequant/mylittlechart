@@ -146,7 +146,7 @@ impl Primitive for DisjointChannel {
     }
 
     fn set_points(&mut self, points: &[(f64, f64)]) {
-        if points.len() >= 1 {
+        if !points.is_empty() {
             self.line1_bar1 = points[0].0;
             self.line1_price1 = points[0].1;
         }

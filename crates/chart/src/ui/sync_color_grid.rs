@@ -323,7 +323,7 @@ pub fn draw_sync_color_grid(
             let sy = cursor_y;
 
             let color = all_colors[idx];
-            let is_current = current_color.map_or(false, |c| colors_match(c, color));
+            let is_current = current_color.is_some_and(|c| colors_match(c, color));
             let is_hovered = state.hovered_index == Some(idx);
 
             draw_swatch(ctx, sx, sy, color, is_current, is_hovered);
@@ -355,7 +355,7 @@ pub fn draw_sync_color_grid(
         let sy = cursor_y;
 
         let color = all_colors[idx];
-        let is_current = current_color.map_or(false, |c| colors_match(c, color));
+        let is_current = current_color.is_some_and(|c| colors_match(c, color));
         let is_hovered = state.hovered_index == Some(idx);
 
         draw_swatch(ctx, sx, sy, color, is_current, is_hovered);

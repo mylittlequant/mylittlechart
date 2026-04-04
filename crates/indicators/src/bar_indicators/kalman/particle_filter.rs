@@ -41,6 +41,12 @@ pub struct ParticleFilterResult {
     pub likelihood: f64,            // Правдоподобие
 }
 
+impl Default for ParticleFilterResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParticleFilterResult {
     pub fn new() -> Self {
         Self {

@@ -214,14 +214,11 @@ impl Primitive for PriceLabel {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        match id {
-            "show_line" => {
-                if let Some(v) = value.as_bool() {
-                    self.show_line = v;
-                    return true;
-                }
+        if id == "show_line" {
+            if let Some(v) = value.as_bool() {
+                self.show_line = v;
+                return true;
             }
-            _ => {}
         }
         false
     }

@@ -17,6 +17,12 @@ pub struct AndGate {
     rsi_long: Rsi,
     pub v: bool,
 }
+impl Default for AndGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AndGate {
     pub fn new() -> Self {
         Self {
@@ -66,6 +72,12 @@ pub struct OrGate {
     rsi_long: Rsi,
     pub v: bool,
 }
+impl Default for OrGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrGate {
     pub fn new() -> Self {
         Self {
@@ -83,7 +95,7 @@ impl OrGate {
             let short_val = self.rsi_short.value().main();
             let long_val = self.rsi_long.value().main();
             // Either is extreme
-            self.v = short_val > 70.0 || short_val < 30.0 || long_val > 70.0 || long_val < 30.0;
+            self.v = !(30.0..=70.0).contains(&short_val) || !(30.0..=70.0).contains(&long_val);
         }
         self.v
     }
@@ -116,6 +128,12 @@ pub struct XorGate {
     rsi_long: Rsi,
     pub v: bool,
 }
+impl Default for XorGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl XorGate {
     pub fn new() -> Self {
         Self {
@@ -132,8 +150,8 @@ impl XorGate {
         if self.is_ready() {
             let short_val = self.rsi_short.value().main();
             let long_val = self.rsi_long.value().main();
-            let short_extreme = short_val > 70.0 || short_val < 30.0;
-            let long_extreme = long_val > 70.0 || long_val < 30.0;
+            let short_extreme = !(30.0..=70.0).contains(&short_val);
+            let long_extreme = !(30.0..=70.0).contains(&long_val);
             // XOR: exactly one is extreme (divergence)
             self.v = short_extreme ^ long_extreme;
         }
@@ -168,6 +186,12 @@ pub struct SignCombiner {
     rsi_long: Rsi,
     pub s: i8,
 }
+impl Default for SignCombiner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SignCombiner {
     pub fn new() -> Self {
         Self {

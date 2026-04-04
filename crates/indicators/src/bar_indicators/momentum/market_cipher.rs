@@ -153,7 +153,7 @@ impl MarketCipher {
             let lowest = self.hlc3_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
             
             if (highest - lowest).abs() > 1e-12 {
-                self.wt1 = (hlc3 - ema_hlc3) / (0.015 * (highest - lowest)) * (-1.0);
+                self.wt1 = -((hlc3 - ema_hlc3) / (0.015 * (highest - lowest)));
             } else {
                 self.wt1 = 0.0;
             }

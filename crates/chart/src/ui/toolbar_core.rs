@@ -450,7 +450,7 @@ impl ToolbarSection {
     {
         let items = self.items.into_iter().map(|item| {
             // Get the id first (as owned String) to avoid borrow issues
-            let should_be_active = item.id().map(|id| is_active(id)).unwrap_or(false);
+            let should_be_active = item.id().map(&is_active).unwrap_or(false);
             if should_be_active != item.is_active() {
                 item.with_active(should_be_active)
             } else {
@@ -1285,12 +1285,10 @@ pub fn draw_toolbar_with_icons(
         } else {
             (rect.y + left_reserve, rect.y + toolbar_main_size - end_reserved - right_reserve)
         }
+    } else if is_horizontal {
+        (rect.x + config.padding, rect.x + toolbar_main_size - end_reserved - config.padding)
     } else {
-        if is_horizontal {
-            (rect.x + config.padding, rect.x + toolbar_main_size - end_reserved - config.padding)
-        } else {
-            (rect.y + config.padding, rect.y + toolbar_main_size - end_reserved - config.padding)
-        }
+        (rect.y + config.padding, rect.y + toolbar_main_size - end_reserved - config.padding)
     };
     let content_size = (content_end - content_start).max(0.0);
 

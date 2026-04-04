@@ -9,6 +9,12 @@ pub struct WilliamsAd {
     value: f64,
 }
 
+impl Default for WilliamsAd {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WilliamsAd {
     pub fn new() -> Self {
         Self {

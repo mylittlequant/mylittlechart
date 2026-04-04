@@ -11,6 +11,12 @@ pub struct WilliamsFractals {
     down: bool,
 }
 
+impl Default for WilliamsFractals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WilliamsFractals {
     pub fn new() -> Self {
         Self {

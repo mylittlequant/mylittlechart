@@ -65,6 +65,12 @@ pub struct FrequencyDomain {
     pub spectral_bandwidth: f64,                // Спектральная ширина
 }
 
+impl Default for FrequencyDomain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrequencyDomain {
     pub fn new() -> Self {
         Self {

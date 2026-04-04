@@ -200,7 +200,7 @@ impl KnowSureThing {
         for i in 0..4 {
             let roc_period = self.roc_periods[i];
 
-            if self.source_prices.len() >= roc_period + 1 {
+            if self.source_prices.len() > roc_period {
                 // Рассчитываем ROC
                 let current_price = source_value;
                 let past_price = self.source_prices[self.source_prices.len() - roc_period - 1];
@@ -461,7 +461,7 @@ impl KnowSureThing {
         for i in 0..4 {
             let roc_period = self.roc_periods[i];
 
-            if self.source_prices.len() >= roc_period + 1 {
+            if self.source_prices.len() > roc_period {
                 let past_price = self.source_prices[self.source_prices.len() - roc_period - 1];
 
                 let roc = if past_price.abs() < 1e-12 {

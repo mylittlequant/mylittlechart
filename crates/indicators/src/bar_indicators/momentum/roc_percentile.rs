@@ -71,11 +71,7 @@ impl RocPercentile {
         let mut count = 0usize;
         let mut count_le = 0usize;
         if self.idx > self.period {
-            let start = if self.idx > self.window {
-                self.idx - self.window
-            } else {
-                0
-            };
+            let start = self.idx.saturating_sub(self.window);
             for j in start..self.idx {
                 if j <= self.period {
                     continue;

@@ -38,7 +38,7 @@ mod win32_capture {
                 let mut pt = POINT { x: 0, y: 0 };
                 unsafe {
                     if GetCursorPos(&mut pt) != 0 {
-                        ScreenToClient(h.hwnd.get() as isize, &mut pt);
+                        ScreenToClient(h.hwnd.get(), &mut pt);
                         return Some((pt.x as f64, pt.y as f64));
                     }
                 }
@@ -88,7 +88,7 @@ mod win32_border {
     pub fn extract_hwnd(window: &Window) -> Option<isize> {
         let handle = window.window_handle().ok()?;
         if let RawWindowHandle::Win32(h) = handle.as_ref() {
-            Some(h.hwnd.get() as isize)
+            Some(h.hwnd.get())
         } else {
             None
         }
@@ -1694,7 +1694,7 @@ fn timestamp_for_filename() -> String {
 }
 
 fn is_leap_year(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 /// Recreate `surface.target_texture` with `COPY_SRC` and `RENDER_ATTACHMENT` added to the usage flags.
@@ -1757,7 +1757,7 @@ fn capture_screenshot(
     // wgpu requires rows aligned to 256 bytes (COPY_BYTES_PER_ROW_ALIGNMENT)
     const ALIGNMENT: u32 = 256;
     let padded_bytes_per_row =
-        ((unpadded_bytes_per_row + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT;
+        unpadded_bytes_per_row.div_ceil(ALIGNMENT) * ALIGNMENT;
 
     let buffer_size = (padded_bytes_per_row * full_height) as u64;
 
@@ -2456,25 +2456,23 @@ impl App<'_> {
                     winit::dpi::PhysicalPosition::new(cx, cy),
                 ));
             }
-        } else {
-            if let Some(ws) = restore {
-                use winit::dpi::Position;
-                if let (Some(x), Some(y)) = (ws.x, ws.y) {
+        } else if let Some(ws) = restore {
+            use winit::dpi::Position;
+            if let (Some(x), Some(y)) = (ws.x, ws.y) {
+                attrs = attrs.with_position(Position::Physical(
+                    winit::dpi::PhysicalPosition::new(x, y),
+                ));
+            }
+            if let (Some(w), Some(h)) = (ws.width, ws.height) {
+                attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
+            }
+        } else if let Some(from_id) = cascade_from {
+            use winit::dpi::Position;
+            if let Some(existing) = self.windows.get(&from_id) {
+                if let Ok(pos) = existing.window.outer_position() {
                     attrs = attrs.with_position(Position::Physical(
-                        winit::dpi::PhysicalPosition::new(x, y),
+                        winit::dpi::PhysicalPosition::new(pos.x + 30, pos.y + 30),
                     ));
-                }
-                if let (Some(w), Some(h)) = (ws.width, ws.height) {
-                    attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
-                }
-            } else if let Some(from_id) = cascade_from {
-                use winit::dpi::Position;
-                if let Some(existing) = self.windows.get(&from_id) {
-                    if let Ok(pos) = existing.window.outer_position() {
-                        attrs = attrs.with_position(Position::Physical(
-                            winit::dpi::PhysicalPosition::new(pos.x + 30, pos.y + 30),
-                        ));
-                    }
                 }
             }
         }
@@ -7003,7 +7001,7 @@ impl ApplicationHandler for App<'_> {
                 let enabled_connectors = {
                     let mut seen = std::collections::HashSet::new();
                     for (eid, _, _) in &metrics {
-                        seen.insert(eid.clone());
+                        seen.insert(*eid);
                     }
                     seen.len() as u32
                 };
@@ -7777,12 +7775,11 @@ impl ApplicationHandler for App<'_> {
                 }
 
                 // Right-click on chrome → open context menu
-                if button == MouseButton::Right && state == ElementState::Pressed {
-                    if y < chrome::CHROME_HEIGHT {
+                if button == MouseButton::Right && state == ElementState::Pressed
+                    && y < chrome::CHROME_HEIGHT {
                         pw.chrome_state.context_menu.open_at(x, y);
                         return;
                     }
-                }
 
                 // Only forward to chart when in the chart area (below chrome).
                 let chart_y = y - chrome::CHROME_HEIGHT;

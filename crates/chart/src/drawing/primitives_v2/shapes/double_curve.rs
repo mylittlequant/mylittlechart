@@ -132,7 +132,7 @@ impl Primitive for DoubleCurve {
     }
 
     fn set_points(&mut self, points: &[(f64, f64)]) {
-        if points.len() >= 1 {
+        if !points.is_empty() {
             self.start_bar = points[0].0;
             self.start_price = points[0].1;
         }

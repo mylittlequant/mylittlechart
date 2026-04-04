@@ -30,8 +30,7 @@ pub fn parse_css_color(color: &str) -> (u8, u8, u8, u8) {
         return (0, 0, 0, 0);
     }
 
-    if color.starts_with('#') {
-        let hex = &color[1..];
+    if let Some(hex) = color.strip_prefix('#') {
         match hex.len() {
             // #RGB -> #RRGGBB
             3 => {

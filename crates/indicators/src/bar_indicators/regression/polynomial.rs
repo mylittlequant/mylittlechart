@@ -197,10 +197,8 @@ impl PolynomialRegression {
                 if !self.coefficients.is_full() {
                     self.coefficients.push(coeff);
                 }
-            } else {
-                if !self.coefficients.is_full() {
-                    self.coefficients.push(0.0);
-                }
+            } else if !self.coefficients.is_full() {
+                self.coefficients.push(0.0);
             }
         }
         
@@ -365,12 +363,10 @@ impl PolynomialRegression {
             } else {
                 TrendDirection::Uptrend
             }
+        } else if self.second_derivative < 0.0 {
+            TrendDirection::StrongDowntrend
         } else {
-            if self.second_derivative < 0.0 {
-                TrendDirection::StrongDowntrend
-            } else {
-                TrendDirection::Downtrend
-            }
+            TrendDirection::Downtrend
         };
     }
     
@@ -448,11 +444,10 @@ impl PolynomialRegression {
                 let curr_deriv = self.derivative_at(x);
                 
                 // Смена знака производной указывает на экстремум
-                if prev_deriv * curr_deriv < 0.0 {
-                    if !extrema.is_full() {
+                if prev_deriv * curr_deriv < 0.0
+                    && !extrema.is_full() {
                         extrema.push(x - step * 0.5); // Приблизительная позиция экстремума
                     }
-                }
                 
                 prev_deriv = curr_deriv;
             }

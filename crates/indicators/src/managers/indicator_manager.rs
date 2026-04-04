@@ -23,21 +23,18 @@ pub use zengeld_chart::ui::modal_state::IndicatorCategory;
 /// Choosing a coarser mode (PerFrame, PerBar) reduces CPU usage at the cost
 /// of indicator values being updated less frequently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum RecalcMode {
     /// Recalculate on every incoming trade (highest accuracy, highest CPU).
     PerTick,
     /// Recalculate once per render frame, batching all trades that arrived
     /// since the last frame (default — good balance of accuracy and CPU).
+    #[default]
     PerFrame,
     /// Recalculate only when a new bar forms (lowest CPU usage).
     PerBar,
 }
 
-impl Default for RecalcMode {
-    fn default() -> Self {
-        RecalcMode::PerFrame
-    }
-}
 
 /// How histogram bars are rendered
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -469,7 +466,7 @@ impl IndicatorInstance {
     /// Get formatted title with params (e.g., "SMA(20)")
     pub fn title(&self) -> String {
         // Simplified - just return name with first int param
-        for (_, value) in &self.params {
+        for value in self.params.values() {
             if let IndicatorValue::Int(v) = value {
                 return format!("{}({})", self.name, v);
             }
@@ -615,7 +612,7 @@ impl IndicatorManager {
         self.instances.insert(id, instance);
         self.by_symbol
             .entry(symbol.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id);
 
         Some(id)
@@ -639,7 +636,7 @@ impl IndicatorManager {
         self.instances.insert(id, instance);
         self.by_symbol
             .entry(symbol.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id);
 
         // Update next_id if needed

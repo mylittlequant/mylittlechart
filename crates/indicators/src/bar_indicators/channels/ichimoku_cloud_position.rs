@@ -9,6 +9,12 @@ pub struct IchimokuCloudPosition {
     value: f64,
 }
 
+impl Default for IchimokuCloudPosition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IchimokuCloudPosition {
     pub fn new() -> Self {
         Self {

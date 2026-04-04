@@ -29,8 +29,10 @@ use crate::state::Timeframe;
 
 /// Timeframe visibility configuration for chart objects
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum TimeframeVisibility {
     /// Visible on all timeframes
+    #[default]
     All,
     /// Visible only on specific timeframes
     Specific(Vec<Timeframe>),
@@ -58,11 +60,6 @@ impl TimeframeVisibility {
     }
 }
 
-impl Default for TimeframeVisibility {
-    fn default() -> Self {
-        TimeframeVisibility::All
-    }
-}
 
 // =============================================================================
 // ObjectCategory - full terminal version (with all categories)

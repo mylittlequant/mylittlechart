@@ -287,7 +287,7 @@ pub fn render_alert_settings_modal(
     let tab_labels: [(&str, &str); 3] = [
         ("Settings", "alert_set:tab:settings"),
         ("Notifications", "alert_set:tab:notifications"),
-        (&"", "alert_set:tab:list"), // rendered specially below
+        ("", "alert_set:tab:list"), // rendered specially below
     ];
     let tab_w = MODAL_WIDTH / 3.0;
 

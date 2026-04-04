@@ -10,6 +10,12 @@ pub struct WeekdayEffect {
     pub mean_returns: [f64; 7],
 }
 
+impl Default for WeekdayEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WeekdayEffect {
     pub fn new() -> Self {
         Self {

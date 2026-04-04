@@ -273,7 +273,7 @@ impl VolumeProfile {
     pub fn get_stats(&self) -> VolumeProfileStats {
         let poc = self.get_poc();
         let range = self.price_range();
-        let avg_volume = if self.levels.len() > 0 {
+        let avg_volume = if !self.levels.is_empty() {
             self.total_volume / self.levels.len() as f64
         } else {
             0.0

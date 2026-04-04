@@ -1172,8 +1172,7 @@ fn render_appearance_settings(
         let slider_track_id = format!("appearance:style_{}", field_id);
         let hovered = chart_settings_state.slider_drag.as_ref()
             .map(|d| d.field_id == slider_track_id)
-            .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_ref()
-                .map(|s| s.as_str()) == Some(slider_track_id.as_str()));
+            .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_deref() == Some(slider_track_id.as_str()));
 
         let display_value = chart_settings_state.slider_drag.as_ref()
             .filter(|d| d.field_id == slider_track_id)
@@ -1218,8 +1217,7 @@ fn render_appearance_settings(
         let _is_editing = chart_settings_state.text_input.is_editing(value_field_id);
         let hovered = chart_settings_state.slider_drag.as_ref()
             .map(|d| d.field_id == slider_track_id)
-            .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_ref()
-                .map(|s| s.as_str()) == Some(slider_track_id));
+            .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_deref() == Some(slider_track_id));
 
         let blur_display = chart_settings_state.slider_drag.as_ref()
             .filter(|d| d.field_id == slider_track_id)
@@ -1511,8 +1509,7 @@ fn render_scales_settings(
     let _is_editing_value = chart_settings_state.text_input.is_editing("scales:crosshair_line_width_value");
     let hovered = chart_settings_state.slider_drag.as_ref()
         .map(|d| d.field_id == "scales:crosshair_line_width")
-        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_ref()
-            .map(|s| s.as_str()) == Some("scales:crosshair_line_width"));
+        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_deref() == Some("scales:crosshair_line_width"));
 
     let crosshair_width_display = chart_settings_state.slider_drag.as_ref()
         .filter(|d| d.field_id == "scales:crosshair_line_width")
@@ -1628,8 +1625,7 @@ fn render_scales_settings(
     let _is_editing_price = chart_settings_state.text_input.is_editing("scales:price_width_value");
     let hovered = chart_settings_state.slider_drag.as_ref()
         .map(|d| d.field_id == "scales:price_width_slider")
-        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_ref()
-            .map(|s| s.as_str()) == Some("scales:price_width_slider"));
+        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_deref() == Some("scales:price_width_slider"));
     let price_width_display = chart_settings_state.slider_drag.as_ref()
         .filter(|d| d.field_id == "scales:price_width_slider")
         .and_then(|d| d.floating_value)
@@ -1657,8 +1653,7 @@ fn render_scales_settings(
     let _is_editing_time = chart_settings_state.text_input.is_editing("scales:time_height_value");
     let hovered = chart_settings_state.slider_drag.as_ref()
         .map(|d| d.field_id == "scales:time_height_slider")
-        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_ref()
-            .map(|s| s.as_str()) == Some("scales:time_height_slider"));
+        .unwrap_or_else(|| chart_settings_state.hovered_item_id.as_deref() == Some("scales:time_height_slider"));
     let time_height_display = chart_settings_state.slider_drag.as_ref()
         .filter(|d| d.field_id == "scales:time_height_slider")
         .and_then(|d| d.floating_value)

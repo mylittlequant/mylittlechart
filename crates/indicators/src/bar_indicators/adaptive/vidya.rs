@@ -196,6 +196,12 @@ pub struct VidyaResult {
     pub trend_strength: f64,    // Сила тренда
 }
 
+impl Default for VidyaResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VidyaResult {
     pub fn new() -> Self {
         Self {

@@ -7,6 +7,12 @@ pub struct IntradayIntensityPercent {
     value: f64,
 }
 
+impl Default for IntradayIntensityPercent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IntradayIntensityPercent {
     pub fn new() -> Self {
         Self { value: 0.0 }

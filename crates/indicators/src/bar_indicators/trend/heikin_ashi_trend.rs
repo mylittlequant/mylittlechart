@@ -9,6 +9,12 @@ pub struct HeikinAshiTrend {
     value: i8,
 }
 
+impl Default for HeikinAshiTrend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeikinAshiTrend {
     pub fn new() -> Self {
         Self {

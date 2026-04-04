@@ -10,6 +10,12 @@ pub struct SessionEffect {
     pub mean_returns: [f64; 4],
 }
 
+impl Default for SessionEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionEffect {
     pub fn new() -> Self {
         Self {

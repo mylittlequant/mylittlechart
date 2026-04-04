@@ -15,8 +15,10 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Keltner Channel
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum KeltnerMode {
     /// Classic - использует Typical Price (HLC/3) для средней линии
+    #[default]
     Classic,
     /// Close - использует Close для средней линии  
     Close,
@@ -24,11 +26,6 @@ pub enum KeltnerMode {
     HLC,
 }
 
-impl Default for KeltnerMode {
-    fn default() -> Self {
-        KeltnerMode::Classic
-    }
-}
 
 /// High-Performance Keltner Channel
 /// Архитектура: MovingAverageProvider для центральной линии + Atr для полос

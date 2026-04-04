@@ -143,7 +143,7 @@ impl VolatilityStop {
                 }
                 self.ranges.push(range);
                 
-                if self.ranges.len() >= 1 {
+                if !self.ranges.is_empty() {
                     self.ranges.iter().sum::<f64>() / self.ranges.len() as f64
                 } else {
                     0.0

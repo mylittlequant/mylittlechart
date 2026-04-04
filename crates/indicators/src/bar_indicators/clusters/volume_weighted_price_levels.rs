@@ -69,7 +69,7 @@ impl VolumeWeightedPriceLevels {
         if self.volume_bars.len() >= self.period {
             self.volume_bars.remove(0);
         }
-        self.volume_bars.push(volume_bar.clone());
+        self.volume_bars.push(*volume_bar);
         
         // Обновляем VWAP
         self.update_vwap(volume_bar);

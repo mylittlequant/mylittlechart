@@ -9,6 +9,12 @@ pub struct IchimokuCloudThickness {
     value: f64,
 }
 
+impl Default for IchimokuCloudThickness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IchimokuCloudThickness {
     pub fn new() -> Self {
         Self {

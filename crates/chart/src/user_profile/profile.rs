@@ -797,16 +797,13 @@ impl VaultSecrets {
     /// `VaultSecrets` and clearing those fields in the profile so they
     /// are not written to plaintext storage.
     pub fn extract_from(profile: &mut UserProfile) -> Self {
-        let secrets = Self {
+        
+        Self {
             legacy_single_agent_key: std::mem::take(&mut profile.legacy_single_agent_key),
             local_agent_keys: std::mem::take(&mut profile.local_agent_keys),
             exchange_keys: std::mem::take(&mut profile.exchange_keys),
-            notification_settings: std::mem::replace(
-                &mut profile.notification_settings,
-                alert_delivery::NotificationSettings::default(),
-            ),
-        };
-        secrets
+            notification_settings: std::mem::take(&mut profile.notification_settings),
+        }
     }
 
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.

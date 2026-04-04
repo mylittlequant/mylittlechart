@@ -120,7 +120,7 @@ impl MarketMicrostructure {
         if self.volume_bars.len() >= self.period {
             self.volume_bars.remove(0);
         }
-        self.volume_bars.push(volume_bar.clone());
+        self.volume_bars.push(*volume_bar);
         
         // Обновляем производные данные
         self.update_derived_data(volume_bar);

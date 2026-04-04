@@ -139,6 +139,12 @@ pub struct FilterResult {
     pub likelihood: f64,            // Вероятность наблюдения
 }
 
+impl Default for FilterResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilterResult {
     pub fn new() -> Self {
         Self {

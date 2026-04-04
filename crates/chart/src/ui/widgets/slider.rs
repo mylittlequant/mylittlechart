@@ -192,6 +192,7 @@ impl SliderConfig {
 
 /// Result of single slider rendering
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct SingleSliderResult {
     /// Full slider rect (label + track + input)
     pub full_rect: WidgetRect,
@@ -207,21 +208,10 @@ pub struct SingleSliderResult {
     pub input_result: Option<InputResult>,
 }
 
-impl Default for SingleSliderResult {
-    fn default() -> Self {
-        Self {
-            full_rect: WidgetRect::default(),
-            track_rect: WidgetRect::default(),
-            handle_rect: WidgetRect::default(),
-            input_rect: None,
-            track_info: None,
-            input_result: None,
-        }
-    }
-}
 
 /// Result of dual slider rendering
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct DualSliderResult {
     /// Full slider rect (label + track + inputs)
     pub full_rect: WidgetRect,
@@ -243,21 +233,6 @@ pub struct DualSliderResult {
     pub max_input_result: Option<InputResult>,
 }
 
-impl Default for DualSliderResult {
-    fn default() -> Self {
-        Self {
-            full_rect: WidgetRect::default(),
-            track_rect: WidgetRect::default(),
-            min_handle_rect: WidgetRect::default(),
-            max_handle_rect: WidgetRect::default(),
-            min_input_rect: None,
-            max_input_rect: None,
-            track_info: None,
-            min_input_result: None,
-            max_input_result: None,
-        }
-    }
-}
 
 /// Track info for drag/scroll/click handling
 #[derive(Clone, Debug)]

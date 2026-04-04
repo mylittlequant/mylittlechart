@@ -232,7 +232,7 @@ impl AccumulationDistribution {
         if n >= len {
             self.ad_history.iter().cloned().collect()
         } else {
-            self.ad_history[len - n..].iter().cloned().collect()
+            self.ad_history[len - n..].to_vec()
         }
     }
     

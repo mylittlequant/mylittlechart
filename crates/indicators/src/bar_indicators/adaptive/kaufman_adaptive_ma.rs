@@ -120,7 +120,7 @@ impl KaufmanAdaptiveMA {
     pub fn update(&mut self, price: f64) -> f64 {
         self.add_price(price);
 
-        if self.prices.len() >= self.efficiency_ratio_period + 1 {
+        if self.prices.len() > self.efficiency_ratio_period {
             self.calculate_efficiency_ratio();
             self.calculate_smoothing_constant();
             self.calculate_kama();

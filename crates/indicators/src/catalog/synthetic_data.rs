@@ -630,11 +630,11 @@ fn generate_calendar(count: usize, _start_ts: i64) -> Vec<Bar> {
         let hour_of_day = hours_from_start % 24;
 
         // Higher volatility during market open hours
-        let session_vol = if hour_of_day >= 13 && hour_of_day <= 20 {
+        let session_vol = if (13..=20).contains(&hour_of_day) {
             2.0 // US session
-        } else if hour_of_day >= 7 && hour_of_day <= 15 {
+        } else if (7..=15).contains(&hour_of_day) {
             1.5 // EU session
-        } else if hour_of_day >= 0 && hour_of_day <= 8 {
+        } else if (0..=8).contains(&hour_of_day) {
             1.2 // Asia session
         } else {
             0.8 // Off-hours
@@ -750,11 +750,11 @@ fn generate_ranging(count: usize, start_ts: i64) -> Vec<Bar> {
 
         // Create pattern: 25 stable bars, then 7 extreme bars, then 8 reversal bars
         let cycle_phase = i % 40;
-        let change = if cycle_phase >= 25 && cycle_phase <= 31 {
+        let change = if (25..=31).contains(&cycle_phase) {
             // Sharp 7-bar spike up - pushes short RSI(7) above 70
             // Long RSI(21) needs more bars to reach extreme
             5.0
-        } else if cycle_phase >= 32 && cycle_phase <= 39 {
+        } else if (32..=39).contains(&cycle_phase) {
             // Sharp reversal down - pushes short RSI(7) below 30
             -6.0
         } else {

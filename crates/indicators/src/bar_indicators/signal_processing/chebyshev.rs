@@ -214,7 +214,7 @@ impl ChebyshevFilter {
     /// Прямая IIR фильтрация
     fn direct_form_filter(&mut self, input: f64) -> f64 {
         // Добавляем новое входное значение
-        if self.x_buffer.len() >= self.order + 1 {
+        if self.x_buffer.len() > self.order {
             self.x_buffer.remove(0);
         }
         if !self.x_buffer.is_full() {
@@ -451,7 +451,7 @@ impl ChebyshevFilter {
     
     /// Создание каскада биквадратных секций для высоких порядков
     fn create_biquad_cascade(&mut self) {
-        let sections = (self.order + 1) / 2; // Количество биквадратных секций
+        let sections = self.order.div_ceil(2); // Количество биквадратных секций
         
         for i in 0..sections {
             let mut section = BiquadSection::new();

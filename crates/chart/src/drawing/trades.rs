@@ -8,16 +8,13 @@ use serde::{Deserialize, Serialize};
 
 /// Trade direction
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum TradeDirection {
+    #[default]
     Long,
     Short,
 }
 
-impl Default for TradeDirection {
-    fn default() -> Self {
-        Self::Long
-    }
-}
 
 impl TradeDirection {
     pub fn as_str(&self) -> &'static str {

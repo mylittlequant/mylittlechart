@@ -21,8 +21,10 @@ use super::super::{
 /// - Emotions: Emotional/sentiment indicators
 /// - Arrows: Directional indicators
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum EmojiType {
     // === Signals (Trading) ===
+    #[default]
     Target,       // 🎯 Price target
     Flag,         // 🚩 Flag marker
     Check,        // ✓ Confirmed/done
@@ -298,11 +300,6 @@ impl EmojiType {
     }
 }
 
-impl Default for EmojiType {
-    fn default() -> Self {
-        EmojiType::Target
-    }
-}
 
 /// Emoji primitive with 5 data-coordinate anchor points
 ///

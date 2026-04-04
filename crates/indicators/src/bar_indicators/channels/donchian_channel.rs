@@ -14,18 +14,15 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Donchian Channel
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum DonchianMode {
     /// Классический - простые максимумы/минимумы
+    #[default]
     Classic,
     /// Сглаженный - применяется MA к уровням каналов
     Smoothed,
 }
 
-impl Default for DonchianMode {
-    fn default() -> Self {
-        DonchianMode::Classic
-    }
-}
 
 /// ОПТИМИЗИРОВАННЫЙ Donchian Channel индикатор
 #[derive(Debug, Clone)]

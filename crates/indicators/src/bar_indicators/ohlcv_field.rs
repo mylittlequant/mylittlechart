@@ -24,6 +24,7 @@
 /// assert_eq!(value, 100.0);  // (110 + 90) / 2
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum OhlcvField {
     /// Opening price
     Open,
@@ -32,6 +33,7 @@ pub enum OhlcvField {
     /// Lowest price
     Low,
     /// Closing price (default for most indicators)
+    #[default]
     Close,
     /// Trading volume
     Volume,
@@ -43,11 +45,6 @@ pub enum OhlcvField {
     OHLC4,
 }
 
-impl Default for OhlcvField {
-    fn default() -> Self {
-        Self::Close
-    }
-}
 
 impl OhlcvField {
     /// Extract value from OHLCV bar data based on the selected field.

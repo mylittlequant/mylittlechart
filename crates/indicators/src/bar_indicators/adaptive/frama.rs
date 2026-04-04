@@ -26,6 +26,12 @@ pub struct FramaResult {
     pub volatility_adjustment: f64, // Поправка на волатильность
 }
 
+impl Default for FramaResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FramaResult {
     pub fn new() -> Self {
         Self {
@@ -264,7 +270,7 @@ impl FractalAdaptiveMovingAverage {
         
         let median_change = if !sorted_changes.is_empty() {
             let mid = sorted_changes.len() / 2;
-            if sorted_changes.len() % 2 == 0 {
+            if sorted_changes.len().is_multiple_of(2) {
                 (sorted_changes[mid - 1] + sorted_changes[mid]) / 2.0
             } else {
                 sorted_changes[mid]
@@ -284,7 +290,7 @@ impl FractalAdaptiveMovingAverage {
         hl_ranges.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let _median_range = if !hl_ranges.is_empty() {
             let mid = hl_ranges.len() / 2;
-            if hl_ranges.len() % 2 == 0 {
+            if hl_ranges.len().is_multiple_of(2) {
                 (hl_ranges[mid - 1] + hl_ranges[mid]) / 2.0
             } else {
                 hl_ranges[mid]

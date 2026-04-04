@@ -384,7 +384,7 @@ impl AdaptiveVolatilityRegime {
         }
         
         // Адаптируем кластеры каждые N обновлений
-        if self.update_count % self.adaptation_period == 0 {
+        if self.update_count.is_multiple_of(self.adaptation_period) {
             self.adapt_clusters();
         }
     }

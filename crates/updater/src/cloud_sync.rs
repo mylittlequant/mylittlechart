@@ -252,7 +252,7 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
     if let Ok(entries) = std::fs::read_dir(data_dir.join("presets")) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "json") {
+            if path.extension().is_some_and(|e| e == "json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     let id = path
                         .file_stem()
@@ -288,7 +288,7 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
+                if path.extension().is_some_and(|e| e == "json") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         let id = path
                             .file_stem()
@@ -779,7 +779,7 @@ pub fn write_sync_items_to_disk(data_dir: &Path, items: &[SyncItem]) -> std::io:
                     profile_val["cloud_enabled"] = serde_json::Value::Bool(true);
                     profile_val["sync_level"] = serde_json::Value::String("cloud".to_string());
                     let updated = serde_json::to_string_pretty(&profile_val)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                        .map_err(|e| std::io::Error::other(e.to_string()))?;
                     let tmp = target.with_extension("tmp");
                     std::fs::write(&tmp, &updated)?;
                     std::fs::rename(&tmp, &target)?;
@@ -1471,8 +1471,7 @@ pub async fn do_zt_blob_push(
         .filter(|item| {
             state
                 .last_synced_checksums
-                .get(&item.sync_id)
-                .map_or(true, |last| last != &item.checksum)
+                .get(&item.sync_id) != Some(&item.checksum)
         })
         .map(|item| SyncItem {
             sync_id: item.sync_id.clone(),

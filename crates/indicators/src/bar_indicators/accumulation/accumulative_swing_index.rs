@@ -36,6 +36,12 @@ pub struct AccumulativeSwingIndex {
     is_ready: bool,
 }
 
+impl Default for AccumulativeSwingIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AccumulativeSwingIndex {
     pub fn new() -> Self {
         Self::with_limit_move(0.0) // 0 means auto-calculate based on price

@@ -146,7 +146,7 @@ impl VortexIndicator {
         self.prev_low = low;
 
         // Check readiness
-        if self.bars_count >= self.period + 1 {
+        if self.bars_count > self.period {
             self.is_ready = true;
         }
 

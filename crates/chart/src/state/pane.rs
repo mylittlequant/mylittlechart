@@ -964,12 +964,10 @@ impl PaneManager {
                 } else {
                     InteractionRegion::SubPanePriceScale { pane_id, local_y }
                 }
+            } else if pane_id == MAIN_PANE {
+                InteractionRegion::MainChart { local_y }
             } else {
-                if pane_id == MAIN_PANE {
-                    InteractionRegion::MainChart { local_y }
-                } else {
-                    InteractionRegion::SubPane { pane_id, local_y }
-                }
+                InteractionRegion::SubPane { pane_id, local_y }
             }
         } else {
             InteractionRegion::Outside

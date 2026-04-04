@@ -272,8 +272,8 @@ impl HilbertDominantCycle {
         let std_dev = variance.sqrt();
         
         // Чем меньше отклонение, тем сильнее тренд
-        let stability = 1.0 - (std_dev / mean).min(1.0);
-        stability
+        
+        1.0 - (std_dev / mean).min(1.0)
     }
     
     /// Получить текущий результат

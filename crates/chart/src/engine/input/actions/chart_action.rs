@@ -488,7 +488,7 @@ impl Shortcut {
 
     /// Check if shortcut matches key event
     pub fn matches(&self, key: char, ctrl: bool, shift: bool, alt: bool) -> bool {
-        self.key.to_ascii_lowercase() == key.to_ascii_lowercase()
+        self.key.eq_ignore_ascii_case(&key)
             && self.ctrl == ctrl
             && self.shift == shift
             && self.alt == alt

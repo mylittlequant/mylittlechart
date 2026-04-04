@@ -5,6 +5,12 @@ pub struct AdaptiveBollingerBands {
     // TODO: Add fields
 }
 
+impl Default for AdaptiveBollingerBands {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdaptiveBollingerBands {
     pub fn new() -> Self {
         Self {

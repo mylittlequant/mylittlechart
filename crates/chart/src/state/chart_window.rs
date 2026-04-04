@@ -1083,19 +1083,19 @@ impl ChartWindow {
             crate::chart::render::CrosshairConfig {
                 vert_visible: crosshair_opts.vert_line.visible,
                 vert_width: crosshair_opts.vert_line.width,
-                vert_style: crosshair_opts.vert_line.style.clone(),
+                vert_style: crosshair_opts.vert_line.style,
                 horz_visible: crosshair_opts.horz_line.visible,
                 horz_width: crosshair_opts.horz_line.width,
-                horz_style: crosshair_opts.horz_line.style.clone(),
+                horz_style: crosshair_opts.horz_line.style,
             }
         } else {
             crate::chart::render::CrosshairConfig {
                 vert_visible: false,
                 vert_width: crosshair_opts.vert_line.width,
-                vert_style: crosshair_opts.vert_line.style.clone(),
+                vert_style: crosshair_opts.vert_line.style,
                 horz_visible: false,
                 horz_width: crosshair_opts.horz_line.width,
-                horz_style: crosshair_opts.horz_line.style.clone(),
+                horz_style: crosshair_opts.horz_line.style,
             }
         };
 
@@ -1647,7 +1647,7 @@ impl ChartWindow {
 
     /// Set grid line style for both vertical and horizontal lines.
     pub fn set_grid_style(&mut self, style: crate::drawing::LineStyle) {
-        self.grid_options.vert_lines.style = style.clone();
+        self.grid_options.vert_lines.style = style;
         self.grid_options.horz_lines.style = style;
     }
 
@@ -1659,7 +1659,7 @@ impl ChartWindow {
 
     /// Set crosshair line style for both vertical and horizontal lines.
     pub fn set_crosshair_style(&mut self, style: crate::drawing::LineStyle) {
-        self.crosshair_options.vert_line.style = style.clone();
+        self.crosshair_options.vert_line.style = style;
         self.crosshair_options.horz_line.style = style;
     }
 

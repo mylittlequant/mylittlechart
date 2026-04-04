@@ -73,7 +73,7 @@ impl PrimitiveRegistry {
         self.primitives.insert(type_id, metadata);
         self.by_kind
             .entry(kind)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(type_id);
     }
 

@@ -250,7 +250,7 @@ impl IndicatorCalculator {
                         // Get or create ComponentConfig for this component using Default
                         config.component_configs
                             .entry(component_name.to_string())
-                            .or_insert_with(Default::default)
+                            .or_default()
                             .source = Some(field);
                     }
                 }

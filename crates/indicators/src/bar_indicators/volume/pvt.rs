@@ -8,6 +8,12 @@ pub struct PriceVolumeTrend {
     value: f64,
 }
 
+impl Default for PriceVolumeTrend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PriceVolumeTrend {
     pub fn new() -> Self {
         Self {

@@ -11,6 +11,12 @@ pub struct ThreeBlackCrows {
     value: f64,
 }
 
+impl Default for ThreeBlackCrows {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThreeBlackCrows {
     pub fn new() -> Self {
         Self {

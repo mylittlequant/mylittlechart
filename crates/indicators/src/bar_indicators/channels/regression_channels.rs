@@ -15,8 +15,10 @@ use serde::{Serialize, Deserialize};
 
 /// Режимы расчета Regression Channels
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum RegressionChannelMode {
     /// Standard - стандартные отклонения от регрессионной линии
+    #[default]
     Standard,
     /// Percentage - процентные отклонения от регрессионной линии
     Percentage,
@@ -24,11 +26,6 @@ pub enum RegressionChannelMode {
     R2Weighted,
 }
 
-impl Default for RegressionChannelMode {
-    fn default() -> Self {
-        RegressionChannelMode::Standard
-    }
-}
 
 /// High-Performance Regression Channels
 #[derive(Debug, Clone)]

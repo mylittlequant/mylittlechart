@@ -78,7 +78,7 @@ impl Supertrend {
         let final_upper_band = if self.bars_count == 1 {
             upper_band
         } else {
-            let prev_final_upper = if self.supertrend_values.len() > 0 && self.prev_trend == 1 {
+            let prev_final_upper = if !self.supertrend_values.is_empty() && self.prev_trend == 1 {
                 self.prev_supertrend
             } else {
                 upper_band
@@ -94,7 +94,7 @@ impl Supertrend {
         let final_lower_band = if self.bars_count == 1 {
             lower_band
         } else {
-            let prev_final_lower = if self.supertrend_values.len() > 0 && self.prev_trend == -1 {
+            let prev_final_lower = if !self.supertrend_values.is_empty() && self.prev_trend == -1 {
                 self.prev_supertrend
             } else {
                 lower_band

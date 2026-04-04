@@ -73,16 +73,15 @@ pub struct IndicatorOutputRenderDef {
 
 /// Shape used for signal markers on the chart
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum SignalShape {
+    #[default]
     Arrow,
     Triangle,
     Circle,
     Diamond,
 }
 
-impl Default for SignalShape {
-    fn default() -> Self { Self::Arrow }
-}
 
 /// Visual configuration for signal markers
 #[derive(Clone, Debug, Serialize, Deserialize)]

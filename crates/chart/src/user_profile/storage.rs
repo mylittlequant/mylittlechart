@@ -197,7 +197,7 @@ pub fn save_profile(profile: &UserProfile, key: Option<&VaultKey>) -> Result<(),
     if let Some(k) = key {
         let vault_path = dir.join("vault.enc");
         vault::save_encrypted(k, &vault_path, &secrets)
-            .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| ProfileError::Io(std::io::Error::other(e.to_string())))?;
     }
 
     Ok(())
@@ -255,7 +255,7 @@ pub fn save_json<T: Serialize>(path: &Path, data: &T, key: Option<&VaultKey>) ->
             // Change extension to `.enc`.
             let enc_path = path.with_extension("enc");
             vault::save_encrypted(k, &enc_path, data)
-                .map_err(|e| ProfileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                .map_err(|e| ProfileError::Io(std::io::Error::other(e.to_string())))?;
             // Remove plaintext if it exists.
             if path.exists() {
                 let _ = fs::remove_file(path);

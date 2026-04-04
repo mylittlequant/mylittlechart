@@ -394,7 +394,7 @@ impl IchimokuCloud {
         }
 
         // Генерация итогового сигнала
-        let signal_strength = bullish_signals as i32 - bearish_signals as i32;
+        let signal_strength = bullish_signals - bearish_signals;
 
         match signal_strength {
             3..=5 => IchimokuSignal::StrongBuy,

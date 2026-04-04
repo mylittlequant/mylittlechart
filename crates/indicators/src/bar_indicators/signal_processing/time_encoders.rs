@@ -11,6 +11,12 @@ pub struct TimeEncoders {
     pub buckets: TimeBuckets,
 }
 
+impl Default for TimeEncoders {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimeEncoders {
     pub fn new() -> Self {
         Self {
@@ -39,10 +45,10 @@ impl TimeEncoders {
         // Very lightweight UTC splitting without chrono deps
         // Placeholder: compute day-of-week from Unix time via Zeller-like; for now map by modulo
         // NOTE: In production, replace with chrono if allowed by project
-        let days = (unix_ts / 86_400).max(0) as i64;
+        let days = (unix_ts / 86_400).max(0);
         self.buckets.dow = ((days + 4).rem_euclid(7) + 1) as u8; // 1970-01-01 was Thursday (4)
-        let secs = (unix_ts.rem_euclid(86_400)) as i64;
-        let hour = (secs / 3600) as i64;
+        let secs = unix_ts.rem_euclid(86_400);
+        let hour = secs / 3600;
         self.buckets.session = if hour < 6 {
             3
         } else if hour < 12 {
