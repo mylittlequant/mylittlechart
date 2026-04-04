@@ -158,8 +158,7 @@ pub fn draw_pane_line(
 
     let mut in_path = false;
 
-    for i in start..end {
-        let v = values[i];
+    for (i, &v) in (start..end).zip(values[start..end].iter()) {
         if v.is_nan() || v.is_infinite() {
             if in_path {
                 ctx.stroke();
@@ -224,8 +223,7 @@ pub fn draw_pane_histogram(
 
             // Find max absolute value for scaling
             let mut max_abs = 0.0f64;
-            for i in start..end {
-                let v = values[i];
+            for &v in &values[start..end] {
                 if !v.is_nan() && !v.is_infinite() {
                     max_abs = max_abs.max(v.abs());
                 }
@@ -238,8 +236,7 @@ pub fn draw_pane_histogram(
             let zero_ratio = (0.0 - pane.value_min) / value_range;
             let zero_y = rect.bottom() - zero_ratio * pane_height;
 
-            for i in start..end {
-                let v = values[i];
+            for (i, &v) in (start..end).zip(values[start..end].iter()) {
                 if v.is_nan() || v.is_infinite() {
                     continue;
                 }
@@ -261,8 +258,7 @@ pub fn draw_pane_histogram(
             // FromBottom histogram: draw bars from bottom
             let base_y = rect.bottom();
 
-            for i in start..end {
-                let v = values[i];
+            for (i, &v) in (start..end).zip(values[start..end].iter()) {
                 if v.is_nan() || v.is_infinite() {
                     continue;
                 }

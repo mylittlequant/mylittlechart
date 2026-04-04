@@ -197,17 +197,17 @@ impl Arima {
         let mut xtx = vec![vec![0.0; p]; p];
         for i in 0..p {
             for j in 0..p {
-                for k in 0..n {
-                    xtx[i][j] += x_matrix[k][i] * x_matrix[k][j];
+                for row in &x_matrix[..n] {
+                    xtx[i][j] += row[i] * row[j];
                 }
             }
         }
-        
+
         // X'y вектор
         let mut xty = vec![0.0; p];
         for i in 0..p {
-            for k in 0..n {
-                xty[i] += x_matrix[k][i] * y_vector[k];
+            for (row, &y) in x_matrix[..n].iter().zip(y_vector[..n].iter()) {
+                xty[i] += row[i] * y;
             }
         }
         

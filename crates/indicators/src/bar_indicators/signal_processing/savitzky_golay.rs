@@ -111,10 +111,10 @@ impl SavitzkyGolayFilter {
         let mut rhs = vec![0.0; degree + 1];
         
         // Заполняем матрицу
-        for i in 0..n {
+        for (i, row) in matrix.iter_mut().enumerate() {
             let x = (i as f64) - (m as f64); // Центрируем относительно середины окна
-            for j in 0..=degree {
-                matrix[i][j] = x.powi(j as i32);
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = x.powi(j as i32);
             }
         }
         
@@ -167,17 +167,17 @@ impl SavitzkyGolayFilter {
         let mut ata = vec![vec![0.0; p]; p];
         for i in 0..p {
             for j in 0..p {
-                for k in 0..n {
-                    ata[i][j] += matrix[k][i] * matrix[k][j];
+                for row in &matrix[..n] {
+                    ata[i][j] += row[i] * row[j];
                 }
             }
         }
-        
+
         // Вычисляем A^T * rhs
         let mut atr = vec![0.0; p];
         for i in 0..p {
-            for k in 0..n {
-                atr[i] += matrix[k][i] * rhs[i];
+            for row in &matrix[..n] {
+                atr[i] += row[i] * rhs[i];
             }
         }
         
@@ -211,8 +211,10 @@ impl SavitzkyGolayFilter {
             for k in (i + 1)..n {
                 if a[i][i].abs() > 1e-12 {
                     let factor = a[k][i] / a[i][i];
-                    for j in i..n {
-                        a[k][j] -= factor * a[i][j];
+                    // i < k always holds here, so split_at_mut is safe
+                    let (left, right) = a.split_at_mut(k);
+                    for (akj, &aij) in right[0][i..].iter_mut().zip(left[i][i..].iter()) {
+                        *akj -= factor * aij;
                     }
                     b[k] -= factor * b[i];
                 }

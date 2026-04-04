@@ -67,15 +67,8 @@ impl Pacf {
     fn compute_pacf_k(&self) -> f64 {
         // Yule-Walker via Levinson-Durbin
         let n = self.window;
-        let mut mean = 0.0;
-        for i in 0..n {
-            mean += self.values[i];
-        }
-        mean /= n as f64;
-        let mut x = vec![0.0; n];
-        for i in 0..n {
-            x[i] = self.values[i] - mean;
-        }
+        let mean: f64 = self.values.iter().sum::<f64>() / n as f64;
+        let x: Vec<f64> = self.values.iter().map(|&v| v - mean).collect();
         let k = self.lag;
         let mut autoc = vec![0.0; k + 1];
         for lag in 0..=k {

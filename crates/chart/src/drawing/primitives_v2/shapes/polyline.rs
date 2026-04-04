@@ -222,10 +222,7 @@ impl Primitive for Polyline {
 
         // Fill if closed and fill enabled
         if self.closed && self.fill && screen_points.len() >= 3 {
-            let fill_color = format!("{}{}",
-                &self.data.color.stroke[..7],
-                format!("{:02x}", (self.fill_opacity * 255.0) as u8)
-            );
+            let fill_color = format!("{}{:02x}", &self.data.color.stroke[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
             ctx.move_to(screen_points[0].0, screen_points[0].1);

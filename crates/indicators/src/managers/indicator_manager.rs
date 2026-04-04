@@ -1194,8 +1194,7 @@ impl IndicatorManager {
                 let start = visible_start.min(values.len().saturating_sub(1));
                 let end = visible_end.min(values.len());
 
-                for i in start..end {
-                    let v = values[i];
+                for &v in &values[start..end] {
                     if !v.is_nan() && !v.is_infinite() {
                         min_val = min_val.min(v);
                         max_val = max_val.max(v);

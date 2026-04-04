@@ -257,13 +257,13 @@ impl CompareOverlay {
             .collect();
 
         // Calculate main symbol percentages
-        for i in start..end.min(main_bars.len()) {
-            let pct = self.main_price_to_percent(main_bars[i].close);
+        for bar in &main_bars[start..end.min(main_bars.len())] {
+            let pct = self.main_price_to_percent(bar.close);
             min_pct = min_pct.min(pct);
             max_pct = max_pct.max(pct);
             // Also consider high/low for main
-            let pct_high = self.main_price_to_percent(main_bars[i].high);
-            let pct_low = self.main_price_to_percent(main_bars[i].low);
+            let pct_high = self.main_price_to_percent(bar.high);
+            let pct_low = self.main_price_to_percent(bar.low);
             min_pct = min_pct.min(pct_low);
             max_pct = max_pct.max(pct_high);
         }

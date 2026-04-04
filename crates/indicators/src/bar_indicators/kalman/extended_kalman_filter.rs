@@ -135,10 +135,10 @@ impl Matrix2x2 {
     
     pub fn multiply(&self, other: &Matrix2x2) -> Matrix2x2 {
         let mut result = [[0.0; 2]; 2];
-        for i in 0..2 {
-            for j in 0..2 {
+        for (i, row) in result.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
                 for k in 0..2 {
-                    result[i][j] += self.data[i][k] * other.data[k][j];
+                    *cell += self.data[i][k] * other.data[k][j];
                 }
             }
         }

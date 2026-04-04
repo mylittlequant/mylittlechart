@@ -324,8 +324,7 @@ impl Primitive for FibSpiral {
                     ctx.move_to(cx, cy);
 
                     // First segment points (outer edge)
-                    for j in start1..end1.min(total_points) {
-                        let (bar, price) = spiral_data[j];
+                    for &(bar, price) in &spiral_data[start1..end1.min(total_points)] {
                         ctx.line_to(ctx.bar_to_x(bar), ctx.price_to_y(price));
                     }
 
@@ -400,8 +399,7 @@ impl Primitive for FibSpiral {
             let (bar, price) = spiral_data[start_idx];
             ctx.move_to(ctx.bar_to_x(bar), ctx.price_to_y(price));
 
-            for i in (start_idx + 1)..end_idx {
-                let (bar, price) = spiral_data[i];
+            for &(bar, price) in &spiral_data[(start_idx + 1)..end_idx] {
                 ctx.line_to(ctx.bar_to_x(bar), ctx.price_to_y(price));
             }
             ctx.stroke();

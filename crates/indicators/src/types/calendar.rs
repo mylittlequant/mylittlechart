@@ -93,8 +93,8 @@ impl CalendarService {
     fn doy(year: i32, month: u32, day: u32) -> u32 {
         const MD: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
         let mut s = 0;
-        for i in 0..(month - 1) as usize {
-            s += MD[i];
+        for &days in MD[..(month - 1) as usize].iter() {
+            s += days;
         }
         s + day
             + if month > 2 && Self::is_leap(year) {

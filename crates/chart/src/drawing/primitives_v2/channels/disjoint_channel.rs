@@ -333,10 +333,7 @@ impl Primitive for DisjointChannel {
 
         // Fill if enabled
         if self.fill {
-            let fill_color = format!("{}{}",
-                &self.data.color.stroke[..7],
-                format!("{:02x}", (self.fill_opacity * 255.0) as u8)
-            );
+            let fill_color = format!("{}{:02x}", &self.data.color.stroke[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
             ctx.move_to(l1_x1, l1_y1);

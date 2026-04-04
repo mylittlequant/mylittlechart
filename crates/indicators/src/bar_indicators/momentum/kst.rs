@@ -458,9 +458,7 @@ impl KnowSureThing {
         let mut components = [0.0; 4];
         let current_price = *self.source_prices.last().unwrap();
 
-        for i in 0..4 {
-            let roc_period = self.roc_periods[i];
-
+        for (comp, &roc_period) in components.iter_mut().zip(self.roc_periods.iter()) {
             if self.source_prices.len() > roc_period {
                 let past_price = self.source_prices[self.source_prices.len() - roc_period - 1];
 
@@ -470,7 +468,7 @@ impl KnowSureThing {
                     ((current_price - past_price) / past_price) * 100.0
                 };
 
-                components[i] = roc;
+                *comp = roc;
             }
         }
 

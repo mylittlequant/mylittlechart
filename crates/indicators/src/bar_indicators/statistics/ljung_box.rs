@@ -71,10 +71,7 @@ impl LjungBox {
             mean += *v;
         }
         mean /= self.window as f64;
-        let mut x = vec![0.0; self.window];
-        for i in 0..self.window {
-            x[i] = self.vals[i] - mean;
-        }
+        let x: Vec<f64> = self.vals.iter().map(|&v| v - mean).collect();
         let mut var = 0.0;
         for v in &x {
             var += *v * *v;

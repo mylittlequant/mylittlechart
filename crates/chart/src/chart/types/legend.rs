@@ -194,7 +194,7 @@ impl LegendData {
 
                 if legend.show_percent {
                     if let Some(pct) = self.change_percent() {
-                        parts.push(format!("({}{}%)", sign, format!("{:.2}", pct)));
+                        parts.push(format!("({}{:.2}%)", sign, pct));
                     }
                 }
             }

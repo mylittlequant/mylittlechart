@@ -217,9 +217,9 @@ impl AdaptiveVolatilityRegime {
         
         // Инициализируем матрицу переходов (равномерное распределение)
         let mut transition_matrix = [[0.0; 6]; 6];
-        for i in 0..6 {
-            for j in 0..6 {
-                transition_matrix[i][j] = if i == j { 0.7 } else { 0.06 }; // Склонность оставаться в том же режиме
+        for (i, row) in transition_matrix.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = if i == j { 0.7 } else { 0.06 }; // Склонность оставаться в том же режиме
             }
         }
         
@@ -396,9 +396,8 @@ impl AdaptiveVolatilityRegime {
             if !cluster.points.is_empty() {
                 let last_point = cluster.points[cluster.points.len() - 1];
                 
-                for i in 0..4 {
-                    cluster.centroid[i] = cluster.centroid[i] * (1.0 - self.learning_rate) +
-                                         last_point[i] * self.learning_rate;
+                for (c, &lp) in cluster.centroid.iter_mut().zip(last_point.iter()) {
+                    *c = *c * (1.0 - self.learning_rate) + lp * self.learning_rate;
                 }
             }
         }
@@ -420,9 +419,9 @@ impl AdaptiveVolatilityRegime {
         }
         
         // Конвертируем расстояния в вероятности (чем ближе, тем больше вероятность)
-        for i in 0..6 {
-            let inverse_distance = 1.0 / (distances[i] + 1e-6);
-            self.current_result.regime_probability[i] = inverse_distance / total_inverse_distance;
+        for (prob, &d) in self.current_result.regime_probability.iter_mut().zip(distances.iter()) {
+            let inverse_distance = 1.0 / (d + 1e-6);
+            *prob = inverse_distance / total_inverse_distance;
         }
         
         // Рассчитываем уверенность как максимальную вероятность

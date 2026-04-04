@@ -127,8 +127,8 @@ impl Primitive for ElliottCorrection {
         if self.show_lines {
             ctx.begin_path();
             ctx.move_to(crisp(screen[0].0, dpr), crisp(screen[0].1, dpr));
-            for i in 1..4 {
-                ctx.line_to(crisp(screen[i].0, dpr), crisp(screen[i].1, dpr));
+            for &(sx, sy) in &screen[1..4] {
+                ctx.line_to(crisp(sx, dpr), crisp(sy, dpr));
             }
             ctx.stroke();
         }

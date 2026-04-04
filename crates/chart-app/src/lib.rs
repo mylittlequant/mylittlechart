@@ -5099,8 +5099,7 @@ impl ChartApp {
         // When `skip_toolbar_draw` is true, skip the expensive vector draw and
         // re-register hit zones from the cached `last_toolbar_result` instead.
         // The caller composites the previously-built toolbar scene on top.
-        let out_last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult>;
-        if !skip_toolbar_draw {
+        let out_last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult> = if !skip_toolbar_draw {
             let (active_sym_str, active_tf_str) = self.panel_app.panel_grid.active_window()
                 .map(|w| (w.symbol.clone(), w.timeframe.name.clone()))
                 .unwrap_or_default();
@@ -5114,11 +5113,11 @@ impl ChartApp {
                 Some(active_tf_str.as_str()),
                 sidebar_w,
             );
-            out_last_toolbar_result = Some(toolbar_result);
+            Some(toolbar_result)
         } else {
             // Preserve the cached toolbar result from the previous frame.
-            out_last_toolbar_result = self.last_toolbar_result.clone();
-        }
+            self.last_toolbar_result.clone()
+        };
 
         // Register toolbar hit zones — always done every frame (cheap coordinate
         // registration), whether the toolbar was redrawn or cached.
@@ -5360,15 +5359,14 @@ impl ChartApp {
         let mut out_frame_result: Option<ChartModalRenderResult> = Some(modal_result);
 
         // 5b. Render indicator / symbol / compare search modal (if open)
-        let out_search_modal_result: Option<zengeld_chart::ModalSearchResult>;
-        if self.modal_state.current.is_search_overlay() {
+        let out_search_modal_result: Option<zengeld_chart::ModalSearchResult> = if self.modal_state.current.is_search_overlay() {
             let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
             let indicator_catalog = self.build_indicator_catalog();
             let hovered = self.modal_state.hovered_item_id.as_deref();
             let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
 
             let indicator_sets = &self.panel_app.template_manager.indicator_sets;
-            out_search_modal_result = Some(render_search_overlay(
+            Some(render_search_overlay(
                 ctx,
                 screen,
                 &self.modal_state,
@@ -5379,10 +5377,10 @@ impl ChartApp {
                 &toolbar_theme_search,
                 current_time_ms,
                 &mut self.input_coordinator.borrow_mut(),
-            ));
+            ))
         } else {
-            out_search_modal_result = None;
-        }
+            None
+        };
 
         // 5c. Render preset name input for CreateIndicatorSet mode AFTER search
         // overlay so it draws on top visually.
@@ -5407,20 +5405,19 @@ impl ChartApp {
         }
 
         // 6. Render context menu (highest z-order after modals)
-        let out_context_menu_result: Option<ContextMenuResult>;
-        if self.panel_app.context_menu_state.is_open() {
+        let out_context_menu_result: Option<ContextMenuResult> = if self.panel_app.context_menu_state.is_open() {
             let dropdown_theme = self.panel_app.dropdown_theme_for_render();
             let hovered_id = self.hovered_context_menu_item_id.as_deref();
-            out_context_menu_result = Some(render_context_menu(
+            Some(render_context_menu(
                 ctx,
                 &self.panel_app.context_menu_state,
                 &dropdown_theme,
                 hovered_id,
                 &mut self.input_coordinator.borrow_mut(),
-            ));
+            ))
         } else {
-            out_context_menu_result = None;
-        }
+            None
+        };
 
 
         // 8. Render right sidebar if a panel is open.
@@ -5435,10 +5432,9 @@ impl ChartApp {
         // window.  The caller (chart-app-vello) composites the cached
         // sidebar_scene on top via Scene::append, visually covering these
         // pixels when the scene is unchanged.
-        let out_last_sidebar_result: Option<sidebar_content::render::RightSidebarResult>;
         let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
             || self.panel_app.user_settings_state.show_welcome_wizard;
-        if self.sidebar_state.is_right_open() && !skeleton_active {
+        let out_last_sidebar_result: Option<sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
             let top_h = panel_layout.top_toolbar_rect.height;
             let bottom_h = panel_layout.bottom_toolbar_rect.height;
             let sidebar_x = content_rect.x + content_rect.width;
@@ -5459,14 +5455,13 @@ impl ChartApp {
                 &mut self.input_coordinator.borrow_mut(),
             );
 
-            out_last_sidebar_result = Some(sidebar_result);
+            Some(sidebar_result)
         } else {
-            out_last_sidebar_result = None;
-        }
+            None
+        };
 
         // 8b. Render watchlist modal if open (above sidebar, below context menu).
-        let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult>;
-        if self.watchlist_modal.is_open() {
+        let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = if self.watchlist_modal.is_open() {
             // Build WatchlistEntry items from sidebar_state.watchlist_items.
             // Pre-collect color flags so the iterator closure doesn't double-borrow self.
             let color_flags: Vec<String> = self.sidebar_state.watchlist_items.iter()
@@ -5519,14 +5514,13 @@ impl ChartApp {
                 current_time_ms,
                 &mut self.input_coordinator.borrow_mut(),
             );
-            out_last_watchlist_modal_result = Some(wl_modal_result);
+            Some(wl_modal_result)
         } else {
-            out_last_watchlist_modal_result = None;
-        }
+            None
+        };
 
         // 8c. Render watchlist group name input modal (on top of watchlist modal)
-        let out_last_wl_group_name_result: Option<WlGroupNameInputResult>;
-        if self.wl_group_name_input.is_open() {
+        let out_last_wl_group_name_result: Option<WlGroupNameInputResult> = if self.wl_group_name_input.is_open() {
             let result = render_wl_group_name_input(
                 ctx,
                 modal_right_edge,
@@ -5537,10 +5531,10 @@ impl ChartApp {
                 current_time_ms,
                 &mut self.input_coordinator.borrow_mut(),
             );
-            out_last_wl_group_name_result = Some(result);
+            Some(result)
         } else {
-            out_last_wl_group_name_result = None;
-        }
+            None
+        };
 
         // 9. End frame — collect widget responses (ignored for now)
         let _rt4 = std::time::Instant::now(); // checkpoint: after sidebar + modals

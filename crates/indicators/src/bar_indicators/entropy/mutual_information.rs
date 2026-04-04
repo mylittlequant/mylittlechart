@@ -150,11 +150,11 @@ impl MutualInformation {
         // compute marginals p(x), p(y)
         let mut px = vec![0.0; self.bins];
         let mut py = vec![0.0; self.bins];
-        for bx in 0..self.bins {
-            for by in 0..self.bins {
+        for (bx, px_entry) in px.iter_mut().enumerate() {
+            for (by, py_entry) in py.iter_mut().enumerate() {
                 let v = self.joint[self.joint_idx(bx, by)] as f64;
-                px[bx] += v;
-                py[by] += v;
+                *px_entry += v;
+                *py_entry += v;
             }
         }
         for v in &mut px {
@@ -164,11 +164,11 @@ impl MutualInformation {
             *v /= total;
         }
         let mut mi = 0.0;
-        for bx in 0..self.bins {
-            for by in 0..self.bins {
+        for (bx, &px_val) in px.iter().enumerate() {
+            for (by, &py_val) in py.iter().enumerate() {
                 let pxy = (self.joint[self.joint_idx(bx, by)] as f64) / total;
-                if pxy > 0.0 && px[bx] > 0.0 && py[by] > 0.0 {
-                    mi += pxy * (pxy / (px[bx] * py[by])).ln();
+                if pxy > 0.0 && px_val > 0.0 && py_val > 0.0 {
+                    mi += pxy * (pxy / (px_val * py_val)).ln();
                 }
             }
         }

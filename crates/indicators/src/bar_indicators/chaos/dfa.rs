@@ -55,18 +55,14 @@ impl Dfa {
             buf[self.idx % n] = c;
             if self.idx >= n {
                 // demean
-                let mut mean = 0.0;
-                for i in 0..n {
-                    mean += buf[i];
-                }
-                mean /= n as f64;
+                let mean: f64 = buf[..n].iter().sum::<f64>() / n as f64;
                 let mut sxy = 0.0;
                 let mut sx = 0.0;
                 let mut sy = 0.0;
                 let mut sxx = 0.0;
-                for i in 0..n {
+                for (i, &bv) in buf[..n].iter().enumerate() {
                     let x = i as f64;
-                    let y = buf[i] - mean;
+                    let y = bv - mean;
                     sx += x;
                     sy += y;
                     sxy += x * y;
@@ -82,10 +78,10 @@ impl Dfa {
                 };
                 // RMS residual
                 let mut rss = 0.0;
-                for i in 0..n {
+                for (i, &bv) in buf[..n].iter().enumerate() {
                     let x = i as f64;
                     let fit = a + beta * x;
-                    let r = (buf[i] - mean) - fit;
+                    let r = (bv - mean) - fit;
                     rss += r * r;
                 }
                 let f = (rss / n as f64).sqrt();

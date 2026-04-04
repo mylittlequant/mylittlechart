@@ -146,9 +146,9 @@ fn invert_sym_posdef(a: &Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
         // pivot
         let mut piv = i;
         let mut best = aug[piv][i].abs();
-        for r in (i + 1)..n {
-            if aug[r][i].abs() > best {
-                best = aug[r][i].abs();
+        for (r, row) in aug[(i + 1)..].iter().enumerate().map(|(r, row)| (i + 1 + r, row)) {
+            if row[i].abs() > best {
+                best = row[i].abs();
                 piv = r;
             }
         }
@@ -159,15 +159,24 @@ fn invert_sym_posdef(a: &Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
             aug.swap(i, piv);
         }
         let diag = aug[i][i];
-        for c in 0..2 * n {
-            aug[i][c] /= diag;
+        for cell in aug[i].iter_mut() {
+            *cell /= diag;
         }
         for r in 0..n {
             if r != i {
                 let f = aug[r][i];
                 if f != 0.0 {
-                    for c in 0..2 * n {
-                        aug[r][c] -= f * aug[i][c];
+                    // split to allow simultaneous mut borrow of aug[r] and immut of aug[i]
+                    if r < i {
+                        let (left, right) = aug.split_at_mut(i);
+                        for (ar_c, &ai_c) in left[r].iter_mut().zip(right[0].iter()) {
+                            *ar_c -= f * ai_c;
+                        }
+                    } else {
+                        let (left, right) = aug.split_at_mut(r);
+                        for (ar_c, &ai_c) in right[0].iter_mut().zip(left[i].iter()) {
+                            *ar_c -= f * ai_c;
+                        }
                     }
                 }
             }

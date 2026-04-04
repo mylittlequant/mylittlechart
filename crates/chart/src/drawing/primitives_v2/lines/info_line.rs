@@ -96,7 +96,7 @@ impl InfoLine {
         if self.show_percent {
             let pct = self.percent_change();
             let sign = if pct >= 0.0 { "+" } else { "" };
-            parts.push(format!("({}{}%)", sign, format!("{:.2}", pct)));
+            parts.push(format!("({}{:.2}%)", sign, pct));
         }
 
         if self.show_bars {

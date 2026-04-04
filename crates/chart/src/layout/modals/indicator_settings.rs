@@ -67,8 +67,10 @@ pub fn render_indicator_settings_modal(
     input_coordinator: &mut uzor::input::InputCoordinator,
     templates: &[crate::templates::IndicatorTemplate],
 ) -> IndicatorSettingsModalResult {
-    let mut result = IndicatorSettingsModalResult::default();
-    result.signals_enabled = signals_enabled;
+    let mut result = IndicatorSettingsModalResult {
+        signals_enabled,
+        ..IndicatorSettingsModalResult::default()
+    };
 
     // Modal dimensions
     let modal_width = 500.0;

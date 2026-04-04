@@ -3704,10 +3704,10 @@ impl ChartApp {
                         if !found {
                             for (id, rect) in &is.content_items {
                                 if rect.contains(x, y) {
-                                    let field_name = if id.starts_with("input:") {
-                                        id[6..].to_string()
-                                    } else if id.starts_with("color:") {
-                                        id[6..].to_string()
+                                    let field_name = if let Some(s) = id.strip_prefix("input:") {
+                                        s.to_string()
+                                    } else if let Some(s) = id.strip_prefix("color:") {
+                                        s.to_string()
                                     } else {
                                         id.clone()
                                     };
@@ -6015,9 +6015,10 @@ impl ChartApp {
                                     } else {
                                         data.text = Some({
                                             use zengeld_chart::drawing::primitives_v2::PrimitiveText;
-                                            let mut pt = PrimitiveText::default();
-                                            pt.content = text.clone();
-                                            pt
+                                            PrimitiveText {
+                                                content: text.clone(),
+                                                ..PrimitiveText::default()
+                                            }
                                         });
                                     }
                                     window.drawing_manager.set_data_at(idx, &data);
@@ -10698,8 +10699,8 @@ impl ChartApp {
             }
 
             // UI Style buttons
-            if field.starts_with("ui_style:") {
-                let style_index = field["ui_style:".len()..].parse::<usize>().unwrap_or(0);
+            if let Some(ui_style_str) = field.strip_prefix("ui_style:") {
+                let style_index = ui_style_str.parse::<usize>().unwrap_or(0);
                 if let Some(style) = UIStyle::from_index(style_index) {
                     self.panel_app.theme_manager.current_mut().set_style(style);
                     eprintln!("[ChartApp] UI style: {:?}", style);
@@ -11024,9 +11025,10 @@ impl ChartApp {
                             t.content = text.clone();
                         } else {
                             use zengeld_chart::drawing::primitives_v2::PrimitiveText;
-                            let mut pt = PrimitiveText::default();
-                            pt.content = text.clone();
-                            data.text = Some(pt);
+                            data.text = Some(PrimitiveText {
+                                content: text.clone(),
+                                ..PrimitiveText::default()
+                            });
                         }
                         window.drawing_manager.set_data_at(idx, &data);
                     }
@@ -11459,8 +11461,8 @@ impl ChartApp {
         }
 
         // ── Text position: text_pos_{v}_{h} ──────────────────────────────────
-        if item_id.starts_with("text_pos_") {
-            let parts: Vec<&str> = item_id["text_pos_".len()..].splitn(2, '_').collect();
+        if let Some(text_pos_str) = item_id.strip_prefix("text_pos_") {
+            let parts: Vec<&str> = text_pos_str.splitn(2, '_').collect();
             if parts.len() == 2 {
                 let v_align = TextAlign::from_str(parts[0]);
                 let h_align = TextAlign::from_str(parts[1]);
@@ -12578,9 +12580,9 @@ impl ChartApp {
                         .as_ref()
                         .map(|e| e.field_id.as_str())
                         .unwrap_or("");
-                    if item_id.starts_with("input:") {
+                    if let Some(input_name) = item_id.strip_prefix("input:") {
                         // "input:<name>" maps to "indicator_param:<name>"
-                        let active_field_id = format!("indicator_param:{}", &item_id["input:".len()..]);
+                        let active_field_id = format!("indicator_param:{}", input_name);
                         editing_field == active_field_id
                     } else if (item_id.starts_with("tf_") && item_id.ends_with("_min"))
                         || (item_id.starts_with("tf_") && item_id.ends_with("_max"))
@@ -13011,8 +13013,8 @@ impl ChartApp {
         }
 
         // ── Text input — start editing the parameter value ───────────────────
-        if item_id.starts_with("input:") {
-            let param_name = item_id["input:".len()..].to_string();
+        if let Some(param_name_str) = item_id.strip_prefix("input:") {
+            let param_name = param_name_str.to_string();
             let current_value: String = self.panel_app.indicator_settings_state.indicator_id
                 .and_then(|ind_id| self.indicator_manager.get_instance(ind_id))
                 .and_then(|inst| inst.params.get(&param_name))

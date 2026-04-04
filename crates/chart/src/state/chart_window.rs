@@ -1676,10 +1676,11 @@ impl ChartWindow {
                 wm.vert_align = vert;
             }
             None => {
-                let mut wm = Watermark::default();
-                wm.horz_align = horz;
-                wm.vert_align = vert;
-                self.watermark = Some(wm);
+                self.watermark = Some(Watermark {
+                    horz_align: horz,
+                    vert_align: vert,
+                    ..Watermark::default()
+                });
             }
         }
     }

@@ -52,13 +52,13 @@ pub fn calculate_ema(bars: &[Bar], period: usize) -> Vec<f64> {
         bars[0].close
     };
 
-    for i in 0..bars.len() {
+    for (i, bar) in bars.iter().enumerate() {
         if i < period - 1 {
             result.push(f64::NAN);
         } else if i == period - 1 {
             result.push(ema);
         } else {
-            ema = (bars[i].close - ema) * multiplier + ema;
+            ema = (bar.close - ema) * multiplier + ema;
             result.push(ema);
         }
     }
@@ -254,9 +254,9 @@ pub fn calculate_stochastic(bars: &[Bar], k_period: usize, d_period: usize, smoo
         let mut highest_high = f64::NEG_INFINITY;
         let mut lowest_low = f64::INFINITY;
 
-        for j in (i + 1 - k_period)..=i {
-            highest_high = highest_high.max(bars[j].high);
-            lowest_low = lowest_low.min(bars[j].low);
+        for bar in &bars[(i + 1 - k_period)..=i] {
+            highest_high = highest_high.max(bar.high);
+            lowest_low = lowest_low.min(bar.low);
         }
 
         let range = highest_high - lowest_low;
@@ -288,22 +288,22 @@ fn smooth_values(values: &[f64], period: usize) -> Vec<f64> {
 
     let mut result = vec![f64::NAN; values.len()];
 
-    for i in 0..values.len() {
+    for (i, slot) in result.iter_mut().enumerate() {
         if i < period - 1 {
             continue;
         }
 
         let mut sum = 0.0;
         let mut count = 0;
-        for j in (i + 1 - period)..=i {
-            if !values[j].is_nan() {
-                sum += values[j];
+        for &v in &values[(i + 1 - period)..=i] {
+            if !v.is_nan() {
+                sum += v;
                 count += 1;
             }
         }
 
         if count == period {
-            result[i] = sum / period as f64;
+            *slot = sum / period as f64;
         }
     }
 

@@ -67,24 +67,20 @@ impl KpssProxy {
         // partial sums S_t = sum_{i=1..t} eps_i
         let mut s = 0.0;
         let mut s2_sum = 0.0;
-        for i in 0..n {
-            s += eps[i];
+        for &e in &eps {
+            s += e;
             s2_sum += s * s;
         }
         // long-run variance proxy: variance of eps with simple lag-1 Newey-West like adjustment (cheap)
         let mut var = 0.0;
         let mut cov1 = 0.0;
-        let mut e_mean = 0.0;
-        for i in 0..n {
-            e_mean += eps[i];
-        }
-        e_mean /= n as f64;
-        for i in 0..n {
-            let d = eps[i] - e_mean;
+        let e_mean: f64 = eps.iter().sum::<f64>() / n as f64;
+        for &e in &eps {
+            let d = e - e_mean;
             var += d * d;
         }
-        for i in 1..n {
-            cov1 += (eps[i] - e_mean) * (eps[i - 1] - e_mean);
+        for w in eps.windows(2) {
+            cov1 += (w[1] - e_mean) * (w[0] - e_mean);
         }
         var /= n as f64;
         cov1 /= (n - 1) as f64;

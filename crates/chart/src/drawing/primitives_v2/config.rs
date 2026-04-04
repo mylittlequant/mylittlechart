@@ -1366,7 +1366,7 @@ impl<T: Primitive> Configurable for T {
         // Handle coordinate properties (point1, point2, etc.)
         if id.starts_with("point") {
             if let Some((bar, price)) = value.as_coordinate() {
-                if let Ok(idx) = id[5..].parse::<usize>() {
+                if let Some(idx) = id.strip_prefix("point").and_then(|s| s.parse::<usize>().ok()) {
                     let idx = idx.saturating_sub(1); // point1 -> index 0
                     let mut points = self.points();
                     if idx < points.len() {

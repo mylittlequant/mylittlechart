@@ -128,9 +128,7 @@ fn percentile_of(buf: &Vec<f64>, len: usize, q: f64) -> f64 {
         return 0.0;
     }
     let mut tmp = Vec::with_capacity(len);
-    for i in 0..len {
-        tmp.push(buf[i]);
-    }
+    tmp.extend_from_slice(&buf[..len]);
     let pos = (q.clamp(0.0, 1.0) * (len as f64 - 1.0)).round() as usize;
     quickselect_nth(&mut tmp, pos)
 }

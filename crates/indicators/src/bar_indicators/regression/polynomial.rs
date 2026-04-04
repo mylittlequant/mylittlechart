@@ -150,9 +150,9 @@ impl PolynomialRegression {
         let n = self.x_values.len();
         let mut matrix = vec![vec![0.0; self.degree + 1]; n];
         
-        for (i, &x) in self.x_values.iter().enumerate() {
-            for j in 0..=self.degree {
-                matrix[i][j] = x.powi(j as i32);
+        for (row, &x) in matrix.iter_mut().zip(self.x_values.iter()) {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = x.powi(j as i32);
             }
         }
         
@@ -174,19 +174,17 @@ impl PolynomialRegression {
         let mut xtx = vec![vec![0.0; p]; p];
         for i in 0..p {
             for j in 0..p {
-                for k in 0..n {
-                    xtx[i][j] += x_matrix[k][i] * x_matrix[k][j];
+                for row in &x_matrix[..n] {
+                    xtx[i][j] += row[i] * row[j];
                 }
             }
         }
-        
+
         // Создаем X'y вектор
         let mut xty = vec![0.0; p];
         for i in 0..p {
-            for k in 0..n {
-                if k < self.y_values.len() {
-                    xty[i] += x_matrix[k][i] * self.y_values[k];
-                }
+            for (row, &y) in x_matrix[..n].iter().zip(self.y_values.iter()) {
+                xty[i] += row[i] * y;
             }
         }
         

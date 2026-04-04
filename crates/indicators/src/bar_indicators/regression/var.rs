@@ -240,17 +240,17 @@ impl Var {
         let mut xtx = vec![vec![0.0; k]; k];
         for i in 0..k {
             for j in 0..k {
-                for t in 0..n {
-                    xtx[i][j] += x_matrix[t][i] * x_matrix[t][j];
+                for row in &x_matrix[..n] {
+                    xtx[i][j] += row[i] * row[j];
                 }
             }
         }
-        
+
         // X'y вектор
         let mut xty = vec![0.0; k];
         for i in 0..k {
-            for t in 0..n {
-                xty[i] += x_matrix[t][i] * y_vector[t];
+            for (row, &y) in x_matrix[..n].iter().zip(y_vector[..n].iter()) {
+                xty[i] += row[i] * y;
             }
         }
         
@@ -385,9 +385,9 @@ impl Var {
     /// Вычисление определителя матрицы (упрощенно - только для диагональных элементов)
     fn calculate_determinant(&self, matrix: &[ArrayVec<f64, 16>]) -> f64 {
         let mut det = 1.0;
-        for i in 0..matrix.len().min(self.n_vars) {
-            if i < matrix[i].len() {
-                det *= matrix[i][i].abs();
+        for (i, row) in matrix.iter().enumerate().take(self.n_vars) {
+            if i < row.len() {
+                det *= row[i].abs();
             }
         }
         det

@@ -64,32 +64,28 @@ impl KpssTrendProxy {
         let b = ((n as f64) * sxy - sx * sy) / den; // slope
                                                       // residuals from trend
         let mut eps = vec![0.0; n];
-        for i in 0..n {
+        for (i, slot) in eps.iter_mut().enumerate() {
             let t = (i + 1) as f64;
             let y = self.buf[(self.idx + i) % n];
-            eps[i] = y - (a + b * t);
+            *slot = y - (a + b * t);
         }
         // partial sums
         let mut s = 0.0;
         let mut s2_sum = 0.0;
-        for i in 0..n {
-            s += eps[i];
+        for &e in &eps {
+            s += e;
             s2_sum += s * s;
         }
         // long-run variance proxy (as in level version)
         let mut var = 0.0;
         let mut cov1 = 0.0;
-        let mut e_mean = 0.0;
-        for i in 0..n {
-            e_mean += eps[i];
-        }
-        e_mean /= n as f64;
-        for i in 0..n {
-            let d = eps[i] - e_mean;
+        let e_mean: f64 = eps.iter().sum::<f64>() / n as f64;
+        for &e in &eps {
+            let d = e - e_mean;
             var += d * d;
         }
-        for i in 1..n {
-            cov1 += (eps[i] - e_mean) * (eps[i - 1] - e_mean);
+        for w in eps.windows(2) {
+            cov1 += (w[1] - e_mean) * (w[0] - e_mean);
         }
         var /= n as f64;
         cov1 /= (n - 1) as f64;

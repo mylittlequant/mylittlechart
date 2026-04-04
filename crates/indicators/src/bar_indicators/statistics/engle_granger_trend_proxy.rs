@@ -93,10 +93,9 @@ impl EngleGrangerTrendProxy {
             0.0
         };
         let mut resid = vec![0.0; n];
-        for i in 0..n {
+        for (i, (slot, &t)) in resid.iter_mut().zip(self.times[..n].iter()).enumerate() {
             let y = self.closes[(self.idx + i) % n];
-            let t = self.times[i];
-            resid[i] = y - (a + c * t);
+            *slot = y - (a + c * t);
         }
         let mut rx = 0.0;
         let mut ry = 0.0;

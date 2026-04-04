@@ -330,9 +330,11 @@ pub fn render_overlay_settings_modal(
     let modal_x = modal_x.max(0.0).min((screen_x + screen_w - modal_width).max(0.0));
     let modal_y = modal_y.max(0.0).min((screen_y + screen_h - modal_height).max(0.0));
 
-    let mut result = OverlaySettingsResult::default();
-    result.modal_rect   = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect  = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
+    let mut result = OverlaySettingsResult {
+        modal_rect: WidgetRect::new(modal_x, modal_y, modal_width, modal_height),
+        header_rect: WidgetRect::new(modal_x, modal_y, modal_width, header_height),
+        ..OverlaySettingsResult::default()
+    };
 
     // =========================================================================
     // InputCoordinator layer

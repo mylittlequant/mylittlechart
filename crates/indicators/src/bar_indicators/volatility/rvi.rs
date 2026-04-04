@@ -60,9 +60,9 @@ impl Rvi {
         let mean = self.ma_close.value().main();
         // Собрать последние n close в правильном порядке
         let mut window = [0.0; 512];
-        for i in 0..n {
+        for (i, slot) in window[..n].iter_mut().enumerate() {
             let idx = if self.idx + 512 >= i { (self.idx + 512 - i) % 512 } else { 0 };
-            window[i] = self.closes[idx];
+            *slot = self.closes[idx];
         }
         let mut std = (window[..n].iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / n as f64).sqrt();
         // корректировка на n-1 (несмещённая оценка)

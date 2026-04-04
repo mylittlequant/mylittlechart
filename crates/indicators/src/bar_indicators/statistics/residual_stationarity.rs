@@ -58,20 +58,17 @@ impl ResidualStationarity {
         // simple SMA as regressor; residuals = close - SMA
         let mut sma = vec![0.0; n];
         let mut sum = 0.0;
-        for i in 0..n {
+        for (i, slot) in sma.iter_mut().enumerate() {
             sum += self.closes[i];
-            sma[i] = sum / ((i + 1) as f64);
+            *slot = sum / ((i + 1) as f64);
         }
-        let mut res = vec![0.0; n];
-        for i in 0..n {
-            res[i] = self.closes[i] - sma[i];
-        }
+        let res: Vec<f64> = self.closes[..n].iter().zip(sma.iter()).map(|(&c, &s)| c - s).collect();
         // variance ratio: Var(res) / Var(close)
         let mut var_res = 0.0;
         let mut var_close = 0.0;
-        for i in 0..n {
-            var_res += res[i] * res[i];
-            var_close += (self.closes[i] - mean) * (self.closes[i] - mean);
+        for (&r, &c) in res.iter().zip(self.closes[..n].iter()) {
+            var_res += r * r;
+            var_close += (c - mean) * (c - mean);
         }
         if var_close > 0.0 {
             (var_res / n as f64) / (var_close / n as f64)

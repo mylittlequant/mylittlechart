@@ -782,8 +782,8 @@ fn render_watchlist_column_header(
     // Separator lines and draggable hit zones.
     let sep_hit_w = 8.0;
     ctx.set_stroke_width(1.0);
-    for sep_i in 0..n_seps {
-        let sep_x = sep_positions[sep_i] - 0.5;
+    for (sep_i, &sep_pos) in sep_positions[..n_seps].iter().enumerate() {
+        let sep_x = sep_pos - 0.5;
         let sep_id = format!("watchlist_sep_{}", sep_i + 1);
         let sep_is_hovered = input_coordinator
             .is_hovered(&uzor::types::WidgetId::new(&sep_id));

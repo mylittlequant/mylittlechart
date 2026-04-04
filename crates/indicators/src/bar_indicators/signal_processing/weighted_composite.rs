@@ -72,10 +72,7 @@ impl WeightedComposite {
                 self.sma4.value().main(),
             ];
 
-            let mut s = 0.0;
-            for k in 0..4 {
-                s += self.w[k] * inputs[k];
-            }
+            let s: f64 = self.w.iter().zip(inputs.iter()).map(|(w, inp)| w * inp).sum();
             if self.norm {
                 let denom = self.w.iter().map(|x| x.abs()).sum::<f64>().max(1e-9);
                 self.value = s / denom;

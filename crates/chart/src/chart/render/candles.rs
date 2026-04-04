@@ -329,8 +329,7 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let mut prev_ha_close = (bars[0].open + bars[0].high + bars[0].low + bars[0].close) / 4.0;
 
     // Pre-calculate HA values up to visible range
-    for i in 1..start.min(bars.len()) {
-        let bar = &bars[i];
+    for bar in &bars[1..start.min(bars.len())] {
         let ha_close = (bar.open + bar.high + bar.low + bar.close) / 4.0;
         let ha_open = (prev_ha_open + prev_ha_close) / 2.0;
         prev_ha_open = ha_open;
