@@ -322,8 +322,10 @@ impl TextInputManager {
             if state.config.capability == InputCapability::Keyboard {
                 continue;
             }
-            // Only fields updated this frame.
-            if state.last_frame != self.current_frame {
+            // Accept geometry from this frame or the previous one — input events
+            // arrive after begin_frame() but before update_field() re-stamps the
+            // geometry, so last_frame is typically current_frame - 1.
+            if self.current_frame.wrapping_sub(state.last_frame) > 1 {
                 continue;
             }
             if let Some((rx, ry, rw, rh)) = state.last_rect {
