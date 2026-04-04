@@ -5724,25 +5724,6 @@ impl IndicatorInstance {
                 x.update_bar(open, high, low, close, volume);
                 x.value()
             }
-            // ========================================
-            // FVG indicators
-            // ========================================
-            Self::FvgDetector(x) => {
-                x.update_bar(open, high, low, close, volume);
-                x.value()
-            }
-            Self::Fvgalt(x) => {
-                x.update_bar(open, high, low, close, volume);
-                x.value()
-            }
-            Self::Fvgdur(x) => {
-                x.update_bar(open, high, low, close, volume);
-                x.value()
-            }
-            Self::Fvgrev(x) => {
-                x.update_bar(open, high, low, close, volume);
-                x.value()
-            }
             // ========== PHASE 6: Previously missing indicators ==========
             Self::Stochastics(x) => {
                 x.update_bar(high, low, close, volume);
@@ -6271,7 +6252,6 @@ impl IndicatorInstance {
             Self::NeuralMomentumNetwork(ind) => ind.value(),
             Self::Ofi(ind) => ind.value(),
             Self::OrderFlowImb(ind) => ind.value(),
-            Self::OrGate(ind) => IndicatorValue::Flag(ind.value()),
             Self::ParticleFilter(ind) => ind.value(),
             Self::Poc(ind) => {
                 let poc_price = ind.get_current_poc().map(|p| p.price).unwrap_or(0.0);
@@ -6310,8 +6290,6 @@ impl IndicatorInstance {
             Self::ZigzagCandle(ind) => ind.value(),
             Self::ZigzagLookahead(ind) => ind.value(),
             Self::ZigzagTime(ind) => ind.value(),
-            _ => IndicatorValue::Single(0.0),
-
         }
     }
 
@@ -6783,7 +6761,6 @@ impl IndicatorInstance {
             Self::ZigzagLookahead(ind) => ind.is_ready(),
             Self::ZigzagTime(ind) => ind.is_ready(),
             Self::ZlSma(ind) => ind.is_ready(),
-            _ => true, // If indicator doesn't have is_ready, assume it's ready
         }
     }
 
@@ -7255,7 +7232,6 @@ impl IndicatorInstance {
             Self::ZigzagLookahead(ind) => ind.reset(),
             Self::ZigzagTime(ind) => ind.reset(),
             Self::ZlSma(ind) => ind.reset(),
-            _ => {}, // If indicator doesn't have reset, do nothing
         }
     }
 }

@@ -26,7 +26,9 @@ use super::super::ohlcv_field::OhlcvField;
 pub struct Alma {
     period: usize,
     source: OhlcvField,
+    #[allow(dead_code)]
     offset: f64,
+    #[allow(dead_code)]
     sigma: f64,
     buffer: VecDeque<f64>,
     weights: Vec<f64>,

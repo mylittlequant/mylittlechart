@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -58,11 +58,6 @@ struct CreateKeyResponse {
 #[derive(Serialize)]
 struct DeleteKeyResponse {
     deleted: bool,
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
 }
 
 // ---------------------------------------------------------------------------

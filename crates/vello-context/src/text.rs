@@ -12,11 +12,7 @@ use vello::peniko::{Blob, Brush, Fill, FontData};
 use vello::{Glyph, Scene};
 use skrifa::{MetadataProvider, raw::{FileRef, FontRef}};
 
-use vello::peniko::color::AlphaColor;
-use vello::peniko::color::Srgb;
-
-/// Public color type alias (same as the one in context.rs).
-pub type Color = AlphaColor<Srgb>;
+use vello::peniko::color::{AlphaColor, Srgb};
 
 // ── Private font bytes (re-declared here to avoid cross-module statics) ──────
 // We re-use the same bytes as context.rs — they will be deduplicated by the
@@ -67,7 +63,7 @@ pub fn draw_text_to_scene(
     y: f64,
     font_size: f32,
     bold: bool,
-    color: Color,
+    color: AlphaColor<Srgb>,
 ) {
     if text.is_empty() {
         return;

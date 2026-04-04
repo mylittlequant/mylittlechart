@@ -133,7 +133,7 @@ pub fn render_right_sidebar(
 ) -> RightSidebarResult {
     let header_height = 40.0;
     let scrollbar_width = 8.0;
-    let content_padding = 12.0;
+    let _content_padding = 12.0;
 
     // Content area (below header, minus scrollbar column).
     let content_rect = WidgetRect::new(
@@ -1286,7 +1286,6 @@ fn render_watchlist_items(
                     current_y + data_row_h / 2.0,
                 );
             }
-            col_idx += 1;
         }
 
         // Delete (×) overlay — drawn AFTER column text so it's on top.
@@ -2349,7 +2348,7 @@ fn render_connectors_panel(
 
     // We need a flat index for alternating row backgrounds that is local
     // to each group (reset per group), so we track it separately.
-    let mut group_item_idx: usize = 0;
+    let mut _group_item_idx: usize = 0;
 
     for (group_variant, group_label) in &groups {
         // Collect items belonging to this group.
@@ -2437,17 +2436,17 @@ fn render_connectors_panel(
 
         // If collapsed, skip all items in this group.
         if is_collapsed {
-            group_item_idx = 0; // reset per group
+            _group_item_idx = 0; // reset per group
             continue;
         }
 
         // -----------------------------------------------------------------
         // Render each item in this group (same logic as before).
         // -----------------------------------------------------------------
-        group_item_idx = 0;
+        _group_item_idx = 0;
         for connector in &items_in_group {
-        let idx = group_item_idx;
-        group_item_idx += 1;
+        let idx = _group_item_idx;
+        _group_item_idx += 1;
 
         // -----------------------------------------------------------------
         // Collapsed row background (full-width).
@@ -2561,11 +2560,11 @@ fn render_connectors_panel(
             let content_right = rect.x + content_width - pad;
 
             // Helper: draw a label/value pair on one line.
-            let mut draw_detail = |ctx: &mut dyn RenderContext,
-                                   y: &mut f64,
-                                   label: &str,
-                                   value: &str,
-                                   value_color: &str| {
+            let draw_detail = |ctx: &mut dyn RenderContext,
+                               y: &mut f64,
+                               label: &str,
+                               value: &str,
+                               value_color: &str| {
                 ctx.set_font("12.5px sans-serif");
                 ctx.set_fill_color("#6b7280"); // muted gray labels
                 ctx.set_text_align(TextAlign::Left);
@@ -2578,7 +2577,7 @@ fn render_connectors_panel(
 
             // Helper: draw a section divider using native lines + text label.
             // Replaces the old unicode box-drawing character approach.
-            let mut draw_section = |ctx: &mut dyn RenderContext, y: &mut f64, label: &str| {
+            let draw_section = |ctx: &mut dyn RenderContext, y: &mut f64, label: &str| {
                 let line_y = *y + detail_row_h * 0.5;
                 let label_pad = 5.0;
 
@@ -3194,7 +3193,7 @@ fn render_performance_panel(
     let bar_max_w = content_width - pad * 2.0;
 
     // Helper: draw a section header with separator
-    let mut draw_section = |ctx: &mut dyn RenderContext, y: &mut f64, title: &str| {
+    let draw_section = |ctx: &mut dyn RenderContext, y: &mut f64, title: &str| {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Left);
@@ -3211,7 +3210,7 @@ fn render_performance_panel(
     };
 
     // Helper: draw a metric row (label left, value right)
-    let mut draw_row = |ctx: &mut dyn RenderContext, y: &mut f64, label: &str, value: &str, value_color: &str| {
+    let draw_row = |ctx: &mut dyn RenderContext, y: &mut f64, label: &str, value: &str, value_color: &str| {
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Left);

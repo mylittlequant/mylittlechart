@@ -7,6 +7,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 
 #[derive(Debug, Clone)]
 pub struct ChandeKrollStop {
+    #[allow(dead_code)]
     atr_period: usize,
     k: f64,
     hh_period: usize,

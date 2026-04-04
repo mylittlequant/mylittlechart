@@ -246,6 +246,7 @@ pub struct ExtendedKalmanFilter {
     
     // Адаптивность
     adaptive_noise: bool,
+    #[allow(dead_code)]
     innovation_variance: f64,
     
     // Диагностика

@@ -26,12 +26,10 @@ const COLOR_ORANGE: &str = "#FF9800";
 const COLOR_PURPLE: &str = "#9C27B0";
 const COLOR_CYAN: &str = "#00BCD4";
 const COLOR_PINK: &str = "#E91E63";
-const COLOR_YELLOW: &str = "#FFEB3B";
 const COLOR_TEAL: &str = "#009688";
 const COLOR_INDIGO: &str = "#3F51B5";
 
 // Secondary colors
-const COLOR_LIGHT_BLUE: &str = "#03A9F4";
 const COLOR_DEEP_ORANGE: &str = "#FF5722";
 const COLOR_LIME: &str = "#CDDC39";
 const COLOR_AMBER: &str = "#FFC107";

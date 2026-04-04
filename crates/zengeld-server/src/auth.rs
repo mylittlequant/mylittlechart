@@ -10,7 +10,7 @@
 //! - [`AgentId`] — optional agent identifier attached to the key
 
 use axum::{
-    extract::{Extension, Request},
+    extract::Request,
     http::StatusCode,
     middleware::Next,
     response::Response,

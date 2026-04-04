@@ -1872,10 +1872,10 @@ impl ChartApp {
         // Track whether at least one trade arrived this tick so the alert
         // crossing checker can be skipped on quiet (no-trade) frames.
         let mut had_trade_update = false;
-        let mut drain_count = 0u32;
+        let mut _drain_count = 0u32;
         loop {
             let update = match self.live_update_rx.try_recv() {
-                Ok(u) => { drain_count += 1; u },
+                Ok(u) => { _drain_count += 1; u },
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
                     eprintln!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",

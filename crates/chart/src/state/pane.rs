@@ -853,18 +853,16 @@ impl PaneManager {
             (pane.height, pane.min_height, if pane.max_height > 0.0 { pane.max_height } else { f64::MAX })
         };
 
-        let (next_height, next_min, next_max) = {
+        let (next_height, next_min, _next_max) = {
             let next = self.panes.get(&next_id).unwrap();
             (next.height, next.min_height, if next.max_height > 0.0 { next.max_height } else { f64::MAX })
         };
 
         // Calculate new heights
         let new_pane_height = (pane_height + delta_y).max(pane_min).min(pane_max);
-        let mut new_next_height = (next_height - delta_y).max(next_min).min(next_max);
-
         // Adjust if constraints prevent full delta
         let actual_delta = new_pane_height - pane_height;
-        new_next_height = (next_height - actual_delta).max(next_min);
+        let new_next_height = (next_height - actual_delta).max(next_min);
 
         // Apply new heights
         if let Some(pane) = self.panes.get_mut(&pane_id) {

@@ -129,11 +129,13 @@ impl VolumeProfile {
     }
 
     /// Получить эффективный индекс цены для хеширования
+    #[allow(dead_code)]
     fn price_to_index(&self, price: f64) -> i64 {
         (price * self.price_multiplier).round() as i64
     }
 
     /// Конвертировать индекс обратно в цену
+    #[allow(dead_code)]
     fn index_to_price(&self, index: i64) -> f64 {
         index as f64 / self.price_multiplier
     }

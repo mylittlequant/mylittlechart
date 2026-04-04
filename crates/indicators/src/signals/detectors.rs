@@ -21,6 +21,7 @@ use arrayvec::ArrayVec;
 pub struct CrossoverDetector {
     prev_a: Option<f64>,
     prev_b: Option<f64>,
+    #[allow(dead_code)]
     use_level: bool,
     level: f64,
 }

@@ -292,6 +292,7 @@ impl AdvancedPatternRecognition {
         self.current_result = PatternResult::default();
     }
     
+    #[allow(dead_code)]
     fn analyze_single_candle(&self, open: f64, high: f64, low: f64, close: f64) -> PatternResult {
         let body_size = (close - open).abs();
         let total_range = high - low;
@@ -352,6 +353,7 @@ impl AdvancedPatternRecognition {
         }
     }
     
+    #[allow(dead_code)]
     fn analyze_multi_candle_patterns(&self) -> PatternResult {
         let len = self.ohlc_history.len();
         if len < 2 {
@@ -393,7 +395,8 @@ impl AdvancedPatternRecognition {
         total_range > 0.0 && (body_size / total_range) < self.config.doji_body_ratio
     }
     
-    fn is_hammer(&self, _open: f64, high: f64, low: f64, _close: f64, 
+    #[allow(dead_code)]
+    fn is_hammer(&self, _open: f64, high: f64, low: f64, _close: f64,
                  body_size: f64, lower_shadow: f64, upper_shadow: f64) -> bool {
         let total_range = high - low;
         if total_range == 0.0 { return false; }
@@ -403,6 +406,7 @@ impl AdvancedPatternRecognition {
         (body_size / total_range) > 0.1
     }
     
+    #[allow(dead_code)]
     fn is_shooting_star(&self, _open: f64, high: f64, low: f64, _close: f64,
                        body_size: f64, upper_shadow: f64, lower_shadow: f64) -> bool {
         let total_range = high - low;
@@ -417,6 +421,7 @@ impl AdvancedPatternRecognition {
         total_range > 0.0 && (body_size / total_range) > self.config.marubozu_body_ratio
     }
     
+    #[allow(dead_code)]
     fn is_engulfing(&self, prev: [f64; 4], curr: [f64; 4]) -> bool {
         let prev_body_size = (prev[3] - prev[0]).abs();
         let curr_body_size = (curr[3] - curr[0]).abs();
@@ -430,6 +435,7 @@ impl AdvancedPatternRecognition {
         curr[0].max(curr[3]) > prev[0].max(prev[3])
     }
     
+    #[allow(dead_code)]
     fn is_harami(&self, prev: [f64; 4], curr: [f64; 4]) -> bool {
         let prev_body_size = (prev[3] - prev[0]).abs();
         let curr_body_size = (curr[3] - curr[0]).abs();

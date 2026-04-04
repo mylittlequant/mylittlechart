@@ -4,6 +4,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// Twiggs Money Flow (TMF) = EMA( (Close - Low) - (High - Close) / (High - Low), n ) * Volume smoothed / Volume smoothed
 #[derive(Debug, Clone)]
 pub struct Tmf {
+    #[allow(dead_code)]
     n: usize,
     cmf_num_ma: MovingAverageProvider,
     vol_ma: MovingAverageProvider,

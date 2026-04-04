@@ -4,7 +4,9 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::statistics::variance_ratio::VarianceRatio;
 
 pub struct VarianceRatioAggregate {
+    #[allow(dead_code)]
     windows: Vec<usize>,
+    #[allow(dead_code)]
     ms: Vec<usize>,
     vr_list: Vec<VarianceRatio>,
     pub value: f64,

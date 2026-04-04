@@ -224,14 +224,6 @@ fn generate_candle_patterns(count: usize, start_ts: i64) -> Vec<Bar> {
                 let low = open - 0.5;
                 Bar::new(open, high, low, close, volume, timestamp)
             }
-            // Bar 2: Small star (gapped up)
-            30 => {
-                let star_open = price + 3.0 + 2.0;  // Gap up above previous close
-                let star_close = star_open - 0.2;  // Small body
-                let star_high = star_open + 0.5;
-                let star_low = star_open - 0.5;  // Must be > previous body high
-                Bar::new(star_open, star_high, star_low, star_close, volume * 0.5, timestamp)
-            }
             // Bar 3: Bearish candle closing below first midpoint
             31 => {
                 let third_open = price + 4.5;

@@ -156,6 +156,7 @@ pub use types::{
 };
 
 // Layout (platform-agnostic layout computation)
+#[allow(deprecated)]
 pub use layout::{
     // Rectangle types
     LayoutRect, ChartAreaLayout, FrameLayout, ChartHitZone,

@@ -5,6 +5,7 @@ use crate::bar_indicators::entropy::mutual_information::MutualInformation;
 
 pub struct CrossMutualInformationLags {
     indicators: Vec<MutualInformation>,
+    #[allow(dead_code)]
     lags: Vec<usize>,
     pub values: Vec<f64>,
 }

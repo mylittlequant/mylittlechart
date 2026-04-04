@@ -141,13 +141,13 @@ pub fn wait_for_parent_exit() {
         const WAIT_OBJECT_0: u32 = 0;
         const WAIT_TIMEOUT: u32 = 258;
 
-        let pid_gone;
+        let _pid_gone;
         if let Ok(pid) = pid_str.parse::<u32>() {
             let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
             if handle == 0 {
                 // Can't open process — already dead or access denied
                 log::info!("Parent process {} already exited (OpenProcess failed)", pid_str);
-                pid_gone = true;
+                _pid_gone = true;
             } else {
                 // Wait up to 30 seconds for process to exit
                 let result = unsafe { WaitForSingleObject(handle, 30_000) };
@@ -155,21 +155,21 @@ pub fn wait_for_parent_exit() {
                 match result {
                     WAIT_OBJECT_0 => {
                         log::info!("Parent process {} has exited", pid_str);
-                        pid_gone = true;
+                        _pid_gone = true;
                     }
                     WAIT_TIMEOUT => {
                         log::warn!("Timed out waiting for parent process {} to exit", pid_str);
-                        pid_gone = false;
+                        _pid_gone = false;
                     }
                     _ => {
                         log::warn!("WaitForSingleObject returned {}, proceeding", result);
-                        pid_gone = true;
+                        _pid_gone = true;
                     }
                 }
             }
         } else {
             log::warn!("Invalid PID '{}', proceeding without wait", pid_str);
-            pid_gone = true;
+            _pid_gone = true;
         }
 
         // Phase 2: if a port was given, probe until it's free (or timeout).

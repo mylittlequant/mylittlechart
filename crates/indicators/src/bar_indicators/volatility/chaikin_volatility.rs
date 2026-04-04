@@ -8,6 +8,7 @@ pub struct ChaikinVolatility {
     n_period: usize,
     ema_range: MovingAverageProvider,
     prev_ema: f64,
+    #[allow(dead_code)]
     k: usize,
     value: f64,
     ready: bool,

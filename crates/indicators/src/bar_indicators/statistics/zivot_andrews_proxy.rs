@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 #[derive(Debug, Clone)]
 pub struct ZivotAndrewsProxy {
+    #[allow(dead_code)]
     window: usize,
     value: f64,
 }

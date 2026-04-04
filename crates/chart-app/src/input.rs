@@ -4831,7 +4831,7 @@ impl ChartApp {
                 let delta = dy.signum();
 
                 enum CmpScrollAction {
-                    TfSlider { field_id: String, tf_idx: usize, x_pos: f64, item_rect_x: f64, item_rect_w: f64 },
+                    TfSlider { _field_id: String, tf_idx: usize, x_pos: f64, item_rect_x: f64, item_rect_w: f64 },
                     LineWidth { current: f64, min_val: f64, max_val: f64 },
                     Swallow,
                 }
@@ -4851,7 +4851,7 @@ impl ChartApp {
                                             .and_then(|s| s.parse::<usize>().ok())
                                         {
                                             found = CmpScrollAction::TfSlider {
-                                                field_id: track.field_id.clone(),
+                                                _field_id: track.field_id.clone(),
                                                 tf_idx,
                                                 x_pos: x,
                                                 item_rect_x: item_rect.x,
@@ -4890,9 +4890,8 @@ impl ChartApp {
                 };
 
                 match action {
-                    CmpScrollAction::TfSlider { field_id, tf_idx, x_pos, item_rect_x, item_rect_w } => {
+                    CmpScrollAction::TfSlider { _field_id: _, tf_idx, x_pos, item_rect_x, item_rect_w } => {
                         use zengeld_chart::drawing::TimeframeVisibilityConfig;
-                        use zengeld_chart::ui::modal_settings::DualSliderHandle;
                         let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
                             1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
                             4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
@@ -13150,7 +13149,7 @@ impl ChartApp {
     }
 
     /// Handle an L1 (quick palette) hit result.
-    fn handle_l1_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL1HitResult, source: &str, x: f64, y: f64) {
+    fn handle_l1_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL1HitResult, source: &str, _x: f64, _y: f64) {
         use zengeld_chart::ui::widgets::color_picker::ColorPickerL1HitResult;
 
         match hit {
@@ -13298,7 +13297,7 @@ impl ChartApp {
     }
 
     /// Handle an L2 (HSV full picker) hit result.
-    fn handle_l2_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, x: f64, y: f64) {
+    fn handle_l2_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, _x: f64, _y: f64) {
         use zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult;
 
         match hit {

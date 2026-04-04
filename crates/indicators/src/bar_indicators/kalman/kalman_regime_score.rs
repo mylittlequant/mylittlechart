@@ -7,6 +7,7 @@ pub struct KalmanRegimeScore {
     inner: KalmanTrendSlope,
     mean: f64,
     var: f64,
+    #[allow(dead_code)]
     decay: f64,
     pub value: f64,
 }

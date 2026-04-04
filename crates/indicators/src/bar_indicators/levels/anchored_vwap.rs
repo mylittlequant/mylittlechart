@@ -21,6 +21,7 @@ impl Default for AnchoredVwapParams {
 }
 
 pub struct AnchoredVwap {
+    #[allow(dead_code)]
     params: AnchoredVwapParams,
     // Accumulators for current anchor window
     cum_pv: f64,

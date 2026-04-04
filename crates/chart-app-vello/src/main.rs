@@ -56,6 +56,7 @@ mod win32_capture {
 #[cfg(target_os = "windows")]
 mod win32_border {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    #[allow(unused_imports)] // extract_hwnd uses Window, set_dwm_border_color does not
     use winit::window::Window;
 
     #[link(name = "dwmapi")]
@@ -83,21 +84,24 @@ mod win32_border {
         Some((b as u32) << 16 | (g as u32) << 8 | r as u32)
     }
 
-    /// Apply the DWM border color to `window`.
+    /// Extract HWND from a winit `Window` (must be called on the main thread).
+    pub fn extract_hwnd(window: &Window) -> Option<isize> {
+        let handle = window.window_handle().ok()?;
+        if let RawWindowHandle::Win32(h) = handle.as_ref() {
+            Some(h.hwnd.get() as isize)
+        } else {
+            None
+        }
+    }
+
+    /// Apply the DWM border color using a cached HWND.
     ///
     /// `color` must be a `#RRGGBB` hex string.  Invalid strings or OS versions
     /// that do not support this attribute are silently ignored.
-    pub fn set_dwm_border_color(window: &Window, color: &str) {
+    pub fn set_dwm_border_color(hwnd: isize, color: &str) {
         let Some(colorref) = hex_to_colorref(color) else {
             return;
         };
-        let Ok(handle) = window.window_handle() else {
-            return;
-        };
-        let RawWindowHandle::Win32(h) = handle.as_ref() else {
-            return;
-        };
-        let hwnd = h.hwnd.get() as isize;
         // Ignore the return value — non-zero means unsupported (Win10/older), which is fine.
         unsafe {
             DwmSetWindowAttribute(
@@ -156,7 +160,7 @@ use winit::{
     window::{CursorIcon, Icon, Window, WindowId},
 };
 use zengeld_chart::CursorStyle;
-use sysinfo::{System, Pid, ProcessesToUpdate, ProcessRefreshKind};
+use sysinfo::{System, Pid, ProcessesToUpdate};
 
 use vello_context::VelloGpuRenderContext;
 
@@ -249,6 +253,9 @@ struct PerWindowState {
     drawing_capture: bool,
     // Chrome
     chrome_state: chrome::ChromeState,
+    /// Cached Win32 HWND (extracted on main thread at window creation).
+    #[cfg(target_os = "windows")]
+    hwnd: Option<isize>,
     /// App shutdown signal — set by chrome X button or OS-level CloseRequested.
     /// When any window has this flag, about_to_wait saves ALL windows and exits.
     close_requested: bool,
@@ -530,6 +537,7 @@ struct App<'s> {
     /// Set to true when ALL windows should close.
     close_all_requested: bool,
     /// Default symbol for new charts.
+    #[allow(dead_code)]
     default_symbol: String,
     /// Shared DataBridge — tokio runtime + connector pool, created once at startup.
     bridge: std::sync::Arc<live_data::DataBridge>,
@@ -684,6 +692,7 @@ struct App<'s> {
 
     /// Unused — retained to avoid removing struct fields during the OTA simplification.
     /// Previously held a deferred switch until the user chose a sync level in the wizard.
+    #[allow(dead_code)]
     pending_switch_after_sync_level: Option<(String, zengeld_chart::vault::VaultKey)>,
 
     /// Unused — retained alongside `pending_switch_after_sync_level`.
@@ -720,8 +729,6 @@ fn render_toasts(
     window_width: f64,
     window_height: f64,
 ) {
-    use uzor::render::RenderContext;
-
     let toast_width = 320.0_f64;
     let toast_height = 64.0_f64;
     let padding = 12.0_f64;
@@ -833,7 +840,9 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         { dwm_border_color = theme.colors.ui_border.clone(); }
     }
     #[cfg(target_os = "windows")]
-    win32_border::set_dwm_border_color(&pw.window, &dwm_border_color);
+    if let Some(hwnd) = pw.hwnd {
+        win32_border::set_dwm_border_color(hwnd, &dwm_border_color);
+    }
 
     // Sync tabs from open_tabs order.
     {
@@ -2771,6 +2780,8 @@ impl App<'_> {
         chart.resize(size.width, size.height.saturating_sub(chrome_px));
 
         let win_id = window.id();
+        #[cfg(target_os = "windows")]
+        let cached_hwnd = win32_border::extract_hwnd(&window);
         let pw = PerWindowState {
             window,
             surface,
@@ -2792,6 +2803,8 @@ impl App<'_> {
             modifiers: winit::keyboard::ModifiersState::default(),
             drawing_capture: false,
             chrome_state: chrome::ChromeState::new("chart-app-vello"),
+            #[cfg(target_os = "windows")]
+            hwnd: cached_hwnd,
             close_requested: false,
             spawn_new_window: false,
             window_id,
@@ -7276,7 +7289,7 @@ impl ApplicationHandler for App<'_> {
 
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         id: WindowId,
         event: WindowEvent,
     ) {

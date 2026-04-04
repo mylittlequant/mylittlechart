@@ -37,6 +37,7 @@ pub struct EnvelopeChannels {
     base_percentage: f64,
     mode: EnvelopeMode,
     ma_type: MovingAverageType,
+    #[allow(dead_code)]
     source: OhlcvField,
 
     // MovingAverage для базовой линии

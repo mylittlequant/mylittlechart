@@ -1260,7 +1260,7 @@ impl ChartToolbarState {
             None => TcToolbarTheme::default(),
         };
 
-        let active_tool = self.active_tool_id.as_deref();
+        let _active_tool = self.active_tool_id.as_deref();
 
         // --- Drawing toolbar (vertical, left side) ---
         let drawing_tc_result = if toolbar_config.left.is_some() {
@@ -1760,7 +1760,7 @@ impl ChartToolbarState {
         active_preset_id: &str,
         autosave_enabled: bool,
         sync_flags: Option<&crate::tag_manager::SyncFlags>,
-        is_expanded: bool,
+        _is_expanded: bool,
         split_without_group: bool,
     ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.

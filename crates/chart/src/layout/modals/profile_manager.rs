@@ -437,7 +437,7 @@ fn render_page_profile_list(
         Sense::CLICK | Sense::HOVER,
         layer_id,
     );
-    left_cy += wiz_btn_h;
+    let _left_cy = left_cy + wiz_btn_h;
 
     // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
     let mascot_w = 140.0;

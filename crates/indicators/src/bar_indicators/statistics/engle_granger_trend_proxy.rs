@@ -56,27 +56,27 @@ impl EngleGrangerTrendProxy {
 
     fn update_stats(&mut self) {
         let n = self.window;
-        let mut sx = 0.0;
+        let mut _sx = 0.0;
         let mut st = 0.0;
-        let mut sxx = 0.0;
+        let mut _sxx = 0.0;
         let mut stt = 0.0;
-        let mut sxt = 0.0;
+        let mut _sxt = 0.0;
         let mut sy = 0.0;
         let mut syt = 0.0;
-        let mut sxy = 0.0;
+        let mut _sxy = 0.0;
         let mut count = 0.0;
         // multiple regression y ~ a + b*x + c*t, here x is SMA proxy via de-meaning (omit for simplicity) -> use (t) trend only with intercept
         for i in 0..n {
             let y = self.closes[(self.idx + i) % n];
             let t = self.times[i];
-            sx += 1.0;
+            _sx += 1.0;
             st += t;
-            sxx += 1.0;
+            _sxx += 1.0;
             stt += t * t;
-            sxt += t;
+            _sxt += t;
             sy += y;
             syt += y * t;
-            sxy += y;
+            _sxy += y;
             count += 1.0;
         }
         // Solve for c (trend coef) in normal equations [[n, sum t],[sum t, sum t2]] * [a,c] = [sum y, sum y t]

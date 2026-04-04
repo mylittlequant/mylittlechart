@@ -168,6 +168,7 @@ pub struct UnscentedKalmanFilter {
     
     // Параметры трансформации
     lambda: f64,                        // Параметр масштабирования
+    #[allow(dead_code)]
     n_sigma: usize,                     // Количество сигма-точек
     
     // История для анализа

@@ -66,6 +66,7 @@ enum DetectorInstance {
     Swing {
         config_id: String,
         detector: SwingDetector,
+        #[allow(dead_code)]
         value_source: ValueSource,
     },
 }

@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 pub struct CloseVolPercentile {
+    #[allow(dead_code)]
     vol_window: usize,
     ret_prev_close: f64,
     // ring for recent vol values

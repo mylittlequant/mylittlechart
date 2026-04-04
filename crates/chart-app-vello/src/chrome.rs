@@ -184,6 +184,7 @@ impl Default for ChromeColors {
 pub struct ChromeState {
     pub hovered: ChromeHit,
     pub is_maximized: bool,
+    #[allow(dead_code)]
     pub title: String,
     pub colors: ChromeColors,
     pub tabs: Vec<Tab>,

@@ -43,6 +43,7 @@ impl Flag {
         }
     }
 
+    #[allow(dead_code)]
     fn get_text(&self) -> &str {
         if let Some(ref text) = self.data.text {
             &text.content

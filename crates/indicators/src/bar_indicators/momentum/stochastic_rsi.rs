@@ -36,6 +36,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 pub struct StochasticRsi {
     stoch_period: usize,
     k_period: usize,
+    #[allow(dead_code)]
     d_period: usize,
 
     // 🚀 RSI calculation - используем стандартный RSI
@@ -48,8 +49,11 @@ pub struct StochasticRsi {
     // MA-based smoothing for %K and %D
     k_ma: MovingAverageProvider,
     d_ma: MovingAverageProvider,
+    #[allow(dead_code)]
     k_ma_type: MovingAverageType,
+    #[allow(dead_code)]
     d_ma_type: MovingAverageType,
+    #[allow(dead_code)]
     source: OhlcvField,
 
     // Current values

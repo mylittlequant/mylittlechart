@@ -147,19 +147,18 @@ impl EhlersFractalAdaptiveMa {
         }
         
         let mut total_length = 0.0;
-        let mut direct_distance = 0.0;
-        
+
         let start_idx = self.prices.len() - self.period;
-        
+
         // Вычисляем общую длину пути
         for i in 1..self.period {
             let prev = self.prices[start_idx + i - 1];
             let curr = self.prices[start_idx + i];
             total_length += (curr - prev).abs();
         }
-        
+
         // Прямое расстояние
-        direct_distance = (self.prices[start_idx + self.period - 1] - self.prices[start_idx]).abs();
+        let direct_distance = (self.prices[start_idx + self.period - 1] - self.prices[start_idx]).abs();
         
         if direct_distance == 0.0 || total_length == 0.0 {
             return 1.5;

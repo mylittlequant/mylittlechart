@@ -10,7 +10,7 @@
 //! - Logarithmic: Log scale for large price ranges
 
 use crate::types::{
-    PRICE_SCALE_FONT_SIZE_MAX, PRICE_SCALE_FONT_SIZE_MIN, PRICE_SCALE_WIDTH,
+    PRICE_SCALE_FONT_SIZE_MAX, PRICE_SCALE_WIDTH,
 };
 use crate::Bar;
 use serde::{Deserialize, Serialize};

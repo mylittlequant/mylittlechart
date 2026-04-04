@@ -674,7 +674,6 @@ impl TimeframeVisibilityConfig {
             // Weeks
             "1w" | "w" | "w1" => Some(("weeks", 1)),
             // Months
-            "1m" if label.chars().last() == Some('M') => Some(("months", 1)), // "1M" uppercase
             "1mo" | "m1" => Some(("months", 1)),
             "3mo" => Some(("months", 3)),
             // Seconds

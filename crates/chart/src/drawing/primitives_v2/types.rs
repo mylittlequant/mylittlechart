@@ -707,18 +707,3 @@ pub fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f
     let ddy = py - proj_y;
     (ddx * ddx + ddy * ddy).sqrt()
 }
-
-/// Check if point is inside rectangle
-pub fn point_in_rect(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, tolerance: f64) -> bool {
-    let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-    let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-    px >= min_x - tolerance && px <= max_x + tolerance &&
-    py >= min_y - tolerance && py <= max_y + tolerance
-}
-
-/// Calculate distance from point to point
-pub fn point_distance(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    (dx * dx + dy * dy).sqrt()
-}

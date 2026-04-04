@@ -436,17 +436,17 @@ impl PocDetector {
         let volume = bar.volume;
         
         // Анализируем положение цены относительно POC уровней
-        let mut price_above_poc = 0;
-        let mut price_below_poc = 0;
+        let mut _price_above_poc = 0;
+        let mut _price_below_poc = 0;
         let mut total_volume_above = 0.0;
         let mut total_volume_below = 0.0;
-        
+
         for level in &self.analysis.active_levels {
             if current_price > level.price {
-                price_above_poc += 1;
+                _price_above_poc += 1;
                 total_volume_above += level.volume;
             } else if current_price < level.price {
-                price_below_poc += 1;
+                _price_below_poc += 1;
                 total_volume_below += level.volume;
             }
         }

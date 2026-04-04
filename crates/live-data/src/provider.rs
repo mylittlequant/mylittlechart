@@ -173,6 +173,7 @@ impl DataProvider for LiveDataProvider {
 ///
 /// Re-exports the bridge helper so callers in chart-app can use it without
 /// directly importing from bridge internals.
+#[allow(dead_code)]
 pub fn parse_account_type(label: &str) -> AccountType {
     account_type_from_short_label(label)
 }

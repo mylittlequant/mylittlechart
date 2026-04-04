@@ -10,9 +10,6 @@ use zengeld_chart::render::RenderContext as ChartRenderContext;
 use uzor::render::{RenderContext as UzorRenderContext, RenderContextExt, TextAlign, TextBaseline};
 use uzor_backend_vello_gpu::VelloGpuRenderContext as InnerContext;
 
-/// Vello color type alias — same underlying type as the GPU backend.
-pub type Color = vello::peniko::color::AlphaColor<vello::peniko::color::Srgb>;
-
 // ─── Coordinate-space override ────────────────────────────────────────────────
 
 /// Per-window coordinate space set by `set_coordinate_space`.

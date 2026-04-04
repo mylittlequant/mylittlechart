@@ -1070,8 +1070,8 @@ fn render_sync_tab(
     state: &UserSettingsState,
     text_color: &str,
     scroll_widget_theme: &WidgetTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
+    _input_coordinator: &mut uzor::input::InputCoordinator,
+    _layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
     let container = ScrollableContainer::new(
@@ -1083,7 +1083,7 @@ fn render_sync_tab(
     let x = viewport_rect.x;
     let available_w = container.content_width();
     let mut cy = container.content_y();
-    let section_gap = 20.0;
+    let _section_gap = 20.0;
 
     // ── Gate: Unofficial Build / Attestation Rejected ─────────────────────────
     let sync_tab_locked = state.is_unofficial_build || state.attestation_rejected;

@@ -120,12 +120,10 @@ impl ParabolicSAR {
         let prev_sar = self.sar;
         let new_sar = prev_sar + self.af * (self.ep - prev_sar);
         
-        let mut trend_changed = false;
-        
         if self.trend == 1 {
             // Восходящий тренд
             self.sar = new_sar;
-            
+
             // SAR не должен быть выше минимумов последних двух баров
             let len = self.lows.len();
             if len >= 2 {
@@ -134,16 +132,15 @@ impl ParabolicSAR {
                     self.sar = min_low;
                 }
             }
-            
+
             // Проверяем новый максимум
             if high > self.ep {
                 self.ep = high;
                 self.af = (self.af + self.af_increment).min(self.af_max);
             }
-            
+
             // Проверяем разворот тренда
             if low <= self.sar {
-                trend_changed = true;
                 self.trend = -1;
                 self.sar = self.ep; // SAR становится предыдущим максимумом
                 self.ep = low;      // EP становится текущим минимумом
@@ -152,7 +149,7 @@ impl ParabolicSAR {
         } else {
             // Нисходящий тренд
             self.sar = new_sar;
-            
+
             // SAR не должен быть ниже максимумов последних двух баров
             let len = self.highs.len();
             if len >= 2 {
@@ -161,16 +158,15 @@ impl ParabolicSAR {
                     self.sar = max_high;
                 }
             }
-            
+
             // Проверяем новый минимум
             if low < self.ep {
                 self.ep = low;
                 self.af = (self.af + self.af_increment).min(self.af_max);
             }
-            
+
             // Проверяем разворот тренда
             if high >= self.sar {
-                trend_changed = true;
                 self.trend = 1;
                 self.sar = self.ep; // SAR становится предыдущим минимумом
                 self.ep = high;     // EP становится текущим максимумом

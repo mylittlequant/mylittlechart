@@ -23,7 +23,7 @@ use crate::{GridOptions, Legend, Watermark, Tooltip, PriceLine, MarkerManager};
 use crate::drawing::{DrawingManager, SignalManager, TradeManager};
 use crate::chart::{CompareOverlay, CompareSeries, get_compare_color};
 use crate::state::{SubPane, PaneManager, CommandHistory, Command};
-use crate::data_provider::{DataProvider, SharedDataProvider, NullDataProvider};
+use crate::data_provider::{SharedDataProvider, NullDataProvider};
 use crate::scale_settings::ScaleSettings;
 use crate::indicator_source::{IndicatorSource, NullIndicatorSource};
 use crate::panel_app::{ChartToolbarState, ToolbarConfig};
