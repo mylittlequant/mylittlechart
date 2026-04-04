@@ -5478,8 +5478,41 @@ impl ChartApp {
             }
         }
 
-        // Handle color picker hex input editing
+        // Handle color picker hex input editing — delegated to TextInputManager.
         // Check all color picker instances; the first one with hex_editing=true consumes the event.
+        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
+            let action = self.text_input.on_char(ch);
+            match action {
+                crate::text_input::FieldAction::Commit(_) | crate::text_input::FieldAction::Cancel => {
+                    // Close hex editing on all pickers.
+                    self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.chart_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.compare_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.panel_color_picker.hex_editing = false;
+                    self.text_input.blur();
+                }
+                crate::text_input::FieldAction::TextChanged(ref new_hex) => {
+                    // Live-apply: sync the new hex text to the active picker.
+                    let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                        (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
+                        (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
+                        (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
+                        (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
+                        (&mut self.panel_app.panel_color_picker, "panel"),
+                    ];
+                    for (picker, _src) in pickers {
+                        if picker.hex_editing {
+                            picker.hex_set_text(new_hex);
+                            break;
+                        }
+                    }
+                }
+                crate::text_input::FieldAction::None => {}
+            }
+            return;
+        }
+        // Legacy fallback: if hex_editing is set but manager isn't focused, use old path.
         {
             let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
                 (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
@@ -5492,11 +5525,9 @@ impl ChartApp {
                 if picker.hex_editing {
                     match ch {
                         '\r' | '\n' => {
-                            // Enter: apply hex and exit editing mode
                             picker.hex_editing = false;
                         }
                         '\x1b' => {
-                            // Escape: cancel editing (revert to current color hex)
                             let color = picker.current_color.clone();
                             picker.hex_set_text(&color);
                             picker.hex_editing = false;
@@ -6676,6 +6707,38 @@ impl ChartApp {
             return;
         }
 
+        // ── Hex color picker key routing — delegated to TextInputManager ─────
+        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
+            let action = self.text_input.on_key(key.clone());
+            match action {
+                crate::text_input::FieldAction::Commit(_) | crate::text_input::FieldAction::Cancel => {
+                    self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.chart_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.compare_settings_state.color_picker.hex_editing = false;
+                    self.panel_app.panel_color_picker.hex_editing = false;
+                    self.text_input.blur();
+                }
+                crate::text_input::FieldAction::TextChanged(ref new_hex) => {
+                    let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                        (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
+                        (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
+                        (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
+                        (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
+                        (&mut self.panel_app.panel_color_picker, "panel"),
+                    ];
+                    for (picker, _src) in pickers {
+                        if picker.hex_editing {
+                            picker.hex_set_text(new_hex);
+                            break;
+                        }
+                    }
+                }
+                crate::text_input::FieldAction::None => {}
+            }
+            return;
+        }
+
         // ── Global undo/redo — handled before any modal short-circuits ────────
         match key {
             KeyPress::Undo => {
@@ -6813,6 +6876,11 @@ impl ChartApp {
             let start_byte = editing.char_to_byte_pos(start);
             let end_byte = editing.char_to_byte_pos(end);
             Some(editing.text[start_byte..end_byte].to_string())
+        }
+
+        // TextInputManager handles all migrated fields (HexColor for Phase 1).
+        if let Some(text) = self.text_input.copy_selection() {
+            return Some(text);
         }
 
         // Chart browser search
@@ -13515,31 +13583,31 @@ impl ChartApp {
                 }
             }
             ColorPickerL2HitResult::HexInput => {
-                // Toggle hex editing mode for the active picker
-                match source {
-                    "primitive" => {
-                        self.panel_app.primitive_settings_state.color_picker.hex_editing =
-                            !self.panel_app.primitive_settings_state.color_picker.hex_editing;
+                // Toggle hex editing mode for the active picker.
+                // When enabling: sync text to manager and focus the HexColor field.
+                // When disabling: blur the manager field.
+                let active_picker: Option<&mut zengeld_chart::ui::color_picker_state::ColorPickerState> = match source {
+                    "primitive" => Some(&mut self.panel_app.primitive_settings_state.color_picker),
+                    "indicator" => Some(&mut self.panel_app.indicator_settings_state.color_picker),
+                    "chart"     => Some(&mut self.panel_app.chart_settings_state.color_picker),
+                    "compare"   => Some(&mut self.panel_app.compare_settings_state.color_picker),
+                    "panel"     => Some(&mut self.panel_app.panel_color_picker),
+                    _           => None,
+                };
+                if let Some(picker) = active_picker {
+                    picker.hex_editing = !picker.hex_editing;
+                    if picker.hex_editing {
+                        // Sync the current hex text into the manager and focus it.
+                        let hex = picker.hex_input.clone();
+                        self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
+                        self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
+                        self.text_input.focus(crate::text_input::FieldId::HexColor);
+                        eprintln!("[ChartApp] color picker hex input activated (manager focused)");
+                    } else {
+                        self.text_input.blur();
+                        eprintln!("[ChartApp] color picker hex input deactivated");
                     }
-                    "indicator" => {
-                        self.panel_app.indicator_settings_state.color_picker.hex_editing =
-                            !self.panel_app.indicator_settings_state.color_picker.hex_editing;
-                    }
-                    "chart" => {
-                        self.panel_app.chart_settings_state.color_picker.hex_editing =
-                            !self.panel_app.chart_settings_state.color_picker.hex_editing;
-                    }
-                    "compare" => {
-                        self.panel_app.compare_settings_state.color_picker.hex_editing =
-                            !self.panel_app.compare_settings_state.color_picker.hex_editing;
-                    }
-                    "panel" => {
-                        self.panel_app.panel_color_picker.hex_editing =
-                            !self.panel_app.panel_color_picker.hex_editing;
-                    }
-                    _ => {}
                 }
-                eprintln!("[ChartApp] color picker hex input toggled");
             }
             ColorPickerL2HitResult::Inside => {} // absorb
             ColorPickerL2HitResult::Outside => {

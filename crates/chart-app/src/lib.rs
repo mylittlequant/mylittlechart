@@ -16,6 +16,7 @@
 
 pub mod input;
 pub mod scroll_dispatch;
+pub mod text_input;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
@@ -489,6 +490,14 @@ pub struct ChartApp {
     ///
     /// Format: `window_id → Vec<instance_id>`.  Cleared after applied.
     pub(crate) pending_sub_pane_order: std::collections::HashMap<u64, Vec<u64>>,
+
+    /// Central text-input manager — owns text/cursor/selection for all fields.
+    ///
+    /// All text fields in the application delegate their state to this manager.
+    /// Renderers register field geometry each frame via `update_field`; input
+    /// handlers call `on_char` / `on_key` / `on_drag_*` instead of touching
+    /// scattered per-field state copies.
+    pub text_input: text_input::TextInputManager,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -809,6 +818,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            text_input: text_input::TextInputManager::new(),
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1076,6 +1086,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            text_input: text_input::TextInputManager::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1239,6 +1250,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            text_input: text_input::TextInputManager::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
