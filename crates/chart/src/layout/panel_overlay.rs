@@ -210,17 +210,13 @@ pub fn render_leaf_tab(
         display_text
     };
 
-    // Shadow — universal black overlay works on any theme.
-    ctx.set_fill_color("rgba(0,0,0,0.5)");
-    ctx.fill_text(&final_text, text_x + 1.0, center_y + 1.0);
-
     // Main text color: brighter for active, dimmer for inactive.
     let text_color = if is_active {
-        hex_with_alpha(&toolbar_theme.item_text_active, 0.90)
+        &toolbar_theme.item_text_active
     } else {
-        hex_with_alpha(&toolbar_theme.item_text_muted, 0.80)
+        &toolbar_theme.item_text_muted
     };
-    ctx.set_fill_color(&text_color);
+    ctx.set_fill_color(text_color);
     ctx.fill_text(&final_text, text_x, center_y);
 
     // ── Color tag square ──────────────────────────────────────────────────────

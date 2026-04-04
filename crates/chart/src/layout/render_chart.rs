@@ -2171,8 +2171,12 @@ pub fn render_sub_pane_left_overlay(
     let gap = 2.0;
     let margin_left = 8.0; // matches the old title x-offset
     let title_x = (content.x + margin_left).round();
-    // Vertical center for text and icons — aligns with icon center row.
-    let title_center_y = (content.y + content.height / 2.0).round();
+    // Pill geometry (used for both hover and non-hover text alignment).
+    let pill_y_raw = content.y + 2.0;
+    let pill_height = 22.0;
+    // Text Y = pill vertical center, rounded for crisp rendering.
+    let title_center_y = (pill_y_raw + pill_height / 2.0).round();
+    let pill_y = title_center_y - pill_height / 2.0;
 
     ctx.set_font("10px sans-serif");
     ctx.set_text_align(crate::render::TextAlign::Left);
@@ -2199,8 +2203,6 @@ pub fn render_sub_pane_left_overlay(
     let text_to_buttons_gap = 6.0;
     let pill_padding = 4.0;
     let pill_x = title_x - pill_padding;
-    let pill_y = content.y + 2.0;
-    let pill_height = 22.0;
     let pill_width = pill_padding + title_width + text_to_buttons_gap + buttons_width + pill_padding;
 
     // Clip: don't draw if the pill would overlap the right-side overlay area.
