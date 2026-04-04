@@ -6362,10 +6362,6 @@ impl ApplicationHandler for App<'_> {
                     .unwrap_or_default()
                     .as_secs() as i64;
 
-                // Compose the launch banner text for a Completed event.
-                // Show it once per launch: only if the banner has not already been shown.
-                let compose_launch_banner = is_completed;
-
                 // Pre-extract cloud profile state changes before the windows loop
                 // so we can call methods that need &mut self after the loop.
                 let cloud_profiles_loaded: Option<Vec<zengeld_chart::ui::modal_settings::CloudProfileEntry>> =
@@ -6442,23 +6438,6 @@ impl ApplicationHandler for App<'_> {
                         }
                     }
 
-                    // Show the launch banner on the first successful sync completion
-                    // for connected+authenticated users (shown at most once per launch).
-                    if compose_launch_banner
-                        && !pw.chart.launch_banner_visible
-                        && pw.chart.launch_banner_shown_at.is_none()
-                        && uss.is_logged_in
-                        && uss.client_mode_connected
-                    {
-                        let version = env!("CARGO_PKG_VERSION");
-                        pw.chart.launch_banner_text = format!(
-                            "v{}  \u{2022}  {}",
-                            version,
-                            label
-                        );
-                        pw.chart.launch_banner_visible = true;
-                        pw.chart.launch_banner_shown_at = Some(std::time::Instant::now());
-                    }
                 }
 
                 // ── ProfileRestored: refresh the local profile index ──────────
@@ -6503,20 +6482,6 @@ impl ApplicationHandler for App<'_> {
                         .profile
                         .sync_state
                         .last_synced_checksums = checksums;
-                }
-            }
-        }
-
-        // ── Launch banner auto-dismiss (10-second timeout) ───────────────────
-        {
-            let now = std::time::Instant::now();
-            for pw in self.windows.values_mut() {
-                if pw.chart.launch_banner_visible {
-                    if let Some(shown_at) = pw.chart.launch_banner_shown_at {
-                        if now.duration_since(shown_at) >= std::time::Duration::from_secs(10) {
-                            pw.chart.launch_banner_visible = false;
-                        }
-                    }
                 }
             }
         }

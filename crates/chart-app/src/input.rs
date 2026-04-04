@@ -7541,13 +7541,6 @@ impl ChartApp {
             }
         }
 
-        // === Launch banner dismiss ===
-        if widget_id == "dismiss_launch_banner" {
-            self.launch_banner_visible = false;
-            eprintln!("[ChartApp] launch banner dismissed");
-            return;
-        }
-
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {

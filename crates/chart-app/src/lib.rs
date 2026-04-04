@@ -469,17 +469,6 @@ pub struct ChartApp {
     /// - setup_us:   time spent in layout setup before chart render starts
     pub render_timing_us: (u64, u64, u64, u64),
 
-    // ── Launch Banner ─────────────────────────────────────────────────────────
-    /// Whether the launch banner is currently visible. Set on first successful
-    /// sync completion for connected+authenticated users, cleared on dismiss or
-    /// after 10 seconds. In-memory only — not persisted.
-    pub launch_banner_visible: bool,
-    /// Text displayed in the launch banner center (e.g. version + sync summary).
-    pub launch_banner_text: String,
-    /// Instant when the banner was shown — used for the 10-second auto-dismiss.
-    /// None until the banner is first made visible.
-    pub launch_banner_shown_at: Option<std::time::Instant>,
-
     // ── Sub-pane height restore ───────────────────────────────────────────────
     /// Per-window sub-pane height ratios pending application on the next
     /// `sync_sub_panes_from_manager` call.  Populated during `LoadPreset` from
@@ -816,9 +805,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
-            launch_banner_visible: false,
-            launch_banner_text: String::new(),
-            launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
@@ -1086,9 +1072,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
-            launch_banner_visible: false,
-            launch_banner_text: String::new(),
-            launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
@@ -1252,9 +1235,6 @@ impl ChartApp {
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
-            launch_banner_visible: false,
-            launch_banner_text: String::new(),
-            launch_banner_shown_at: None,
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
@@ -5544,56 +5524,6 @@ impl ChartApp {
             out_last_wl_group_name_result = Some(result);
         } else {
             out_last_wl_group_name_result = None;
-        }
-
-        // 8d. Launch Banner — rendered last (topmost layer).
-        //     A thin 30 px banner at the top of the window shown once per launch
-        //     for connected+authenticated users. Dismissed by clicking X or after 10s.
-        if self.launch_banner_visible {
-            use uzor::input::Sense;
-            use zengeld_chart::ui::z_order::ZLayer;
-
-            let banner_h = 30.0;
-            let text_color_main = toolbar_theme.item_text.as_str();
-            let version = env!("CARGO_PKG_VERSION");
-
-            // Background
-            ctx.set_fill_color("rgba(20,22,28,0.92)");
-            ctx.fill_rect(0.0, 0.0, w, banner_h);
-            // Subtle bottom border (1 px fill)
-            ctx.set_fill_color("rgba(244,205,99,0.25)");
-            ctx.fill_rect(0.0, banner_h - 1.0, w, 1.0);
-
-            // Left: version
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(244,205,99,0.80)");
-            ctx.set_text_align(uzor::render::TextAlign::Left);
-            ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-            ctx.fill_text(&format!("v{}", version), 12.0, banner_h / 2.0);
-
-            // Center: sync status / banner text
-            if !self.launch_banner_text.is_empty() {
-                ctx.set_fill_color(text_color_main);
-                ctx.set_text_align(uzor::render::TextAlign::Center);
-                ctx.fill_text(&self.launch_banner_text, w / 2.0, banner_h / 2.0);
-            }
-
-            // Right: dismiss button "✕"
-            let dismiss_btn_w = 24.0;
-            let dismiss_btn_x = w - dismiss_btn_w - 4.0;
-            ctx.set_fill_color("rgba(254,255,238,0.45)");
-            ctx.set_text_align(uzor::render::TextAlign::Center);
-            ctx.fill_text("\u{2715}", dismiss_btn_x + dismiss_btn_w / 2.0, banner_h / 2.0);
-
-            // Register dismiss click zone
-            let banner_layer = ZLayer::Modal.push_named(&mut *self.input_coordinator.borrow_mut(), "launch_banner");
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "dismiss_launch_banner",
-                uzor::Rect::new(dismiss_btn_x, 0.0, dismiss_btn_w, banner_h),
-                Sense::CLICK,
-                &banner_layer,
-            );
-            self.input_coordinator.borrow_mut().pop_layer(&banner_layer);
         }
 
         // 9. End frame — collect widget responses (ignored for now)
