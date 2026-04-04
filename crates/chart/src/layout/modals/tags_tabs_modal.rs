@@ -262,7 +262,7 @@ pub fn render_tags_tabs_modal(
         text_disabled:  toolbar_theme.item_text_muted.clone(),
         border_normal:  toolbar_theme.separator.clone(),
         border_hover:   toolbar_theme.separator.clone(),
-        border_focused: toolbar_theme.accent.clone(),
+        border_focused: toolbar_theme.item_bg_active.clone(),
         accent:         toolbar_theme.accent.clone(),
         accent_hover:   toolbar_theme.accent.clone(),
         success:        "#26a69a".to_string(),

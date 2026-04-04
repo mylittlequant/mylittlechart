@@ -35,7 +35,7 @@ pub fn toolbar_to_widget_theme(toolbar_theme: &ToolbarTheme, frame_theme: &Frame
         text_disabled: toolbar_theme.item_text_muted.clone(),
         border_normal: toolbar_theme.separator.clone(),
         border_hover: toolbar_theme.item_bg_hover.clone(),
-        border_focused: toolbar_theme.accent.clone(),
+        border_focused: toolbar_theme.item_bg_active.clone(),
         accent: toolbar_theme.accent.clone(),
         accent_hover: toolbar_theme.accent_hover.clone(),
         success: toolbar_theme.success.clone(),

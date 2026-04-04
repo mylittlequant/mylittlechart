@@ -561,20 +561,20 @@ impl ChartTheme {
 
                 scale_bg: "#0e1525",
                 scale_border: "#3a2e14",
-                scale_text: "#FEFFEE",
+                scale_text: "#E8D5A3",
                 scale_text_muted: "#6b7a8d",
 
                 time_scale_bg: "#0e1525",
                 time_scale_border: "#3a2e14",
-                time_scale_text: "#FEFFEE",
+                time_scale_text: "#E8D5A3",
                 time_scale_text_medium: "#b8c4d0",
                 time_scale_text_muted: "#6b7a8d",
 
                 crosshair_line: "#2158A4",
                 crosshair_label_bg: "#2158A4",
-                crosshair_label_text: "#FEFFEE",
+                crosshair_label_text: "#E8D5A3",
 
-                legend_text: "#FEFFEE",
+                legend_text: "#E8D5A3",
                 legend_value_up: "#26a69a",
                 legend_value_down: "#ef5350",
 
@@ -583,7 +583,7 @@ impl ChartTheme {
                 sidebar_bg: "#0e1525",
                 sidebar_border: "#3a2e14",
                 sidebar_header_bg: "#0a0f1a",
-                sidebar_text: "#FEFFEE",
+                sidebar_text: "#E8D5A3",
 
                 chart_border: "#3a2e14",
                 frame_border: "#3a2e14",
@@ -1142,7 +1142,7 @@ impl UITheme {
                 button_rounding: 6.0,
                 dropdown_bg: "#131d2e",
                 status_bar_bg: "#0a0f1a",
-                text_primary: "#FEFFEE",
+                text_primary: "#E8D5A3",
                 text_secondary: "#b8c4d0",
                 text_muted: "#6b7a8d",
                 border: "#0a0f1a",
