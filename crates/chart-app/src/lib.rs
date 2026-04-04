@@ -4493,24 +4493,18 @@ impl ChartApp {
 
             // Render separators between split leaves.
             // thickness_for_state() returns 2.0 for idle, 4.0 for hover/dragging.
-            // We use thickness > 2.0 as a proxy for "highlighted" state.
             let separators: Vec<_> = self.panel_app.panel_grid.docking()
                 .separators()
                 .iter()
                 .map(|sep| {
                     let thickness = sep.thickness_for_state();
-                    let highlighted = thickness > 2.0;
-                    (sep.orientation, sep.position, sep.start, sep.length, thickness, highlighted)
+                    (sep.orientation, sep.position, sep.start, sep.length, thickness)
                 })
                 .collect();
 
             use zengeld_chart::SeparatorOrientation;
-            for (orientation, position, start, length, thickness, highlighted) in separators {
-                let color = if highlighted {
-                    "rgba(115, 115, 153, 1.0)"
-                } else {
-                    "rgba(64, 64, 77, 1.0)"
-                };
+            for (orientation, position, start, length, thickness) in separators {
+                let color: &str = &frame_theme.toolbar_border;
                 // Convert content-relative separator coords to absolute screen coords.
                 let (rect_x, rect_y, rect_w, rect_h) = match orientation {
                     SeparatorOrientation::Vertical => {
