@@ -13545,6 +13545,7 @@ impl ChartApp {
                         let hex = picker.hex_input.clone();
                         self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
                         self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
+                        self.text_input.focus(crate::text_input::FieldId::HexColor);
                         self.text_input.on_drag_start(x, y);
                     }
                 }
