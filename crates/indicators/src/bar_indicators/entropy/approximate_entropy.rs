@@ -30,8 +30,8 @@ impl ApproximateEntropy {
     pub fn new(period: usize, m: usize, r: f64) -> Self {
         Self {
             period: period.min(512),
-            m: m.max(1).min(5), // Ограничиваем разумными пределами
-            r: r.max(0.01).min(1.0), // Толерантность не может быть слишком маленькой или большой
+            m: m.clamp(1, 5), // Ограничиваем разумными пределами
+            r: r.clamp(0.01, 1.0), // Толерантность не может быть слишком маленькой или большой
             data: ArrayVec::new(),
             apen: 0.0,
             regularity_score: 0.5,
@@ -103,7 +103,7 @@ impl ApproximateEntropy {
         
         // Нормализуем для получения регулярности (0-1)
         // Максимальное значение ApEn примерно 2.0 для случайных данных
-        self.regularity_score = 1.0 - (self.apen / 2.0).min(1.0).max(0.0);
+        self.regularity_score = 1.0 - (self.apen / 2.0).clamp(0.0, 1.0);
     }
     
     /// Рассчитать φ(m) для заданной длины паттерна

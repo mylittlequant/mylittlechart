@@ -14,8 +14,8 @@ pub struct SwingStrengthScore {
 
 impl SwingStrengthScore {
     pub fn new(left: usize, right: usize) -> Self {
-        let l = left.max(1).min(10);
-        let r = right.max(1).min(10);
+        let l = left.clamp(1, 10);
+        let r = right.clamp(1, 10);
         let cap = (l + r + 2).max(16);
         Self {
             left: l,

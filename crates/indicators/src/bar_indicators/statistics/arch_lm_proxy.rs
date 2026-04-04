@@ -14,8 +14,8 @@ pub struct ArchLmProxy {
 
 impl ArchLmProxy {
     pub fn new(window: usize, lags: usize) -> Self {
-        let w = window.max(50).min(1024);
-        let l = lags.max(1).min(10);
+        let w = window.clamp(50, 1024);
+        let l = lags.clamp(1, 10);
         Self {
             window: w,
             lags: l,

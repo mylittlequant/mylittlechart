@@ -538,7 +538,7 @@ impl FastFourierTransform {
     /// Установить параметры сглаживания
     pub fn set_spectral_smoothing(&mut self, enabled: bool, factor: f64) {
         self.spectral_smoothing = enabled;
-        self.smoothing_factor = factor.max(0.0).min(1.0);
+        self.smoothing_factor = factor.clamp(0.0, 1.0);
     }
     
     /// Проверить готовность
@@ -558,7 +558,7 @@ impl FastFourierTransform {
 
     /// Установить коэффициент перекрытия окон
     pub fn set_overlap_ratio(&mut self, ratio: f64) {
-        self.overlap_ratio = ratio.max(0.0).min(1.0);
+        self.overlap_ratio = ratio.clamp(0.0, 1.0);
         self.hop_size = (self.window_size as f64 * (1.0 - self.overlap_ratio)) as usize;
     }
 

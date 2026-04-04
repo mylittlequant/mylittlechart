@@ -522,7 +522,7 @@ fn generate_volatility_clustering(count: usize, start_ts: i64) -> Vec<Bar> {
 
         // Mean reversion in volatility
         current_vol = 0.95 * current_vol + 0.05 * 1.0 + vol_shock;
-        current_vol = current_vol.max(0.3).min(5.0);
+        current_vol = current_vol.clamp(0.3, 5.0);
 
         let return_val = (i as f64 * 0.1).sin() * current_vol * 0.5;
         price *= 1.0 + return_val / 100.0;
@@ -762,7 +762,7 @@ fn generate_ranging(count: usize, start_ts: i64) -> Vec<Bar> {
             (i as f64 * 0.15).sin() * 0.3
         };
 
-        price = (price + change).max(50.0).min(150.0);
+        price = (price + change).clamp(50.0, 150.0);
 
         let open = price - change * 0.4;
         let close = price;
@@ -938,7 +938,7 @@ fn generate_tick_data(count: usize, start_ts: i64) -> Vec<Bar> {
         let price_change = imbalance * tick_count.sqrt() * 0.01;
 
         price *= 1.0 + price_change;
-        price = price.max(80.0).min(120.0);
+        price = price.clamp(80.0, 120.0);
 
         let open = price / (1.0 + price_change);
         let close = price;

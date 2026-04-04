@@ -20,7 +20,7 @@ pub struct ProjectionBands {
 impl ProjectionBands {
     pub fn new(window: usize, k: f64) -> Self {
         Self {
-            window: window.max(2).min(512),
+            window: window.clamp(2, 512),
             k: if k > 0.0 { k } else { 2.0 },
             source: OhlcvField::Close,
             buf: ArrayVec::new(),
@@ -34,7 +34,7 @@ impl ProjectionBands {
 
     pub fn with_source(window: usize, k: f64, source: OhlcvField) -> Self {
         Self {
-            window: window.max(2).min(512),
+            window: window.clamp(2, 512),
             k: if k > 0.0 { k } else { 2.0 },
             source,
             buf: ArrayVec::new(),

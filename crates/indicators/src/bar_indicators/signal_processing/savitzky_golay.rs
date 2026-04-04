@@ -90,12 +90,12 @@ impl SavitzkyGolayFilter {
     /// Проверка размера окна
     fn validate_window_size(size: usize) -> usize {
         let size = if size.is_multiple_of(2) { size + 1 } else { size }; // Должен быть нечетным
-        size.max(5).min(63) // От 5 до 63
+        size.clamp(5, 63) // От 5 до 63
     }
     
     /// Проверка порядка полинома
     fn validate_polynomial_order(order: usize, window_size: usize) -> usize {
-        order.max(1).min(6).min(window_size - 1) // Порядок должен быть меньше размера окна
+        order.clamp(1, 6).min(window_size - 1) // Порядок должен быть меньше размера окна
     }
     
     /// Вычисление коэффициентов Савицкого-Голея

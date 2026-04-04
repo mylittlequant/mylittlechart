@@ -16,7 +16,7 @@ pub struct StftBandEnergyRatio {
 impl StftBandEnergyRatio {
     pub fn new(window: usize, split: usize) -> Self {
         Self {
-            window: window.max(4).min(1024),
+            window: window.clamp(4, 1024),
             split: split.clamp(1, 8),
             buf: ArrayVec::new(),
             idx: 0,

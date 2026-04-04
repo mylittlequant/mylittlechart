@@ -252,7 +252,7 @@ impl EhlersRocketRsi {
         let rocket_rsi = regular_rsi + self.smoothing_factor * smoothed_momentum * 10.0;
         
         // Ограничиваем диапазон 0-100
-        rocket_rsi.max(0.0).min(100.0)
+        rocket_rsi.clamp(0.0, 100.0)
     }
     
     /// Рассчитать momentum и производные
@@ -279,7 +279,7 @@ impl EhlersRocketRsi {
         
         // Momentum factor (нормализованный momentum)
         let momentum_range = 20.0; // Диапазон для нормализации
-        self.current_result.momentum_factor = (smoothed_velocity / momentum_range).max(-1.0).min(1.0);
+        self.current_result.momentum_factor = (smoothed_velocity / momentum_range).clamp(-1.0, 1.0);
     }
     
     /// Рассчитать качество сигнала

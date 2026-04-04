@@ -10,7 +10,7 @@ pub struct QuarterTurnEffect {
 impl QuarterTurnEffect {
     pub fn new(window_days: u32) -> Self {
         Self {
-            window: window_days.max(1).min(15),
+            window: window_days.clamp(1, 15),
             value: 0.0,
         }
     }

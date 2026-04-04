@@ -154,7 +154,7 @@ impl Garch {
         }
         
         // Ограничиваем phi для стационарности
-        self.phi = self.phi.max(-0.99).min(0.99);
+        self.phi = self.phi.clamp(-0.99, 0.99);
     }
     
     /// Рассчитать остатки модели среднего
@@ -549,7 +549,7 @@ impl EGarch {
             self.mu = mean_r;
         }
         
-        self.phi = self.phi.max(-0.99).min(0.99);
+        self.phi = self.phi.clamp(-0.99, 0.99);
     }
     
     /// Рассчитать остатки

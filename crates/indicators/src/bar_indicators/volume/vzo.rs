@@ -23,7 +23,7 @@ pub struct Vzo {
 impl Vzo {
     pub fn new(period: usize) -> Self {
         Self {
-            period: period.max(2).min(1024),
+            period: period.clamp(2, 1024),
             vol_pos: ArrayVec::new(),
             vol_neg: ArrayVec::new(),
             sum_pos: 0.0,

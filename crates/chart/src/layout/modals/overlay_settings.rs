@@ -286,7 +286,7 @@ pub fn render_overlay_settings_modal(
     // =========================================================================
     // Dynamic content height
     // =========================================================================
-    let content_height = match state.active_tab {
+    let content_height = (match state.active_tab {
         OverlayPanelTreeTab::TreeView => {
             (tree_node_count + 1) as f64 * (row_height + row_gap) + modal_padding * 2.0
         }
@@ -299,7 +299,7 @@ pub fn render_overlay_settings_modal(
         OverlayPanelTreeTab::Minimap => {
             200.0 + 40.0 + modal_padding * 3.0
         }
-    }.max(120.0).min(400.0);
+    }).clamp(120.0, 400.0);
 
     // =========================================================================
     // Tab width measurement and modal sizing

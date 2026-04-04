@@ -23,7 +23,7 @@ impl TrimaBands {
     pub fn new(period: usize, k: f64) -> Self {
         Self {
             trima: Trima::new(period.max(2)),
-            window: period.max(2).min(512),
+            window: period.clamp(2, 512),
             k: if k > 0.0 { k } else { 2.0 },
             source: OhlcvField::Close,
             buf: ArrayVec::new(),
@@ -38,7 +38,7 @@ impl TrimaBands {
     pub fn with_source(period: usize, k: f64, source: OhlcvField) -> Self {
         Self {
             trima: Trima::new(period.max(2)),
-            window: period.max(2).min(512),
+            window: period.clamp(2, 512),
             k: if k > 0.0 { k } else { 2.0 },
             source,
             buf: ArrayVec::new(),

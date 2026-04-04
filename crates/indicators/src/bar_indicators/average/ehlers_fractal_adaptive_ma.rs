@@ -168,7 +168,7 @@ impl EhlersFractalAdaptiveMa {
         let fractal_dim = (total_length / direct_distance).ln() / (self.period as f64).ln();
         
         // Ограничиваем значения от 1.0 до 2.0
-        fractal_dim.max(1.0).min(2.0)
+        fractal_dim.clamp(1.0, 2.0)
     }
     
     /// Вычисление коэффициента эффективности (как в AMA)

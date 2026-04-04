@@ -227,7 +227,7 @@ impl AdaptiveMovingAverage {
         adaptation_mode: AdaptationMode, 
         efficiency_method: EfficiencyMethod
     ) -> Self {
-        let period = period.max(2).min(200);
+        let period = period.clamp(2, 200);
         
         Self {
             period,
@@ -531,8 +531,7 @@ impl AdaptiveMovingAverage {
         };
         
         // Масштабируем фактор
-        self.adaptation_result.volatility_factor = (1.0 + normalized_volatility * self.adaptation_params.volatility_scaling)
-            .max(0.1).min(3.0);
+        self.adaptation_result.volatility_factor = (1.0 + normalized_volatility * self.adaptation_params.volatility_scaling).clamp(0.1, 3.0);
     }
     
     /// Фактор объема
@@ -551,8 +550,7 @@ impl AdaptiveMovingAverage {
             1.0
         };
         
-        self.adaptation_result.volume_factor = (1.0 + (volume_ratio - 1.0) * self.adaptation_params.volume_scaling)
-            .max(0.1).min(3.0);
+        self.adaptation_result.volume_factor = (1.0 + (volume_ratio - 1.0) * self.adaptation_params.volume_scaling).clamp(0.1, 3.0);
     }
     
     /// Фактор тренда
@@ -591,8 +589,7 @@ impl AdaptiveMovingAverage {
         };
         
         self.trend_strength = normalized_slope.abs();
-        self.adaptation_result.trend_factor = (1.0 + self.trend_strength * self.adaptation_params.trend_sensitivity)
-            .max(0.1).min(2.0);
+        self.adaptation_result.trend_factor = (1.0 + self.trend_strength * self.adaptation_params.trend_sensitivity).clamp(0.1, 2.0);
     }
     
     /// Уровень шума
@@ -668,7 +665,7 @@ impl AdaptiveMovingAverage {
         };
         
         // Ограничиваем эффективность
-        let bounded_efficiency = efficiency.max(0.01).min(1.0);
+        let bounded_efficiency = efficiency.clamp(0.01, 1.0);
         
         // Вычисляем адаптивный период
         let fast_alpha = 2.0 / (self.adaptation_params.fast_period + 1.0);

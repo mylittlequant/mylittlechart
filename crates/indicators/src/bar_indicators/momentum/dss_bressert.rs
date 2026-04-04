@@ -19,7 +19,7 @@ pub struct DssBressert {
 
 impl DssBressert {
     pub fn new(k_period: usize, smooth_period: usize) -> Self {
-        let k = k_period.max(2).min(512);
+        let k = k_period.clamp(2, 512);
         let s = smooth_period.max(1);
         Self {
             k_period: k,

@@ -6031,7 +6031,7 @@ impl ChartApp {
                             if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                                     if let Some(mut data) = window.drawing_manager.get_data_at(idx) {
-                                        data.width = width.max(0.5).min(20.0);
+                                        data.width = width.clamp(0.5, 20.0);
                                         window.drawing_manager.set_data_at(idx, &data);
                                     }
                                 }
@@ -11039,7 +11039,7 @@ impl ChartApp {
                 if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         if let Some(mut data) = window.drawing_manager.get_data_at(idx) {
-                            data.width = width.max(0.5).min(20.0);
+                            data.width = width.clamp(0.5, 20.0);
                             window.drawing_manager.set_data_at(idx, &data);
                         }
                     }

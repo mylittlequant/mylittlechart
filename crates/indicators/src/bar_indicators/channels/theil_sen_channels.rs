@@ -18,7 +18,7 @@ pub struct TheilSenChannels {
 impl TheilSenChannels {
     pub fn new(window: usize, k: f64) -> Self {
         Self {
-            window: window.max(5).min(256),
+            window: window.clamp(5, 256),
             k: if k > 0.0 { k } else { 2.0 },
             buf: ArrayVec::new(),
             idx: 0,

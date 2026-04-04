@@ -346,7 +346,7 @@ impl PivotChannels {
             };
             
             // Адаптивный множитель на основе текущей волатильности
-            self.width_multiplier = (current_volatility / self.avg_volatility).max(0.5).min(2.0);
+            self.width_multiplier = (current_volatility / self.avg_volatility).clamp(0.5, 2.0);
         }
     }
     

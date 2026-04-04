@@ -450,7 +450,7 @@ impl NeuralMomentumNetwork {
                 .collect();
             
             let avg_error = recent_errors.iter().sum::<f64>() / recent_errors.len() as f64;
-            self.current_result.confidence = (1.0 - avg_error).max(0.0).min(1.0);
+            self.current_result.confidence = (1.0 - avg_error).clamp(0.0, 1.0);
         }
         
         // Тренд momentum

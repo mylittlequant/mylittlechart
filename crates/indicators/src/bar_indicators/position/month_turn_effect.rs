@@ -10,7 +10,7 @@ pub struct MonthTurnEffect {
 impl MonthTurnEffect {
     pub fn new(window_days: u32) -> Self {
         Self {
-            window: window_days.max(1).min(10),
+            window: window_days.clamp(1, 10),
             value: 0.0,
         }
     }

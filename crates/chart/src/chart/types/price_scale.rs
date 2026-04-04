@@ -264,7 +264,7 @@ impl PriceScale {
     /// Uses approximately 30px between price grid lines.
     pub fn calc_step(&self, chart_height: f64) -> f64 {
         let range = self.range();
-        let target_ticks = (chart_height / 30.0).max(4.0).min(20.0);
+        let target_ticks = (chart_height / 30.0).clamp(4.0, 20.0);
         nice_price_step(range, target_ticks)
     }
 
@@ -590,7 +590,7 @@ impl PriceScale {
                 let pct_min = self.price_to_percent(self.price_min);
                 let pct_max = self.price_to_percent(self.price_max);
                 let pct_range = pct_max - pct_min;
-                let target_ticks = (chart_height / 30.0).max(4.0).min(20.0);
+                let target_ticks = (chart_height / 30.0).clamp(4.0, 20.0);
                 let step = nice_price_step(pct_range, target_ticks);
 
                 // Extend range by 50px worth of percent in each direction
@@ -621,7 +621,7 @@ impl PriceScale {
                 let log_max = safe_max.log10();
                 let log_range = log_max - log_min;
 
-                let target_ticks = (chart_height / 30.0).max(4.0).min(20.0);
+                let target_ticks = (chart_height / 30.0).clamp(4.0, 20.0);
                 let log_step = nice_price_step(log_range, target_ticks);
 
                 // Extend range by 50px worth of log-space in each direction

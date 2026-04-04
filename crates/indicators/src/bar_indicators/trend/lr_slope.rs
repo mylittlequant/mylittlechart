@@ -15,7 +15,7 @@ pub struct LrSlope {
 impl LrSlope {
     pub fn new(window: usize) -> Self {
         Self {
-            window: window.max(2).min(1024),
+            window: window.clamp(2, 1024),
             buf: ArrayVec::new(),
             idx: 0,
             filled: false,

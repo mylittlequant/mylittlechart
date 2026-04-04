@@ -36,7 +36,7 @@ impl ArchLmPvalueProxy {
         let k = self.dof.max(1) as f64;
         let stat = r2 * (k.max(1.0) * 10.0); // simple scaled proxy for LM
                                              // use simple survival proxy: p ≈ exp(-stat/2)
-        self.value = (-0.5 * stat).exp().min(1.0).max(0.0);
+        self.value = (-0.5 * stat).exp().clamp(0.0, 1.0);
         self.value
     }
 }

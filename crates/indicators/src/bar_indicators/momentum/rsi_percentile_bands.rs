@@ -21,7 +21,7 @@ impl RsiPercentileBands {
     pub fn new(rsi_period: usize, window: usize) -> Self {
         Self {
             rsi: Rsi::new(rsi_period.max(1)),
-            window: window.max(10).min(1024),
+            window: window.clamp(10, 1024),
             buf: ArrayVec::new(),
             idx: 0,
             filled: false,

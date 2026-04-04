@@ -122,7 +122,7 @@ impl HurstExponent {
                 self.hurst_exponent = self.rs_ratio.ln() / (n / 2.0).ln();
                 
                 // Ограничиваем значения в разумных пределах
-                self.hurst_exponent = self.hurst_exponent.max(0.0).min(1.0);
+                self.hurst_exponent = self.hurst_exponent.clamp(0.0, 1.0);
                 
                 // Рассчитываем persistence score
                 self.persistence_score = (self.hurst_exponent - 0.5) * 2.0; // -1.0 to 1.0

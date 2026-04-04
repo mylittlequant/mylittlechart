@@ -89,7 +89,7 @@ impl WilliamsR {
                 self.value = ((highest_high - current_close) / range) * -100.0;
 
                 // Ограничиваем значения в диапазоне [-100, 0]
-                self.value = self.value.max(-100.0).min(0.0);
+                self.value = self.value.clamp(-100.0, 0.0);
             }
         }
 

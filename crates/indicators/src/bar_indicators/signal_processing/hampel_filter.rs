@@ -17,7 +17,7 @@ pub struct HampelFilter {
 impl HampelFilter {
     pub fn new(window: usize, k: f64) -> Self {
         Self {
-            window: window.max(3).min(512),
+            window: window.clamp(3, 512),
             k: if k > 0.0 { k } else { 3.0 },
             buf: ArrayVec::new(),
             idx: 0,

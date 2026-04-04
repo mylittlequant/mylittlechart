@@ -304,7 +304,7 @@ impl VolatilityBreakoutDetector {
         
         // Нормализуем momentum
         let momentum_factor = if current_price > 0.0 {
-            (smoothed_momentum / current_price).max(-1.0).min(1.0)
+            (smoothed_momentum / current_price).clamp(-1.0, 1.0)
         } else {
             0.0
         };

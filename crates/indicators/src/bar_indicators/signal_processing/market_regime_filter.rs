@@ -277,7 +277,7 @@ impl MarketRegimeFilter {
         
         // Нормализуем momentum
         if price != 0.0 {
-            (smoothed_momentum / price).max(-1.0).min(1.0)
+            (smoothed_momentum / price).clamp(-1.0, 1.0)
         } else {
             0.0
         }

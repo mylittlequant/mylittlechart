@@ -12,7 +12,7 @@ pub struct KpssProxy {
 
 impl KpssProxy {
     pub fn new(window: usize) -> Self {
-        let w = window.max(50).min(1024);
+        let w = window.clamp(50, 1024);
         Self {
             window: w,
             buf: vec![0.0; w],

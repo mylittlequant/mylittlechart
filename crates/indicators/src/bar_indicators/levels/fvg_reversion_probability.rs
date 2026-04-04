@@ -24,7 +24,7 @@ impl FvgReversionProbability {
     pub fn new(horizon: usize) -> Self {
         Self {
             det: FvgDetector::new(),
-            horizon: horizon.max(1).min(50),
+            horizon: horizon.clamp(1, 50),
             active: Vec::new(),
             total: 0,
             hits: 0,

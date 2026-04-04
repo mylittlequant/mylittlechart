@@ -496,8 +496,7 @@ impl AdaptiveVolatilityRegime {
         // Общий счет волатильности (взвешенная сумма признаков)
         self.current_result.volatility_score = (features[0] * 0.3 + 
                                                features[1] * 0.3 +
-                                               features[2] * 0.25 +
-                                               features[3] * 0.15).min(1.0).max(0.0);
+                                               features[2] * 0.25 + features[3] * 0.15).clamp(0.0, 1.0);
         
         // Волатильность тренда
         if self.volatilities.len() >= 5 {
@@ -522,7 +521,7 @@ impl AdaptiveVolatilityRegime {
         if self.returns.len() >= 10 {
             let recent_returns: Vec<f64> = self.returns.iter().rev().take(10).copied().collect();
             let autocorr = self.calculate_autocorrelation(&recent_returns, 1);
-            self.current_result.mean_reversion_strength = (-autocorr).max(0.0).min(1.0);
+            self.current_result.mean_reversion_strength = (-autocorr).clamp(0.0, 1.0);
         }
     }
     

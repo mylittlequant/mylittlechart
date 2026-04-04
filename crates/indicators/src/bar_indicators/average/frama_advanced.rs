@@ -14,7 +14,7 @@ pub struct FramaAdvanced {
 impl FramaAdvanced {
     /// Создает новую расширенную FRAMA с настройками по умолчанию
     pub fn new(period: usize) -> Self {
-        let period = period.max(1).min(512); // Разрешаем период от 1
+        let period = period.clamp(1, 512); // Разрешаем период от 1
         Self {
             inner: FractalAdaptiveMovingAverage::new(period, FractalMethod::Standard),
             period,
@@ -23,7 +23,7 @@ impl FramaAdvanced {
     
     /// Создает расширенную FRAMA с выбранным методом
     pub fn new_with_method(period: usize, method: FractalMethod) -> Self {
-        let period = period.max(1).min(512);
+        let period = period.clamp(1, 512);
         Self {
             inner: FractalAdaptiveMovingAverage::new(period, method),
             period,
@@ -32,7 +32,7 @@ impl FramaAdvanced {
     
     /// Создает расширенную FRAMA с настройками alpha bounds
     pub fn new_with_alpha_bounds(period: usize, min_alpha: f64, max_alpha: f64) -> Self {
-        let period = period.max(1).min(512);
+        let period = period.clamp(1, 512);
         let mut frama = FractalAdaptiveMovingAverage::new(period, FractalMethod::Standard);
         frama.set_alpha_bounds(min_alpha, max_alpha);
         Self {
@@ -49,7 +49,7 @@ impl FramaAdvanced {
         max_alpha: f64,
         dimension_smoothing: f64
     ) -> Self {
-        let period = period.max(1).min(512);
+        let period = period.clamp(1, 512);
         let mut frama = FractalAdaptiveMovingAverage::new(period, method);
         frama.set_alpha_bounds(min_alpha, max_alpha);
         frama.set_dimension_smoothing(dimension_smoothing);

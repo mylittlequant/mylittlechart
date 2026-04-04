@@ -15,7 +15,7 @@ pub struct Wvf {
 
 impl Wvf {
     pub fn new(lookback: usize) -> Self {
-        let lb = lookback.max(2).min(1024);
+        let lb = lookback.clamp(2, 1024);
         Self {
             lookback: lb,
             closes: ArrayVec::new(),

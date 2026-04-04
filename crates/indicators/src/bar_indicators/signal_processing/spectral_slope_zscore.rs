@@ -14,7 +14,7 @@ pub struct SpectralSlopeZscore {
 
 impl SpectralSlopeZscore {
     pub fn new(fft_window: usize, z_window: usize) -> Self {
-        let w = z_window.max(20).min(2048);
+        let w = z_window.clamp(20, 2048);
         Self {
             inner: SpectralSlope::new(fft_window),
             window: w,

@@ -40,7 +40,7 @@ impl IntradayIntensityRatio {
         let alpha = 1.0 / (self.window as f64);
         self.sum_iip = (1.0 - alpha) * self.sum_iip + alpha * iip;
         self.count += 1;
-        self.value = self.sum_iip.max(-1e9).min(1e9);
+        self.value = self.sum_iip.clamp(-1e9, 1e9);
         self.value
     }
 }

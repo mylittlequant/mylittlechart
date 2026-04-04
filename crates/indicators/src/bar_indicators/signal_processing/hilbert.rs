@@ -67,7 +67,7 @@ pub struct HilbertTransform {
 
 impl HilbertTransform {
     pub fn new(window_size: usize, sampling_rate: f64) -> Self {
-        let window_size = window_size.min(256).max(16);
+        let window_size = window_size.clamp(16, 256);
         
         Self {
             time_series: ArrayVec::new(),
@@ -391,7 +391,7 @@ impl HilbertTransform {
     
     /// Установить длину фильтра частоты
     pub fn set_frequency_filter_length(&mut self, length: usize) {
-        self.frequency_filter_length = length.max(1).min(20);
+        self.frequency_filter_length = length.clamp(1, 20);
     }
     
     /// Проверить готовность

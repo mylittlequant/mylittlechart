@@ -30,8 +30,8 @@ impl SampleEntropy {
     pub fn new(period: usize, m: usize, r: f64) -> Self {
         Self {
             period: period.min(512),
-            m: m.max(1).min(5), // Ограничиваем разумными пределами
-            r: r.max(0.01).min(1.0), // Толерантность не может быть слишком маленькой или большой
+            m: m.clamp(1, 5), // Ограничиваем разумными пределами
+            r: r.clamp(0.01, 1.0), // Толерантность не может быть слишком маленькой или большой
             data: ArrayVec::new(),
             sampen: 0.0,
             complexity_score: 0.5,
@@ -109,7 +109,7 @@ impl SampleEntropy {
         
         // Нормализуем для получения complexity score (0-1)
         // Максимальное значение SampEn примерно 3.0 для случайных данных
-        self.complexity_score = (self.sampen / 3.0).min(1.0).max(0.0);
+        self.complexity_score = (self.sampen / 3.0).clamp(0.0, 1.0);
     }
     
     /// Подсчитать совпадения для паттернов заданной длины

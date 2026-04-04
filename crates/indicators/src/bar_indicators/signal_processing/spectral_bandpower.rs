@@ -26,7 +26,7 @@ struct SpectralBandpowerGeneric {
 
 impl SpectralBandpowerGeneric {
     fn new(window: usize, low_cut_fraction: f64, high_cut_fraction: f64, band: BandKind) -> Self {
-        let w = window.max(32).min(512);
+        let w = window.clamp(32, 512);
         let l = low_cut_fraction.clamp(0.05, 0.45);
         let h = high_cut_fraction.clamp(l + 0.01, 0.49);
         Self {
@@ -218,7 +218,7 @@ pub struct SpectralBandpower {
 
 impl SpectralBandpower {
     pub fn new(window: usize, low_cut_fraction: f64, high_cut_fraction: f64) -> Self {
-        let w = window.max(32).min(512);
+        let w = window.clamp(32, 512);
         let l = low_cut_fraction.clamp(0.05, 0.45);
         let h = high_cut_fraction.clamp(l + 0.01, 0.49);
         Self {

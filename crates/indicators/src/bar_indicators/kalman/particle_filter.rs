@@ -146,7 +146,7 @@ impl ParticleFilter {
         resampling_strategy: ResamplingStrategy,
         seed: Option<u64>
     ) -> Self {
-        let num_particles = num_particles.min(1000).max(10); // Ограничиваем размер
+        let num_particles = num_particles.clamp(10, 1000); // Ограничиваем размер
         let seed = seed.unwrap_or(42);
         
         Self {
@@ -611,7 +611,7 @@ impl ParticleFilter {
     }
     
     pub fn set_resampling_threshold(&mut self, threshold: f64) {
-        self.resampling_threshold = threshold.max(0.1).min(1.0);
+        self.resampling_threshold = threshold.clamp(0.1, 1.0);
     }
     
     pub fn reset(&mut self) {

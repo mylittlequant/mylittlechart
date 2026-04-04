@@ -462,7 +462,7 @@ impl MedianChannels {
                 self.adaptive_quantiles = (0.25, 0.75); // Стандартные квартили
             }
             
-            self.volatility_adj = volatility_ratio.max(0.5).min(2.0);
+            self.volatility_adj = volatility_ratio.clamp(0.5, 2.0);
         }
     }
     

@@ -15,7 +15,7 @@ pub struct SpectralEnergyRatio {
 
 impl SpectralEnergyRatio {
     pub fn new(window: usize, low_cut_fraction: f64) -> Self {
-        let w = window.max(32).min(256);
+        let w = window.clamp(32, 256);
         Self {
             window: w,
             fft: FastFourierTransform::new(w, 1.0),

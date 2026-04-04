@@ -85,7 +85,7 @@ pub struct FractalAdaptiveMovingAverage {
 
 impl FractalAdaptiveMovingAverage {
     pub fn new(period: usize, method: FractalMethod) -> Self {
-        let period = period.max(4).min(512); // Минимум 4 для расчета размерности
+        let period = period.clamp(4, 512); // Минимум 4 для расчета размерности
         
         Self {
             period,
@@ -204,7 +204,7 @@ impl FractalAdaptiveMovingAverage {
         let dimension = (n2 / n1).ln() / (2.0_f64.ln());
         
         // Ограничиваем размерность в разумных пределах
-        dimension.max(1.0).min(2.0)
+        dimension.clamp(1.0, 2.0)
     }
     
     /// Улучшенный метод с дополнительным сглаживанием
@@ -216,7 +216,7 @@ impl FractalAdaptiveMovingAverage {
         let volatility_factor = 1.0 + (volatility - 0.5).max(0.0) * 0.2;
         
         let adjusted_dimension = base_dimension * volatility_factor;
-        adjusted_dimension.max(1.0).min(2.0)
+        adjusted_dimension.clamp(1.0, 2.0)
     }
     
     /// Динамический метод с адаптивным периодом
@@ -249,7 +249,7 @@ impl FractalAdaptiveMovingAverage {
         }
         
         let dimension = (n2 / n1).ln() / (2.0_f64.ln());
-        dimension.max(1.0).min(2.0)
+        dimension.clamp(1.0, 2.0)
     }
     
     /// Устойчивый к выбросам метод
@@ -308,7 +308,7 @@ impl FractalAdaptiveMovingAverage {
         }
         
         let dimension = (n2 / n1).ln() / (2.0_f64.ln());
-        dimension.max(1.0).min(2.0)
+        dimension.clamp(1.0, 2.0)
     }
     
     /// Вычисление коэффициента сглаживания
@@ -356,7 +356,7 @@ impl FractalAdaptiveMovingAverage {
         let relative_volatility = std_dev / mean.abs().max(1e-12);
         
         // Нормализуем в диапазон 0-1
-        (relative_volatility * 100.0).min(1.0).max(0.0)
+        (relative_volatility * 100.0).clamp(0.0, 1.0)
     }
     
     /// Вычисление дополнительных метрик
@@ -496,7 +496,7 @@ impl FractalAdaptiveMovingAverage {
     
     /// Установка границ адаптации
     pub fn set_alpha_bounds(&mut self, min_alpha: f64, max_alpha: f64) {
-        self.min_alpha = min_alpha.max(0.001).min(0.5);
+        self.min_alpha = min_alpha.clamp(0.001, 0.5);
         self.max_alpha = max_alpha.min(1.0).max(self.min_alpha);
     }
     
@@ -506,7 +506,7 @@ impl FractalAdaptiveMovingAverage {
     
     /// Установка параметров сглаживания размерности
     pub fn set_dimension_smoothing(&mut self, alpha: f64) {
-        self.dimension_ema_alpha = alpha.max(0.01).min(1.0);
+        self.dimension_ema_alpha = alpha.clamp(0.01, 1.0);
     }
     
     pub fn reset(&mut self) {

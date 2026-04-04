@@ -15,7 +15,7 @@ pub struct CenterOfGravity {
 impl CenterOfGravity {
     pub fn new(period: usize) -> Self {
         Self {
-            period: period.max(2).min(512),
+            period: period.clamp(2, 512),
             buf: ArrayVec::new(),
             idx: 0,
             count: 0,

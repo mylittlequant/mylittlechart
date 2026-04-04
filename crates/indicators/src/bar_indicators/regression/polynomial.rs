@@ -62,7 +62,7 @@ impl PolynomialRegression {
 
     /// Создать с настраиваемым источником данных
     pub fn with_source(degree: usize, source: OhlcvField) -> Self {
-        let degree = degree.min(8).max(1); // Ограничиваем степень от 1 до 8
+        let degree = degree.clamp(1, 8); // Ограничиваем степень от 1 до 8
         let min_obs = (degree + 2).max(10);
 
         Self {

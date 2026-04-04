@@ -15,7 +15,7 @@ pub struct RSquared {
 impl RSquared {
     pub fn new(window: usize) -> Self {
         Self {
-            window: window.max(5).min(1024),
+            window: window.clamp(5, 1024),
             buf: ArrayVec::new(),
             idx: 0,
             filled: false,

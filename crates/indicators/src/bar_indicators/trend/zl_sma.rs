@@ -15,7 +15,7 @@ pub struct ZlSma {
 impl ZlSma {
     pub fn new(window: usize) -> Self {
         Self {
-            window: window.max(2).min(512),
+            window: window.clamp(2, 512),
             buf: ArrayVec::new(),
             idx: 0,
             filled: false,

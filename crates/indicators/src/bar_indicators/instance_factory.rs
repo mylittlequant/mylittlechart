@@ -1327,7 +1327,7 @@ impl IndicatorInstance {
     // Helper: derive quarter (1..=4) from month
     #[inline]
     fn month_to_quarter(month: u8) -> u8 {
-        ((month.max(1).min(12) - 1) / 3) + 1
+        ((month.clamp(1, 12) - 1) / 3) + 1
     }
 
     // Helper: derive (year, month, day) from timestamp
@@ -1408,7 +1408,7 @@ impl IndicatorInstance {
     /// The `uses_configurable_source()` helper determines which indicators accept source selection.
     pub fn create(config: &IndicatorConfig) -> Result<Self, String> {
         // Ensure minimal valid period for all periodized indicators
-        let period = config.periods.first().copied().unwrap_or(14).max(2).min(512);
+        let period = config.periods.first().copied().unwrap_or(14).clamp(2, 512);
         match config.id {
             // Average indicators
             BarIndicatorId::Sma => Ok(Self::Sma(Sma::with_source(period, config.source))),
@@ -1519,8 +1519,8 @@ impl IndicatorInstance {
             }
             BarIndicatorId::Tr => Ok(Self::TrueRange(Box::default())),
             BarIndicatorId::Bpv => {
-                let n = config.periods.first().copied().unwrap_or(10).max(2).min(512);
-                let k = config.periods.get(1).copied().unwrap_or(10).max(2).min(512);
+                let n = config.periods.first().copied().unwrap_or(10).clamp(2, 512);
+                let k = config.periods.get(1).copied().unwrap_or(10).clamp(2, 512);
                 Ok(Self::ChaikinVolatility(Box::new(ChaikinVolatility::new(n, k))))
             }
             BarIndicatorId::Sqmom => {
@@ -1751,8 +1751,8 @@ impl IndicatorInstance {
                 Ok(Self::Cci(Box::new(Cci::new(period, scalar, None))))
             }
             BarIndicatorId::Stoch => {
-                let period_k = config.periods.first().copied().unwrap_or(14).max(2).min(512);
-                let period_d = config.periods.get(1).copied().unwrap_or(3).max(1).min(512);
+                let period_k = config.periods.first().copied().unwrap_or(14).clamp(2, 512);
+                let period_d = config.periods.get(1).copied().unwrap_or(3).clamp(1, 512);
                 Ok(Self::Stochastics(Box::new(Stochastics::new(period_k, period_d))))
             }
             BarIndicatorId::Obv => Ok(Self::Obv(Box::new(Obv::new()))),
@@ -2082,7 +2082,7 @@ impl IndicatorInstance {
             }
             BarIndicatorId::Rvi => Ok(Self::Rvi(Box::new(Rvi::new(period)))),
             BarIndicatorId::VoVr => {
-                let fast = config.periods.first().copied().unwrap_or(10).max(2).min(512);
+                let fast = config.periods.first().copied().unwrap_or(10).clamp(2, 512);
                 let slow = config.periods.get(1).copied().unwrap_or(20).max(fast+1).min(512);
                 Ok(Self::Vr(Box::new(Vr::new(fast, slow))))
             }
@@ -2400,7 +2400,7 @@ impl IndicatorInstance {
                 Ok(Self::UnscentedKalmanFilter(Box::new(UnscentedKalmanFilter::new(dt, q_std, r_std, Some(ut)))))
             }
             BarIndicatorId::Particle => {
-                let n = config.periods.first().copied().unwrap_or(200).max(10).min(1000);
+                let n = config.periods.first().copied().unwrap_or(200).clamp(10, 1000);
                 let dt = config.additional_params.get("dt").copied().unwrap_or(1.0);
                 let q_std = config.additional_params.get("process_noise_std").copied().unwrap_or(0.05);
                 let r_std = config.additional_params.get("measurement_noise_std").copied().unwrap_or(0.1);
@@ -3028,7 +3028,7 @@ impl IndicatorInstance {
                 Ok(Self::FastFourierTransform(Box::new(FastFourierTransform::new(win, sr))))
             }
             BarIndicatorId::Wave => {
-                let max_scales = config.periods.first().copied().unwrap_or(16).max(1).min(32);
+                let max_scales = config.periods.first().copied().unwrap_or(16).clamp(1, 32);
                 let wtype_code = config.additional_params.get("wavelet_type").copied().unwrap_or(0.0) as i32;
                 let wtype = match wtype_code { 1 => WaveletType::Daubechies4, 2 => WaveletType::Daubechies6, 3 => WaveletType::Morlet, 4 => WaveletType::Mexican, 5 => WaveletType::Biorthogonal, _ => WaveletType::Haar };
                 Ok(Self::Wave(Box::new(WaveletTransform::new(wtype, max_scales))))
@@ -3067,7 +3067,7 @@ impl IndicatorInstance {
             }
             BarIndicatorId::Sslopez => {
                 let fft_win = config.periods.first().copied().unwrap_or(256).clamp(32, 512);
-                let z_win = config.periods.get(1).copied().unwrap_or(256).max(20).min(2048);
+                let z_win = config.periods.get(1).copied().unwrap_or(256).clamp(20, 2048);
                 Ok(Self::SpectralSlopeZscore(Box::new(SpectralSlopeZscore::new(fft_win, z_win))))
             }
             BarIndicatorId::Sflux => {
@@ -3455,8 +3455,8 @@ impl IndicatorInstance {
             // VOLATILITY (7 aliases + 1 new) - Batch 2
             BarIndicatorId::Abb => Ok(Self::AdaptiveBollingerBands(Box::new(AdaptiveBollingerBands::new()))),
             BarIndicatorId::Cv => {
-                let n = config.periods.first().copied().unwrap_or(10).max(2).min(512);
-                let k = config.periods.get(1).copied().unwrap_or(10).max(2).min(512);
+                let n = config.periods.first().copied().unwrap_or(10).clamp(2, 512);
+                let k = config.periods.get(1).copied().unwrap_or(10).clamp(2, 512);
                 Ok(Self::ChaikinVolatility(Box::new(ChaikinVolatility::new(n, k))))
             }
             BarIndicatorId::Rp => {

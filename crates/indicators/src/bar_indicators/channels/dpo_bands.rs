@@ -21,7 +21,7 @@ impl DpoBands {
     pub fn new(period: usize, window: usize, k: f64) -> Self {
         Self {
             dpo: DetrendedPriceOscillator::with_period(period.max(2)),
-            window: window.max(5).min(512),
+            window: window.clamp(5, 512),
             k: if k > 0.0 { k } else { 2.0 },
             buf: ArrayVec::new(),
             idx: 0,

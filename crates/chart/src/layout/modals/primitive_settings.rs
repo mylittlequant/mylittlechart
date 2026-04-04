@@ -231,7 +231,7 @@ pub fn render_primitive_settings_modal(
     let text_props = prim.text_properties();
 
     // Calculate content height based on active tab
-    let content_height = match state.active_tab {
+    let content_height = (match state.active_tab {
         PrimitiveSettingsTab::Style => {
             let base_rows = if prim_data.color.fill.is_some() { 4 } else { 3 };
             let extra_rows = style_props.len();
@@ -260,7 +260,7 @@ pub fn render_primitive_settings_modal(
         PrimitiveSettingsTab::Visibility => {
             9.0 * (row_height + row_gap) + modal_padding * 2.0
         }
-    }.max(150.0).min(400.0);
+    }).clamp(150.0, 400.0);
 
     // Calculate tab widths dynamically
     ctx.set_font("13px sans-serif");

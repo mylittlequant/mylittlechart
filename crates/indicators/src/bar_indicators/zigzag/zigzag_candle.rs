@@ -15,7 +15,7 @@ pub struct ZigZagCandle {
 impl ZigZagCandle {
     pub fn new(period: usize, swing_bars: usize) -> Self {
         // Ensure period is at least swing_bars*2+1 for swing detection to work
-        let swing_bars = swing_bars.max(1).min(50);
+        let swing_bars = swing_bars.clamp(1, 50);
         let min_period = swing_bars * 2 + 1;
         let period = period.max(min_period);
 

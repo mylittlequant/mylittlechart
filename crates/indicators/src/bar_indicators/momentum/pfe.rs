@@ -15,7 +15,7 @@ pub struct Pfe {
 impl Pfe {
     pub fn new(window: usize) -> Self {
         Self {
-            window: window.max(5).min(1024),
+            window: window.clamp(5, 1024),
             closes: ArrayVec::new(),
             idx: 0,
             count: 0,

@@ -29,8 +29,8 @@ impl PermutationEntropy {
     pub fn new(period: usize, order: usize, delay: usize) -> Self {
         Self {
             period: period.min(512),
-            order: order.max(3).min(7), // Ограничиваем разумными пределами
-            delay: delay.max(1).min(5), // Задержка не может быть слишком большой
+            order: order.clamp(3, 7), // Ограничиваем разумными пределами
+            delay: delay.clamp(1, 5), // Задержка не может быть слишком большой
             data: ArrayVec::new(),
             pe: 0.0,
             normalized_pe: 0.0,
@@ -100,7 +100,7 @@ impl PermutationEntropy {
         
         self.pe = entropy;
         self.normalized_pe = if max_entropy > 0.0 {
-            (entropy / max_entropy).min(1.0).max(0.0)
+            (entropy / max_entropy).clamp(0.0, 1.0)
         } else {
             0.0
         };

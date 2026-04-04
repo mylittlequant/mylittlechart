@@ -70,8 +70,8 @@ pub fn render_chart_browser(
     let mut result = ChartBrowserResult::default();
 
     // --- Layout constants ---
-    let modal_w = (screen_w * 0.6).min(480.0).max(340.0);
-    let modal_h = (screen_h * 0.75).min(500.0).max(280.0);
+    let modal_w = (screen_w * 0.6).clamp(340.0, 480.0);
+    let modal_h = (screen_h * 0.75).clamp(280.0, 500.0);
     let header_h = 44.0;
     let search_h = 40.0;
     let col_header_h = 28.0;

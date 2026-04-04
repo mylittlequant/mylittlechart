@@ -11,7 +11,7 @@ pub struct StartEndOfWeekFlags {
 impl StartEndOfWeekFlags {
     pub fn new(window_days: u32) -> Self {
         Self {
-            window_days: window_days.max(1).min(3),
+            window_days: window_days.clamp(1, 3),
             start_flag: 0.0,
             end_flag: 0.0,
         }

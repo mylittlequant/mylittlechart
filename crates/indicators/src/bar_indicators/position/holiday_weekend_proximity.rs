@@ -10,7 +10,7 @@ pub struct HolidayWeekendProximityEffect {
 impl HolidayWeekendProximityEffect {
     pub fn new(window_days: u32) -> Self {
         Self {
-            window: window_days.max(1).min(5),
+            window: window_days.clamp(1, 5),
             value: 0.0,
         }
     }

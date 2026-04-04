@@ -14,7 +14,7 @@ pub struct SpectralEntropy {
 
 impl SpectralEntropy {
     pub fn new(window: usize) -> Self {
-        let w = window.max(16).min(256);
+        let w = window.clamp(16, 256);
         // sampling_rate: 1.0 bar^-1
         Self {
             window: w,
@@ -84,7 +84,7 @@ impl SpectralEntropy {
 
                 // Проверяем на NaN и нормализуем
                 if h.is_finite() && h >= 0.0 && n > 1.0 {
-                    self.value = (h / n.ln()).min(1.0).max(0.0);
+                    self.value = (h / n.ln()).clamp(0.0, 1.0);
                 } else {
                     self.value = 0.5; // Средняя энтропия при проблемах
                 }

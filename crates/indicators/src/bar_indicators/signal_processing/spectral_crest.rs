@@ -14,7 +14,7 @@ pub struct SpectralCrest {
 
 impl SpectralCrest {
     pub fn new(window: usize) -> Self {
-        let w = window.max(16).min(256);
+        let w = window.clamp(16, 256);
         Self {
             window: w,
             fft: FastFourierTransform::new(w, 1.0),

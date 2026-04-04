@@ -16,7 +16,7 @@ pub struct SpectralBandpowerRatioHL {
 
 impl SpectralBandpowerRatioHL {
     pub fn new(window: usize, low_cut_fraction: f64, high_cut_fraction: f64) -> Self {
-        let w = window.max(32).min(1024);
+        let w = window.clamp(32, 1024);
         let lc = low_cut_fraction.clamp(1e-6, 0.49);
         let hc = high_cut_fraction.clamp(lc + 1e-6, 0.499);
         Self {

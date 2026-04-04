@@ -444,7 +444,7 @@ impl DynamicVolatilityRegime {
         
         // Тренд как нормализованное изменение
         if older_avg > 0.0 {
-            self.current_result.volatility_trend = ((recent_avg - older_avg) / older_avg).max(-1.0).min(1.0);
+            self.current_result.volatility_trend = ((recent_avg - older_avg) / older_avg).clamp(-1.0, 1.0);
         } else {
             self.current_result.volatility_trend = 0.0;
         }

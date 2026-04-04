@@ -748,7 +748,7 @@ pub struct SwingDetector {
 impl SwingDetector {
     pub fn new(lookback: usize) -> Self {
         Self {
-            lookback: lookback.max(1).min(30),
+            lookback: lookback.clamp(1, 30),
             highs: ArrayVec::new(),
             lows: ArrayVec::new(),
             bar_index: 0,

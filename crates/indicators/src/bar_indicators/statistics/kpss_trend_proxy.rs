@@ -10,7 +10,7 @@ pub struct KpssTrendProxy {
 
 impl KpssTrendProxy {
     pub fn new(window: usize) -> Self {
-        let w = window.max(50).min(2048);
+        let w = window.clamp(50, 2048);
         Self {
             window: w,
             buf: vec![0.0; w],

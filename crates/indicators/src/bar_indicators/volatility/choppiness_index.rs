@@ -99,7 +99,7 @@ impl ChoppinessIndex {
                 if log_period.abs() > 1e-12 {
                     self.choppiness_value = 100.0 * log_ratio / log_period;
                     // Ограничиваем значение от 0 до 100
-                    self.choppiness_value = self.choppiness_value.max(0.0).min(100.0);
+                    self.choppiness_value = self.choppiness_value.clamp(0.0, 100.0);
                 }
             }
         }

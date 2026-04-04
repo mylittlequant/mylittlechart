@@ -180,7 +180,7 @@ impl UltimateOscillator {
             self.value = 100.0 * ((4.0 * avg1) + (2.0 * avg2) + avg3) / 7.0;
 
             // Ограничиваем значения в диапазоне [0, 100]
-            self.value = self.value.max(0.0).min(100.0);
+            self.value = self.value.clamp(0.0, 100.0);
         }
 
         self.prev_close = close;

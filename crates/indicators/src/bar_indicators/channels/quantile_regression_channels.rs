@@ -20,7 +20,7 @@ pub struct QuantileRegressionChannels {
 impl QuantileRegressionChannels {
     pub fn new(window: usize, k: f64) -> Self {
         Self {
-            window: window.max(2).min(512),
+            window: window.clamp(2, 512),
             k: if k > 0.0 { k } else { 2.0 },
             buf: ArrayVec::new(),
             idx: 0,

@@ -433,7 +433,7 @@ impl VolumeProfileChannels {
         
         // Адаптивный множитель
         if self.avg_volatility > 0.0 {
-            self.adaptive_multiplier = (true_range / self.avg_volatility).max(0.5).min(2.0);
+            self.adaptive_multiplier = (true_range / self.avg_volatility).clamp(0.5, 2.0);
         }
     }
     

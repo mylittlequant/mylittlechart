@@ -256,7 +256,7 @@ impl EhlersSuperSmoother {
         
         // Уровень подавления шума
         self.current_result.noise_reduction = if avg_price_change > 0.0 {
-            (1.0 - (avg_smooth_change / avg_price_change)).max(0.0).min(1.0)
+            (1.0 - (avg_smooth_change / avg_price_change)).clamp(0.0, 1.0)
         } else {
             0.0
         };

@@ -15,7 +15,7 @@ pub struct SpectralRolloff {
 
 impl SpectralRolloff {
     pub fn new(window: usize, target_fraction: f64) -> Self {
-        let w = window.max(16).min(256);
+        let w = window.clamp(16, 256);
         let t = target_fraction.clamp(0.01, 0.99);
         Self {
             window: w,

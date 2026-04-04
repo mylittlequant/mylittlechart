@@ -16,7 +16,7 @@ pub struct TrendIntensityIndex {
 
 impl TrendIntensityIndex {
     pub fn new(window: usize) -> Self {
-        let w = window.max(2).min(512);
+        let w = window.clamp(2, 512);
         Self {
             window: w,
             ma: MovingAverageProvider::new(MovingAverageType::SMA, w),

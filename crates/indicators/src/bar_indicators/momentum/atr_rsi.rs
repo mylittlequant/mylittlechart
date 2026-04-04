@@ -241,7 +241,7 @@ impl AtrRsi {
         let normalized = raw_rsi * atr_ratio.sqrt(); // Используем квадратный корень для сглаживания
         
         // Ограничиваем диапазон 0-100
-        normalized.max(0.0).min(100.0)
+        normalized.clamp(0.0, 100.0)
     }
     
     /// Определить режим волатильности

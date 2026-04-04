@@ -14,7 +14,7 @@ pub struct SpectralSlopePercentile {
 
 impl SpectralSlopePercentile {
     pub fn new(fft_window: usize, pct_window: usize) -> Self {
-        let w = pct_window.max(30).min(4096);
+        let w = pct_window.clamp(30, 4096);
         Self {
             inner: SpectralSlope::new(fft_window),
             window: w,

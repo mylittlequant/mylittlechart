@@ -43,12 +43,12 @@ pub struct ButterworthFilter {
 
 impl ButterworthFilter {
     pub fn new(filter_type: FilterType, order: usize, cutoff_frequency: f64, sampling_rate: f64) -> Self {
-        let order = order.max(1).min(8);
+        let order = order.clamp(1, 8);
         let sampling_rate = sampling_rate.max(1.0); // Минимальная частота дискретизации
         
         // Конвертируем частоту среза из Hz в нормализованную частоту [0, 0.5)
         let nyquist_freq = sampling_rate / 2.0;
-        let normalized_cutoff = (cutoff_frequency / nyquist_freq).max(0.001).min(0.499);
+        let normalized_cutoff = (cutoff_frequency / nyquist_freq).clamp(0.001, 0.499);
         
         let mut filter = Self {
             filter_type,
@@ -79,12 +79,12 @@ impl ButterworthFilter {
         high_cutoff: f64,
         sampling_rate: f64
     ) -> Self {
-        let order = order.max(1).min(8);
+        let order = order.clamp(1, 8);
         let sampling_rate = sampling_rate.max(1.0);
         
         // Конвертируем частоты среза из Hz в нормализованные частоты
         let nyquist_freq = sampling_rate / 2.0;
-        let normalized_low = (low_cutoff / nyquist_freq).max(0.001).min(0.499);
+        let normalized_low = (low_cutoff / nyquist_freq).clamp(0.001, 0.499);
         let normalized_high = (high_cutoff / nyquist_freq).max(normalized_low + 0.001).min(0.499);
         
         let mut filter = Self {
@@ -455,7 +455,7 @@ impl ButterworthFilter {
     
     /// Установить новую частоту среза
     pub fn set_cutoff_frequency(&mut self, cutoff: f64) {
-        self.cutoff_frequency = cutoff.max(0.001).min(0.499);
+        self.cutoff_frequency = cutoff.clamp(0.001, 0.499);
         self.design_filter();
         self.compute_impulse_response(); // Пересчитываем импульсную характеристику при изменении частоты среза
     }
@@ -492,8 +492,8 @@ impl ButterworthFilter {
         let high_cutoff_hz = self.high_cutoff * old_nyquist;
         
         self.sampling_rate = new_sampling_rate;
-        self.cutoff_frequency = (cutoff_hz / new_nyquist).max(0.001).min(0.499);
-        self.low_cutoff = (low_cutoff_hz / new_nyquist).max(0.001).min(0.499);
+        self.cutoff_frequency = (cutoff_hz / new_nyquist).clamp(0.001, 0.499);
+        self.low_cutoff = (low_cutoff_hz / new_nyquist).clamp(0.001, 0.499);
         self.high_cutoff = (high_cutoff_hz / new_nyquist).max(self.low_cutoff + 0.001).min(0.499);
         
         // Перепроектируем фильтр с новыми параметрами
@@ -515,7 +515,7 @@ impl ButterworthFilter {
     /// Установить частоту среза в Hz
     pub fn set_cutoff_frequency_hz(&mut self, cutoff_hz: f64) {
         let nyquist_freq = self.sampling_rate / 2.0;
-        let normalized_cutoff = (cutoff_hz / nyquist_freq).max(0.001).min(0.499);
+        let normalized_cutoff = (cutoff_hz / nyquist_freq).clamp(0.001, 0.499);
         self.cutoff_frequency = normalized_cutoff;
         self.design_filter();
         self.compute_impulse_response();
@@ -530,7 +530,7 @@ impl ButterworthFilter {
     /// Установить полосовые частоты в Hz
     pub fn set_band_frequencies_hz(&mut self, low_cutoff_hz: f64, high_cutoff_hz: f64) {
         let nyquist_freq = self.sampling_rate / 2.0;
-        let normalized_low = (low_cutoff_hz / nyquist_freq).max(0.001).min(0.499);
+        let normalized_low = (low_cutoff_hz / nyquist_freq).clamp(0.001, 0.499);
         let normalized_high = (high_cutoff_hz / nyquist_freq).max(normalized_low + 0.001).min(0.499);
         
         self.low_cutoff = normalized_low;
@@ -556,12 +556,12 @@ impl ButterworthFilter {
     /// Установить новую конфигурацию фильтра
     pub fn set_config(&mut self, config: ButterworthConfig) {
         self.filter_type = config.filter_type;
-        self.order = config.order.max(1).min(8);
+        self.order = config.order.clamp(1, 8);
         self.sampling_rate = config.sampling_rate.max(1.0);
         
         let nyquist_freq = self.sampling_rate / 2.0;
-        self.cutoff_frequency = (config.cutoff_frequency_hz / nyquist_freq).max(0.001).min(0.499);
-        self.low_cutoff = (config.low_cutoff_hz / nyquist_freq).max(0.001).min(0.499);
+        self.cutoff_frequency = (config.cutoff_frequency_hz / nyquist_freq).clamp(0.001, 0.499);
+        self.low_cutoff = (config.low_cutoff_hz / nyquist_freq).clamp(0.001, 0.499);
         self.high_cutoff = (config.high_cutoff_hz / nyquist_freq).max(self.low_cutoff + 0.001).min(0.499);
         
         self.design_filter();

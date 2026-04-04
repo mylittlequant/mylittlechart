@@ -15,7 +15,7 @@ pub struct LiquidityGapDensity {
 
 impl LiquidityGapDensity {
     pub fn new(window: usize, threshold: f64) -> Self {
-        let w = window.max(20).min(512);
+        let w = window.clamp(20, 512);
         Self {
             window: w,
             threshold,

@@ -3101,7 +3101,7 @@ fn draw_sparkline(
     for (i, val) in data.iter().enumerate() {
         let px = x_start + i as f64 * step;
         if px < x { continue; }
-        let ratio = (val / max_val).min(1.0).max(0.0);
+        let ratio = (val / max_val).clamp(0.0, 1.0);
         let py = y + h - ratio * h;
         ctx.line_to(px, py);
     }
@@ -3116,7 +3116,7 @@ fn draw_sparkline(
     for (i, val) in data.iter().enumerate() {
         let px = x_start + i as f64 * step;
         if px < x { continue; }
-        let ratio = (val / max_val).min(1.0).max(0.0);
+        let ratio = (val / max_val).clamp(0.0, 1.0);
         let py = y + h - ratio * h;
         if !started {
             ctx.move_to(px, py);

@@ -127,8 +127,8 @@ pub fn render_watchlist_modal(
     // -------------------------------------------------------------------------
     // Layout constants
     // -------------------------------------------------------------------------
-    let modal_w = (screen_w * 0.65).min(600.0).max(380.0);
-    let modal_h = (screen_h * 0.8).min(600.0).max(300.0);
+    let modal_w = (screen_w * 0.65).clamp(380.0, 600.0);
+    let modal_h = (screen_h * 0.8).clamp(300.0, 600.0);
     let header_h = 44.0;
     let tab_bar_h = 32.0;
     let search_h = 36.0;

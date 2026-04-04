@@ -70,7 +70,7 @@ impl FractalDimension {
             let slope = self.linear_regression_slope(&k_values.iter().map(|&x| x.ln()).collect::<Vec<_>>(), &l_k_values);
             
             // Фрактальная размерность = 2 - slope
-            self.fractal_dimension = (2.0 - slope).max(1.0).min(2.0);
+            self.fractal_dimension = (2.0 - slope).clamp(1.0, 2.0);
             
             // Complexity score: чем ближе к 2.0, тем сложнее
             self.complexity_score = (self.fractal_dimension - 1.0) / 1.0;

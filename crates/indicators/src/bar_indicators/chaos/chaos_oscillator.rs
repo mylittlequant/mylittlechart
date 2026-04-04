@@ -152,11 +152,8 @@ impl ChaosOscillator {
         };
         
         // Комбинируем компоненты с весами
-        self.chaos_index = (
-            complexity_component * self.complexity_weight +
-            persistence_component * self.persistence_weight +
-            volatility_component * self.volatility_weight
-        ).max(0.0).min(1.0);
+        self.chaos_index = (complexity_component * self.complexity_weight +
+            persistence_component * self.persistence_weight + volatility_component * self.volatility_weight).clamp(0.0, 1.0);
         
         // Предсказуемость - обратная величина хаоса
         self.predictability = 1.0 - self.chaos_index;

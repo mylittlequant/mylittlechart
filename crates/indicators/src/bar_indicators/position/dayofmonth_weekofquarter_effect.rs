@@ -58,8 +58,8 @@ impl DayOfMonthWeekOfQuarterEffect {
     pub fn update_with_calendar(&mut self, close: f64, day_of_month: u8, week_of_quarter: u8) {
         if let Some(prev) = self.last_close {
             let r = (close / prev).ln();
-            let d = (day_of_month.max(1).min(31) as usize) - 1;
-            let w = (week_of_quarter.max(1).min(13) as usize) - 1;
+            let d = (day_of_month.clamp(1, 31) as usize) - 1;
+            let w = (week_of_quarter.clamp(1, 13) as usize) - 1;
             self.dom_counts[d] += 1;
             self.dom_sums[d] += r;
             self.dom_means[d] = self.dom_sums[d] / self.dom_counts[d] as f64;

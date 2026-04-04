@@ -61,8 +61,8 @@ impl KaufmanAdaptiveMA {
 
     /// Создать KAMA с настраиваемым источником данных
     pub fn with_source(efficiency_ratio_period: usize, fast_sc_period: usize, slow_sc_period: usize, source: OhlcvField) -> Self {
-        let efficiency_ratio_period = efficiency_ratio_period.max(2).min(200);
-        let fast_sc_period = fast_sc_period.max(1).min(50);
+        let efficiency_ratio_period = efficiency_ratio_period.clamp(2, 200);
+        let fast_sc_period = fast_sc_period.clamp(1, 50);
         let slow_sc_period = slow_sc_period.max(fast_sc_period + 1).min(200);
 
         // Вычисляем константы сглаживания
@@ -169,7 +169,7 @@ impl KaufmanAdaptiveMA {
         };
 
         // Ограничиваем ER от 0 до 1
-        self.efficiency_ratio = self.efficiency_ratio.max(0.0).min(1.0);
+        self.efficiency_ratio = self.efficiency_ratio.clamp(0.0, 1.0);
 
         // Сохраняем направление и волатильность
         if self.direction_values.len() >= 200 {
@@ -459,8 +459,8 @@ impl KaufmanAdaptiveMA {
 
     /// Установить новую конфигурацию периодов (пересчитывает константы)
     pub fn set_periods(&mut self, efficiency_ratio_period: usize, fast_sc_period: usize, slow_sc_period: usize) {
-        let efficiency_ratio_period = efficiency_ratio_period.max(2).min(200);
-        let fast_sc_period = fast_sc_period.max(1).min(50);
+        let efficiency_ratio_period = efficiency_ratio_period.clamp(2, 200);
+        let fast_sc_period = fast_sc_period.clamp(1, 50);
         let slow_sc_period = slow_sc_period.max(fast_sc_period + 1).min(200);
 
         self.efficiency_ratio_period = efficiency_ratio_period;

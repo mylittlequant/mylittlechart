@@ -109,7 +109,7 @@ impl FisherTransform {
             }
             
             // 3. Ограничение для избежания ln(0)
-            let clamped = self.smoothed_value.max(-0.999).min(0.999);
+            let clamped = self.smoothed_value.clamp(-0.999, 0.999);
             
             // 4. Расчет Fisher Transform
             self.trigger_value = self.fisher_value; // Предыдущее значение становится trigger

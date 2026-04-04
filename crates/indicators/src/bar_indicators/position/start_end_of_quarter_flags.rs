@@ -12,7 +12,7 @@ pub struct StartEndOfQuarterFlags {
 impl StartEndOfQuarterFlags {
     pub fn new(window_days: u32) -> Self {
         Self {
-            window_days: window_days.max(1).min(7),
+            window_days: window_days.clamp(1, 7),
             start_flag: 0.0,
             end_flag: 0.0,
         }

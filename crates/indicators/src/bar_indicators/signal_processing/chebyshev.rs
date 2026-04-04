@@ -99,9 +99,9 @@ impl ChebyshevFilter {
         cutoff_frequency: f64, 
         ripple_db: f64
     ) -> Self {
-        let order = order.max(1).min(8);
-        let cutoff_frequency = cutoff_frequency.max(0.001).min(0.499);
-        let ripple_db = ripple_db.max(0.1).min(60.0);
+        let order = order.clamp(1, 8);
+        let cutoff_frequency = cutoff_frequency.clamp(0.001, 0.499);
+        let ripple_db = ripple_db.clamp(0.1, 60.0);
         
         let mut filter = Self {
             chebyshev_type,
@@ -135,10 +135,10 @@ impl ChebyshevFilter {
         high_cutoff: f64,
         ripple_db: f64
     ) -> Self {
-        let order = order.max(1).min(8);
-        let low_cutoff = low_cutoff.max(0.001).min(0.499);
+        let order = order.clamp(1, 8);
+        let low_cutoff = low_cutoff.clamp(0.001, 0.499);
         let high_cutoff = high_cutoff.max(low_cutoff + 0.001).min(0.499);
-        let ripple_db = ripple_db.max(0.1).min(60.0);
+        let ripple_db = ripple_db.clamp(0.1, 60.0);
         
         let mut filter = Self {
             chebyshev_type,
@@ -519,13 +519,13 @@ impl ChebyshevFilter {
     }
     
     pub fn set_cutoff_frequency(&mut self, cutoff: f64) {
-        self.cutoff_frequency = cutoff.max(0.001).min(0.499);
+        self.cutoff_frequency = cutoff.clamp(0.001, 0.499);
         self.design_filter();
         self.reset();
     }
     
     pub fn set_ripple(&mut self, ripple_db: f64) {
-        self.ripple_db = ripple_db.max(0.1).min(60.0);
+        self.ripple_db = ripple_db.clamp(0.1, 60.0);
         self.design_filter();
         self.reset();
     }

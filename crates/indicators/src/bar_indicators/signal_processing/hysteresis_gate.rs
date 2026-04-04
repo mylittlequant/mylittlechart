@@ -18,8 +18,8 @@ impl HysteresisGate {
     /// Default: lower=30 (oversold), upper=70 (overbought)
     pub fn new(lower: f64, upper: f64) -> Self {
         Self {
-            lower: lower.max(0.0).min(50.0),
-            upper: upper.max(50.0).min(100.0),
+            lower: lower.clamp(0.0, 50.0),
+            upper: upper.clamp(50.0, 100.0),
             state: 0,
             rsi: Rsi::new(14),
         }

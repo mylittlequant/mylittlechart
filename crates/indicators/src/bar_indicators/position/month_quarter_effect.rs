@@ -58,8 +58,8 @@ impl MonthQuarterEffect {
     pub fn update_with_calendar(&mut self, close: f64, month: u8, quarter: u8) {
         if let Some(prev) = self.last_close {
             let r = (close / prev).ln();
-            let m = (month.max(1).min(12) as usize) - 1;
-            let q = (quarter.max(1).min(4) as usize) - 1;
+            let m = (month.clamp(1, 12) as usize) - 1;
+            let q = (quarter.clamp(1, 4) as usize) - 1;
             self.month_counts[m] += 1;
             self.month_sums[m] += r;
             self.month_means[m] = self.month_sums[m] / self.month_counts[m] as f64;

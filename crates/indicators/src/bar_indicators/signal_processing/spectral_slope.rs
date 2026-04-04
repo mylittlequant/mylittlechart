@@ -14,7 +14,7 @@ pub struct SpectralSlope {
 
 impl SpectralSlope {
     pub fn new(window: usize) -> Self {
-        let w = window.max(32).min(512);
+        let w = window.clamp(32, 512);
         Self {
             window: w,
             fft: FastFourierTransform::new(w, 1.0),

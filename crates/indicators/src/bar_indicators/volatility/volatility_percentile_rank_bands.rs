@@ -22,7 +22,7 @@ impl VolatilityPercentileRankBands {
     pub fn new(atr_period: usize, rank_window: usize) -> Self {
         Self {
             atr: Atr::new(atr_period.max(1), MovingAverageType::EMA),
-            window: rank_window.max(5).min(512),
+            window: rank_window.clamp(5, 512),
             buf: ArrayVec::new(),
             idx: 0,
             filled: false,

@@ -38,7 +38,7 @@ impl ShannonEntropy {
     pub fn new(period: usize, bins: usize) -> Self {
         Self {
             period: period.min(512),
-            bins: bins.max(5).min(50), // Ограничиваем разумными пределами
+            bins: bins.clamp(5, 50), // Ограничиваем разумными пределами
             returns: ArrayVec::new(),
             prev_close: None,
             entropy: 0.0,
@@ -125,7 +125,7 @@ impl ShannonEntropy {
         
         self.entropy = entropy;
         self.normalized_entropy = if max_entropy > 0.0 {
-            (entropy / max_entropy).min(1.0).max(0.0)
+            (entropy / max_entropy).clamp(0.0, 1.0)
         } else {
             0.0
         };
