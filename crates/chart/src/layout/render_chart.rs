@@ -2920,6 +2920,9 @@ pub struct ChartPanelRenderData<'a> {
     /// internally.  Pass `&ToolbarConfig::minimal()` when the caller has already
     /// stripped toolbar space from the rect it passes in.
     pub toolbar_config: &'a crate::panel_app::ToolbarConfig,
+    /// Whether this leaf is rendered inside a multi-leaf split layout.
+    /// When true, top/bottom frame borders are suppressed (the split separator handles them).
+    pub is_split: bool,
 }
 
 /// Render a complete chart panel — background, grid, series, scales, indicators,
@@ -3288,10 +3291,13 @@ pub fn render_full_chart_panel(
         // Horizontal separators spanning full width (chart + price scale).
         let horz_x = chart.x.min(price_scale.x);
         let horz_w = chart.width + price_scale.width;
-        // Top border (visible when above-main panes exist).
-        ctx.fill_rect(horz_x, total_chart_top, horz_w, 1.0);
-        // Bottom border between chart content and time scale.
-        ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
+        // Top/bottom borders are suppressed in split mode — the split separator handles them.
+        if !data.is_split {
+            // Top border (visible when above-main panes exist).
+            ctx.fill_rect(horz_x, total_chart_top, horz_w, 1.0);
+            // Bottom border between chart content and time scale.
+            ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
+        }
 
         // Sub-pane separator lines across the price scale area.
         for sub_pane in &extended_layout.sub_panes {
@@ -3428,6 +3434,7 @@ pub fn render_chart_splits(
             // the full sub-rect to chart content.  Pass minimal so that
             // render_full_chart_panel computes layout from the full rect.
             toolbar_config: &window.toolbar_config,
+            is_split: true,
         };
 
         // sub_pane_ranges writeback is not performed here because render_chart_splits

@@ -4193,6 +4193,7 @@ impl ChartApp {
                     frame_theme: &frame_theme,
                     sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &no_toolbar,
+                    is_split: true,
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
@@ -4636,6 +4637,7 @@ impl ChartApp {
                     frame_theme: &frame_theme,
                     sub_pane_overlay_states: &window.sub_pane_overlay_states,
                     toolbar_config: &self.panel_app.toolbar_config,
+                    is_split: false,
                 };
 
                 // Render chart into content_rect (shrunk by sidebar).
