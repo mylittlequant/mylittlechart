@@ -881,10 +881,12 @@ impl DrawingManager {
     }
 
     /// Add an externally-created primitive with proper ID assignment
-    /// Use this when creating primitives outside the normal on_click flow
+    /// Use this when creating primitives outside the normal on_click flow.
+    /// NOTE: pane_id is preserved from the primitive's deserialized state
+    /// (not overwritten with current_pane_id) so that drawings restored from
+    /// a preset keep their correct pane assignment.
     pub fn add_external_primitive(&mut self, mut prim: Box<dyn Primitive>) {
         prim.data_mut().id = crate::drawing::alloc_primitive_id();
-        prim.data_mut().pane_id = self.current_pane_id;
         prim.data_mut().window_id = self.current_window_id;
         self.primitives.push(prim);
         self.selected = Some(self.primitives.len() - 1);
