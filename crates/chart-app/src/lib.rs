@@ -3153,6 +3153,10 @@ impl ChartApp {
     /// - Alert-settings modal sync
     /// - Sidebar data rebuild (when `sidebar_data_dirty` is set)
     pub fn prepare_frame(&mut self, width: f64, height: f64) {
+        // Advance the text-input manager's frame counter so stale field geometry
+        // from a previous frame is expired before new update_field calls arrive.
+        self.text_input.begin_frame();
+
         let sidebar_w = self.sidebar_state.right_width();
         let window_rect = LayoutRect::new(0.0, 0.0, width, height);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
@@ -5604,6 +5608,21 @@ impl ChartApp {
         for (leaf_id, overlays) in output.sub_pane_overlay_writebacks {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.sub_pane_overlay_results = overlays;
+            }
+        }
+        // Update TextInputManager geometry for the HexColor field whenever the
+        // L2 color picker is visible.  This gives on_drag_start accurate rect +
+        // char positions so cursor-from-click works correctly.
+        if let Some(ref fr) = self.frame_result {
+            if let Some(ref cp) = fr.color_picker {
+                if let Some(ref l2) = cp.l2_result {
+                    let r = &l2.hex_input_rect;
+                    self.text_input.update_field(
+                        crate::text_input::FieldId::HexColor,
+                        (r.x, r.y, r.width, r.height),
+                        l2.hex_char_positions.clone(),
+                    );
+                }
             }
         }
     }

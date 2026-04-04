@@ -519,6 +519,11 @@ impl ChartApp {
         // Track whether this drag started on a UI element (for crosshair suppression).
         self.ui_drag_active = self.input_coordinator.borrow_mut().is_over_ui();
 
+        // Let the TextInputManager claim the drag if (x, y) falls inside a registered
+        // text field (e.g. the HexColor field when the L2 color picker is visible).
+        // This must run BEFORE the sidebar-separator check so early returns don't miss it.
+        self.text_input.on_drag_start(x, y);
+
         // Check if drag starts on the sidebar separator — if so, begin sidebar resize.
         // This must be checked BEFORE the modal guard so the separator is reachable
         // even when a sidebar panel is open (which registers the sidebar as a UI widget).
@@ -2055,6 +2060,9 @@ impl ChartApp {
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+        // Forward to TextInputManager for text-selection drag (e.g. HexColor field).
+        self.text_input.on_drag_move(x);
+
         // If the sidebar separator drag is active, resize the sidebar.
         if self.sidebar_separator_drag_active {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
@@ -2883,6 +2891,9 @@ impl ChartApp {
     /// Handle drag end at `(x, y)`.
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
+
+        // Notify TextInputManager that drag selection has ended.
+        self.text_input.on_drag_end();
 
         // End pane separator drag: persist the new height ratios.
         if let zengeld_chart::engine::input::DragMode::PaneSeparator { .. } = self.input_handler.state.drag_mode {
@@ -5512,35 +5523,6 @@ impl ChartApp {
             }
             return;
         }
-        // Legacy fallback: if hex_editing is set but manager isn't focused, use old path.
-        {
-            let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
-                (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
-                (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
-                (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
-                (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
-                (&mut self.panel_app.panel_color_picker, "panel"),
-            ];
-            for (picker, _src) in pickers {
-                if picker.hex_editing {
-                    match ch {
-                        '\r' | '\n' => {
-                            picker.hex_editing = false;
-                        }
-                        '\x1b' => {
-                            let color = picker.current_color.clone();
-                            picker.hex_set_text(&color);
-                            picker.hex_editing = false;
-                        }
-                        _ => {
-                            picker.hex_char_input(ch);
-                        }
-                    }
-                    return;
-                }
-            }
-        }
-
         // Handle preset name input modal
         if self.panel_app.preset_name_input.is_open {
             let editing = &mut self.panel_app.preset_name_input.editing;
@@ -13397,7 +13379,7 @@ impl ChartApp {
     }
 
     /// Handle an L2 (HSV full picker) hit result.
-    fn handle_l2_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, _x: f64, _y: f64) {
+    fn handle_l2_hit(&mut self, hit: zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult, source: &str, x: f64, y: f64) {
         use zengeld_chart::ui::widgets::color_picker::ColorPickerL2HitResult;
 
         match hit {
@@ -13583,9 +13565,7 @@ impl ChartApp {
                 }
             }
             ColorPickerL2HitResult::HexInput => {
-                // Toggle hex editing mode for the active picker.
-                // When enabling: sync text to manager and focus the HexColor field.
-                // When disabling: blur the manager field.
+                // Activate hex editing or reposition cursor on re-click.
                 let active_picker: Option<&mut zengeld_chart::ui::color_picker_state::ColorPickerState> = match source {
                     "primitive" => Some(&mut self.panel_app.primitive_settings_state.color_picker),
                     "indicator" => Some(&mut self.panel_app.indicator_settings_state.color_picker),
@@ -13595,17 +13575,17 @@ impl ChartApp {
                     _           => None,
                 };
                 if let Some(picker) = active_picker {
-                    picker.hex_editing = !picker.hex_editing;
                     if picker.hex_editing {
-                        // Sync the current hex text into the manager and focus it.
+                        // Already editing — reposition cursor at click x via manager.
+                        // on_drag_start uses last_rect (set by update_field) to find the field.
+                        self.text_input.on_drag_start(x, y);
+                    } else {
+                        // Activate editing: sync text into manager, then focus.
+                        picker.hex_editing = true;
                         let hex = picker.hex_input.clone();
                         self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
                         self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
-                        self.text_input.focus(crate::text_input::FieldId::HexColor);
-                        eprintln!("[ChartApp] color picker hex input activated (manager focused)");
-                    } else {
-                        self.text_input.blur();
-                        eprintln!("[ChartApp] color picker hex input deactivated");
+                        self.text_input.on_drag_start(x, y);
                     }
                 }
             }

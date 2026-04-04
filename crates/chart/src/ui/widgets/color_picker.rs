@@ -333,6 +333,9 @@ pub struct ColorPickerL2Result {
     pub hex_cursor_y: f64,
     /// Hex cursor height
     pub hex_cursor_height: f64,
+    /// Character boundary X positions from `draw_input` — used by `TextInputManager::update_field`.
+    /// Contains `char_count + 1` entries (left edge of each char plus the right edge of the last).
+    pub hex_char_positions: Vec<f64>,
     /// Opacity slider rect
     pub opacity_slider_rect: WidgetRect,
     /// Opacity toggle button rect (eye icon to toggle 0%/previous)
@@ -476,6 +479,7 @@ pub fn draw_color_picker_l2(
     result.hex_cursor_x = hex_input_result.cursor_x;
     result.hex_cursor_y = hex_input_result.cursor_y;
     result.hex_cursor_height = hex_input_result.cursor_height;
+    result.hex_char_positions = hex_input_result.char_x_positions;
 
     if config.hex_editing {
         draw_input_cursor(ctx, hex_input_result.cursor_x, hex_input_result.cursor_y, hex_input_result.cursor_height, "#d1d4dc");
