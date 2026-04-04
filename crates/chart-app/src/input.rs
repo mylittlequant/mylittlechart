@@ -5478,6 +5478,38 @@ impl ChartApp {
             }
         }
 
+        // Handle color picker hex input editing
+        // Check all color picker instances; the first one with hex_editing=true consumes the event.
+        {
+            let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
+                (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
+                (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
+                (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
+                (&mut self.panel_app.panel_color_picker, "panel"),
+            ];
+            for (picker, _src) in pickers {
+                if picker.hex_editing {
+                    match ch {
+                        '\r' | '\n' => {
+                            // Enter: apply hex and exit editing mode
+                            picker.hex_editing = false;
+                        }
+                        '\x1b' => {
+                            // Escape: cancel editing (revert to current color hex)
+                            let color = picker.current_color.clone();
+                            picker.hex_set_text(&color);
+                            picker.hex_editing = false;
+                        }
+                        _ => {
+                            picker.hex_char_input(ch);
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
         // Handle preset name input modal
         if self.panel_app.preset_name_input.is_open {
             let editing = &mut self.panel_app.preset_name_input.editing;

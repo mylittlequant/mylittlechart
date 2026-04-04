@@ -236,6 +236,8 @@ pub struct ColorPickerL2Config {
     pub hex_input: String,
     /// Whether hex input is being edited
     pub hex_editing: bool,
+    /// Cursor position in hex input (character index)
+    pub hex_cursor: usize,
     /// SV square size
     pub sv_square_size: f64,
     /// Hue bar width
@@ -253,6 +255,7 @@ impl Default for ColorPickerL2Config {
             opacity: 1.0,
             hex_input: "#ff0000".to_string(),
             hex_editing: false,
+            hex_cursor: 7, // "#ff0000".chars().count()
             sv_square_size: 180.0,
             hue_bar_width: 20.0,
             gap: 8.0,
@@ -333,6 +336,8 @@ pub struct ColorPickerState {
     pub hex_input: String,
     /// Whether hex input is focused
     pub hex_editing: bool,
+    /// Cursor position in hex input (character index)
+    pub hex_cursor: usize,
     /// Custom colors saved by user
     pub custom_colors: Vec<String>,
     /// Origin position for popup
@@ -379,6 +384,7 @@ impl ColorPickerState {
         self.hsv = HsvColor::from_hex(&self.current_color)
             .unwrap_or(HsvColor::new(0.0, 1.0, 1.0));
         self.hex_input = self.current_color.clone();
+        self.hex_cursor = self.hex_input.chars().count();
     }
 
     /// Return to L1 (from L2's back button)
@@ -410,6 +416,7 @@ impl ColorPickerState {
         self.hsv.v = v;
         self.current_color = self.hsv.to_hex();
         self.hex_input = self.current_color.clone();
+        self.hex_cursor = self.hex_input.chars().count();
     }
 
     /// Update hue from hue bar drag
@@ -417,6 +424,7 @@ impl ColorPickerState {
         self.hsv.h = h;
         self.current_color = self.hsv.to_hex();
         self.hex_input = self.current_color.clone();
+        self.hex_cursor = self.hex_input.chars().count();
     }
 
     /// Get the current opacity value (0.0–1.0)
@@ -456,7 +464,61 @@ impl ColorPickerState {
     /// Set hex input text (during editing)
     pub fn set_hex_input(&mut self, text: &str) {
         self.hex_input = text.to_string();
+        self.hex_cursor = self.hex_input.chars().count();
         // Try to parse and update HSV
+        if let Some(hsv) = HsvColor::from_hex(text) {
+            self.hsv = hsv;
+            self.current_color = text.to_string();
+        }
+    }
+
+    /// Handle a single character input for the hex field.
+    ///
+    /// Accepts `'\x08'` for backspace, `'#'`, and ASCII hex digits (`0-9a-fA-F`).
+    /// Applies change only when editing; caller must check `hex_editing` first.
+    pub fn hex_char_input(&mut self, ch: char) {
+        if ch == '\x08' {
+            // Backspace: remove char before cursor
+            if self.hex_cursor > 0 {
+                let byte_pos = self.hex_input
+                    .char_indices()
+                    .nth(self.hex_cursor - 1)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                let byte_end = self.hex_input
+                    .char_indices()
+                    .nth(self.hex_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.hex_input.len());
+                self.hex_input.drain(byte_pos..byte_end);
+                self.hex_cursor -= 1;
+            }
+        } else if ch == '#' || ch.is_ascii_hexdigit() {
+            // Max length: #RRGGBBAA = 9 chars
+            if self.hex_input.chars().count() < 9 {
+                let byte_pos = self.hex_input
+                    .char_indices()
+                    .nth(self.hex_cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.hex_input.len());
+                self.hex_input.insert(byte_pos, ch);
+                self.hex_cursor += 1;
+            }
+        }
+        // After every edit, try to apply the hex value
+        if let Some(hsv) = HsvColor::from_hex(&self.hex_input) {
+            self.hsv = hsv;
+            self.current_color = self.hex_input.trim_end_matches(|c: char| !c.is_ascii_hexdigit()).to_string();
+            if self.current_color.is_empty() {
+                self.current_color = self.hex_input.clone();
+            }
+        }
+    }
+
+    /// Replace hex input text and move cursor to the end.
+    pub fn hex_set_text(&mut self, text: &str) {
+        self.hex_input = text.to_string();
+        self.hex_cursor = self.hex_input.chars().count();
         if let Some(hsv) = HsvColor::from_hex(text) {
             self.hsv = hsv;
             self.current_color = text.to_string();
@@ -505,6 +567,7 @@ impl ColorPickerState {
             opacity: self.opacity,
             hex_input: self.hex_input.clone(),
             hex_editing: self.hex_editing,
+            hex_cursor: self.hex_cursor,
             is_opacity_toggled_off: self.is_opacity_toggled_off(),
             ..Default::default()
         }

@@ -7,7 +7,8 @@
 //! `crate::ui::color_picker_state`.
 
 use crate::render::{RenderContext, TextAlign, TextBaseline};
-use crate::ui::widgets::types::WidgetTheme;
+use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+use crate::ui::widgets::input::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::slider::{render_single_slider, SliderConfig};
 use crate::ui::widgets::popup::{draw_popup, PopupConfig, PopupTheme};
 use uzor::types::Rect as WidgetRect;
@@ -326,6 +327,12 @@ pub struct ColorPickerL2Result {
     pub hue_bar_rect: WidgetRect,
     /// Hex input rect
     pub hex_input_rect: WidgetRect,
+    /// Hex cursor X position (for blinking cursor rendering)
+    pub hex_cursor_x: f64,
+    /// Hex cursor Y position
+    pub hex_cursor_y: f64,
+    /// Hex cursor height
+    pub hex_cursor_height: f64,
     /// Opacity slider rect
     pub opacity_slider_rect: WidgetRect,
     /// Opacity toggle button rect (eye icon to toggle 0%/previous)
@@ -436,20 +443,43 @@ pub fn draw_color_picker_l2(
     let hex_input_rect = WidgetRect::new(hex_input_x, y + 2.0, hex_input_width, 28.0);
     result.hex_input_rect = hex_input_rect;
 
-    // Draw input background
-    let input_bg = if config.hex_editing { "#2a2e39" } else { "#1e222d" };
-    ctx.set_fill_color(input_bg);
-    ctx.fill_rounded_rect(hex_input_rect.x, hex_input_rect.y, hex_input_rect.width, hex_input_rect.height, 4.0);
-    ctx.set_stroke_color(if config.hex_editing { "#2196f3" } else { "#363a45" });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(hex_input_rect.x, hex_input_rect.y, hex_input_rect.width, hex_input_rect.height, 4.0);
+    let hex_widget_theme = WidgetTheme {
+        bg_normal: "#1e222d".to_string(),
+        bg_hover: "#2a2e39".to_string(),
+        bg_pressed: "#2a2e39".to_string(),
+        bg_disabled: "#1e222d".to_string(),
+        text_normal: "#d1d4dc".to_string(),
+        text_hover: "#d1d4dc".to_string(),
+        text_disabled: "#6a6d78".to_string(),
+        border_normal: "#363a45".to_string(),
+        border_hover: "#363a45".to_string(),
+        border_focused: "#2196f3".to_string(),
+        accent: "#2196f3".to_string(),
+        accent_hover: "#42a5f5".to_string(),
+        success: "#26a69a".to_string(),
+        warning: "#ff9800".to_string(),
+        danger: "#ef5350".to_string(),
+    };
 
-    // Draw hex text
-    ctx.set_font("13px monospace");
-    ctx.set_fill_color("#d1d4dc");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&config.hex_input, hex_input_rect.x + 8.0, hex_input_rect.center_y());
+    let hex_input_config = InputConfig {
+        value: config.hex_input.clone(),
+        placeholder: "#000000".to_string(),
+        focused: config.hex_editing,
+        cursor: config.hex_cursor,
+        font_size: 13.0,
+        padding: 8.0,
+        radius: 4.0,
+        ..InputConfig::default()
+    };
+
+    let hex_input_result = draw_input(ctx, &hex_input_config, WidgetState::Normal, hex_input_rect, &hex_widget_theme);
+    result.hex_cursor_x = hex_input_result.cursor_x;
+    result.hex_cursor_y = hex_input_result.cursor_y;
+    result.hex_cursor_height = hex_input_result.cursor_height;
+
+    if config.hex_editing {
+        draw_input_cursor(ctx, hex_input_result.cursor_x, hex_input_result.cursor_y, hex_input_result.cursor_height, "#d1d4dc");
+    }
 
     y += hex_row_height + config.gap;
 
