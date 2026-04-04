@@ -2679,7 +2679,7 @@ impl ChartPanelApp {
             item_text_muted: rt.colors.text_secondary.clone(),
             item_text_hidden: crate::apply_opacity(&rt.colors.text_primary, 0.5),
             item_text_hover: rt.colors.text_primary.clone(),
-            item_text_active: rt.colors.text_primary.clone(),
+            item_text_active: rt.colors.text_active.clone(),
             accent: rt.colors.accent.clone(),
             accent_hover: rt.colors.accent_hover.clone(),
             success: rt.colors.success.clone(),

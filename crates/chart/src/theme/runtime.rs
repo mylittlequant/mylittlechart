@@ -50,6 +50,7 @@ pub struct RuntimeUIColors {
     pub text_primary: String,
     pub text_secondary: String,
     pub text_muted: String,
+    pub text_active: String,
 
     // Borders
     pub border: String,
@@ -259,6 +260,7 @@ impl From<&UITheme> for RuntimeTheme {
                 text_primary: theme.colors.text_primary.to_string(),
                 text_secondary: theme.colors.text_secondary.to_string(),
                 text_muted: theme.colors.text_muted.to_string(),
+                text_active: theme.colors.text_active.to_string(),
                 border: theme.colors.border.to_string(),
                 border_light: theme.colors.border_light.to_string(),
                 divider: theme.colors.divider.to_string(),
