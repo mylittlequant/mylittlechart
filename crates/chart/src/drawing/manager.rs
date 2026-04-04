@@ -1192,8 +1192,8 @@ impl DrawingManager {
     /// Note: Locked primitives CAN be selected (to allow unlocking them),
     /// but drag/resize operations are blocked separately.
     pub fn hit_test(&self, x: f64, y: f64, viewport: &Viewport, price_scale: &PriceScale) -> Option<usize> {
-        // If globally locked, no primitives are selectable
-        if self.locked {
+        // If hidden or globally locked, no primitives are selectable
+        if !self.visible || self.locked {
             return None;
         }
 
@@ -1225,8 +1225,8 @@ impl DrawingManager {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<usize> {
-        // If globally locked, no primitives are selectable
-        if self.locked {
+        // If hidden or globally locked, no primitives are selectable
+        if !self.visible || self.locked {
             return None;
         }
 
@@ -1254,8 +1254,8 @@ impl DrawingManager {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<ControlPointType> {
-        // If globally locked, control points are not interactable
-        if self.locked {
+        // If hidden or globally locked, control points are not interactable
+        if !self.visible || self.locked {
             return None;
         }
 
@@ -1286,7 +1286,7 @@ impl DrawingManager {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<ControlPointType> {
-        if self.locked {
+        if !self.visible || self.locked {
             return None;
         }
 

@@ -2030,6 +2030,38 @@ impl ChartApp {
                         }
                     }
 
+                    // Propagate recalculated bar-index caches back to sync groups so that
+                    // the per-frame group→dm sync doesn't overwrite the corrected positions.
+                    // Collect (group_id, primitives) from matched windows (immutable pass).
+                    let group_prim_updates: Vec<(zengeld_chart::tag_manager::SyncGroupId, Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>)> = {
+                        let mut seen = std::collections::HashSet::new();
+                        self.panel_app.panel_grid.windows().iter()
+                            .filter(|(_, w)| {
+                                w.symbol == symbol
+                                    && w.exchange == exchange_id.as_str()
+                                    && w.timeframe.name == tf_name
+                                    && w.account_type == account_type.short_label()
+                            })
+                            .filter_map(|(_, w)| {
+                                let gid = w.group_id?;
+                                if seen.insert(gid) {
+                                    let cloned = w.drawing_manager.primitives()
+                                        .iter()
+                                        .map(|p| p.clone_box())
+                                        .collect();
+                                    Some((gid, cloned))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+                    for (group_id, corrected) in group_prim_updates {
+                        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                            group.primitives = corrected;
+                        }
+                    }
+
                     // Trigger Layer 2 background backfill for initial loads.
                     // Done after the window loop to avoid borrow conflicts with self.bridge.
                     let bg_target = self.panel_app.user_manager.profile.data_load.background_bar_count;
@@ -2101,6 +2133,37 @@ impl ChartApp {
                         }
                     }
 
+                    // Propagate recalculated bar-index caches back to sync groups.
+                    {
+                        let mut seen = std::collections::HashSet::new();
+                        let group_prim_updates: Vec<(zengeld_chart::tag_manager::SyncGroupId, Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>)> =
+                            self.panel_app.panel_grid.windows().iter()
+                                .filter(|(_, w)| {
+                                    w.symbol == symbol
+                                        && w.exchange == exchange_id.as_str()
+                                        && w.timeframe.name == tf_name
+                                        && w.account_type == account_type.short_label()
+                                })
+                                .filter_map(|(_, w)| {
+                                    let gid = w.group_id?;
+                                    if seen.insert(gid) {
+                                        let cloned = w.drawing_manager.primitives()
+                                            .iter()
+                                            .map(|p| p.clone_box())
+                                            .collect();
+                                        Some((gid, cloned))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                        for (group_id, corrected) in group_prim_updates {
+                            if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                                group.primitives = corrected;
+                            }
+                        }
+                    }
+
                     // Recalculate indicators for matched windows.
                     let matched_ids: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
@@ -2161,6 +2224,37 @@ impl ChartApp {
                         window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
+                        }
+                    }
+
+                    // Propagate recalculated bar-index caches back to sync groups.
+                    if any_matched {
+                        let mut seen = std::collections::HashSet::new();
+                        let group_prim_updates: Vec<(zengeld_chart::tag_manager::SyncGroupId, Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>>)> =
+                            self.panel_app.panel_grid.windows().iter()
+                                .filter(|(_, w)| {
+                                    w.symbol == symbol
+                                        && w.exchange == exchange_id.as_str()
+                                        && w.timeframe.name == tf_name
+                                        && w.account_type == at_label
+                                })
+                                .filter_map(|(_, w)| {
+                                    let gid = w.group_id?;
+                                    if seen.insert(gid) {
+                                        let cloned = w.drawing_manager.primitives()
+                                            .iter()
+                                            .map(|p| p.clone_box())
+                                            .collect();
+                                        Some((gid, cloned))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                        for (group_id, corrected) in group_prim_updates {
+                            if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                                group.primitives = corrected;
+                            }
                         }
                     }
 
