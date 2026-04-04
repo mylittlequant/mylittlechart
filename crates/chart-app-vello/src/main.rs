@@ -48,6 +48,68 @@ mod win32_capture {
     }
 }
 
+/// DWM window border color control (Windows 11+).
+///
+/// Sets the thin colored border that Windows 11 draws around undecorated windows.
+/// Silently ignored on Windows 10 and older — `DwmSetWindowAttribute` with
+/// `DWMWA_BORDER_COLOR` returns an error on those versions which we discard.
+#[cfg(target_os = "windows")]
+mod win32_border {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::Window;
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            dw_attribute: u32,
+            pv_attribute: *const u32,
+            cb_attribute: u32,
+        ) -> i32;
+    }
+
+    /// `DWMWA_BORDER_COLOR` — available since Windows 11 Build 22000.
+    const DWMWA_BORDER_COLOR: u32 = 34;
+
+    /// Parse `#RRGGBB` into a Win32 COLORREF (`0x00BBGGRR`).
+    fn hex_to_colorref(hex: &str) -> Option<u32> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return None;
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        Some((b as u32) << 16 | (g as u32) << 8 | r as u32)
+    }
+
+    /// Apply the DWM border color to `window`.
+    ///
+    /// `color` must be a `#RRGGBB` hex string.  Invalid strings or OS versions
+    /// that do not support this attribute are silently ignored.
+    pub fn set_dwm_border_color(window: &Window, color: &str) {
+        let Some(colorref) = hex_to_colorref(color) else {
+            return;
+        };
+        let Ok(handle) = window.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::Win32(h) = handle.as_ref() else {
+            return;
+        };
+        let hwnd = h.hwnd.get() as isize;
+        // Ignore the return value — non-zero means unsupported (Win10/older), which is fine.
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                &colorref as *const u32,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+}
+
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -754,6 +816,8 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
     pw.scene.reset();
 
     // Sync chrome colours from the chart theme.
+    #[cfg(target_os = "windows")]
+    let dwm_border_color: String;
     {
         let theme = pw.chart.panel_app.theme_manager.current();
         pw.chrome_state.colors.background = theme.chart.background.clone();
@@ -765,7 +829,11 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
         pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
         pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
+        #[cfg(target_os = "windows")]
+        { dwm_border_color = theme.colors.ui_border.clone(); }
     }
+    #[cfg(target_os = "windows")]
+    win32_border::set_dwm_border_color(&pw.window, &dwm_border_color);
 
     // Sync tabs from open_tabs order.
     {

@@ -210,12 +210,7 @@ pub fn render_leaf_tab(
         display_text
     };
 
-    // Main text color: brighter for active, dimmer for inactive.
-    let text_color = if is_active {
-        &toolbar_theme.item_text_active
-    } else {
-        &toolbar_theme.item_text_muted
-    };
+    let text_color = &toolbar_theme.item_text;
     ctx.set_fill_color(text_color);
     ctx.fill_text(&final_text, text_x, center_y);
 
