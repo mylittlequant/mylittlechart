@@ -721,14 +721,17 @@ pub fn draw_overlay_indicators(
                         .get("color_by_direction")
                         .copied()
                         .unwrap_or(true);
+                    // Build theme-aware fallback colors (candle theme color + 50% alpha).
+                    let up_fallback = format!("{}80", state.theme.candle_up);
+                    let down_fallback = format!("{}80", state.theme.candle_down);
                     let up_color = instance.color_params
                         .get("up_color")
                         .map(|s| s.as_str())
-                        .unwrap_or("#26A69A80");
+                        .unwrap_or(up_fallback.as_str());
                     let down_color = instance.color_params
                         .get("down_color")
                         .map(|s| s.as_str())
-                        .unwrap_or("#EF535080");
+                        .unwrap_or(down_fallback.as_str());
                     draw_volume_overlay(ctx, state, values, color_by_direction, up_color, down_color);
                 }
                 _ => {}
@@ -1187,7 +1190,11 @@ pub fn draw_sub_pane_histogram(
                 let val_ratio = (v - pane_min) / pane_range;
                 let val_y = pane_y + pane_height - (val_ratio * pane_height);
 
-                let bar_color = if v >= 0.0 { "#26A69A" } else { "#EF5350" };
+                let bar_color = if v >= 0.0 {
+                    &state.theme.candle_up
+                } else {
+                    &state.theme.candle_down
+                };
                 ctx.set_fill_color(bar_color);
 
                 if v >= 0.0 {
@@ -2163,9 +2170,9 @@ pub fn render_sub_pane_left_overlay(
     let button_size = 18.0;
     let gap = 2.0;
     let margin_left = 8.0; // matches the old title x-offset
-    let title_x = content.x + margin_left;
+    let title_x = (content.x + margin_left).round();
     // Vertical center for text and icons — aligns with icon center row.
-    let title_center_y = content.y + content.height / 2.0;
+    let title_center_y = (content.y + content.height / 2.0).round();
 
     ctx.set_font("10px sans-serif");
     ctx.set_text_align(crate::render::TextAlign::Left);
