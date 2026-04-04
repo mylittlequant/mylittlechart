@@ -100,7 +100,6 @@ impl TextInputManager {
         char_positions: Vec<f64>,
     ) {
         if let Some(state) = self.fields.get_mut(&id) {
-            eprintln!("[TextInput] update_field({:?}) rect=({:.1},{:.1},{:.1},{:.1}) chars={} frame={}", id, rect.0, rect.1, rect.2, rect.3, char_positions.len(), self.current_frame);
             state.last_rect = Some(rect);
             state.last_char_positions = char_positions;
             state.last_frame = self.current_frame;
@@ -316,7 +315,6 @@ impl TextInputManager {
 
     /// Begin a mouse drag on the field whose `last_rect` contains `(x, y)`.
     pub fn on_drag_start(&mut self, x: f64, y: f64) {
-        eprintln!("[TextInput] on_drag_start({x:.1}, {y:.1}) current_frame={}", self.current_frame);
         // Find the field that was updated this frame and contains the point.
         let mut hit_id: Option<FieldId> = None;
         for (id, state) in &self.fields {
@@ -329,15 +327,10 @@ impl TextInputManager {
             // arrive after begin_frame() but before update_field() re-stamps the
             // geometry, so last_frame is typically current_frame - 1.
             if frame_lag > 1 {
-                if state.last_rect.is_some() {
-                    eprintln!("[TextInput]   {:?} SKIPPED: frame_lag={} last_frame={}", id, frame_lag, state.last_frame);
-                }
                 continue;
             }
             if let Some((rx, ry, rw, rh)) = state.last_rect {
-                eprintln!("[TextInput]   {:?} rect=({rx:.1},{ry:.1},{rw:.1},{rh:.1}) frame_lag={}", id, frame_lag);
                 if x >= rx && x <= rx + rw && y >= ry && y <= ry + rh {
-                    eprintln!("[TextInput]   {:?} HIT!", id);
                     hit_id = Some(*id);
                     break;
                 }
@@ -346,10 +339,7 @@ impl TextInputManager {
 
         let id = match hit_id {
             Some(id) => id,
-            None => {
-                eprintln!("[TextInput]   no field hit");
-                return;
-            }
+            None => return,
         };
 
         // Focus the field (clears other selections).
