@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uzor = "1.0.26"
-uzor-backend-wgpu-instanced = "1.0.26"
+uzor = "1.0.27"
+uzor-backend-wgpu-instanced = "1.0.27"
 zengeld-chart = { path = "../chart" }

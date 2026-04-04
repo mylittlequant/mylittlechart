@@ -227,15 +227,15 @@ fn render_page_profile_list(
         let signin_id = "profile_mgr:sign_in";
         let is_signin_hovered = hovered == Some(signin_id);
         let signin_bg = if is_signin_hovered {
-            toolbar_theme.accent_hover.as_str()
+            toolbar_theme.button_bg_hover.as_str()
         } else {
-            toolbar_theme.accent.as_str()
+            toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(signin_bg);
         ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, signin_btn_h, 4.0);
-        draw_svg_icon(ctx, Icon::LogIn.svg(), left_inner_x + 10.0, left_cy + (signin_btn_h - 16.0) / 2.0, 16.0, 16.0, "rgba(0,0,0,0.85)");
+        draw_svg_icon(ctx, Icon::LogIn.svg(), left_inner_x + 10.0, left_cy + (signin_btn_h - 16.0) / 2.0, 16.0, 16.0, toolbar_theme.item_text_active.as_str());
         ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color("rgba(0,0,0,0.85)");
+        ctx.set_fill_color(toolbar_theme.item_text_active.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Sign In via Browser", left_inner_x + left_inner_w / 2.0 + 8.0, left_cy + signin_btn_h / 2.0);
@@ -785,12 +785,10 @@ fn render_page_profile_list(
 
             let is_restoring = state.restoring_profile_id.as_deref() == Some(&cp.profile_id);
             let btn_label = if is_restoring { "Restoring\u{2026}" } else { "Restore" };
-            let btn_bg = if is_restoring {
+            let btn_bg = if is_restoring || !is_row_hovered {
                 toolbar_theme.button_bg.as_str()
-            } else if is_row_hovered {
-                toolbar_theme.accent_hover.as_str()
             } else {
-                toolbar_theme.accent.as_str()
+                toolbar_theme.button_bg_hover.as_str()
             };
             ctx.set_fill_color(btn_bg);
             ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
@@ -798,7 +796,7 @@ fn render_page_profile_list(
             let btn_text_color = if is_restoring {
                 toolbar_theme.item_text_muted.as_str()
             } else {
-                "rgba(0,0,0,0.85)"
+                toolbar_theme.item_text_active.as_str()
             };
             ctx.set_font("bold 10px sans-serif");
             ctx.set_fill_color(btn_text_color);
@@ -923,14 +921,12 @@ fn render_page_unlock(
     // Unlock button
     let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("profile_mgr:unlock");
-    let btn_bg = if unlock_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_unlock_hovered {
-        toolbar_theme.accent_hover.as_str()
+    let btn_bg = if is_unlock_hovered {
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let btn_text_col = if unlock_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if unlock_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);
@@ -1140,14 +1136,12 @@ fn render_page_create_passphrase(
     let encrypt_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
         || !confirm_matches_create;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
-    let btn_bg = if encrypt_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_encrypt_hovered {
-        toolbar_theme.accent_hover.as_str()
+    let btn_bg = if is_encrypt_hovered {
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let btn_text_col = if encrypt_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if encrypt_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);
@@ -1338,11 +1332,11 @@ fn render_page_show_recovery_key(
     let btn_label = "Я записал — продолжить";
     let is_btn_hovered = hovered == Some("profile_mgr:recovery_key_confirm");
     let btn_bg = if is_btn_hovered {
-        toolbar_theme.accent_hover.as_str()
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let btn_text_col = "rgba(0,0,0,0.85)";
+    let btn_text_col = toolbar_theme.item_text_active.as_str();
     let btn_h = 34.0;
     let btn_w = inner_w.min(260.0);
     let btn_x = inner_x + (inner_w - btn_w) / 2.0;
@@ -1470,14 +1464,12 @@ fn render_page_create_new(
     let name_is_empty = state.new_profile_name_editing.text.trim().is_empty();
     let create_disabled = name_is_empty;
     let is_create_hovered = !create_disabled && hovered == Some("profile_mgr:create_confirm");
-    let create_bg = if create_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_create_hovered {
-        toolbar_theme.accent_hover.as_str()
+    let create_bg = if is_create_hovered {
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let create_text_col = if create_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
+    let create_text_col = if create_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let create_btn_h = 32.0;
     let create_btn_w = inner_w.min(180.0);
     ctx.set_fill_color(create_bg);
@@ -1683,14 +1675,12 @@ fn render_page_set_new_passphrase(
         || new_text != confirm_text;
 
     let is_save_hovered = !save_disabled && hovered == Some("profile_mgr:save_new_passphrase");
-    let save_bg = if save_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_save_hovered {
-        toolbar_theme.accent_hover.as_str()
+    let save_bg = if is_save_hovered {
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let save_text_col = if save_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
+    let save_text_col = if save_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(save_bg);
@@ -1819,14 +1809,12 @@ fn render_page_use_recovery_key(
     // Recover button
     let recover_disabled = state.recovery_key_editing.text.len() < 40;
     let is_recover_hovered = !recover_disabled && hovered == Some("profile_mgr:recovery_unlock");
-    let btn_bg = if recover_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_recover_hovered {
-        toolbar_theme.accent_hover.as_str()
+    let btn_bg = if is_recover_hovered {
+        toolbar_theme.button_bg_hover.as_str()
     } else {
-        toolbar_theme.accent.as_str()
+        toolbar_theme.button_bg.as_str()
     };
-    let btn_text_col = if recover_disabled { toolbar_theme.item_text_muted.as_str() } else { "rgba(0,0,0,0.85)" };
+    let btn_text_col = if recover_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
     let btn_w = inner_w.min(180.0);
     ctx.set_fill_color(btn_bg);

@@ -18,7 +18,7 @@ use crate::ui::toolbar_render::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
-use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::i18n::{Language, current_language, WizardKey, t_wizard};
@@ -451,7 +451,7 @@ fn render_page2_profile(
     let confirm_text = &state.confirm_passphrase_editing.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(t_wizard(WizardKey::PassphraseMismatch), x, *cy);
@@ -920,7 +920,7 @@ pub fn render_vault_unlock(
     // ── Error message ────────────────────────────────────────────────────────
     if let Some(ref err_msg) = state.vault_unlock_error {
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(255,80,80,0.90)");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
