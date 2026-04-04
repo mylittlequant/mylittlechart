@@ -444,39 +444,16 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
     ctx.fill_rect(0.0, 0.0, width, CHROME_HEIGHT);
 
     // ── Hover backgrounds ───────────────────────────────────────────────────
+    // Only Close App (red) and Mascot get a background highlight on hover.
+    // All other buttons use SVG color change only — no BG highlight.
     match state.hovered {
-        ChromeHit::MinimizeButton => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.minimize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
-        ChromeHit::MaximizeButton => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.maximize_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
         ChromeHit::CloseButton => {
             ctx.set_fill_color(&c.close_hover);
             ctx.fill_rect(bp.close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::CloseWindowButton => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.close_window_left, 0.0, CLOSE_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
         ChromeHit::MascotButton if !skeleton_mode => {
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rect(bp.mascot_left, 0.0, MASCOT_BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
-        ChromeHit::MenuButton if !skeleton_mode => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
-        ChromeHit::NewWindowButton if !skeleton_mode => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
-        }
-        ChromeHit::NewTabButton if !skeleton_mode => {
-            let new_tab_x = tab_strip_end_x(state);
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(new_tab_x, 0.0, NEW_TAB_BUTTON_WIDTH, BUTTON_HEIGHT);
         }
         _ => {}
     }
@@ -496,14 +473,14 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
             } else if state.hovered == ChromeHit::Tab(i)
                    || state.hovered == ChromeHit::TabClose(i)
             {
-                ctx.set_fill_color(&c.icon_hover);
+                ctx.set_fill_color(&c.button_hover);
                 ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
             }
 
             // Tab name text
             {
                 let text_x = tab_left + TAB_PADDING_H;
-                let text_color = if tab.active { &c.icon_hover } else { &c.icon_normal };
+                let text_color = &c.icon_normal;
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(text_color);
                 ctx.set_text_align(TextAlign::Left);
@@ -669,12 +646,9 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
     }
 
     // ── Close icon × (stroked diagonals, 1.5px) ────────────────────────────
+    // SVG stays icon_normal always; only the BG turns red on hover.
     {
-        let icon_color = if state.hovered == ChromeHit::CloseButton {
-            &c.icon_hover
-        } else {
-            &c.icon_normal
-        };
+        let icon_color = &c.icon_normal;
         let cx = bp.close_x + BUTTON_WIDTH / 2.0;
         let cy = CHROME_HEIGHT / 2.0;
         let s = 5.0;
