@@ -1383,6 +1383,10 @@ impl ChartApp {
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
                 let preset_id = app.panel_app.active_preset_id.clone();
+                // Clear active_preset_id so LoadPreset doesn't skip with
+                // "already active" — the constructor set it above, but the
+                // preset windows haven't been built yet.
+                app.panel_app.active_preset_id = String::new();
                 app.process_chart_out_event(
                     zengeld_chart::events::ChartOutEvent::LoadPreset { id: preset_id },
                 );
