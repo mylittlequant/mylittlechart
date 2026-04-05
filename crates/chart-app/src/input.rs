@@ -515,7 +515,7 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     /// Handle drag start at `(x, y)`.
-    pub fn on_drag_start(&mut self, x: f64, y: f64) {
+    pub fn on_drag_start(&mut self, x: f64, y: f64) -> bool {
         // Track whether this drag started on a UI element (for crosshair suppression).
         self.ui_drag_active = self.input_coordinator.borrow_mut().is_over_ui();
 
@@ -568,7 +568,7 @@ impl ChartApp {
             }
             if dismissed {
                 self.drag_dismissed_popup = true;
-                return;
+                return true;
             }
         }
 
@@ -580,7 +580,7 @@ impl ChartApp {
             .unwrap_or(false);
         if on_sidebar_separator {
             self.sidebar_separator_drag_active = true;
-            return;
+            return false;
         }
 
         // Check if drag starts on a watchlist column separator — begin separator drag.
@@ -647,7 +647,7 @@ impl ChartApp {
                 self.sidebar_state.watchlist_sep_drag = Some((sep_idx, x, sep_offset_at_start));
                 self.ui_drag_active = true;
                 eprintln!("[Sidebar] Watchlist sep drag started: sep={}, x={:.0}, offset={:.0}", sep_idx, x, sep_offset_at_start);
-                return;
+                return false;
             }
         }
 
@@ -667,7 +667,7 @@ impl ChartApp {
                     self.sidebar_state.watchlist_drop_index = Some(idx);
                     self.ui_drag_active = true;
                     eprintln!("[Sidebar] Watchlist drag started: row {}", idx);
-                    return;
+                    return false;
                 }
             }
         }
@@ -690,7 +690,7 @@ impl ChartApp {
                             .or_default()
                             .start_drag(y);
                         self.ui_drag_active = true;
-                        return;
+                        return false;
                     }
                     // Track click — jump scroll to clicked position.
                     let track_hit = x >= track_rect.x
@@ -709,7 +709,7 @@ impl ChartApp {
                                 content_h,
                                 viewport_h,
                             );
-                        return;
+                        return false;
                     }
                 }
             }
@@ -724,7 +724,7 @@ impl ChartApp {
                         && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
                     if hit {
                         self.sidebar_state.current_right_scroll_mut().start_drag(y);
-                        return;
+                        return false;
                     }
                 }
                 // Scrollbar track click — jump to position
@@ -737,7 +737,7 @@ impl ChartApp {
                         self.sidebar_state.current_right_scroll_mut().handle_track_click(
                             y, track_rect.y, track_rect.height, content_h, viewport_h,
                         );
-                        return;
+                        return false;
                     }
                 }
             }
@@ -777,7 +777,7 @@ impl ChartApp {
                     let modal_y = ps.header_rect.y;
                     self.panel_app.primitive_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] prim_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Chart settings modal header
@@ -787,7 +787,7 @@ impl ChartApp {
                     let modal_y = cs.header_rect.y;
                     self.panel_app.chart_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] chart_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // User settings modal header
@@ -797,7 +797,7 @@ impl ChartApp {
                     let modal_y = us.header_rect.y;
                     self.panel_app.user_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] user_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Overlay settings modal header
@@ -807,7 +807,7 @@ impl ChartApp {
                     let modal_y = os.header_rect.y;
                     self.panel_app.overlay_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] overlay_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Tags & Tabs modal header
@@ -817,7 +817,7 @@ impl ChartApp {
                     let modal_y = tt.header_rect.y;
                     self.panel_app.tags_tabs_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] tags_tabs modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Indicator settings modal header
@@ -827,7 +827,7 @@ impl ChartApp {
                     let modal_y = is.header_rect.y;
                     self.panel_app.indicator_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] ind_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Alert settings modal header
@@ -837,7 +837,7 @@ impl ChartApp {
                     let modal_y = as_result.header_rect.y;
                     self.panel_app.alert_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] alert_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Compare settings modal header
@@ -847,7 +847,7 @@ impl ChartApp {
                     let modal_y = cs_result.header_rect.y;
                     self.panel_app.compare_settings_state.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] compare_settings modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Compare settings slider drag start
@@ -908,7 +908,7 @@ impl ChartApp {
                         }
                     }
                     if tf_drag_started {
-                        return;
+                        return false;
                     }
 
                     // Line-width single-handle slider (Style tab)
@@ -932,7 +932,7 @@ impl ChartApp {
                             // Jump handle to click position immediately.
                             self.panel_app.compare_settings_state.update_slider_drag(x);
                             eprintln!("[ChartApp] compare_settings line_width slider drag started");
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -1030,7 +1030,7 @@ impl ChartApp {
                         }
                         self.panel_app.user_settings_state.profile_mgr_text_select_dragging = Some(field_id.clone());
                         eprintln!("[ChartApp] profile_mgr text select drag started: {} at char {}", field_id, drag_cursor);
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1045,7 +1045,7 @@ impl ChartApp {
                     self.panel_app.preset_name_input.editing.selection_start = Some(new_cursor);
                     self.panel_app.preset_name_input.text_select_dragging = true;
                     eprintln!("[ChartApp] preset_name_input text select drag started at char {}", new_cursor);
-                    return;
+                    return false;
                 }
             }
             // Preset name input modal header
@@ -1055,7 +1055,7 @@ impl ChartApp {
                     let modal_y = pni.modal_rect.y;
                     self.panel_app.preset_name_input.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] preset_name_input modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Chart browser — text select drag on the search input field
@@ -1069,7 +1069,7 @@ impl ChartApp {
                     self.panel_app.chart_browser.search_editing.selection_start = Some(new_cursor);
                     self.panel_app.chart_browser.search_text_select_dragging = true;
                     eprintln!("[ChartApp] chart_browser search text select drag started at char {}", new_cursor);
-                    return;
+                    return false;
                 }
             }
             // Chart browser modal header
@@ -1079,7 +1079,7 @@ impl ChartApp {
                     let modal_y = br.modal_rect.y;
                     self.panel_app.chart_browser.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] chart_browser modal drag started");
-                    return;
+                    return false;
                 }
             }
             // Primitive settings — text select drag on ANY active text input field
@@ -1098,7 +1098,7 @@ impl ChartApp {
                             edit.selection_start = Some(new_cursor);
                         }
                         self.panel_app.primitive_settings_state.text_select_dragging = true;
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1118,7 +1118,7 @@ impl ChartApp {
                             edit.selection_start = Some(new_cursor);
                         }
                         self.panel_app.indicator_settings_state.text_select_dragging = true;
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1138,7 +1138,7 @@ impl ChartApp {
                             edit.selection_start = Some(new_cursor);
                         }
                         self.panel_app.chart_settings_state.text_select_dragging = true;
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1158,7 +1158,7 @@ impl ChartApp {
                             edit.selection_start = Some(new_cursor);
                         }
                         self.panel_app.compare_settings_state.text_select_dragging = true;
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1176,7 +1176,7 @@ impl ChartApp {
                     self.wl_group_name_input.editing.selection_start = Some(new_cursor);
                     self.wl_group_name_input.text_select_dragging = true;
                     eprintln!("[ChartApp] wl_group_name_input text select drag started at char {}", new_cursor);
-                    return;
+                    return false;
                 }
             }
         }
@@ -1189,7 +1189,7 @@ impl ChartApp {
                     let modal_y = gni.modal_rect.y;
                     self.wl_group_name_input.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] wl_group_name_input drag started");
-                    return;
+                    return false;
                 }
             }
         }
@@ -1208,7 +1208,7 @@ impl ChartApp {
                         self.watchlist_modal.search_editing.selection_start = Some(new_cursor);
                         self.watchlist_modal.search_text_select_dragging = true;
                         eprintln!("[ChartApp] watchlist_modal search text select drag started at char {}", new_cursor);
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1222,7 +1222,7 @@ impl ChartApp {
                     let modal_y = wl.modal_rect.y;
                     self.watchlist_modal.start_drag(x, y, modal_x, modal_y);
                     eprintln!("[ChartApp] watchlist_modal drag started");
-                    return;
+                    return false;
                 }
                 // Watchlist modal item row drag — begin drag-to-reorder.
                 // Guard: if the pointer is over a delete button, don't start drag — let it be a click.
@@ -1271,7 +1271,7 @@ impl ChartApp {
                         edit.selection_start = Some(new_cursor);
                     }
                     self.modal_state.text_select_dragging = true;
-                    return;
+                    return false;
                 }
             }
         }
@@ -1284,7 +1284,7 @@ impl ChartApp {
                         let modal_y = smr.modal_rect.y;
                         self.modal_state.start_drag(x, y, modal_x, modal_y);
                         eprintln!("[ChartApp] search_modal modal drag started");
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1302,7 +1302,7 @@ impl ChartApp {
                     self.panel_app.toolbar_state.floating_inline_bar.start_drag(x, y, &bar_rect);
                     self.ui_drag_active = true;
                     eprintln!("[ChartApp] inline bar drag started (by label)");
-                    return;
+                    return false;
                 }
             }
         }
@@ -1321,7 +1321,7 @@ impl ChartApp {
                         if hit {
                             self.panel_app.chart_settings_state.scroll.start_drag(y);
                             eprintln!("[ChartApp] chart_settings scrollbar drag started");
-                            return;
+                            return false;
                         }
                     }
                     // Track click — click on empty scrollbar track to jump position
@@ -1336,7 +1336,7 @@ impl ChartApp {
                                 cs.total_content_height,
                                 cs.viewport_height,
                             );
-                            return;
+                            return false;
                         }
                     }
                     for track in &cs.slider_tracks {
@@ -1355,7 +1355,7 @@ impl ChartApp {
                                 );
                                 // Set initial floating value so the handle jumps to click position.
                                 self.panel_app.chart_settings_state.update_slider_drag_float(x);
-                                return;
+                                return false;
                             }
                         }
                     }
@@ -1374,10 +1374,10 @@ impl ChartApp {
                     };
                     let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
                     if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
-                        return;
+                        return false;
                     }
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1403,11 +1403,11 @@ impl ChartApp {
                     };
 
                     if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
-                        return;
+                        return false;
                     }
                     // Track click (jump to position)
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1430,7 +1430,7 @@ impl ChartApp {
                                         &field_id, track_x, track_width, min_val, max_val,
                                     );
                                     self.panel_app.user_settings_state.update_data_slider_drag(x);
-                                    return;
+                                    return false;
                                 }
                             }
                         }
@@ -1445,7 +1445,7 @@ impl ChartApp {
                             && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
                         if hit {
                             self.panel_app.user_settings_state.profile_list_scroll.start_drag(y);
-                            return;
+                            return false;
                         }
                     }
                     // Track click — click on empty scrollbar track to jump position
@@ -1460,7 +1460,7 @@ impl ChartApp {
                                 us.profile_list_total_content_h,
                                 us.profile_list_viewport_rect.height,
                             );
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -1477,7 +1477,7 @@ impl ChartApp {
                         if hit {
                             self.panel_app.indicator_settings_state.scroll.start_drag(y);
                             eprintln!("[ChartApp] ind_settings scrollbar drag started");
-                            return;
+                            return false;
                         }
                     }
                     // Track click — click on empty scrollbar track to jump position
@@ -1492,7 +1492,7 @@ impl ChartApp {
                                 is.total_content_height,
                                 is.viewport_height,
                             );
-                            return;
+                            return false;
                         }
                     }
                     for track in &is.slider_tracks {
@@ -1562,7 +1562,7 @@ impl ChartApp {
                                     // Set initial floating value.
                                     self.panel_app.indicator_settings_state.update_slider_drag_float(x);
                                 }
-                                return;
+                                return false;
                             }
                         }
                     }
@@ -1650,7 +1650,7 @@ impl ChartApp {
                                     self.panel_app.primitive_settings_state.start_dual_slider_drag_from_track(
                                         &field_id, track_x, track_width, min_val, max_val, handle, x,
                                     );
-                                    return;
+                                    return false;
                                 }
                                 // Regular single-handle slider.
                                 self.panel_app.primitive_settings_state.start_slider_drag_from_track(
@@ -1658,7 +1658,7 @@ impl ChartApp {
                                 );
                                 // Set initial floating value so handle jumps to click position.
                                 self.panel_app.primitive_settings_state.update_slider_drag_float(x);
-                                return;
+                                return false;
                             }
                         }
                     }
@@ -1691,7 +1691,7 @@ impl ChartApp {
                         });
                         self.apply_color_picker_drag(x, y);
                         eprintln!("[ChartApp] color_picker SV drag started ({})", src);
-                        return;
+                        return false;
                     }
                     if hue.contains(x, y) {
                         self.color_picker_drag = Some(crate::ColorPickerDragState {
@@ -1703,7 +1703,7 @@ impl ChartApp {
                         });
                         self.apply_color_picker_drag(x, y);
                         eprintln!("[ChartApp] color_picker hue drag started ({})", src);
-                        return;
+                        return false;
                     }
                     if opacity.contains(x, y) {
                         self.color_picker_drag = Some(crate::ColorPickerDragState {
@@ -1715,7 +1715,7 @@ impl ChartApp {
                         });
                         self.apply_color_picker_drag(x, y);
                         eprintln!("[ChartApp] color_picker L2 opacity drag started ({})", src);
-                        return;
+                        return false;
                     }
                 }
 
@@ -1732,7 +1732,7 @@ impl ChartApp {
                             });
                             self.apply_color_picker_drag(x, y);
                             eprintln!("[ChartApp] color_picker L1 opacity drag started ({})", src);
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -1749,7 +1749,7 @@ impl ChartApp {
                         if hit {
                             self.panel_app.alert_settings_state.list_scroll.start_drag(y);
                             eprintln!("[ChartApp] alert_settings scrollbar drag started");
-                            return;
+                            return false;
                         }
                     }
                     if let Some(ref track_rect) = asr.scrollbar_track_rect {
@@ -1765,7 +1765,7 @@ impl ChartApp {
                                     vp.height,
                                 );
                             }
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -1782,7 +1782,7 @@ impl ChartApp {
                     if hit {
                         self.modal_state.scroll.start_drag(y);
                         eprintln!("[ChartApp] search_modal scrollbar drag started");
-                        return;
+                        return false;
                     }
                 }
                 // Track click — click on empty scrollbar track to jump position
@@ -1797,7 +1797,7 @@ impl ChartApp {
                             smr.total_content_height,
                             smr.viewport_height,
                         );
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1811,7 +1811,7 @@ impl ChartApp {
                         && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
                     if hit {
                         self.watchlist_modal.scroll.start_drag(y);
-                        return;
+                        return false;
                     }
                 }
                 if let Some(ref track_rect) = wmr.scrollbar_track_rect {
@@ -1823,7 +1823,7 @@ impl ChartApp {
                             wmr.total_content_height,
                             wmr.list_viewport_rect.height,
                         );
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1839,7 +1839,7 @@ impl ChartApp {
                         if hit {
                             self.panel_app.chart_browser.scroll.start_drag(y);
                             eprintln!("[ChartApp] chart_browser scrollbar drag started");
-                            return;
+                            return false;
                         }
                     }
                     if let Some(ref track_rect) = cbr.scrollbar_track_rect {
@@ -1853,7 +1853,7 @@ impl ChartApp {
                                 cbr.total_content_height,
                                 cbr.list_viewport_rect.height,
                             );
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -1862,7 +1862,7 @@ impl ChartApp {
 
         // Block drags when a modal is open (and we didn't start a modal drag above).
         if self.input_coordinator.borrow_mut().is_blocked_by_modal(x, y) {
-            return;
+            return false;
         }
 
         // Split panel: route drag to the correct leaf FIRST, before any drawing
@@ -1881,7 +1881,7 @@ impl ChartApp {
                         start_x: x,
                         start_y: y,
                     });
-                    return;
+                    return false;
                 }
                 ChartInputTarget::Chart { leaf_id }
                 | ChartInputTarget::PriceScale { leaf_id }
@@ -1890,7 +1890,7 @@ impl ChartApp {
                     self.panel_app.panel_grid.set_active_leaf(leaf_id);
                     // Fall through to chart engine drag handling.
                 }
-                ChartInputTarget::None => return,
+                ChartInputTarget::None => return false,
             }
         }
 
@@ -1900,7 +1900,7 @@ impl ChartApp {
         let _has_ct = self.has_click_drawing_tool();
         if !self.ui_drag_active && _has_ct {
             self.handle_canvas_click(x, y);
-            return;
+            return false;
         }
 
         // Freehand tool (brush/highlighter) — start stroke on drag start
@@ -1925,7 +1925,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                     window.drawing_manager.start_freehand(bar, price);
                 }
-                return;
+                return false;
             }
         }
 
@@ -2102,6 +2102,7 @@ impl ChartApp {
         // drawing_manager.start_drag() with the correct coordinates.
         actions.extend(extra_actions);
         self.process_output_actions(actions);
+        false
     }
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
@@ -7888,6 +7889,7 @@ impl ChartApp {
                             window.exchange = item_exchange.clone();
                             window.account_type = item_account_type.clone();
                             window.update_title();
+                            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
@@ -15071,6 +15073,7 @@ impl ChartApp {
                     window.exchange = exchange_part.to_string();
                     window.account_type = wl_at_label.clone();
                     window.update_title();
+                    window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                     window.bars.clear();
                     window.viewport.bar_count = 0;
                     window.pending_symbol_load = true;
@@ -15497,6 +15500,7 @@ impl ChartApp {
                             window.exchange = resolved_exchange.as_str().to_string();
                             window.account_type = search_at_label.clone();
                             window.update_title();
+                            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                             window.bars.clear();
                             window.viewport.bar_count = 0;
                             window.viewport.view_start = 0.0;
@@ -17541,6 +17545,7 @@ impl ChartApp {
                                 window.symbol = snap.symbol.clone();
                                 window.exchange = snap.exchange.clone();
                                 window.account_type = snap.account_type.clone();
+                                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                                 // Rebuild data_provider for this window's (possibly new) exchange.
                                 let patch_exchange_id = digdigdig3::ExchangeId::from_str(&snap.exchange)
                                     .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -19651,6 +19656,7 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
                 window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type);
                 window.symbol = symbol_owned.clone();
+                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                 window.bars.clear();
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;

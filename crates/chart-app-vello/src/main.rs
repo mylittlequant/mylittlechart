@@ -7831,7 +7831,14 @@ impl ApplicationHandler for App<'_> {
                         pw.mouse_pressed = true;
                         pw.last_drag_pos = Some((x, y));
                         pw.drag_start_pos = Some((x, y));
-                        pw.chart.on_drag_start(x, chart_y);
+                        let dismissed = pw.chart.on_drag_start(x, chart_y);
+                        if dismissed {
+                            // Popup was dismissed — reset platform drag state so
+                            // the upcoming MouseUp does nothing.
+                            pw.mouse_pressed = false;
+                            pw.last_drag_pos = None;
+                            pw.drag_start_pos = None;
+                        }
                     }
                     (MouseButton::Left, ElementState::Released) => {
                         if pw.mouse_pressed {

@@ -923,6 +923,7 @@ impl ChartApp {
                 // Use BTCUSDT as the default symbol.
                 window.symbol = "BTCUSDT".to_string();
                 window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+                window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
@@ -1120,6 +1121,7 @@ impl ChartApp {
             window.toolbar_config = ToolbarConfig::standalone();
             window.symbol = "BTCUSDT".to_string();
             window.timeframe = zengeld_chart::state::Timeframe::new("1H", 60);
+            window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
         }
         app.panel_app.toolbar_config = ToolbarConfig::standalone();
 
