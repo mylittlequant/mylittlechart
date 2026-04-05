@@ -123,6 +123,12 @@ impl ChartPanelGrid {
         }
     }
 
+    /// Minimal grid used as temporary stand-in during `mem::replace` in preset cache swaps.
+    pub fn placeholder() -> Self {
+        use crate::state::Timeframe;
+        Self::new(ChartWindow::new("PLACEHOLDER", Timeframe::h1()))
+    }
+
     // =========================================================================
     // Query
     // =========================================================================

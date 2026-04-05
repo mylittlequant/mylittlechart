@@ -17332,14 +17332,33 @@ impl ChartApp {
 
             ChartOutEvent::LoadPreset { id } => {
                 eprintln!("[ChartApp] load preset: {}", id);
-                // Save the outgoing preset (with bars) before switching away.
                 let prev_id = self.panel_app.active_preset_id.clone();
-                if prev_id != id && !prev_id.is_empty() && prev_id != "__default__" {
+
+                // Same tab — no-op.
+                if prev_id == id {
+                    eprintln!("[ChartApp] LoadPreset: already active, skipping");
+                    state_mutated = true;
+                } else {
+
+                // Save the outgoing preset (with bars) before switching away.
+                if !prev_id.is_empty() && prev_id != "__default__" {
                     self.autosave_snapshot();
                 }
+
+                // Park outgoing state into live cache.
+                if !prev_id.is_empty() {
+                    self.park_active_preset(&prev_id);
+                }
+
                 self.panel_app.active_preset_id = id.clone();
                 self.persist_profile();
-                if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
+
+                // Warm path: live cache hit — zero-flicker switch.
+                if self.unpark_preset(&id) {
+                    eprintln!("[ChartApp] LoadPreset '{}': live cache hit — zero-flicker switch", id);
+                    self.sidebar_data_dirty = true;
+                    state_mutated = true;
+                } else if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
                     eprintln!(
                         "[ChartApp] applying preset '{}': {} windows, {} groups, {} indicators",
                         preset.name, preset.windows.len(), preset.sync_groups.len(), preset.indicators.len()
@@ -17930,10 +17949,12 @@ impl ChartApp {
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
 
                     eprintln!("[ChartApp] preset '{}' fully restored", preset.name);
+                    state_mutated = true;
                 } else {
                     eprintln!("[ChartApp] preset '{}' not found in memory", id);
                 }
-                state_mutated = true;
+
+                } // end else (prev_id != id)
             }
 
             ChartOutEvent::DeletePreset { id } => {
@@ -17956,6 +17977,8 @@ impl ChartApp {
                     self.autosave_snapshot();
                 }
                 self.panel_app.open_tabs.retain(|t| t != &id);
+                // Drop live cache entry for the closed tab.
+                self.live_preset_cache.remove(&id);
                 // If the closed tab was active, switch to another.
                 if self.panel_app.active_preset_id == id {
                     if let Some(next) = self.panel_app.open_tabs.last().cloned() {

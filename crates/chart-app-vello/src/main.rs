@@ -7833,8 +7833,9 @@ impl ApplicationHandler for App<'_> {
                         pw.drag_start_pos = Some((x, y));
                         let dismissed = pw.chart.on_drag_start(x, chart_y);
                         if dismissed {
-                            // Popup was dismissed — reset platform drag state so
-                            // the upcoming MouseUp does nothing.
+                            // Popup was dismissed — synthetic drag-end cleans up
+                            // ui_drag_active, drag_dismissed_popup, text_input state.
+                            pw.chart.on_drag_end(x, chart_y);
                             pw.mouse_pressed = false;
                             pw.last_drag_pos = None;
                             pw.drag_start_pos = None;

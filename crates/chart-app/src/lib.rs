@@ -15,6 +15,7 @@
 //! ```
 
 pub mod input;
+pub mod preset_cache;
 pub mod scroll_dispatch;
 pub mod text_input;
 
@@ -351,6 +352,9 @@ pub struct ChartApp {
     /// Key = (chart_id, BarSeriesKey) → handle.
     /// Used for version-based change detection in future phases.
     series_handles: std::collections::HashMap<(u64, bar_service::BarSeriesKey), bar_service::TrackedSeriesHandle>,
+    /// Live preset state for open tabs (except the active one).
+    /// Key = preset id. On tab switch: park active → cache, unpark target → active.
+    live_preset_cache: std::collections::HashMap<String, preset_cache::LivePresetState>,
     /// Set to true when window geometry (position/size) changed.
     /// Triggers local save but NOT cloud sync.
     pub profile_geometry_dirty: bool,
@@ -824,6 +828,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
         };
 
@@ -1094,6 +1099,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
         };
 
@@ -1260,6 +1266,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
+            live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
         };
 
@@ -7084,6 +7091,57 @@ impl ChartApp {
     /// directly because they don't know about other windows.
     pub fn persist_profile(&mut self) {
         self.profile_dirty = true;
+    }
+
+    /// Park the active preset's live state into the cache.
+    /// Active fields are replaced with cheap placeholders.
+    fn park_active_preset(&mut self, id: &str) {
+        let state = preset_cache::LivePresetState {
+            panel_grid: std::mem::replace(
+                &mut self.panel_app.panel_grid,
+                zengeld_chart::state::panel_grid::ChartPanelGrid::placeholder(),
+            ),
+            tag_manager: std::mem::replace(
+                &mut self.panel_app.tag_manager,
+                zengeld_chart::tag_manager::TagManager::new(),
+            ),
+            indicator_manager: std::mem::replace(
+                &mut self.indicator_manager,
+                IndicatorManager::new(),
+            ),
+            alert_manager: std::mem::replace(
+                &mut self.alert_manager,
+                alerts::AlertManager::new(),
+            ),
+            leaf_color_tags: std::mem::take(&mut self.panel_app.leaf_color_tags),
+            indicator_overlay_states: std::mem::take(&mut self.panel_app.indicator_overlay_states),
+            series_handles: std::mem::take(&mut self.series_handles),
+            pending_sub_pane_ratios: std::mem::take(&mut self.pending_sub_pane_ratios),
+            pending_sub_pane_above_main: std::mem::take(&mut self.pending_sub_pane_above_main),
+            pending_sub_pane_order: std::mem::take(&mut self.pending_sub_pane_order),
+            needs_initial_viewport_fit: self.needs_initial_viewport_fit,
+        };
+        self.live_preset_cache.insert(id.to_string(), state);
+        eprintln!("[ChartApp] Parked preset '{}' into live cache ({} total cached)", id, self.live_preset_cache.len());
+    }
+
+    /// Unpack a cached preset into active fields. Returns true on cache hit.
+    fn unpark_preset(&mut self, id: &str) -> bool {
+        let Some(state) = self.live_preset_cache.remove(id) else { return false; };
+        self.panel_app.panel_grid = state.panel_grid;
+        self.panel_app.tag_manager = state.tag_manager;
+        self.indicator_manager = state.indicator_manager;
+        self.alert_manager = state.alert_manager;
+        self.panel_app.leaf_color_tags = state.leaf_color_tags;
+        self.panel_app.indicator_overlay_states = state.indicator_overlay_states;
+        self.series_handles = state.series_handles;
+        self.pending_sub_pane_ratios = state.pending_sub_pane_ratios;
+        self.pending_sub_pane_above_main = state.pending_sub_pane_above_main;
+        self.pending_sub_pane_order = state.pending_sub_pane_order;
+        self.needs_initial_viewport_fit = state.needs_initial_viewport_fit;
+        self.sidebar_data_dirty = true;
+        eprintln!("[ChartApp] Unpacked preset '{}' from live cache", id);
+        true
     }
 
     /// Persist watchlists to disk.
