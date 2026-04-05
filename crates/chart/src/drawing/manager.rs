@@ -919,6 +919,9 @@ impl DrawingManager {
     pub fn add_external_primitive(&mut self, mut prim: Box<dyn Primitive>) {
         prim.data_mut().id = crate::drawing::alloc_primitive_id();
         prim.data_mut().window_id = self.current_window_id;
+        if prim.data().symbol.is_empty() {
+            prim.data_mut().symbol = self.current_symbol.clone();
+        }
         self.primitives.push(prim);
         self.selected = Some(self.primitives.len() - 1);
     }

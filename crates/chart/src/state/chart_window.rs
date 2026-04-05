@@ -502,6 +502,7 @@ impl ChartWindow {
     pub fn clone_for_split(&self, new_chart_id: ChartId, sync_drawings: bool) -> Self {
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(new_chart_id.0));
+        drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
         if sync_drawings {
             let synced = self.drawing_manager.clone_primitives_for_sync(new_chart_id.0);
             drawing_manager.add_synced_primitives(synced);
