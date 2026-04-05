@@ -79,6 +79,7 @@ impl ChartTemplate {
                 use_24h: true,
                 date_format_label: "21.01.2026".to_string(),
                 show_day_of_week: false,
+                show_bar_countdown: true,
             },
             status_line: StatusLineSettings {
                 legend_position: "top_left".to_string(),

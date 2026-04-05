@@ -10427,6 +10427,12 @@ impl ChartApp {
                         eprintln!("[ChartApp] instrument:show_day_of_week = {}", w.scale_settings.time_format.show_day_of_week);
                     }
                 }
+                "show_bar_countdown" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        w.scale_settings.show_bar_countdown = !w.scale_settings.show_bar_countdown;
+                        eprintln!("[ChartApp] instrument:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
+                    }
+                }
                 "body_up_color" | "body_down_color"
                 | "border_up_color" | "border_down_color"
                 | "wick_up_color" | "wick_down_color" => {

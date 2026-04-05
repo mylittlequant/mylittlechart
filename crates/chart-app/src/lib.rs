@@ -7355,6 +7355,10 @@ impl ChartApp {
                 use_24h: time_fmt_use_24h,
                 date_format_label: date_fmt_label.clone(),
                 show_day_of_week: time_fmt_show_dow,
+                show_bar_countdown: self.panel_app.panel_grid
+                    .active_window()
+                    .map(|w| w.scale_settings.show_bar_countdown)
+                    .unwrap_or(true),
             },
             status_line: StatusLineSettings {
                 legend_show_ohlc,

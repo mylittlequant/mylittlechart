@@ -414,8 +414,6 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_heikin_ashi_formula() {
         // Test HA calculation

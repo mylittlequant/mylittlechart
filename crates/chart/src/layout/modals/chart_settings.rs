@@ -62,6 +62,8 @@ pub struct InstrumentSettings {
     pub date_format_label: String,
     /// Show day of week
     pub show_day_of_week: bool,
+    /// Show countdown to bar close inside the last price label
+    pub show_bar_countdown: bool,
 }
 
 /// Settings for scales and lines
@@ -825,7 +827,7 @@ fn render_instrument_settings(
     let viewport_y = y;
 
     let section_count = 2.0;
-    let item_count = 7.0;
+    let item_count = 8.0;
     let gap_count = 2.0;
     let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
 
@@ -927,6 +929,17 @@ fn render_instrument_settings(
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
     ctx.fill_text("НАСТРОЙКА ДАННЫХ", x, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Row: show_bar_countdown
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.show_bar_countdown, theme);
+    result.content_items.push(("instrument:show_bar_countdown".to_string(), check_rect));
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text("Обратный отсчёт до закрытия бара", x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Precision dropdown
@@ -1327,8 +1340,8 @@ fn render_scales_settings(
     let viewport_y = y;
 
     let section_count = 8.0;
-    let item_count = 23.0;
-    let gap_count = 7.0;
+    let item_count = 22.0;
+    let gap_count = 6.0;
     let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
 
     result.total_content_height = total_content_height;
@@ -1408,15 +1421,6 @@ fn render_scales_settings(
     ctx.set_fill_color(text_color);
     ctx.fill_text("Автомасштаб", label_x, row_y + row_height / 2.0);
     row_y += row_height;
-
-    // show_bar_countdown
-    let check_y = row_y + (row_height - checkbox_size) / 2.0;
-    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
-    draw_checkbox(ctx, check_rect, settings.show_bar_countdown, theme);
-    result.content_items.push(("scales:show_bar_countdown".to_string(), check_rect));
-    ctx.set_fill_color(text_color);
-    ctx.fill_text("Обратный отсчёт до закрытия бара", label_x, row_y + row_height / 2.0);
-    row_y += row_height + 12.0;
 
     // Section: ВРЕМЕННАЯ ШКАЛА
     ctx.set_fill_color(muted_color);

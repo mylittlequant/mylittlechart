@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(y, 50.0); // Clamped to max
 
         // Edge snapping
-        let (x, y) = constraints.apply(94.0, 25.0);
+        let (x, _y) = constraints.apply(94.0, 25.0);
         assert_eq!(x, 90.0); // Snapped to 90
     }
 

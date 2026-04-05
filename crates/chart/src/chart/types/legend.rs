@@ -207,7 +207,6 @@ impl LegendData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Bar;
 
     #[test]
     fn test_legend_data_change() {

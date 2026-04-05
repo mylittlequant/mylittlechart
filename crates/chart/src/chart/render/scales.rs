@@ -150,10 +150,42 @@ pub fn draw_price_scale(
             };
 
             let label = price_scale.format_label(last_price, viewport.chart_height);
+
+            // Compute countdown text when enabled
+            let countdown_opt: Option<String> =
+                if let (Some(scale_settings), Some(tf_minutes)) = (state.scale_settings, state.timeframe_minutes) {
+                    if scale_settings.show_bar_countdown && tf_minutes > 0 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let bar_interval_secs = (tf_minutes as i64) * 60;
+                        let bar_close_time = last_bar.timestamp + bar_interval_secs;
+                        let remaining_secs = (bar_close_time - now).max(0);
+                        let formatted = if remaining_secs >= 3600 {
+                            format!("{:02}:{:02}:{:02}",
+                                remaining_secs / 3600,
+                                (remaining_secs % 3600) / 60,
+                                remaining_secs % 60)
+                        } else {
+                            format!("{:02}:{:02}",
+                                remaining_secs / 60,
+                                remaining_secs % 60)
+                        };
+                        Some(formatted)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            // Label height grows to 34px when countdown is shown (2 lines)
+            let height = if countdown_opt.is_some() { 34.0 } else { 20.0 };
             let width = config.price_scale_width - 2.0;
-            let height = 20.0;
             let label_x = origin_x + 1.0;
-            let label_y = origin_y + display_y - 10.0;
+            // Center the taller box on the price line
+            let label_y = origin_y + display_y - height / 2.0;
 
             // Clip to price scale column so the label never overflows above/below the chart area
             ctx.save();
@@ -168,10 +200,26 @@ pub fn draw_price_scale(
             ctx.set_fill_color(bg_color);
             ctx.fill_rect(label_x, label_y, width, height);
 
-            // Draw label text (white for better contrast)
-            ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
-            ctx.set_fill_color("#ffffff");
-            ctx.fill_text(&label, text_x, origin_y + display_y);
+            if let Some(ref countdown_text) = countdown_opt {
+                // Two-line layout: price on upper line, countdown on lower line
+                let price_line_y = origin_y + display_y - 7.0;
+                let countdown_line_y = origin_y + display_y + 8.0;
+
+                // Draw price text (white)
+                ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
+                ctx.set_fill_color("#ffffff");
+                ctx.fill_text(&label, text_x, price_line_y);
+
+                // Draw countdown text (smaller, muted white)
+                ctx.set_font("9px sans-serif");
+                ctx.set_fill_color("rgba(255,255,255,0.7)");
+                ctx.fill_text(countdown_text, text_x, countdown_line_y);
+            } else {
+                // Single-line: price centered in the 20px box
+                ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
+                ctx.set_fill_color("#ffffff");
+                ctx.fill_text(&label, text_x, origin_y + display_y);
+            }
 
             ctx.restore();
         }
@@ -210,61 +258,6 @@ pub fn draw_price_scale(
         }
     }
 
-    // Bar close countdown
-    if let (Some(scale_settings), Some(tf_minutes)) = (state.scale_settings, state.timeframe_minutes) {
-        if scale_settings.show_bar_countdown && tf_minutes > 0 {
-            if let Some(last_bar) = state.bars.last() {
-                // Get current time (Unix timestamp)
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
-
-                // Calculate bar interval in seconds
-                let bar_interval_secs = (tf_minutes as i64) * 60;
-
-                // Calculate when current bar closes
-                let bar_close_time = last_bar.timestamp + bar_interval_secs;
-
-                // Time remaining
-                let remaining_secs = (bar_close_time - now).max(0);
-
-                // Format countdown
-                let countdown_label = if remaining_secs >= 3600 {
-                    format!("{:02}:{:02}:{:02}",
-                        remaining_secs / 3600,
-                        (remaining_secs % 3600) / 60,
-                        remaining_secs % 60)
-                } else {
-                    format!("{:02}:{:02}",
-                        remaining_secs / 60,
-                        remaining_secs % 60)
-                };
-
-                // Render at top of price scale
-                let countdown_y = origin_y + 15.0;
-
-                // Calculate box dimensions
-                let text_width = ctx.measure_text(&countdown_label);
-                let box_width = text_width + 8.0;
-                let box_height = 16.0;
-                let box_x = origin_x + (config.price_scale_width - box_width) / 2.0;
-                let box_y = countdown_y - 8.0;
-
-                // Draw blur background (for FrostedGlass/LiquidGlass styles)
-                ctx.draw_blur_background(box_x, box_y, box_width, box_height);
-
-                // Background with style opacity
-                ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
-                ctx.fill_rect(box_x, box_y, box_width, box_height);
-
-                // Text
-                ctx.set_fill_color(&scale_theme.crosshair_label_text);
-                ctx.set_text_align(TextAlign::Center);
-                ctx.fill_text(&countdown_label, origin_x + config.price_scale_width / 2.0, countdown_y);
-            }
-        }
-    }
 }
 
 /// Draw the time scale (X-axis) at the bottom of the chart
@@ -368,7 +361,11 @@ pub fn draw_time_scale(
         };
 
         if let Some(ts) = ts_opt {
-            let x = viewport.bar_to_x_f64(crosshair.bar_f64);
+            let x = if let Some(bar_idx) = crosshair.bar_idx {
+                viewport.bar_to_x(bar_idx)
+            } else {
+                viewport.bar_to_x_f64(crosshair.bar_f64)
+            };
 
             // Get format settings (use default if not provided)
             let default_settings = TimeFormatSettings::default();

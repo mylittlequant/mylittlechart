@@ -416,14 +416,23 @@ impl TimeScale {
     {
         // Choose interval based on day width
         // day_width_px > 200 means we're zoomed in quite a bit
-        let (time_interval, weight) = if day_width_px > 24.0 * Self::MIN_CELL_WIDTH {
-            // Very zoomed in: show hours (1200px+ per day)
+        let (time_interval, weight) = if day_width_px > 1440.0 * Self::MIN_CELL_WIDTH {
+            // Extreme zoom: show 1-minute (72000px+ per day)
+            (MINUTE, TickMarkWeight::Minute1)
+        } else if day_width_px > 288.0 * Self::MIN_CELL_WIDTH {
+            // Very deep zoom: show 5-minute (14400px+ per day)
+            (5 * MINUTE, TickMarkWeight::Minute5)
+        } else if day_width_px > 48.0 * Self::MIN_CELL_WIDTH {
+            // Deep zoom: show 30-minute (2400px+ per day)
+            (30 * MINUTE, TickMarkWeight::Minute30)
+        } else if day_width_px > 24.0 * Self::MIN_CELL_WIDTH {
+            // Zoomed in: show hours (1200px+ per day)
             (HOUR, TickMarkWeight::Hour)
         } else if day_width_px > 6.0 * Self::MIN_CELL_WIDTH {
             // Moderately zoomed: show 4-hour (300px+ per day)
             (4 * HOUR, TickMarkWeight::Hour4)
         } else {
-            // Less zoomed: show 12-hour (but with Hour4 weight)
+            // Less zoomed: show 12-hour
             (12 * HOUR, TickMarkWeight::Hour4)
         };
 
