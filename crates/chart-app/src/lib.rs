@@ -3888,7 +3888,7 @@ impl ChartApp {
                             .and_then(|w| w.group_id)
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
-                                if group.sync_flags.sync_drawings {
+                                if group.sync_flags.sync_drawings && group.members.len() > 1 {
                                     let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                         group.primitives.iter()
                                             .filter(|p| {
@@ -3938,11 +3938,11 @@ impl ChartApp {
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.
-                        let drawings_on = self.panel_app.tag_manager
+                        let (drawings_on, is_mono) = self.panel_app.tag_manager
                             .group(group_id)
-                            .map(|g| g.sync_flags.sync_drawings)
-                            .unwrap_or(true);
-                        if drawings_on {
+                            .map(|g| (g.sync_flags.sync_drawings, g.members.len() <= 1))
+                            .unwrap_or((true, false));
+                        if drawings_on && !is_mono {
                             // Capture the window's current symbol so we can filter
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
