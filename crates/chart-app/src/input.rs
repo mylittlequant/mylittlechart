@@ -524,6 +524,44 @@ impl ChartApp {
         // This must run BEFORE the sidebar-separator check so early returns don't miss it.
         self.text_input.on_drag_start(x, y);
 
+        // Dismiss color picker on drag-start outside the popup.
+        // This treats on_drag_start as a click for popup dismissal purposes,
+        // preventing the UX issue where dragging outside doesn't close the picker.
+        {
+            fn outside_popup(picker: &zengeld_chart::ui::color_picker_state::ColorPickerState, x: f64, y: f64) -> bool {
+                if !picker.is_open() { return false; }
+                let (ox, oy) = picker.origin;
+                let (pw, ph) = match picker.level {
+                    zengeld_chart::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    zengeld_chart::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    _ => return false,
+                };
+                x < ox || x > ox + pw || y < oy || y > oy + ph
+            }
+
+            if outside_popup(&self.panel_app.primitive_settings_state.color_picker, x, y) {
+                self.panel_app.primitive_settings_state.close_color_picker();
+                self.text_input.blur();
+            }
+            if outside_popup(&self.panel_app.indicator_settings_state.color_picker, x, y) {
+                self.panel_app.indicator_settings_state.close_color_picker();
+                self.text_input.blur();
+            }
+            if outside_popup(&self.panel_app.chart_settings_state.color_picker, x, y) {
+                self.panel_app.chart_settings_state.close_color_picker();
+                self.text_input.blur();
+            }
+            if outside_popup(&self.panel_app.compare_settings_state.color_picker, x, y) {
+                self.panel_app.compare_settings_state.close_color_picker();
+                self.text_input.blur();
+            }
+            if outside_popup(&self.panel_app.panel_color_picker, x, y) {
+                self.panel_app.panel_color_picker.close();
+                self.panel_app.sync_color_grid.adding_custom_color = false;
+                self.text_input.blur();
+            }
+        }
+
         // Check if drag starts on the sidebar separator — if so, begin sidebar resize.
         // This must be checked BEFORE the modal guard so the separator is reachable
         // even when a sidebar panel is open (which registers the sidebar as a UI widget).

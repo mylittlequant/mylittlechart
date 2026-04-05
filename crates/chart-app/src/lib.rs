@@ -5395,6 +5395,25 @@ impl ChartApp {
             None
         };
 
+        // 8a. Render color picker popups AFTER the sidebar so they draw on top of it.
+        {
+            let cp_result = self.panel_app.render_color_picker_popups(
+                ctx,
+                &modal_layout,
+                &toolbar_theme,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+            // Merge into frame_result — color picker and sync_color_grid fields only.
+            if let Some(ref mut fr) = out_frame_result {
+                if cp_result.color_picker.is_some() {
+                    fr.color_picker = cp_result.color_picker;
+                }
+                if cp_result.sync_color_grid.is_some() {
+                    fr.sync_color_grid = cp_result.sync_color_grid;
+                }
+            }
+        }
+
         // 8b. Render watchlist modal if open (above sidebar, below context menu).
         let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = if self.watchlist_modal.is_open() {
             // Build WatchlistEntry items from sidebar_state.watchlist_items.

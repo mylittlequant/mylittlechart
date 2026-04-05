@@ -2778,16 +2778,6 @@ impl ChartPanelApp {
             }
         }
 
-        // Primitive color picker popup (above primitive settings modal)
-        if self.primitive_settings_state.is_color_picker_open() {
-            result.color_picker = Some(render_primitive_color_picker_popup(
-                ctx,
-                &self.primitive_settings_state,
-                toolbar_theme,
-                input_coordinator,
-            ));
-        }
-
         // Compare settings modal
         if self.compare_settings_state.is_open() {
             result.compare_settings = Some(crate::layout::modals::compare_settings::render_compare_settings_modal(
@@ -2799,16 +2789,6 @@ impl ChartPanelApp {
                 toolbar_theme,
                 input_coordinator,
                 &self.template_manager.compare_templates,
-            ));
-        }
-
-        // Compare settings color picker popup (rendered above the compare settings modal)
-        if self.compare_settings_state.is_open() && self.compare_settings_state.is_color_picker_open() {
-            result.color_picker = Some(crate::layout::modals::compare_color_picker::render_compare_color_picker_popup(
-                ctx,
-                &self.compare_settings_state,
-                toolbar_theme,
-                input_coordinator,
             ));
         }
 
@@ -2855,16 +2835,6 @@ impl ChartPanelApp {
             }
         }
 
-        // Indicator color picker popup (above indicator settings modal)
-        if self.indicator_settings_state.is_color_picker_open() {
-            result.color_picker = Some(render_indicator_color_picker_popup(
-                ctx,
-                &self.indicator_settings_state,
-                toolbar_theme,
-                input_coordinator,
-            ));
-        }
-
         // Chart settings modal
         if self.chart_settings_state.is_open {
             if let (Some(data), Some(tm)) = (chart_settings_data, theme_manager) {
@@ -2884,16 +2854,6 @@ impl ChartPanelApp {
                     &self.template_manager.chart_templates,
                 ));
             }
-        }
-
-        // Chart settings color picker popup
-        if self.chart_settings_state.is_color_picker_open() {
-            result.color_picker = Some(render_chart_settings_color_picker_popup(
-                ctx,
-                &self.chart_settings_state,
-                toolbar_theme,
-                input_coordinator,
-            ));
         }
 
         // Overlay settings modal
@@ -2933,80 +2893,6 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_h,
                 input_coordinator,
             ));
-        }
-
-        // Panel color tag picker popup (legacy L1/L2 — kept for non-panel use)
-        if self.panel_color_picker.is_open() {
-            result.color_picker = Some(render_panel_color_tag_picker_popup(
-                ctx,
-                &self.panel_color_picker,
-                toolbar_theme,
-                input_coordinator,
-            ));
-        }
-
-        // Sync color grid popup — lightweight preset grid for panel color tags
-        if self.sync_color_grid.is_open() {
-            use crate::ui::sync_color_grid::{draw_sync_color_grid, SyncColorGridDrawResult};
-            use uzor::{Rect, input::Sense};
-            use crate::ui::z_order::ZLayer;
-
-            let current_color = self.sync_color_grid.target_leaf
-                .and_then(|lid| self.leaf_color_tags.get(&lid).copied());
-
-            let draw_result: SyncColorGridDrawResult =
-                draw_sync_color_grid(ctx, &self.sync_color_grid, current_color, toolbar_theme);
-
-            // Register input zones on the ColorPicker layer (topmost interactive).
-            let layer_id = ZLayer::ColorPicker.push_named(input_coordinator, "sync_color_grid");
-
-            // Full-screen backdrop to catch clicks outside the popup
-            input_coordinator.register_on_layer(
-                "sync_color_grid:backdrop",
-                Rect { x: 0.0, y: 0.0, width: modal_layout.prim_screen_w, height: modal_layout.prim_screen_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-
-            let [px, py, pw, ph] = draw_result.popup_rect;
-            // Background / "absorb click inside popup" rect
-            input_coordinator.register_on_layer(
-                "sync_color_grid:bg",
-                Rect { x: px, y: py, width: pw, height: ph },
-                Sense::CLICK,
-                &layer_id,
-            );
-
-            // Individual swatch rects
-            for &(idx, [sx, sy, sw, sh]) in &draw_result.swatch_rects {
-                input_coordinator.register_on_layer(
-                    format!("sync_color_grid:swatch:{}", idx),
-                    Rect { x: sx, y: sy, width: sw, height: sh },
-                    Sense::CLICK,
-                    &layer_id,
-                );
-            }
-
-            // "+" add-custom button
-            if let Some([ax, ay, aw, ah]) = draw_result.add_button_rect {
-                input_coordinator.register_on_layer(
-                    "sync_color_grid:add",
-                    Rect { x: ax, y: ay, width: aw, height: ah },
-                    Sense::CLICK,
-                    &layer_id,
-                );
-            }
-
-            // Remove row
-            let [rx, ry, rw, rh] = draw_result.remove_rect;
-            input_coordinator.register_on_layer(
-                "sync_color_grid:remove",
-                Rect { x: rx, y: ry, width: rw, height: rh },
-                Sense::CLICK,
-                &layer_id,
-            );
-
-            result.sync_color_grid = Some(draw_result);
         }
 
         // Preset name input modal — skip CreateIndicatorSet mode here;
@@ -3202,6 +3088,138 @@ impl ChartPanelApp {
                     ws_result,
                 );
             }
+        }
+
+        result
+    }
+
+    /// Renders color picker popups and the sync color grid popup.
+    ///
+    /// Must be called AFTER the sidebar is rendered so that these popups
+    /// are drawn on top of the sidebar (correct z-order).
+    /// The returned [`ChartModalRenderResult`] only populates `color_picker`
+    /// and `sync_color_grid`; all other fields are `None`.
+    pub fn render_color_picker_popups(
+        &self,
+        ctx: &mut dyn crate::render::RenderContext,
+        modal_layout: &ChartModalLayout,
+        toolbar_theme: &crate::ui::toolbar_render::ToolbarTheme,
+        input_coordinator: &mut uzor::input::InputCoordinator,
+    ) -> ChartModalRenderResult {
+        let mut result = ChartModalRenderResult::default();
+
+        // Primitive color picker popup (above primitive settings modal)
+        if self.primitive_settings_state.is_color_picker_open() {
+            result.color_picker = Some(render_primitive_color_picker_popup(
+                ctx,
+                &self.primitive_settings_state,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Compare settings color picker popup (rendered above the compare settings modal)
+        if self.compare_settings_state.is_open() && self.compare_settings_state.is_color_picker_open() {
+            result.color_picker = Some(crate::layout::modals::compare_color_picker::render_compare_color_picker_popup(
+                ctx,
+                &self.compare_settings_state,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Indicator color picker popup (above indicator settings modal)
+        if self.indicator_settings_state.is_color_picker_open() {
+            result.color_picker = Some(render_indicator_color_picker_popup(
+                ctx,
+                &self.indicator_settings_state,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Chart settings color picker popup
+        if self.chart_settings_state.is_color_picker_open() {
+            result.color_picker = Some(render_chart_settings_color_picker_popup(
+                ctx,
+                &self.chart_settings_state,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Panel color tag picker popup (legacy L1/L2 — kept for non-panel use)
+        if self.panel_color_picker.is_open() {
+            result.color_picker = Some(render_panel_color_tag_picker_popup(
+                ctx,
+                &self.panel_color_picker,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Sync color grid popup — lightweight preset grid for panel color tags
+        if self.sync_color_grid.is_open() {
+            use crate::ui::sync_color_grid::{draw_sync_color_grid, SyncColorGridDrawResult};
+            use uzor::{Rect, input::Sense};
+            use crate::ui::z_order::ZLayer;
+
+            let current_color = self.sync_color_grid.target_leaf
+                .and_then(|lid| self.leaf_color_tags.get(&lid).copied());
+
+            let draw_result: SyncColorGridDrawResult =
+                draw_sync_color_grid(ctx, &self.sync_color_grid, current_color, toolbar_theme);
+
+            // Register input zones on the ColorPicker layer (topmost interactive).
+            let layer_id = ZLayer::ColorPicker.push_named(input_coordinator, "sync_color_grid");
+
+            // Full-screen backdrop to catch clicks outside the popup
+            input_coordinator.register_on_layer(
+                "sync_color_grid:backdrop",
+                Rect { x: 0.0, y: 0.0, width: modal_layout.prim_screen_w, height: modal_layout.prim_screen_h },
+                Sense::CLICK,
+                &layer_id,
+            );
+
+            let [px, py, pw, ph] = draw_result.popup_rect;
+            // Background / "absorb click inside popup" rect
+            input_coordinator.register_on_layer(
+                "sync_color_grid:bg",
+                Rect { x: px, y: py, width: pw, height: ph },
+                Sense::CLICK,
+                &layer_id,
+            );
+
+            // Individual swatch rects
+            for &(idx, [sx, sy, sw, sh]) in &draw_result.swatch_rects {
+                input_coordinator.register_on_layer(
+                    format!("sync_color_grid:swatch:{}", idx),
+                    Rect { x: sx, y: sy, width: sw, height: sh },
+                    Sense::CLICK,
+                    &layer_id,
+                );
+            }
+
+            // "+" add-custom button
+            if let Some([ax, ay, aw, ah]) = draw_result.add_button_rect {
+                input_coordinator.register_on_layer(
+                    "sync_color_grid:add",
+                    Rect { x: ax, y: ay, width: aw, height: ah },
+                    Sense::CLICK,
+                    &layer_id,
+                );
+            }
+
+            // Remove row
+            let [rx, ry, rw, rh] = draw_result.remove_rect;
+            input_coordinator.register_on_layer(
+                "sync_color_grid:remove",
+                Rect { x: rx, y: ry, width: rw, height: rh },
+                Sense::CLICK,
+                &layer_id,
+            );
+
+            result.sync_color_grid = Some(draw_result);
         }
 
         result
