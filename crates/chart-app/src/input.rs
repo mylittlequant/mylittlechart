@@ -539,26 +539,36 @@ impl ChartApp {
                 x < ox || x > ox + pw || y < oy || y > oy + ph
             }
 
+            let mut dismissed = false;
             if outside_popup(&self.panel_app.primitive_settings_state.color_picker, x, y) {
                 self.panel_app.primitive_settings_state.close_color_picker();
                 self.text_input.blur();
+                dismissed = true;
             }
             if outside_popup(&self.panel_app.indicator_settings_state.color_picker, x, y) {
                 self.panel_app.indicator_settings_state.close_color_picker();
                 self.text_input.blur();
+                dismissed = true;
             }
             if outside_popup(&self.panel_app.chart_settings_state.color_picker, x, y) {
                 self.panel_app.chart_settings_state.close_color_picker();
                 self.text_input.blur();
+                dismissed = true;
             }
             if outside_popup(&self.panel_app.compare_settings_state.color_picker, x, y) {
                 self.panel_app.compare_settings_state.close_color_picker();
                 self.text_input.blur();
+                dismissed = true;
             }
             if outside_popup(&self.panel_app.panel_color_picker, x, y) {
                 self.panel_app.panel_color_picker.close();
                 self.panel_app.sync_color_grid.adding_custom_color = false;
                 self.text_input.blur();
+                dismissed = true;
+            }
+            if dismissed {
+                self.drag_dismissed_popup = true;
+                return;
             }
         }
 
@@ -2099,6 +2109,10 @@ impl ChartApp {
         // Forward to TextInputManager for text-selection drag (e.g. HexColor field).
         self.text_input.on_drag_move(x);
 
+        if self.drag_dismissed_popup {
+            return;
+        }
+
         // If the sidebar separator drag is active, resize the sidebar.
         if self.sidebar_separator_drag_active {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
@@ -2930,6 +2944,11 @@ impl ChartApp {
 
         // Notify TextInputManager that drag selection has ended.
         self.text_input.on_drag_end();
+
+        if self.drag_dismissed_popup {
+            self.drag_dismissed_popup = false;
+            return;
+        }
 
         // End pane separator drag: persist the new height ratios.
         if let zengeld_chart::engine::input::DragMode::PaneSeparator { .. } = self.input_handler.state.drag_mode {

@@ -216,6 +216,11 @@ pub struct ChartApp {
     /// Used to suppress crosshair during UI drags without enumerating every drag type.
     pub(crate) ui_drag_active: bool,
 
+    /// True when `on_drag_start` dismissed a color-picker popup.
+    /// While set, `on_drag_move` and `on_drag_end` are swallowed so the chart
+    /// doesn't receive a spurious pan/draw drag.  Cleared in `on_drag_end`.
+    pub(crate) drag_dismissed_popup: bool,
+
     /// In-progress separator drag state when the user is dragging a split-panel divider.
     /// Set in `on_drag_start`, updated in `on_drag_move`, cleared in `on_drag_end`.
     pub(crate) split_separator_drag: Option<SplitSeparatorDragState>,
@@ -750,6 +755,7 @@ impl ChartApp {
             viewport_before_drag: None,
             color_picker_drag: None,
             ui_drag_active: false,
+            drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
@@ -1015,6 +1021,7 @@ impl ChartApp {
             viewport_before_drag: None,
             color_picker_drag: None,
             ui_drag_active: false,
+            drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
@@ -1185,6 +1192,7 @@ impl ChartApp {
             viewport_before_drag: None,
             color_picker_drag: None,
             ui_drag_active: false,
+            drag_dismissed_popup: false,
             split_separator_drag: None,
             leaf_tab_hit_zones: std::collections::HashMap::new(),
             leaf_tab_hover: zengeld_chart::LeafTabHoverZone::None,
