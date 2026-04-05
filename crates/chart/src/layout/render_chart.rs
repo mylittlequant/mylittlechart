@@ -3280,13 +3280,13 @@ pub fn render_full_chart_panel(
         // Horizontal separators spanning full width (chart + price scale).
         let horz_x = chart.x.min(price_scale.x);
         let horz_w = chart.width + price_scale.width;
-        // Top/bottom borders are suppressed in split mode — the split separator handles them.
+        // Top border is suppressed in split mode — the split separator handles it.
         if !data.is_split {
             // Top border (visible when above-main panes exist).
             ctx.fill_rect(horz_x, total_chart_top, horz_w, 1.0);
-            // Bottom border between chart content and time scale.
-            ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
         }
+        // Bottom border between chart content and time scale (always drawn).
+        ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
 
         // Sub-pane separator lines across the price scale area.
         for sub_pane in &extended_layout.sub_panes {
