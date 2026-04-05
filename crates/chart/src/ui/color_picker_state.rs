@@ -697,9 +697,9 @@ impl ColorPickerState {
 
     /// Calculate smart popup position that stays within window bounds
     ///
-    /// For sidebar buttons: popup appears to the LEFT of button, with right edge touching button
-    /// For bottom toolbar: popup appears ABOVE the button
-    /// Always clamps to stay within window bounds
+    /// Preference order: ABOVE the anchor button first (handles bottom toolbar),
+    /// then BELOW if above doesn't fit, then LEFT if neither vertical option fits.
+    /// Always clamps to stay within window bounds.
     pub fn calculate_smart_origin(
         anchor_x: f64,
         anchor_y: f64,
@@ -711,23 +711,22 @@ impl ColorPickerState {
         window_h: f64,
         margin: f64,
     ) -> (f64, f64) {
-        // Try to position LEFT of anchor (right edge of popup touches left edge of button)
-        let mut x = anchor_x - popup_w;
-        let mut y = anchor_y;
+        // Prefer ABOVE the anchor button (popup bottom aligns with anchor top)
+        let mut x = anchor_x;
+        let mut y = anchor_y - popup_h - margin;
 
-        // If popup goes off left edge, position it at window edge with margin
-        if x < margin {
-            // Can't fit left, try BELOW the button instead
-            x = anchor_x;
+        if y < margin {
+            // Can't fit above → try BELOW
             y = anchor_y + anchor_h + margin;
         }
 
-        // If popup goes off bottom, try ABOVE
         if y + popup_h > window_h - margin {
-            y = anchor_y - popup_h;
+            // Can't fit below either → try LEFT of anchor
+            x = anchor_x - popup_w - margin;
+            y = anchor_y;
         }
 
-        // Final clamp: ensure popup stays within window bounds
+        // Final clamp to window bounds
         x = x.clamp(margin, (window_w - popup_w - margin).max(margin));
         y = y.clamp(margin, (window_h - popup_h - margin).max(margin));
 

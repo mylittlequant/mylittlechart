@@ -456,9 +456,9 @@ pub fn draw_color_picker_l2(
         text_disabled: "#6a6d78".to_string(),
         border_normal: "#363a45".to_string(),
         border_hover: "#363a45".to_string(),
-        border_focused: "#2196f3".to_string(),
-        accent: "#2196f3".to_string(),
-        accent_hover: "#42a5f5".to_string(),
+        border_focused: theme.active.clone(),
+        accent: theme.active.clone(),
+        accent_hover: theme.active.clone(),
         success: "#26a69a".to_string(),
         warning: "#ff9800".to_string(),
         danger: "#ef5350".to_string(),
@@ -600,7 +600,7 @@ pub fn draw_color_picker_l2(
     result.add_button_rect = add_rect;
 
     let add_hovered = matches!(hovered_area, Some(ColorPickerL2Area::AddButton));
-    ctx.set_fill_color(if add_hovered { "#1976d2" } else { "#2196f3" });
+    ctx.set_fill_color(if add_hovered { theme.active.as_str() } else { theme.active.as_str() });
     ctx.fill_rounded_rect(add_rect.x, add_rect.y, add_rect.width, add_rect.height, 4.0);
 
     ctx.set_fill_color("#ffffff");

@@ -13541,12 +13541,16 @@ impl ChartApp {
                         self.text_input.on_drag_start(x, y);
                     } else {
                         // Activate editing: sync text into manager, then focus.
+                        // Do NOT call on_drag_start here — geometry isn't available yet
+                        // (update_field hasn't run for this field this frame, so
+                        // last_char_positions is empty and the anchor would land at 0).
+                        // on_drag_start will work correctly on the next frame once
+                        // update_field has populated the geometry.
                         picker.hex_editing = true;
                         let hex = picker.hex_input.clone();
                         self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
                         self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
                         self.text_input.focus(crate::text_input::FieldId::HexColor);
-                        self.text_input.on_drag_start(x, y);
                     }
                 }
             }
