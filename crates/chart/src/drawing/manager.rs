@@ -143,6 +143,13 @@ pub struct DrawingManager {
     current_pane_id: Option<u64>,
     /// Current window ID for new primitives (for multi-window support)
     current_window_id: Option<u64>,
+    /// Symbol key for new primitives — set via `set_current_symbol_key()`.
+    /// Stamped onto `PrimitiveData.symbol` at creation time.
+    current_symbol: String,
+    /// Exchange name for the current symbol context.
+    current_exchange: String,
+    /// Account type label (e.g. "S", "F") for the current symbol context.
+    current_account_type: String,
     /// Per-tool-type last-used style settings.
     /// Key: type_id (e.g. "trend_line"). Value: last style the user applied.
     /// Applied automatically when a new primitive of the same type is created.
@@ -176,6 +183,9 @@ impl Clone for DrawingManager {
             visible: self.visible,
             current_pane_id: self.current_pane_id,
             current_window_id: self.current_window_id,
+            current_symbol: self.current_symbol.clone(),
+            current_exchange: self.current_exchange.clone(),
+            current_account_type: self.current_account_type.clone(),
             last_used_style: self.last_used_style.clone(),
         }
     }
@@ -198,6 +208,9 @@ impl DrawingManager {
             visible: true,
             current_pane_id: None,
             current_window_id: None,
+            current_symbol: String::new(),
+            current_exchange: String::new(),
+            current_account_type: String::new(),
             last_used_style: HashMap::new(),
         }
     }
@@ -345,6 +358,20 @@ impl DrawingManager {
     /// Get the current window ID
     pub fn current_window(&self) -> Option<u64> {
         self.current_window_id
+    }
+
+    // =========================================================================
+    // Symbol Key Context
+    // =========================================================================
+
+    /// Set the current symbol key for new primitives.
+    ///
+    /// Called when the window's symbol/exchange/account_type changes.
+    /// Stamped onto `PrimitiveData.symbol` at primitive creation time.
+    pub fn set_current_symbol_key(&mut self, symbol: &str, exchange: &str, account_type: &str) {
+        self.current_symbol = symbol.to_string();
+        self.current_exchange = exchange.to_string();
+        self.current_account_type = account_type.to_string();
     }
 
     /// Get primitives filtered by window ID
@@ -505,6 +532,7 @@ impl DrawingManager {
                         prim.data_mut().window_id = self.current_window_id;
                         // Apply last-used style for this tool type (if any)
                         self.apply_last_style_to_prim(&mut prim, &tool_id_clone);
+                        prim.data_mut().symbol = self.current_symbol.clone();
                         self.primitives.push(prim);
                         self.selected = Some(self.primitives.len() - 1);
                         // Reset to ready state for continuous drawing
@@ -631,6 +659,7 @@ impl DrawingManager {
                         self.apply_variant_to_primitive(&mut prim, &tool_id, variant);
                     }
 
+                    prim.data_mut().symbol = self.current_symbol.clone();
                     self.primitives.push(prim);
                     self.selected = Some(self.primitives.len() - 1);
                     self.current_tool = None; // Reset tool after creation
@@ -664,6 +693,7 @@ impl DrawingManager {
                                 self.apply_variant_to_primitive(&mut prim, &tool_id, variant);
                             }
 
+                            prim.data_mut().symbol = self.current_symbol.clone();
                             self.primitives.push(prim);
                             self.selected = Some(self.primitives.len() - 1);
                             self.state = DrawingState::Idle;
@@ -700,6 +730,7 @@ impl DrawingManager {
                                 prim.data_mut().window_id = self.current_window_id;
                                 // Apply last-used style for this tool type (if any)
                                 if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
+                                prim.data_mut().symbol = self.current_symbol.clone();
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -734,6 +765,7 @@ impl DrawingManager {
                                 prim.data_mut().pane_id = self.current_pane_id;
                                 // Apply last-used style for this tool type (if any)
                                 if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
+                                prim.data_mut().symbol = self.current_symbol.clone();
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -771,6 +803,7 @@ impl DrawingManager {
                                 prim.data_mut().pane_id = self.current_pane_id;
                                 // Apply last-used style for this tool type (if any)
                                 if let Some(ref s) = last_style { apply_last_style_snapshot(&mut prim, s); }
+                                prim.data_mut().symbol = self.current_symbol.clone();
                                 self.primitives.push(prim);
                                 self.selected = Some(self.primitives.len() - 1);
                                 self.state = DrawingState::Idle;
@@ -819,6 +852,7 @@ impl DrawingManager {
                     prim.data_mut().pane_id = self.current_pane_id;
                     // Apply last-used style for this tool type (if any)
                     self.apply_last_style_to_prim(&mut prim, &tool_id);
+                    prim.data_mut().symbol = self.current_symbol.clone();
                     self.primitives.push(prim);
                     self.selected = Some(self.primitives.len() - 1);
                     self.state = DrawingState::Idle;

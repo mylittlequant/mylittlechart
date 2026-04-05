@@ -6801,6 +6801,45 @@ impl ApplicationHandler for App<'_> {
                     window.pending_symbol_load = true;
                 }
 
+                // Reset all other windows in the same sync group that share
+                // the same symbol key, when sync_symbol is enabled.
+                let active_cid = pw.chart.panel_app.panel_grid.active_chart_id();
+                let group_info = active_cid
+                    .and_then(|cid| {
+                        let w = pw.chart.panel_app.panel_grid.active_window()?;
+                        let gid = w.group_id?;
+                        Some((cid, gid))
+                    });
+                if let Some((active_cid, group_id)) = group_info {
+                    let sync_symbol_on = pw.chart.panel_app.tag_manager
+                        .group(group_id)
+                        .map(|g| g.sync_flags.sync_symbol)
+                        .unwrap_or(false);
+                    if sync_symbol_on {
+                        let peer_ids: Vec<zengeld_chart::ChartId> = pw.chart.panel_app.tag_manager
+                            .group(group_id)
+                            .map(|g| g.members.iter().copied().filter(|&m| m != active_cid).collect())
+                            .unwrap_or_default();
+                        for peer_id in peer_ids {
+                            if let Some(peer_window) = pw.chart.panel_app.panel_grid.windows_mut().get_mut(&peer_id) {
+                                if peer_window.symbol == symbol
+                                    && peer_window.exchange == exchange
+                                    && peer_window.account_type == account_type
+                                {
+                                    peer_window.bars.clear();
+                                    peer_window.viewport.bar_count = 0;
+                                    peer_window.viewport.view_start = 0.0;
+                                    peer_window.pending_symbol_load = true;
+                                    eprintln!(
+                                        "[App] Reset cache propagated to peer {:?} ({}:{}:{})",
+                                        peer_id, symbol, exchange, account_type
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Request a fresh bar fetch from the exchange.
                 if let Some(eid) = chart_app::ExchangeId::from_str(&exchange) {
                     let at = chart_app::account_type_from_label(&account_type);

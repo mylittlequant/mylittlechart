@@ -340,7 +340,7 @@ impl ChartWindow {
         let mut drawing_manager = DrawingManager::new();
         drawing_manager.set_current_window(Some(id.0));
 
-        Self {
+        let mut window = Self {
             id,
             title: format!("{} {}", symbol, timeframe.name.clone()),
             bars: Vec::new(),
@@ -425,7 +425,9 @@ impl ChartWindow {
             restore_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
-        }
+        };
+        window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
+        window
     }
 
     /// Create a new chart window with default settings (uses NullDataProvider).
@@ -823,6 +825,7 @@ impl ChartWindow {
     pub fn set_symbol(&mut self, symbol: &str) {
         self.symbol = symbol.to_string();
         self.update_title();
+        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
     }
 
     /// Change symbol and load data from the configured provider.
@@ -845,6 +848,7 @@ impl ChartWindow {
         self.symbol = symbol.to_string();
         self.exchange = self.data_provider.exchange_name(symbol);
         self.update_title();
+        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
         self.set_bars(new_bars);
 
         eprintln!(
@@ -1020,6 +1024,7 @@ impl ChartWindow {
         self.timeframe = source.timeframe.clone();
         self.exchange = source.exchange.clone();
         self.update_title();
+        self.drawing_manager.set_current_symbol_key(&self.symbol, &self.exchange, &self.account_type);
 
         self.viewport = source.viewport.clone();
         self.price_scale = source.price_scale.clone();
