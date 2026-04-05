@@ -104,6 +104,8 @@ pub fn read_bars(path: &Path) -> Result<Vec<Bar>, BarStoreError> {
         bars.push(bar_from_bytes(chunk));
     }
 
+    bars.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
+
     Ok(bars)
 }
 

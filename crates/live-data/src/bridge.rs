@@ -1525,7 +1525,10 @@ fn read_series_len(map: &SharedSeriesMap, key: &BarSeriesKey) -> usize {
 
 /// Replace the bars in a series (creating it if needed). Bumps version and
 /// marks the series dirty.
-fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, bars: Vec<Bar>, period_secs: i64) {
+fn set_series_bars(map: &SharedSeriesMap, key: &BarSeriesKey, mut bars: Vec<Bar>, period_secs: i64) {
+    bars.sort_by_key(|b| b.timestamp);
+    bars.dedup_by_key(|b| b.timestamp);
+    bars.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
     let handle = get_or_create_series(map, key, period_secs);
     let mut series = handle.write().unwrap_or_else(|e| e.into_inner());
     series.bars = VecDeque::from(bars);
@@ -1552,7 +1555,7 @@ fn merge_into_series(map: &SharedSeriesMap, key: &BarSeriesKey, new_bars: Vec<Ba
 /// Merge two sorted bar vectors by timestamp, keeping the *newer* version of
 /// any bar that appears in both (same timestamp). The result is sorted
 /// ascending by timestamp.
-fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
+fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     if fresh.is_empty() {
         return old;
     }
@@ -1560,16 +1563,8 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
         return fresh;
     }
 
-    // Fast path: if fresh bars are entirely after old bars, just append.
-    let old_last_ts = old.last().map(|b| b.timestamp).unwrap_or(0);
-    let fresh_first_ts = fresh.first().map(|b| b.timestamp).unwrap_or(0);
-    if fresh_first_ts > old_last_ts {
-        old.extend(fresh);
-        return old;
-    }
-
-    // General merge: fresh bars overwrite old bars at the same timestamp.
-    // Build a map from timestamp → bar (fresh wins).
+    // Always merge via HashMap (fresh wins on conflicts) + sort.
+    // This is self-healing: even if old is unsorted, the result is always sorted.
     let mut map: HashMap<i64, Bar> = HashMap::with_capacity(old.len() + fresh.len());
     for bar in old {
         map.insert(bar.timestamp, bar);
@@ -1579,6 +1574,7 @@ fn merge_bars(mut old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
     }
     let mut merged: Vec<Bar> = map.into_values().collect();
     merged.sort_by_key(|b| b.timestamp);
+    merged.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
     merged
 }
 

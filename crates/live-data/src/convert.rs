@@ -8,8 +8,15 @@ use zengeld_chart::state::Timeframe;
 ///
 /// `Kline.open_time` is in milliseconds; `Bar.timestamp` is in seconds.
 pub fn kline_to_bar(kline: &Kline) -> Bar {
+    let ts = kline.open_time / 1000;
+    if ts < 1_000_000_000 || ts > 9_999_999_999 {
+        eprintln!(
+            "[convert] WARNING: suspicious bar timestamp {} (from open_time={})",
+            ts, kline.open_time
+        );
+    }
     Bar {
-        timestamp: kline.open_time / 1000,
+        timestamp: ts,
         open: kline.open,
         high: kline.high,
         low: kline.low,
