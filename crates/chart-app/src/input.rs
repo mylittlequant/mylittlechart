@@ -17356,6 +17356,30 @@ impl ChartApp {
                 // Warm path: live cache hit — zero-flicker switch.
                 if self.unpark_preset(&id) {
                     eprintln!("[ChartApp] LoadPreset '{}': live cache hit — zero-flicker switch", id);
+
+                    // Cure: request 300 fresh bars for every window so gaps are
+                    // healed, stale data is refreshed, and bar store is updated.
+                    let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
+                    let window_bar_data: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = self
+                        .panel_app
+                        .panel_grid
+                        .iter_windows()
+                        .map(|(_, w)| (w.symbol.clone(), w.exchange.clone(), w.timeframe.clone(), w.account_type.clone()))
+                        .collect();
+                    let mut bars_requested: usize = 0;
+                    for (sym, exch, tf, at_label) in &window_bar_data {
+                        let eid = digdigdig3::ExchangeId::from_str(exch)
+                            .unwrap_or(digdigdig3::ExchangeId::Binance);
+                        if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                            continue;
+                        }
+                        let at = crate::account_type_from_label(at_label);
+                        self.bridge.ensure_connector(eid);
+                        self.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
+                        bars_requested += 1;
+                    }
+                    eprintln!("[ChartApp] LoadPreset (cache): cure requested for {} windows", bars_requested);
+
                     self.sidebar_data_dirty = true;
                     state_mutated = true;
                 } else if let Some(preset) = self.panel_app.presets.get(&id).cloned() {
