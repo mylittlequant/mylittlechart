@@ -238,6 +238,12 @@ pub struct ColorPickerL2Config {
     pub hex_editing: bool,
     /// Cursor position in hex input (character index)
     pub hex_cursor: usize,
+    /// Selection start character index (if a selection exists)
+    pub hex_selection_start: Option<usize>,
+    /// Selection end character index (if a selection exists)
+    pub hex_selection_end: Option<usize>,
+    /// Whether the cursor should be rendered visible (blink state)
+    pub hex_cursor_visible: bool,
     /// SV square size
     pub sv_square_size: f64,
     /// Hue bar width
@@ -256,6 +262,9 @@ impl Default for ColorPickerL2Config {
             hex_input: "#ff0000".to_string(),
             hex_editing: false,
             hex_cursor: 7, // "#ff0000".chars().count()
+            hex_selection_start: None,
+            hex_selection_end: None,
+            hex_cursor_visible: true,
             sv_square_size: 180.0,
             hue_bar_width: 20.0,
             gap: 8.0,
@@ -338,6 +347,12 @@ pub struct ColorPickerState {
     pub hex_editing: bool,
     /// Cursor position in hex input (character index)
     pub hex_cursor: usize,
+    /// Selection start character index (if a selection exists)
+    pub hex_selection_start: Option<usize>,
+    /// Selection end character index (if a selection exists)
+    pub hex_selection_end: Option<usize>,
+    /// Whether the cursor should be rendered visible (blink state)
+    pub hex_cursor_visible: bool,
     /// Custom colors saved by user
     pub custom_colors: Vec<String>,
     /// Origin position for popup
@@ -363,6 +378,7 @@ impl ColorPickerState {
         Self {
             level: ColorPickerLevel::Closed,
             opacity: 1.0,
+            hex_cursor_visible: true,
             ..Default::default()
         }
     }
@@ -568,6 +584,9 @@ impl ColorPickerState {
             hex_input: self.hex_input.clone(),
             hex_editing: self.hex_editing,
             hex_cursor: self.hex_cursor,
+            hex_selection_start: self.hex_selection_start,
+            hex_selection_end: self.hex_selection_end,
+            hex_cursor_visible: self.hex_cursor_visible,
             is_opacity_toggled_off: self.is_opacity_toggled_off(),
             ..Default::default()
         }

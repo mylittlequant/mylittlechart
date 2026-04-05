@@ -469,6 +469,8 @@ pub fn draw_color_picker_l2(
         placeholder: "#000000".to_string(),
         focused: config.hex_editing,
         cursor: config.hex_cursor,
+        selection_start: config.hex_selection_start,
+        selection_end: config.hex_selection_end,
         font_size: 13.0,
         padding: 8.0,
         radius: 4.0,
@@ -481,7 +483,7 @@ pub fn draw_color_picker_l2(
     result.hex_cursor_height = hex_input_result.cursor_height;
     result.hex_char_positions = hex_input_result.char_x_positions;
 
-    if config.hex_editing {
+    if config.hex_editing && config.hex_cursor_visible {
         draw_input_cursor(ctx, hex_input_result.cursor_x, hex_input_result.cursor_y, hex_input_result.cursor_height, "#d1d4dc");
     }
 

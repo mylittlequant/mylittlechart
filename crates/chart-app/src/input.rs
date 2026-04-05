@@ -14715,7 +14715,7 @@ impl ChartApp {
 
                 // Look up the button rect from the input coordinator so the
                 // color picker can be anchored beneath the clicked button.
-                let widget_id_str = "csb:inline:color".to_string();
+                let widget_id_str = "ilb:inline:color".to_string();
                 let rect = self.input_coordinator.borrow_mut().widget_rect(
                     &uzor::input::WidgetId(widget_id_str),
                 );
@@ -14737,7 +14737,7 @@ impl ChartApp {
                     .and_then(|w| w.drawing_manager.get_data_at(idx))
                     .and_then(|d| d.text.and_then(|t| t.color));
 
-                let widget_id_str = "csb:inline:text_color".to_string();
+                let widget_id_str = "ilb:inline:text_color".to_string();
                 let rect = self.input_coordinator.borrow_mut().widget_rect(
                     &uzor::input::WidgetId(widget_id_str),
                 );

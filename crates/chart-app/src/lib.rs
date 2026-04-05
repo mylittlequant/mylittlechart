@@ -3069,6 +3069,12 @@ impl ChartApp {
         if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
             let cursor = self.text_input.cursor(crate::text_input::FieldId::HexColor);
             let text = self.text_input.text(crate::text_input::FieldId::HexColor).to_string();
+            let sel = self.text_input.selection_range(crate::text_input::FieldId::HexColor);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let cursor_vis = self.text_input.cursor_visible(now_ms);
             for picker in [
                 &mut self.panel_app.primitive_settings_state.color_picker,
                 &mut self.panel_app.indicator_settings_state.color_picker,
@@ -3079,6 +3085,9 @@ impl ChartApp {
                 if picker.hex_editing {
                     picker.hex_cursor = cursor;
                     picker.hex_input = text.clone();
+                    picker.hex_selection_start = sel.map(|(s, _)| s);
+                    picker.hex_selection_end = sel.map(|(_, e)| e);
+                    picker.hex_cursor_visible = cursor_vis;
                 }
             }
         }
