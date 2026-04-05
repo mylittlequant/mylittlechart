@@ -3114,6 +3114,33 @@ impl ChartApp {
         self.content_rect = content_rect;
         self.right_toolbar_left_x = panel_layout.right_toolbar_rect.x;
 
+        // Clamp open color picker popups to content_rect so they never
+        // overlap toolbars or the right sidebar.
+        {
+            let cr = &content_rect;
+            let margin = 4.0;
+            for picker in [
+                &mut self.panel_app.primitive_settings_state.color_picker,
+                &mut self.panel_app.indicator_settings_state.color_picker,
+                &mut self.panel_app.chart_settings_state.color_picker,
+                &mut self.panel_app.compare_settings_state.color_picker,
+                &mut self.panel_app.panel_color_picker,
+            ] {
+                if !picker.is_open() { continue; }
+                let (pw, ph) = match picker.level {
+                    zengeld_chart::ui::color_picker_state::ColorPickerLevel::L1 => picker.l1_config().calculate_size(),
+                    zengeld_chart::ui::color_picker_state::ColorPickerLevel::L2 => picker.l2_config().calculate_size(),
+                    _ => continue,
+                };
+                let min_x = cr.x + margin;
+                let min_y = cr.y + margin;
+                let max_x = (cr.x + cr.width - pw - margin).max(min_x);
+                let max_y = (cr.y + cr.height - ph - margin).max(min_y);
+                picker.origin.0 = picker.origin.0.clamp(min_x, max_x);
+                picker.origin.1 = picker.origin.1.clamp(min_y, max_y);
+            }
+        }
+
         // Sync recalc_mode_label into user_settings_state so the modal can display it.
         self.panel_app.user_settings_state.recalc_mode_label = match self.indicator_manager.recalc_mode {
             RecalcMode::PerTick  => "Per Tick".to_string(),
