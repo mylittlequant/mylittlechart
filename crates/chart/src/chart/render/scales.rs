@@ -180,8 +180,8 @@ pub fn draw_price_scale(
                     None
                 };
 
-            // Label height grows to 34px when countdown is shown (2 lines)
-            let height = if countdown_opt.is_some() { 34.0 } else { 20.0 };
+            // Label height grows when countdown is shown (2 lines of same font size)
+            let height = if countdown_opt.is_some() { (dynamic_font_size * 2.6).max(34.0) } else { 20.0 };
             let width = config.price_scale_width - 2.0;
             let label_x = origin_x + 1.0;
             // Center the taller box on the price line
@@ -204,17 +204,18 @@ pub fn draw_price_scale(
             ctx.set_text_baseline(TextBaseline::Middle);
 
             if let Some(ref countdown_text) = countdown_opt {
-                // Two-line layout: price on upper line, countdown on lower line
-                let price_line_y = origin_y + display_y - 7.0;
-                let countdown_line_y = origin_y + display_y + 8.0;
+                // Two-line layout: price on upper line, countdown on lower line (same font size)
+                let line_offset = dynamic_font_size * 0.55;
+                let price_line_y = origin_y + display_y - line_offset;
+                let countdown_line_y = origin_y + display_y + line_offset;
 
                 // Draw price text (white)
                 ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
                 ctx.set_fill_color("#ffffff");
                 ctx.fill_text(&label, text_x, price_line_y);
 
-                // Draw countdown text (smaller, muted white)
-                ctx.set_font("9px sans-serif");
+                // Draw countdown text (same size, muted white)
+                ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
                 ctx.set_fill_color("rgba(255,255,255,0.7)");
                 ctx.fill_text(countdown_text, text_x, countdown_line_y);
             } else {
