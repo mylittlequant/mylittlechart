@@ -373,10 +373,8 @@ impl TextInputManager {
         let new_cursor = Self::cursor_from_x(&state.last_char_positions, x);
         state.cursor = new_cursor;
         // Keep the selection_start anchor from drag_start; cursor moves.
-        // If cursor == anchor, clear selection (degenerate drag).
-        if state.selection_start == Some(new_cursor) {
-            state.selection_start = None;
-        }
+        // Do NOT clear selection_start here even if cursor == anchor —
+        // the user may drag back. Degenerate check is in on_drag_end.
     }
 
     /// End the drag-selection. Clears `drag_field`.

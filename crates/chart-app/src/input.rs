@@ -13252,13 +13252,23 @@ impl ChartApp {
                 }
             }
             ColorPickerL1HitResult::PlusButton => {
-                match source {
-                    "primitive" => self.panel_app.primitive_settings_state.color_picker.open_l2(),
-                    "indicator" => self.panel_app.indicator_settings_state.color_picker.open_l2(),
-                    "chart"     => self.panel_app.chart_settings_state.color_picker.open_l2(),
-                    "compare"   => self.panel_app.compare_settings_state.color_picker.open_l2(),
-                    "panel"     => self.panel_app.panel_color_picker.open_l2(),
-                    _ => {}
+                let picker = match source {
+                    "primitive" => Some(&mut self.panel_app.primitive_settings_state.color_picker),
+                    "indicator" => Some(&mut self.panel_app.indicator_settings_state.color_picker),
+                    "chart"     => Some(&mut self.panel_app.chart_settings_state.color_picker),
+                    "compare"   => Some(&mut self.panel_app.compare_settings_state.color_picker),
+                    "panel"     => Some(&mut self.panel_app.panel_color_picker),
+                    _           => None,
+                };
+                if let Some(picker) = picker {
+                    picker.open_l2();
+                    // Immediately activate hex editing so on_drag_start works
+                    // without requiring an extra click to warm up geometry.
+                    picker.hex_editing = true;
+                    let hex = picker.hex_input.clone();
+                    self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
+                    self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
+                    self.text_input.focus(crate::text_input::FieldId::HexColor);
                 }
             }
             ColorPickerL1HitResult::OpacitySlider(opacity) => {
@@ -13525,34 +13535,9 @@ impl ChartApp {
                 }
             }
             ColorPickerL2HitResult::HexInput => {
-                // Activate hex editing or reposition cursor on re-click.
-                let active_picker: Option<&mut zengeld_chart::ui::color_picker_state::ColorPickerState> = match source {
-                    "primitive" => Some(&mut self.panel_app.primitive_settings_state.color_picker),
-                    "indicator" => Some(&mut self.panel_app.indicator_settings_state.color_picker),
-                    "chart"     => Some(&mut self.panel_app.chart_settings_state.color_picker),
-                    "compare"   => Some(&mut self.panel_app.compare_settings_state.color_picker),
-                    "panel"     => Some(&mut self.panel_app.panel_color_picker),
-                    _           => None,
-                };
-                if let Some(picker) = active_picker {
-                    if picker.hex_editing {
-                        // Already editing — reposition cursor at click x via manager.
-                        // on_drag_start uses last_rect (set by update_field) to find the field.
-                        self.text_input.on_drag_start(x, y);
-                    } else {
-                        // Activate editing: sync text into manager, then focus.
-                        // Do NOT call on_drag_start here — geometry isn't available yet
-                        // (update_field hasn't run for this field this frame, so
-                        // last_char_positions is empty and the anchor would land at 0).
-                        // on_drag_start will work correctly on the next frame once
-                        // update_field has populated the geometry.
-                        picker.hex_editing = true;
-                        let hex = picker.hex_input.clone();
-                        self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
-                        self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
-                        self.text_input.focus(crate::text_input::FieldId::HexColor);
-                    }
-                }
+                // hex_editing is already true (set when L2 opens).
+                // Reposition cursor at click x via manager.
+                self.text_input.on_drag_start(x, y);
             }
             ColorPickerL2HitResult::Inside => {} // absorb
             ColorPickerL2HitResult::Outside => {
