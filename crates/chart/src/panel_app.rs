@@ -1239,6 +1239,7 @@ impl ChartToolbarState {
         sync_flags: Option<&crate::tag_manager::SyncFlags>,
         is_expanded: bool,
         split_without_group: bool,
+        is_mono_group: bool,
         active_symbol: Option<&str>,
         active_timeframe: Option<&str>,
         sidebar_w: f64,
@@ -1665,7 +1666,7 @@ impl ChartToolbarState {
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = self.open_dropdown_id {
-            self.render_dropdown(ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group)
+            self.render_dropdown(ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group)
         } else {
             None
         };
@@ -1759,6 +1760,7 @@ impl ChartToolbarState {
         sync_flags: Option<&crate::tag_manager::SyncFlags>,
         _is_expanded: bool,
         split_without_group: bool,
+        is_mono_group: bool,
     ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1807,7 +1809,7 @@ impl ChartToolbarState {
                 }
             }
             if dropdown_id == "layout_menu" {
-                if let DropdownItem::Item { ref id, ref mut toggle, .. } = di {
+                if let DropdownItem::Item { ref id, ref mut toggle, ref mut disabled, .. } = di {
                     if id == "split_untagged" {
                         *toggle = Some(split_without_group);
                     }
@@ -1821,6 +1823,10 @@ impl ChartToolbarState {
                             "sync_indicators" => *toggle = Some(flags.sync_indicators),
                             _ => {}
                         }
+                    }
+                    // Disable sync toggles for mono-groups (solo windows don't need sync)
+                    if is_mono_group && id.starts_with("sync_") {
+                        *disabled = true;
                     }
                 }
             }
@@ -2707,8 +2713,9 @@ impl ChartPanelApp {
         // Get sync flags for the active window's group (used to show toggle state in layout_menu)
         let active_gid = self.panel_grid.active_window().and_then(|w| w.group_id);
         let sync_flags = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| &g.sync_flags);
+        let is_mono_group = active_gid.and_then(|gid| self.tag_manager.group(gid)).map(|g| g.members.len() <= 1).unwrap_or(true);
         let is_expanded = self.panel_grid.is_expanded();
-        self.toolbar_state.render_toolbars(ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, active_symbol, active_timeframe, sidebar_w)
+        self.toolbar_state.render_toolbars(ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &self.presets, &self.active_preset_id, self.autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, active_symbol, active_timeframe, sidebar_w)
     }
 
     /// Render all chart-owned modals in a single call.
