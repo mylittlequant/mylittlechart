@@ -466,20 +466,45 @@ pub fn draw_last_price_line(
     // End at right edge of chart
     let screen_end_x = rect.right();
 
-    // Only draw if there's visible space to the right
-    if screen_start_x >= screen_end_x {
+    // Read tick line settings from scale_settings (or use defaults)
+    let (extend_right, extend_left, tick_style) = if let Some(ss) = state.scale_settings {
+        (ss.price_tick_extend_right, ss.price_tick_extend_left, ss.price_tick_style.as_str())
+    } else {
+        (true, false, "dashed")
+    };
+
+    // Nothing to draw if both extensions disabled
+    if !extend_right && !extend_left {
         return;
     }
 
-    // Draw dashed line
+    // Choose dash pattern based on style
+    let dash_pattern: &[f64] = match tick_style {
+        "dotted" => &[1.0, 3.0],
+        "solid"  => &[],
+        _        => &[4.0, 3.0], // "dashed" is default
+    };
+
     ctx.set_stroke_color(&color_with_alpha);
     ctx.set_stroke_width(1.0);
-    ctx.set_line_dash(&[4.0, 3.0]); // 4px dash, 3px gap
+    ctx.set_line_dash(dash_pattern);
 
-    ctx.begin_path();
-    ctx.move_to(screen_start_x, screen_y);
-    ctx.line_to(screen_end_x, screen_y);
-    ctx.stroke();
+    // Draw right segment: from last bar center to right edge
+    if extend_right && screen_start_x < screen_end_x {
+        ctx.begin_path();
+        ctx.move_to(screen_start_x, screen_y);
+        ctx.line_to(screen_end_x, screen_y);
+        ctx.stroke();
+    }
+
+    // Draw left segment: from left edge of chart to last bar center
+    let screen_left_x = rect.x;
+    if extend_left && screen_left_x < screen_start_x {
+        ctx.begin_path();
+        ctx.move_to(screen_left_x, screen_y);
+        ctx.line_to(screen_start_x, screen_y);
+        ctx.stroke();
+    }
 
     // Reset line dash for other drawing operations
     ctx.set_line_dash(&[]);

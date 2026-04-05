@@ -80,6 +80,9 @@ impl ChartTemplate {
                 date_format_label: "21.01.2026".to_string(),
                 show_day_of_week: false,
                 show_bar_countdown: true,
+                price_tick_style: "dotted".to_string(),
+                price_tick_extend_right: true,
+                price_tick_extend_left: true,
             },
             status_line: StatusLineSettings {
                 legend_position: "top_left".to_string(),

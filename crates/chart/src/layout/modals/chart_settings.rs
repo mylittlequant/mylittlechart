@@ -64,6 +64,12 @@ pub struct InstrumentSettings {
     pub show_day_of_week: bool,
     /// Show countdown to bar close inside the last price label
     pub show_bar_countdown: bool,
+    /// Price tick line style: "dotted", "dashed", "solid"
+    pub price_tick_style: String,
+    /// Extend price tick line to the right
+    pub price_tick_extend_right: bool,
+    /// Extend price tick line to the left
+    pub price_tick_extend_left: bool,
 }
 
 /// Settings for scales and lines
@@ -826,8 +832,8 @@ fn render_instrument_settings(
     let viewport_height = content_height;
     let viewport_y = y;
 
-    let section_count = 2.0;
-    let item_count = 8.0;
+    let section_count = 3.0;
+    let item_count = 11.0;
     let gap_count = 2.0;
     let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
 
@@ -940,6 +946,56 @@ fn render_instrument_settings(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text("Обратный отсчёт до закрытия бара", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Section: ТИК ТЕКУЩЕЙ ЦЕНЫ
+    ctx.set_fill_color(muted_color);
+    ctx.set_font("11px sans-serif");
+    ctx.fill_text("ТИК ТЕКУЩЕЙ ЦЕНЫ", x, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Row: price_tick_extend_right
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.price_tick_extend_right, theme);
+    result.content_items.push(("instrument:price_tick_extend_right".to_string(), check_rect));
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text("Продлить вправо", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Row: price_tick_extend_left
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.price_tick_extend_left, theme);
+    result.content_items.push(("instrument:price_tick_extend_left".to_string(), check_rect));
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text("Продлить влево", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Row: price_tick_style dropdown
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text("Стиль линии", x, row_y + row_height / 2.0);
+
+    let dropdown_x = x + 140.0;
+    let dropdown_width = 140.0;
+    let dropdown_height = 28.0;
+    let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
+    let tick_style_label = match settings.price_tick_style.as_str() {
+        "dashed" => "Штрих",
+        "solid"  => "Линия",
+        _        => "Точки",
+    };
+    draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, tick_style_label, row_y + row_height / 2.0, theme);
+    let chevron_w = 20.0;
+    let text_w = dropdown_width - chevron_w;
+    result.content_items.push(("dropdown_cycle:price_tick_style".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
+    result.content_items.push(("dropdown_menu:price_tick_style".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
     row_y += row_height;
 
     // Precision dropdown

@@ -7359,6 +7359,18 @@ impl ChartApp {
                     .active_window()
                     .map(|w| w.scale_settings.show_bar_countdown)
                     .unwrap_or(true),
+                price_tick_style: self.panel_app.panel_grid
+                    .active_window()
+                    .map(|w| w.scale_settings.price_tick_style.clone())
+                    .unwrap_or_else(|| "dotted".to_string()),
+                price_tick_extend_right: self.panel_app.panel_grid
+                    .active_window()
+                    .map(|w| w.scale_settings.price_tick_extend_right)
+                    .unwrap_or(true),
+                price_tick_extend_left: self.panel_app.panel_grid
+                    .active_window()
+                    .map(|w| w.scale_settings.price_tick_extend_left)
+                    .unwrap_or(true),
             },
             status_line: StatusLineSettings {
                 legend_show_ohlc,

@@ -10433,6 +10433,18 @@ impl ChartApp {
                         eprintln!("[ChartApp] instrument:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
                     }
                 }
+                "price_tick_extend_right" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        w.scale_settings.price_tick_extend_right = !w.scale_settings.price_tick_extend_right;
+                        eprintln!("[ChartApp] instrument:price_tick_extend_right = {}", w.scale_settings.price_tick_extend_right);
+                    }
+                }
+                "price_tick_extend_left" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        w.scale_settings.price_tick_extend_left = !w.scale_settings.price_tick_extend_left;
+                        eprintln!("[ChartApp] instrument:price_tick_extend_left = {}", w.scale_settings.price_tick_extend_left);
+                    }
+                }
                 "body_up_color" | "body_down_color"
                 | "border_up_color" | "border_down_color"
                 | "wick_up_color" | "wick_down_color" => {
@@ -10968,6 +10980,16 @@ impl ChartApp {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                         w.scale_settings.corner_visibility = w.scale_settings.corner_visibility.next();
                         eprintln!("[ChartApp] corner_visibility cycled: {:?}", w.scale_settings.corner_visibility);
+                    }
+                }
+                "price_tick_style" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        w.scale_settings.price_tick_style = match w.scale_settings.price_tick_style.as_str() {
+                            "dotted" => "dashed".to_string(),
+                            "dashed" => "solid".to_string(),
+                            _        => "dotted".to_string(),
+                        };
+                        eprintln!("[ChartApp] price_tick_style cycled: {}", w.scale_settings.price_tick_style);
                     }
                 }
                 _ => {

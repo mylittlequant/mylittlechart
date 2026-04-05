@@ -291,6 +291,23 @@ pub struct ScaleSettings {
     pub prev_close_color: String,
     /// User-configured price precision (None = automatic)
     pub user_precision: Option<usize>,
+    /// Price tick line style: "dotted", "dashed", "solid" (default: "dotted")
+    #[serde(default = "default_price_tick_style")]
+    pub price_tick_style: String,
+    /// Extend price tick line to the right (default: true)
+    #[serde(default = "default_true")]
+    pub price_tick_extend_right: bool,
+    /// Extend price tick line to the left (default: true)
+    #[serde(default = "default_true")]
+    pub price_tick_extend_left: bool,
+}
+
+fn default_price_tick_style() -> String {
+    "dotted".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for ScaleSettings {
@@ -306,6 +323,9 @@ impl Default for ScaleSettings {
             show_prev_close_line: false,  // off by default
             prev_close_color: "#787B86".to_string(),  // gray
             user_precision: None,  // automatic by default
+            price_tick_style: "dotted".to_string(),
+            price_tick_extend_right: true,
+            price_tick_extend_left: true,
         }
     }
 }
