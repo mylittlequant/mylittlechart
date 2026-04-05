@@ -200,6 +200,9 @@ pub fn draw_price_scale(
             ctx.set_fill_color(bg_color);
             ctx.fill_rect(label_x, label_y, width, height);
 
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+
             if let Some(ref countdown_text) = countdown_opt {
                 // Two-line layout: price on upper line, countdown on lower line
                 let price_line_y = origin_y + display_y - 7.0;

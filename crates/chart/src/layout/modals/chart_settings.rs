@@ -833,7 +833,7 @@ fn render_instrument_settings(
     let viewport_y = y;
 
     let section_count = 3.0;
-    let item_count = 11.0;
+    let item_count = 13.0;
     let gap_count = 2.0;
     let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
 

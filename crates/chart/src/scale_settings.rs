@@ -284,6 +284,7 @@ pub struct ScaleSettings {
     /// Time format settings (date format, 24h/12h, day of week)
     pub time_format: TimeFormatSettings,
     /// Show countdown to bar close on price scale
+    #[serde(default = "default_true")]
     pub show_bar_countdown: bool,
     /// Show previous close price line
     pub show_prev_close_line: bool,
@@ -319,7 +320,7 @@ impl Default for ScaleSettings {
             price_scale_width: DEFAULT_PRICE_SCALE_WIDTH,
             time_scale_height: DEFAULT_TIME_SCALE_HEIGHT,
             time_format: TimeFormatSettings::default(),
-            show_bar_countdown: false,  // off by default
+            show_bar_countdown: true,  // on by default
             show_prev_close_line: false,  // off by default
             prev_close_color: "#787B86".to_string(),  // gray
             user_precision: None,  // automatic by default
