@@ -235,6 +235,15 @@ struct PerWindowState {
     /// `chart.sidebar_data_dirty` which guards data population; this flag
     /// guards the vector-graphics rebuild.
     sidebar_dirty_scene: bool,
+    /// Cached scene for the chart content area (panels, crosshair, drawings).
+    /// Rebuilt only when `chart_dirty` is true; otherwise appended as-is.
+    /// This avoids the full chart render on every frame when data/input has
+    /// not changed — only 2-5 ticks/sec arrive, so 99%+ of frames are no-ops.
+    chart_scene: vello::Scene,
+    /// True when the chart content needs to be redrawn into `chart_scene`.
+    /// Starts true; set on resize, mouse events in chart area, scroll, key
+    /// press, tick/data updates, and timer events.  Cleared after rebuild.
+    chart_dirty: bool,
     // ChartApp — per-window tabs/presets, shared DataBridge via broadcast
     chart: chart_app::ChartApp,
     // Input state
@@ -909,16 +918,20 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
 
         // Chart content (chart panels, modals) — toolbar skipped because
         // it is composited from the cached toolbar_scene below.
-        {
+        // The chart scene is cached: only rebuild when chart_dirty is set.
+        if pw.chart_dirty {
+            pw.chart_scene.reset();
             let mut render_ctx = VelloGpuRenderContext::new(
-                &mut pw.scene,
+                &mut pw.chart_scene,
                 0.0,
                 chrome::CHROME_HEIGHT,
                 None,
                 None,
             );
             pw.chart.render(&mut render_ctx, frame_time, true);
+            pw.chart_dirty = false;
         }
+        pw.scene.append(&pw.chart_scene, None);
 
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
 
@@ -2790,6 +2803,8 @@ impl App<'_> {
             toolbar_dirty: true,
             sidebar_scene: Scene::new(),
             sidebar_dirty_scene: true,
+            chart_scene: Scene::new(),
+            chart_dirty: true,
             chart,
             last_mouse_pos: (0.0, 0.0),
             mouse_pressed: false,
@@ -7090,9 +7105,11 @@ impl ApplicationHandler for App<'_> {
             // so the clock string is refreshed on the next frame.
             // Also mark sidebar dirty: performance panel data (fps, frame_time, etc.)
             // updates every second, so the performance panel needs a redraw.
+            // Mark chart dirty: time-based indicators (current-bar progress, etc.) update.
             for pw in self.windows.values_mut() {
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
+                pw.chart_dirty = true;
             }
 
             self.last_indicator_snapshot = std::time::Instant::now();
@@ -7102,9 +7119,12 @@ impl ApplicationHandler for App<'_> {
         // chart.sidebar_data_dirty is set by tick() after any LiveUpdate and
         // by sidebar panel toggle handlers.  When it fires, the sidebar scene
         // must be rebuilt so the new data is reflected in the vector graphics.
+        // New bar data also means chart panels need redrawing (new candle, price
+        // labels shift, indicators update) — mark chart dirty too.
         for pw in self.windows.values_mut() {
             if pw.chart.sidebar_data_dirty {
                 pw.sidebar_dirty_scene = true;
+                pw.chart_dirty = true;
             }
         }
 
@@ -7394,6 +7414,7 @@ impl ApplicationHandler for App<'_> {
                     // Toolbar and sidebar layout changes on resize — must rebuild both.
                     pw.toolbar_dirty = true;
                     pw.sidebar_dirty_scene = true;
+                    pw.chart_dirty = true;
 
                     // Restore from minimize: tick was skipped while minimized,
                     // so viewport stayed at the pre-minimize position.  For
@@ -7513,6 +7534,10 @@ impl ApplicationHandler for App<'_> {
                     return;
                 }
 
+                // Crosshair, hover highlights and price labels update with every
+                // mouse move inside the chart area — mark the chart scene dirty.
+                pw.chart_dirty = true;
+
                 // Mark toolbar dirty when the cursor enters or moves within a
                 // toolbar band (top/bottom/left/right).  This covers hover-state
                 // changes on toolbar buttons without rebuilding on every chart pan.
@@ -7630,9 +7655,10 @@ impl ApplicationHandler for App<'_> {
                 if pw.drawing_capture {
                     return;
                 }
-                // Hover state clears when cursor leaves — toolbar and sidebar must redraw.
+                // Hover state clears when cursor leaves — toolbar, sidebar and chart must redraw.
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
+                pw.chart_dirty = true;
                 pw.chrome_state.tooltip.clear();
                 pw.toolbar_tooltip.clear();
                 pw.chart.on_mouse_leave();
@@ -7646,8 +7672,10 @@ impl ApplicationHandler for App<'_> {
                 // open dropdown, etc.) so mark the toolbar as dirty.
                 // A click in the sidebar area also changes sidebar state (item
                 // selection, delete, settings open, scroll) — always mark it dirty.
+                // A click in the chart area can create/select drawings — mark chart dirty.
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
+                pw.chart_dirty = true;
 
                 // Check chrome hit first for left-button press events.
                 if button == MouseButton::Left && state == ElementState::Pressed {
@@ -7933,6 +7961,8 @@ impl ApplicationHandler for App<'_> {
                     // Scrolling inside the sidebar changes the visible content —
                     // always mark it dirty so the new scroll offset is rendered.
                     pw.sidebar_dirty_scene = true;
+                    // Scrolling pans/zooms the chart — bars shift, price scale updates.
+                    pw.chart_dirty = true;
                 }
             }
 
@@ -7949,8 +7979,10 @@ impl ApplicationHandler for App<'_> {
                     // Keyboard actions can change drawing mode (Escape, Delete, etc.)
                     // which is reflected in the left toolbar — mark it dirty.
                     // Delete can remove objects from the object tree — mark sidebar dirty.
+                    // Keyboard can also modify chart state (drawings, mode) — mark chart dirty.
                     pw.toolbar_dirty = true;
                     pw.sidebar_dirty_scene = true;
+                    pw.chart_dirty = true;
 
                     // ── Ctrl shortcuts — use physical_key so layout doesn't matter ──
                     // On a Russian keyboard, Ctrl+С (Cyrillic) still maps to
