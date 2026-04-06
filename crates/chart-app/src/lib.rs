@@ -5664,9 +5664,7 @@ impl ChartApp {
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.block_on(self.agent.resize(cols, rows));
-                }
+                self.bridge.runtime().block_on(self.agent.resize(cols, rows));
             }
         }
 
@@ -5841,9 +5839,7 @@ impl ChartApp {
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.block_on(self.agent.resize(cols, rows));
-                }
+                self.bridge.runtime().block_on(self.agent.resize(cols, rows));
             }
         }
 

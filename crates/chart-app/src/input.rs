@@ -5579,6 +5579,23 @@ impl ChartApp {
             }
             return;
         }
+        // Agent chat input — route printable characters and Enter to TextInputManager.
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+            if ch == '\r' || ch == '\n' {
+                // Enter sends the message via the agent:send path.
+                if self.agent.is_active() {
+                    let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                    if !text.is_empty() {
+                        let _ = self.bridge.runtime().block_on(self.agent.send_chat(&text));
+                        self.sidebar_state.agent_input_buffer.clear();
+                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                    }
+                }
+            } else {
+                let _action = self.text_input.on_char(ch);
+            }
+            return;
+        }
         // Handle preset name input modal
         if self.panel_app.preset_name_input.is_open {
             let editing = &mut self.panel_app.preset_name_input.editing;
@@ -6775,6 +6792,12 @@ impl ChartApp {
                 crate::text_input::FieldAction::None => {}
                 crate::text_input::FieldAction::RawInput(_) => {}
             }
+            return;
+        }
+
+        // ── Agent chat key routing ─────────────────────────────────────────────
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+            let _action = self.text_input.on_key(key);
             return;
         }
 
@@ -8051,12 +8074,16 @@ impl ChartApp {
             self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
             return;
         }
+        if widget_id == "agent:input" {
+            // Focus the agent chat text input field so keyboard events route to it.
+            self.text_input.focus(crate::text_input::FieldId::AgentChat);
+            eprintln!("[ChartApp] Agent chat input focused");
+            return;
+        }
         if widget_id == "agent:toggle_session" {
             if self.agent.is_active() {
                 // Stop the active session.
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    handle.block_on(self.agent.stop());
-                }
+                self.bridge.runtime().block_on(self.agent.stop());
                 self.sidebar_state.agent_session_active = false;
                 eprintln!("[ChartApp] Agent session stopped");
             } else {
@@ -8072,30 +8099,39 @@ impl ChartApp {
                     tool,
                     ..SessionConfig::default()
                 };
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    match self.sidebar_state.agent_mode {
-                        AgentPanelMode::Pty => {
-                            match handle.block_on(self.agent.start_pty(config)) {
-                                Ok(()) => {
-                                    self.sidebar_state.agent_session_active = true;
-                                    eprintln!("[ChartApp] Agent PTY session started ({:?})", self.sidebar_state.agent_cli);
-                                }
-                                Err(e) => {
-                                    eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
-                                }
+                eprintln!("[ChartApp] Starting agent session: mode={:?} cli={:?}", self.sidebar_state.agent_mode, self.sidebar_state.agent_cli);
+                match self.sidebar_state.agent_mode {
+                    AgentPanelMode::Pty => {
+                        match self.bridge.runtime().block_on(self.agent.start_pty(config)) {
+                            Ok(()) => {
+                                self.sidebar_state.agent_session_active = true;
+                                eprintln!("[ChartApp] Agent PTY session started ({:?})", self.sidebar_state.agent_cli);
+                            }
+                            Err(e) => {
+                                eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
                             }
                         }
-                        AgentPanelMode::Chat => {
-                            let prompt = self.sidebar_state.agent_input_buffer.clone();
-                            match handle.block_on(self.agent.start_pipe(config, &prompt)) {
-                                Ok(()) => {
-                                    self.sidebar_state.agent_session_active = true;
-                                    self.sidebar_state.agent_input_buffer.clear();
-                                    eprintln!("[ChartApp] Agent Chat session started ({:?})", self.sidebar_state.agent_cli);
-                                }
-                                Err(e) => {
-                                    eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
-                                }
+                    }
+                    AgentPanelMode::Chat => {
+                        // Read the initial prompt from the focused AgentChat text field,
+                        // falling back to the legacy agent_input_buffer.
+                        let prompt = {
+                            let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                            if !from_field.is_empty() {
+                                from_field
+                            } else {
+                                self.sidebar_state.agent_input_buffer.clone()
+                            }
+                        };
+                        match self.bridge.runtime().block_on(self.agent.start_pipe(config, &prompt)) {
+                            Ok(()) => {
+                                self.sidebar_state.agent_session_active = true;
+                                self.sidebar_state.agent_input_buffer.clear();
+                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                                eprintln!("[ChartApp] Agent Chat session started ({:?})", self.sidebar_state.agent_cli);
+                            }
+                            Err(e) => {
+                                eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
                             }
                         }
                     }
@@ -8105,12 +8141,20 @@ impl ChartApp {
         }
         if widget_id == "agent:send" {
             if self.agent.is_active() {
-                let text = self.sidebar_state.agent_input_buffer.clone();
-                if !text.is_empty() {
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        let _ = handle.block_on(self.agent.send_chat(&text));
+                // Read from the focused AgentChat text field, falling back to the
+                // legacy agent_input_buffer.
+                let text = {
+                    let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                    if !from_field.is_empty() {
+                        from_field
+                    } else {
+                        self.sidebar_state.agent_input_buffer.clone()
                     }
+                };
+                if !text.is_empty() {
+                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(&text));
                     self.sidebar_state.agent_input_buffer.clear();
+                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
                 }
             }
             return;
