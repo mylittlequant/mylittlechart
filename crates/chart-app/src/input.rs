@@ -7993,10 +7993,6 @@ impl ChartApp {
             self.perf_actions.push(crate::PerfAction::SetBackend(next.label().to_string()));
             return;
         }
-        if widget_id == "perf:vsync" {
-            self.perf_actions.push(crate::PerfAction::ToggleVsync);
-            return;
-        }
         if widget_id == "perf:fps_limit" {
             // Cycle: 30 → 60 → 120 → 0 (unlimited) → 30
             let current = self.sidebar_state.performance_data.fps_limit;
@@ -8011,13 +8007,12 @@ impl ChartApp {
             return;
         }
         if widget_id == "perf:msaa" {
-            // Cycle: 16 → 8 → 4 → 0 (off) → 16
+            // Cycle: 0 (off) → 8 → 16 → 0 (vello has no Msaa4)
             let current = self.sidebar_state.performance_data.msaa_samples;
             let next = match current {
-                16 => 8,
-                8 => 4,
-                4 => 0,
-                _ => 16,
+                0 => 8,
+                8 => 16,
+                _ => 0,
             };
             self.perf_actions.push(crate::PerfAction::SetMsaa(next));
             eprintln!("[ChartApp] perf: MSAA -> {}", if next == 0 { "off".to_string() } else { format!("{}x", next) });

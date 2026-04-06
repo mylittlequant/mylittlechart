@@ -317,8 +317,6 @@ pub struct PerformanceData {
     pub perf_log_enabled: bool,
     /// Current render backend selection.
     pub render_backend: RenderBackend,
-    /// Whether VSync is enabled.
-    pub vsync_enabled: bool,
     /// Scene build time in microseconds (CPU).
     pub scene_build_us: u64,
     /// GPU render-to-texture time in microseconds.
@@ -372,7 +370,6 @@ impl Default for PerformanceData {
             gpu_driver: String::new(),
             perf_log_enabled: false,
             render_backend: RenderBackend::VelloGpu,
-            vsync_enabled: true,
             scene_build_us: 0,
             gpu_render_us: 0,
             gpu_present_us: 0,

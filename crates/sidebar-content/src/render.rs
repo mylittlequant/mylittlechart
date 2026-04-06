@@ -3429,24 +3429,7 @@ fn render_performance_panel(
         theme,
     );
 
-    // VSync toggle
-    {
-        let vsync_label = if perf.vsync_enabled { "On" } else { "Off" };
-        let vsync_color = if perf.vsync_enabled { "#4ade80" } else { &theme.item_text_muted };
-        draw_control_row(
-            ctx,
-            input_coordinator,
-            result,
-            &mut y,
-            "VSync",
-            vsync_label,
-            "perf:vsync",
-            vsync_color,
-            theme,
-        );
-    }
-
-    // MSAA — cycles 0 / 4 / 8 / 16
+    // MSAA — cycles 0 / 8 / 16
     draw_control_row(
         ctx,
         input_coordinator,

@@ -435,11 +435,21 @@ impl AppState {
             }
         };
 
-        // Parse recalc_mode from the profile string.
-        let recalc_mode = match profile.recalc_mode.as_str() {
-            "PerTick" => chart_app::RecalcMode::PerTick,
-            "PerBar"  => chart_app::RecalcMode::PerBar,
-            _         => chart_app::RecalcMode::PerFrame, // default / "PerFrame"
+        // Parse recalc_mode from DeviceSettings (authoritative) with profile as fallback.
+        let recalc_mode = {
+            let ds = zengeld_chart::user_profile::DeviceSettings::load();
+            let src = if ds.recalc_mode == "per_frame" && !profile.recalc_mode.is_empty() {
+                // DeviceSettings has the default value — use the profile value if it
+                // carries a non-default mode so that existing saves are honoured.
+                &profile.recalc_mode
+            } else {
+                &ds.recalc_mode
+            };
+            match src.as_str() {
+                "PerTick" => chart_app::RecalcMode::PerTick,
+                "PerBar"  => chart_app::RecalcMode::PerBar,
+                _         => chart_app::RecalcMode::PerFrame,
+            }
         };
 
         // Parse scale_mode from the profile string.
@@ -613,8 +623,6 @@ struct App<'s> {
     render_backend: sidebar_content::state::RenderBackend,
     /// True if no backend was explicitly saved — triggers auto-detection on first GPU info.
     backend_auto_detect: bool,
-    /// Whether VSync is enabled.
-    vsync_enabled: bool,
     /// System info — CPU/RAM metrics, refreshed once per second.
     sys: System,
     /// Our process ID for per-process CPU/memory tracking.
@@ -1419,9 +1427,10 @@ fn submit_window_gpu_from_gpu_scene(
                     width,
                     height,
                     antialiasing_method: match msaa_samples {
-                        0 => AaConfig::Area,
-                        8 => AaConfig::Msaa8,
-                        _ => AaConfig::Msaa16,
+                        0  => AaConfig::Area,
+                        8  => AaConfig::Msaa8,
+                        16 => AaConfig::Msaa16,
+                        _  => AaConfig::Msaa8, // safe fallback
                     },
                 },
             )
@@ -2342,6 +2351,9 @@ impl App<'_> {
             });
         }
 
+        // Load device settings once for App struct initialisation.
+        let ds_init = zengeld_chart::user_profile::DeviceSettings::load();
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -2364,14 +2376,13 @@ impl App<'_> {
             last_frame_instant: std::time::Instant::now(),
             fps_ema: 60.0,
             last_frame_time_ms: 16.0,
-            fps_limit: 0,
-            msaa_samples: 8,
-            max_bars: 0,
+            fps_limit: ds_init.fps_limit,
+            msaa_samples: ds_init.msaa_samples,
+            max_bars: ds_init.max_bars,
             perf_log_enabled: false,
             render_backend: {
                 use sidebar_content::state::RenderBackend;
-                let ds = zengeld_chart::user_profile::DeviceSettings::load();
-                match ds.render_backend {
+                match ds_init.render_backend {
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu) => RenderBackend::VelloGpu,
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu) => RenderBackend::InstancedWgpu,
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu) => RenderBackend::VelloCpu,
@@ -2380,8 +2391,7 @@ impl App<'_> {
                     None => RenderBackend::VelloGpu, // will be overridden by auto-detect
                 }
             },
-            backend_auto_detect: zengeld_chart::user_profile::DeviceSettings::load().render_backend.is_none(),
-            vsync_enabled: true,
+            backend_auto_detect: ds_init.render_backend.is_none(),
             sys: {
                 let mut s = System::new();
                 s.refresh_cpu_usage();
@@ -2533,7 +2543,17 @@ impl App<'_> {
                     self.render_backend = recommended;
                 }
                 eprintln!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
-                // Save auto-detected choice so next launch skips auto-detect
+
+                // Set backend-specific performance defaults.
+                let (fps, msaa) = match recommended {
+                    RenderBackend::VelloGpu      => (120u32, 8u8),
+                    RenderBackend::VelloCpu      => (30,     0),
+                    RenderBackend::TinySkia      => (90,     8),
+                    RenderBackend::InstancedWgpu => (90,     8),
+                    RenderBackend::VelloHybrid   => (90,     8),
+                };
+
+                // Save auto-detected choice and perf defaults so next launch skips auto-detect.
                 {
                     let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
                     ds.render_backend = Some(match recommended {
@@ -2543,8 +2563,15 @@ impl App<'_> {
                         RenderBackend::VelloHybrid => zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid,
                         RenderBackend::TinySkia => zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia,
                     });
+                    ds.fps_limit = fps;
+                    ds.msaa_samples = msaa;
+                    ds.max_bars = 0; // unlimited
+                    ds.recalc_mode = "per_frame".to_string();
                     ds.save();
                 }
+                // Apply to runtime.
+                self.fps_limit = fps;
+                self.msaa_samples = msaa;
                 self.backend_auto_detect = false;
             }
         }
@@ -3282,11 +3309,7 @@ impl App<'_> {
         profile.active_theme = self.app_state.theme_preset.clone();
         profile.device_name = self.app_state.device_name.clone();
         profile.app_version = self.app_state.app_version.clone();
-        profile.recalc_mode = match self.app_state.recalc_mode {
-            chart_app::RecalcMode::PerTick  => "PerTick".to_string(),
-            chart_app::RecalcMode::PerFrame => "PerFrame".to_string(),
-            chart_app::RecalcMode::PerBar   => "PerBar".to_string(),
-        };
+        // recalc_mode is now persisted to DeviceSettings, not UserProfile.
         profile.scale_mode = match self.app_state.scale_mode {
             zengeld_chart::ScaleMode::Auto   => "Auto".to_string(),
             zengeld_chart::ScaleMode::Focus  => "Focus".to_string(),
@@ -4410,14 +4433,23 @@ impl ApplicationHandler for App<'_> {
                 match action {
                     chart_app::PerfAction::SetFpsLimit(v) => {
                         self.fps_limit = v;
+                        let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                        ds.fps_limit = v;
+                        ds.save();
                         eprintln!("[App] FPS limit → {}", v);
                     }
                     chart_app::PerfAction::SetMsaa(v) => {
                         self.msaa_samples = v;
+                        let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                        ds.msaa_samples = v;
+                        ds.save();
                         eprintln!("[App] MSAA → {}", v);
                     }
                     chart_app::PerfAction::SetMaxBars(v) => {
                         self.max_bars = v;
+                        let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                        ds.max_bars = v;
+                        ds.save();
                         eprintln!("[App] Max bars → {}", v);
                     }
                     chart_app::PerfAction::SetRecalcMode(ref mode) => {
@@ -4426,6 +4458,9 @@ impl ApplicationHandler for App<'_> {
                             "PerBar"  => chart_app::RecalcMode::PerBar,
                             _         => chart_app::RecalcMode::PerFrame,
                         };
+                        let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                        ds.recalc_mode = mode.clone();
+                        ds.save();
                         eprintln!("[App] RecalcMode → {:?}", self.app_state.recalc_mode);
                     }
                     chart_app::PerfAction::TogglePerfLog => {
@@ -4461,8 +4496,7 @@ impl ApplicationHandler for App<'_> {
                         }
                     }
                     chart_app::PerfAction::ToggleVsync => {
-                        self.vsync_enabled = !self.vsync_enabled;
-                        eprintln!("[App] VSync → {}", self.vsync_enabled);
+                        // VSync is hardcoded to AutoNoVsync in the surface config — no-op.
                     }
                 }
             }
@@ -4542,11 +4576,7 @@ impl ApplicationHandler for App<'_> {
                 profile.active_theme = self.app_state.theme_preset.clone();
                 profile.device_name = self.app_state.device_name.clone();
                 profile.app_version = self.app_state.app_version.clone();
-                profile.recalc_mode = match self.app_state.recalc_mode {
-                    chart_app::RecalcMode::PerTick  => "PerTick".to_string(),
-                    chart_app::RecalcMode::PerFrame => "PerFrame".to_string(),
-                    chart_app::RecalcMode::PerBar   => "PerBar".to_string(),
-                };
+                // recalc_mode is now persisted to DeviceSettings, not UserProfile.
 
                 if let Some(key) = preferred_key {
                     if let Some(pw) = self.windows.get(&key) {
@@ -4616,11 +4646,7 @@ impl ApplicationHandler for App<'_> {
                 profile.active_theme = self.app_state.theme_preset.clone();
                 profile.device_name = self.app_state.device_name.clone();
                 profile.app_version = self.app_state.app_version.clone();
-                profile.recalc_mode = match self.app_state.recalc_mode {
-                    chart_app::RecalcMode::PerTick  => "PerTick".to_string(),
-                    chart_app::RecalcMode::PerFrame => "PerFrame".to_string(),
-                    chart_app::RecalcMode::PerBar   => "PerBar".to_string(),
-                };
+                // recalc_mode is now persisted to DeviceSettings, not UserProfile.
 
                 if let Some(key) = preferred_key {
                     if let Some(pw) = self.windows.get(&key) {
@@ -4852,6 +4878,10 @@ impl ApplicationHandler for App<'_> {
                 for pw in self.windows.values_mut() {
                     pw.chart.indicator_manager.recalc_mode = recalc_mode;
                 }
+                // Persist to DeviceSettings so the choice survives restarts.
+                let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
+                ds.recalc_mode = mode_str.clone();
+                ds.save();
                 eprintln!("[App] recalc_mode changed to: {}", mode_str);
             }
         }
@@ -6897,7 +6927,6 @@ impl ApplicationHandler for App<'_> {
             let max_bars = self.max_bars;
             let perf_log_enabled = self.perf_log_enabled;
             let render_backend = self.render_backend;
-            let vsync_enabled = self.vsync_enabled;
 
             // System metrics (refreshed 1x/sec in the indicator snapshot timer)
             // global_cpu_usage() is unreliable on Windows — compute the average of per-core values instead.
@@ -6964,7 +6993,6 @@ impl ApplicationHandler for App<'_> {
                 perf.gpu_driver = gpu_driver.clone();
                 perf.perf_log_enabled = perf_log_enabled;
                 perf.render_backend = render_backend;
-                perf.vsync_enabled = vsync_enabled;
                 perf.per_core_cpu = per_core_cpu.clone();
                 perf.scene_build_us = scene_build_us;
                 perf.gpu_render_us = gpu_render_us;

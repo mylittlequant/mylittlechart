@@ -35,6 +35,22 @@ fn default_stable() -> String {
     "stable".to_string()
 }
 
+fn default_fps_limit() -> u32 {
+    120
+}
+
+fn default_msaa_samples() -> u8 {
+    8
+}
+
+fn default_max_bars() -> usize {
+    0
+}
+
+fn default_recalc_mode() -> String {
+    "per_frame".to_string()
+}
+
 /// Device-level settings that persist across profile switches.
 ///
 /// Stored at `{app_data_dir()}/device_settings.json`.
@@ -61,6 +77,22 @@ pub struct DeviceSettings {
     /// backend at startup.  Set to a specific variant to force a backend.
     #[serde(default)]
     pub render_backend: Option<RenderBackend>,
+
+    /// Frame-rate cap in frames per second.  `0` means unlimited.
+    #[serde(default = "default_fps_limit")]
+    pub fps_limit: u32,
+
+    /// MSAA sample count.  `0` = off (Area AA), `8` = 8x, `16` = 16x.
+    #[serde(default = "default_msaa_samples")]
+    pub msaa_samples: u8,
+
+    /// Maximum bars to keep per window.  `0` = unlimited.
+    #[serde(default = "default_max_bars")]
+    pub max_bars: usize,
+
+    /// Indicator recalculation mode: `"per_frame"`, `"PerBar"`, or `"PerTick"`.
+    #[serde(default = "default_recalc_mode")]
+    pub recalc_mode: String,
 }
 
 impl Default for DeviceSettings {
@@ -69,6 +101,10 @@ impl Default for DeviceSettings {
             ota_enabled: true,
             update_channel: "stable".to_string(),
             render_backend: None,
+            fps_limit: default_fps_limit(),
+            msaa_samples: default_msaa_samples(),
+            max_bars: default_max_bars(),
+            recalc_mode: default_recalc_mode(),
         }
     }
 }
