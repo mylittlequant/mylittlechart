@@ -6,7 +6,7 @@
 //! - does not depend on `FrameTheme` (uses `ToolbarTheme` for all colours)
 //! - no `ThemeManager` argument (theme-settings panel is not present here)
 
-use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
+use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
 use zengeld_chart::LayoutRect;
 use zengeld_chart::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig}};
 use zengeld_chart::ToolbarTheme;
@@ -16,6 +16,8 @@ use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
 use crate::types::ObjectItemState;
+
+const MINI_MASCOT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot.svg");
 
 // =============================================================================
 // Result type — mirrors zengeld_chart::layout::render_frame::RightSidebarResult
@@ -207,7 +209,15 @@ pub fn render_right_sidebar(
     let icon_size = 18.0;
     let icon_x = rect.x + 12.0;
     let icon_y = rect.y + (header_height - icon_size) / 2.0;
-    draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
+    if panel == RightSidebarPanel::Agents {
+        ctx.save();
+        ctx.translate(icon_x + icon_size, icon_y);
+        ctx.scale(-1.0, 1.0);
+        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, 0.0, 0.0, icon_size, icon_size);
+        ctx.restore();
+    } else {
+        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
+    }
 
     // Header title.
     ctx.set_font("13px sans-serif");

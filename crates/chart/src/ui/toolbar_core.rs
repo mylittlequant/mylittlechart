@@ -1088,10 +1088,14 @@ where
 /// Render an icon by looking up its SVG via the chart's icon registry
 fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, color: &str) {
     if icon_id.name() == "Bot" {
-        let mascot_size = 34.0;
+        let mascot_size = 36.0;
         let mx = rect.x + (rect.width - mascot_size) / 2.0;
         let my = rect.y + (rect.height - mascot_size) / 2.0;
-        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, mx, my, mascot_size, mascot_size);
+        ctx.save();
+        ctx.translate(mx + mascot_size, my);
+        ctx.scale(-1.0, 1.0);
+        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, 0.0, 0.0, mascot_size, mascot_size);
+        ctx.restore();
         return;
     }
     if let Some(svg) = super::icons::icon_svg(icon_id.name()) {
