@@ -7147,6 +7147,16 @@ impl ApplicationHandler for App<'_> {
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
             }
+            // Force-redraw sidebar every frame when Agents panel is open so PTY
+            // streams render in real-time (no waiting for dirty flags). Also drains
+            // pending agent events so the snapshot is fresh on every render.
+            if pw.chart.sidebar_state.is_right_open()
+                && pw.chart.sidebar_state.right_panel
+                    == sidebar_content::state::RightSidebarPanel::Agents
+            {
+                let _ = pw.chart.agent.drain_events();
+                pw.sidebar_dirty_scene = true;
+            }
         }
 
         let _t7 = std::time::Instant::now();

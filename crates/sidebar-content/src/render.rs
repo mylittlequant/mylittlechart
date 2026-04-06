@@ -3641,42 +3641,16 @@ fn render_agents_panel(
         y += btn_h + gap;
     }
 
-    // ── Start / Stop session button ───────────────────────────────────────────
-    {
-        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
-        let is_active = state.agent_session_active;
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:toggle_session"));
-
-        let bg = if is_active {
-            if is_hovered { "#b91c1c" } else { "#dc2626" }
-        } else if is_hovered {
-            "#16a34a"
-        } else {
-            "#15803d"
-        };
-
-        ctx.set_fill_color(bg);
-        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
-
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("#ffffff");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(if is_active { "Stop" } else { "Start" }, x + inner_w / 2.0, y + btn_h / 2.0);
-
-        input_coordinator.register("agent:toggle_session", btn_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:toggle_session".to_string(), btn_rect));
-
-        y += btn_h + gap * 2.0;
-    }
+    // Start/Stop button removed: sessions auto-start on panel open / mode switch / first send.
+    y += gap;
 
     // ── Dynamic content area ──────────────────────────────────────────────────
     // Determine if chat mode is active — input row is shown only for Chat.
     let is_chat_mode = state.agent_mode == AgentPanelMode::Chat;
     let input_h = row_h;
     let input_gap = gap;
-    // controls above the content took: (btn_h + gap) * 2 + (btn_h + gap*2) + pad = 114px
-    let controls_h = btn_h + gap + btn_h + gap + btn_h + gap * 2.0 + pad;
+    // controls above the content: mode row + cli row (no start button)
+    let controls_h = btn_h + gap + btn_h + gap + gap + pad;
     // viewport available = rect.height - header_height (40) - controls_h
     // We approximate: use rect.height - 40.0 (header) - controls_h as the total available.
     let viewport_h = rect.height - 40.0 - controls_h;
