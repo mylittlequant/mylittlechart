@@ -9,9 +9,11 @@ use std::collections::HashMap;
 use uzor::panel_api::{
     DropdownItemDef, PanelToolbarDef, SectionAlign, ToolbarItemDef, ToolbarOrientation,
 };
-use uzor::render::{draw_svg_icon, RenderContext};
+use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 
 use super::icons::icon_svg;
+
+const MINI_MASCOT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot.svg");
 
 // =============================================================================
 // Public types
@@ -500,6 +502,12 @@ fn render_icon(
     icon_size: f64,
     color: &str,
 ) {
+    if icon_name == "Bot" {
+        let ix = (item_rect.center_x() - icon_size / 2.0).floor();
+        let iy = (item_rect.center_y() - icon_size / 2.0).floor();
+        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, ix, iy, icon_size, icon_size);
+        return;
+    }
     if let Some(svg) = icon_svg(icon_name) {
         let ix = (item_rect.center_x() - icon_size / 2.0).floor();
         let iy = (item_rect.center_y() - icon_size / 2.0).floor();
