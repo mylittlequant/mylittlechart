@@ -164,6 +164,7 @@ pub fn render_right_sidebar(
         RightSidebarPanel::Signals     => ("Signals",      Icon::Signal),
         RightSidebarPanel::Connectors  => ("Connectors",   Icon::CircuitBoard),
         RightSidebarPanel::Performance => ("Performance",  Icon::Signal),
+        RightSidebarPanel::Agents      => ("Agents",       Icon::Bot),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -435,6 +436,19 @@ pub fn render_right_sidebar(
 
         RightSidebarPanel::Performance => {
             content_height = render_performance_panel(
+                ctx,
+                rect,
+                content_y,
+                content_width,
+                sidebar_state,
+                toolbar_theme,
+                &mut result,
+                input_coordinator,
+            );
+        }
+
+        RightSidebarPanel::Agents => {
+            content_height = render_agents_panel(
                 ctx,
                 rect,
                 content_y,
@@ -3473,4 +3487,229 @@ fn render_performance_panel(
     }
 
     y + pad - content_y
+}
+
+// =============================================================================
+// Agents panel
+// =============================================================================
+
+/// Renders the AI agents panel.
+///
+/// Phase 1 — UI shell only.  No agent backend is connected.  Renders:
+/// - Mode selector (Terminal / Chat)
+/// - CLI cycle button (Claude / Codex / Gemini)
+/// - Start/Stop session toggle
+/// - Placeholder content area
+/// - Input + Send row at bottom
+fn render_agents_panel(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    content_y: f64,
+    content_width: f64,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) -> f64 {
+    use crate::state::AgentPanelMode;
+
+    let pad = 12.0;
+    let row_h = 28.0;
+    let btn_h = 26.0;
+    let gap = 6.0;
+    let mut y = content_y + pad;
+    let x = rect.x + pad;
+    let inner_w = content_width - pad * 2.0;
+
+    // ── Mode selector row (Terminal | Chat) ───────────────────────────────────
+    {
+        let btn_w = (inner_w - gap) / 2.0;
+
+        let modes: [(&str, &str, AgentPanelMode); 2] = [
+            ("agent:mode_pty",  "Terminal", AgentPanelMode::Pty),
+            ("agent:mode_chat", "Chat",     AgentPanelMode::Chat),
+        ];
+
+        for (i, (wid, label, mode)) in modes.iter().enumerate() {
+            let btn_x = x + i as f64 * (btn_w + gap);
+            let btn_rect = WidgetRect::new(btn_x, y, btn_w, btn_h);
+            let is_active = state.agent_mode == *mode;
+            let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(*wid));
+
+            // Background
+            if is_active {
+                ctx.set_fill_color("#4a9eff");
+            } else if is_hovered {
+                ctx.set_fill_color(&theme.item_bg_hover);
+            } else {
+                ctx.set_fill_color(&theme.background);
+            }
+            ctx.fill_rounded_rect(btn_x, y, btn_w, btn_h, 4.0);
+
+            // Border
+            ctx.set_stroke_color(if is_active { "#4a9eff" } else { &theme.separator });
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(btn_x, y);
+            ctx.line_to(btn_x + btn_w, y);
+            ctx.line_to(btn_x + btn_w, y + btn_h);
+            ctx.line_to(btn_x, y + btn_h);
+            ctx.close_path();
+            ctx.stroke();
+
+            // Label
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(if is_active { "#ffffff" } else { &theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(*label, btn_x + btn_w / 2.0, y + btn_h / 2.0);
+
+            input_coordinator.register(*wid, btn_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((wid.to_string(), btn_rect));
+        }
+
+        y += btn_h + gap;
+    }
+
+    // ── CLI cycle button ──────────────────────────────────────────────────────
+    {
+        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:cli_cycle"));
+
+        if is_hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+        } else {
+            ctx.set_fill_color(&theme.background);
+        }
+        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
+
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, y);
+        ctx.line_to(x + inner_w, y);
+        ctx.line_to(x + inner_w, y + btn_h);
+        ctx.line_to(x, y + btn_h);
+        ctx.close_path();
+        ctx.stroke();
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("CLI:", x + 8.0, y + btn_h / 2.0);
+
+        ctx.set_fill_color("#4a9eff");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(state.agent_cli.label(), x + inner_w - 8.0, y + btn_h / 2.0);
+
+        input_coordinator.register("agent:cli_cycle", btn_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:cli_cycle".to_string(), btn_rect));
+
+        y += btn_h + gap;
+    }
+
+    // ── Start / Stop session button ───────────────────────────────────────────
+    {
+        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
+        let is_active = state.agent_session_active;
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:toggle_session"));
+
+        let bg = if is_active {
+            if is_hovered { "#b91c1c" } else { "#dc2626" }
+        } else if is_hovered {
+            "#16a34a"
+        } else {
+            "#15803d"
+        };
+
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#ffffff");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(if is_active { "Stop" } else { "Start" }, x + inner_w / 2.0, y + btn_h / 2.0);
+
+        input_coordinator.register("agent:toggle_session", btn_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:toggle_session".to_string(), btn_rect));
+
+        y += btn_h + gap * 2.0;
+    }
+
+    // ── Content area placeholder ──────────────────────────────────────────────
+    {
+        let content_h = 160.0;
+        ctx.set_fill_color(&theme.background);
+        ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
+
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, y);
+        ctx.line_to(x + inner_w, y);
+        ctx.line_to(x + inner_w, y + content_h);
+        ctx.line_to(x, y + content_h);
+        ctx.close_path();
+        ctx.stroke();
+
+        if !state.agent_session_active {
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(&theme.item_text_muted);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Session not started", x + inner_w / 2.0, y + content_h / 2.0);
+        }
+
+        y += content_h + gap;
+    }
+
+    // ── Input row + Send button ───────────────────────────────────────────────
+    {
+        let send_w = 52.0;
+        let input_w = inner_w - send_w - gap;
+
+        // Input field placeholder
+        let input_rect = WidgetRect::new(x, y, input_w, row_h);
+        ctx.set_fill_color(&theme.background);
+        ctx.fill_rounded_rect(x, y, input_w, row_h, 4.0);
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, y);
+        ctx.line_to(x + input_w, y);
+        ctx.line_to(x + input_w, y + row_h);
+        ctx.line_to(x, y + row_h);
+        ctx.close_path();
+        ctx.stroke();
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Message…", x + 8.0, y + row_h / 2.0);
+
+        let _ = input_rect; // registered for future use in Phase 2
+
+        // Send button
+        let send_x = x + input_w + gap;
+        let send_rect = WidgetRect::new(send_x, y, send_w, row_h);
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:send"));
+        ctx.set_fill_color(if is_hovered { "#2563eb" } else { "#3b82f6" });
+        ctx.fill_rounded_rect(send_x, y, send_w, row_h, 4.0);
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#ffffff");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Send", send_x + send_w / 2.0, y + row_h / 2.0);
+
+        input_coordinator.register("agent:send", send_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:send".to_string(), send_rect));
+
+        y += row_h + pad;
+    }
+
+    y - content_y
 }

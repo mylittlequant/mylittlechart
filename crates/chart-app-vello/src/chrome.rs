@@ -12,12 +12,10 @@
 //! rectangles / stroked lines for pixel-perfect crispness at any DPI.
 //! Tab close icons and the action buttons use SVG icons from the chart icon set.
 
-use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext, TextAlign, TextBaseline};
+use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::{TooltipState, WidgetId, calculate_tooltip_position};
 use uzor::i18n::{TooltipKey, current_language};
 use zengeld_chart::ui::icons::icon_svg;
-
-const MINI_MASCOT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot.svg");
 
 // ── Public constants ──────────────────────────────────────────────────────────
 
@@ -84,7 +82,8 @@ const BUTTON_HEIGHT: f64 = CHROME_HEIGHT;
 const CLOSE_WINDOW_BUTTON_WIDTH: f64 = 36.0;
 
 /// Width of the mascot button in logical pixels.
-const MASCOT_BUTTON_WIDTH: f64 = 36.0;
+/// Set to 0 — mascot removed from chrome title bar (now on agents sidebar toolbar).
+const MASCOT_BUTTON_WIDTH: f64 = 0.0;
 
 /// Width of the menu button (gear icon) in logical pixels.
 const MENU_BUTTON_WIDTH: f64 = 36.0;
@@ -452,9 +451,8 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
             ctx.set_fill_color(&c.close_hover);
             ctx.fill_rect(bp.close_x, 0.0, BUTTON_WIDTH, BUTTON_HEIGHT);
         }
-        ChromeHit::MascotButton if !skeleton_mode => {
-            ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rect(bp.mascot_left, 0.0, MASCOT_BUTTON_WIDTH, BUTTON_HEIGHT);
+        ChromeHit::MascotButton => {
+            // Mascot removed — no hover highlight needed.
         }
         _ => {}
     }
@@ -563,12 +561,6 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
             }
         }
 
-        // ── Mascot icon (SVG, 24×24, full color) ─────────────────────────────
-        {
-            let icon_x = (bp.mascot_left + (MASCOT_BUTTON_WIDTH - 24.0) / 2.0).floor();
-            let icon_y = ((CHROME_HEIGHT - 24.0) / 2.0).floor();
-            draw_svg_multicolor(ctx, MINI_MASCOT_SVG, icon_x, icon_y, 24.0, 24.0);
-        }
     }
 
     // ── Divider between mascot and close_window ─────────────────────────────

@@ -6974,6 +6974,7 @@ impl ChartApp {
             RightSidebarPanel::Signals => Some("signals".to_string()),
             RightSidebarPanel::Connectors => Some("connectors".to_string()),
             RightSidebarPanel::Performance => Some("performance".to_string()),
+            RightSidebarPanel::Agents => Some("agents".to_string()),
         }
     }
 
@@ -6987,6 +6988,7 @@ impl ChartApp {
             "signals" => RightSidebarPanel::Signals,
             "connectors" => RightSidebarPanel::Connectors,
             "performance" => RightSidebarPanel::Performance,
+            "agents" => RightSidebarPanel::Agents,
             _ => RightSidebarPanel::None,
         }
     }

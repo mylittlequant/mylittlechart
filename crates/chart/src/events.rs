@@ -22,6 +22,7 @@ pub enum ChartOutEvent {
     ToggleSignals,
     ToggleConnectors,
     TogglePerformance,
+    ToggleAgents,
     ToggleIndicators,
     ToggleTradingPanel,
     TogglePositions,

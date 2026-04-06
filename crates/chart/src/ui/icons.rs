@@ -272,6 +272,10 @@ pub enum Icon {
     ShieldCheck,
     Globe,
     Key,
+
+    // === AI / Agents ===
+    /// Bot / robot head icon — used for the Agents sidebar panel.
+    Bot,
 }
 
 // =============================================================================
@@ -1194,6 +1198,8 @@ pub const ICON_GLOBE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
 
 pub const ICON_KEY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>"##;
 
+pub const ICON_BOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>"##;
+
 pub const ICON_MENU: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 6h16"/>
   <path d="M4 12h16"/>
@@ -1532,6 +1538,7 @@ impl Icon {
             Icon::ShieldCheck => ICON_SHIELD_CHECK,
             Icon::Globe => ICON_GLOBE,
             Icon::Key => ICON_KEY,
+            Icon::Bot => ICON_BOT,
         }
     }
 
@@ -1727,6 +1734,7 @@ impl Icon {
             "shield_check" | "shieldcheck" => Some(Icon::ShieldCheck),
             "globe" => Some(Icon::Globe),
             "key" => Some(Icon::Key),
+            "bot" => Some(Icon::Bot),
             _ => None,
         }
     }
@@ -1953,6 +1961,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "shield_check" | "shieldcheck" => Some(ICON_SHIELD_CHECK),
         "globe" => Some(ICON_GLOBE),
         "key" => Some(ICON_KEY),
+        "bot" => Some(ICON_BOT),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),

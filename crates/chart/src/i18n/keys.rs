@@ -594,6 +594,7 @@ pub enum ToolbarTooltipKey {
     Signals,
     Connectors,
     Performance,
+    Agents,
 
     // General
     Search,
@@ -654,6 +655,7 @@ impl ToolbarTooltipKey {
             Self::Signals => "Signals",
             Self::Connectors => "Connectors",
             Self::Performance => "Performance",
+            Self::Agents => "Agents",
             Self::Search => "Search",
             Self::FullScreen => "Full Screen",
             Self::SplitView => "Split View",
@@ -705,6 +707,7 @@ impl ToolbarTooltipKey {
             Self::Signals => "Сигналы",
             Self::Connectors => "Коннекторы",
             Self::Performance => "Производительность",
+            Self::Agents => "Агенты",
             Self::Search => "Поиск",
             Self::FullScreen => "Полный экран",
             Self::SplitView => "Разделить вид",

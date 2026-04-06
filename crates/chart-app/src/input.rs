@@ -8036,6 +8036,29 @@ impl ChartApp {
             return;
         }
 
+        // === Agent panel control clicks ===
+        if widget_id == "agent:mode_pty" {
+            self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Pty;
+            return;
+        }
+        if widget_id == "agent:mode_chat" {
+            self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Chat;
+            return;
+        }
+        if widget_id == "agent:cli_cycle" {
+            self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
+            return;
+        }
+        if widget_id == "agent:toggle_session" {
+            self.sidebar_state.agent_session_active = !self.sidebar_state.agent_session_active;
+            eprintln!("[ChartApp] Agent session: {}", if self.sidebar_state.agent_session_active { "started" } else { "stopped" });
+            return;
+        }
+        if widget_id == "agent:send" {
+            // Phase 1 — no-op; Phase 2 will wire this to the agent backend.
+            return;
+        }
+
         // === Alert panel clicks ===
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
@@ -17185,6 +17208,16 @@ impl ChartApp {
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Performance panel: {}", if opening { "opened" } else { "closed" });
+                }
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
+            }
+            ChartOutEvent::ToggleAgents => {
+                let result = self.sidebar_state.toggle_right_panel(
+                    sidebar_content::state::RightSidebarPanel::Agents,
+                );
+                if let Some((opening, _width)) = result {
+                    eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();

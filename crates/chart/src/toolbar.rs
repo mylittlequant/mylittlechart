@@ -49,6 +49,8 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip(t_toolbar(TK::Connectors)),
             ToolbarItemDef::icon_button("performance", ToolbarIconId::new("Activity"))
                 .with_tooltip(t_toolbar(TK::Performance)),
+            ToolbarItemDef::icon_button("agents", ToolbarIconId::new("Bot"))
+                .with_tooltip(t_toolbar(TK::Agents)),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }

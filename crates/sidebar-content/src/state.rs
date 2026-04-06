@@ -68,6 +68,8 @@ pub enum RightSidebarPanel {
     Connectors,
     /// Application performance monitoring and resource control panel.
     Performance,
+    /// AI agent control panel — terminal / chat modes.
+    Agents,
 }
 
 impl RightSidebarPanel {
@@ -86,6 +88,48 @@ impl RightSidebarPanel {
             RightSidebarPanel::Signals    => "signals",
             RightSidebarPanel::Connectors => "connectors",
             RightSidebarPanel::Performance => "performance",
+            RightSidebarPanel::Agents     => "agents",
+        }
+    }
+}
+
+// =============================================================================
+// Agent panel types
+// =============================================================================
+
+/// Display mode for the Agents panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentPanelMode {
+    /// Terminal / PTY mode — raw terminal output.
+    Pty,
+    /// Chat / pipe mode — structured message exchange.
+    Chat,
+}
+
+/// Which AI CLI agent to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCli {
+    Claude,
+    Codex,
+    Gemini,
+}
+
+impl AgentCli {
+    /// Human-readable label for this CLI.
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentCli::Claude  => "Claude",
+            AgentCli::Codex   => "Codex",
+            AgentCli::Gemini  => "Gemini",
+        }
+    }
+
+    /// Returns the next CLI in cycle order.
+    pub fn cycle(&self) -> Self {
+        match self {
+            AgentCli::Claude  => AgentCli::Codex,
+            AgentCli::Codex   => AgentCli::Gemini,
+            AgentCli::Gemini  => AgentCli::Claude,
         }
     }
 }
@@ -226,6 +270,16 @@ pub struct SidebarState {
 
     /// Performance monitoring data for the Performance panel.
     pub performance_data: PerformanceData,
+
+    // ── Agents panel state ────────────────────────────────────────────────────
+    /// Whether the agent panel shows a terminal (Pty) or chat (Chat) view.
+    pub agent_mode: AgentPanelMode,
+    /// Which AI CLI is selected for the agent session.
+    pub agent_cli: AgentCli,
+    /// Whether an agent session is currently active.
+    pub agent_session_active: bool,
+    /// Text typed in the agent input box (not yet sent).
+    pub agent_input_buffer: String,
 }
 
 // =============================================================================
@@ -418,6 +472,10 @@ impl Default for SidebarState {
             metrics_history: HashMap::new(),
             metrics_last_sample: None,
             performance_data: PerformanceData::default(),
+            agent_mode: AgentPanelMode::Pty,
+            agent_cli: AgentCli::Claude,
+            agent_session_active: false,
+            agent_input_buffer: String::new(),
         }
     }
 }

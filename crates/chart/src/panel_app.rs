@@ -924,6 +924,7 @@ impl ChartToolbarState {
             "signals" => vec![ChartOutEvent::ToggleSignals],
             "connectors" => vec![ChartOutEvent::ToggleConnectors],
             "performance" => vec![ChartOutEvent::TogglePerformance],
+            "agents" => vec![ChartOutEvent::ToggleAgents],
             "trading" => vec![ChartOutEvent::ToggleTradingPanel],
             "positions" => vec![ChartOutEvent::TogglePositions],
             "theme_settings" => vec![ChartOutEvent::ToggleThemeSettings],
