@@ -2740,6 +2740,7 @@ impl ChartApp {
             }
         }
 
+        self.agent.drain_events();
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
     }
 
@@ -5888,6 +5889,11 @@ impl ChartApp {
 
         if inside != self.agent_pty_hover_focused {
             self.agent_pty_hover_focused = inside;
+            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty && self.agent.is_active() {
+                self.text_input.focus(crate::text_input::FieldId::AgentPty);
+            } else if !inside && self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
+                self.text_input.blur();
+            }
             return true;
         }
         false

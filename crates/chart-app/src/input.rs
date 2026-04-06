@@ -5575,7 +5575,12 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(_) => {}
+                crate::text_input::FieldAction::RawInput(bytes) => {
+                    if self.agent.is_active() {
+                        let text = String::from_utf8_lossy(&bytes).to_string();
+                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(&text));
+                    }
+                }
             }
             return;
         }
@@ -5593,6 +5598,7 @@ impl ChartApp {
                 }
             } else {
                 let _action = self.text_input.on_char(ch);
+                self.sidebar_state.agent_input_buffer = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
             }
             return;
         }
@@ -6790,7 +6796,12 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(_) => {}
+                crate::text_input::FieldAction::RawInput(bytes) => {
+                    if self.agent.is_active() {
+                        let text = String::from_utf8_lossy(&bytes).to_string();
+                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(&text));
+                    }
+                }
             }
             return;
         }
@@ -6798,6 +6809,7 @@ impl ChartApp {
         // ── Agent chat key routing ─────────────────────────────────────────────
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             let _action = self.text_input.on_key(key);
+            self.sidebar_state.agent_input_buffer = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
             return;
         }
 

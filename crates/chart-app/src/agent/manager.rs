@@ -281,9 +281,12 @@ impl AgentSessionManager {
 
     /// Resize the PTY terminal. Must be called from async context.
     pub async fn resize(&mut self, cols: u16, rows: u16) {
+        if self.cols == cols && self.rows == rows {
+            return;
+        }
         self.cols = cols;
         self.rows = rows;
-        self.pty_parser = vt100::Parser::new(rows, cols, 0);
+        self.pty_parser.set_size(rows, cols);
         if let Some(ref session) = self.pty_session {
             // resize takes (rows, cols) per the PTY convention
             let _ = session.resize(rows, cols).await;
