@@ -3178,6 +3178,26 @@ impl ChartApp {
             }
         }
 
+        // Sync TextInputManager → sidebar_state for agent chat input rendering.
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+            let cursor = self.text_input.cursor(crate::text_input::FieldId::AgentChat);
+            let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+            let sel = self.text_input.selection_range(crate::text_input::FieldId::AgentChat);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let cursor_vis = self.text_input.cursor_visible(now_ms);
+            self.sidebar_state.agent_input_buffer = text;
+            self.sidebar_state.agent_input_cursor = cursor;
+            self.sidebar_state.agent_input_selection_start = sel.map(|(s, _)| s);
+            self.sidebar_state.agent_input_selection_end = sel.map(|(_, e)| e);
+            self.sidebar_state.agent_input_cursor_visible = cursor_vis;
+            self.sidebar_state.agent_input_focused = true;
+        } else {
+            self.sidebar_state.agent_input_focused = false;
+        }
+
         let sidebar_w = self.sidebar_state.right_width();
         let window_rect = LayoutRect::new(0.0, 0.0, width, height);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
@@ -5711,6 +5731,20 @@ impl ChartApp {
                 }
             }
         }
+        // Update TextInputManager geometry for the agent chat input field so
+        // on_drag_start can compute cursor-from-click correctly.
+        if let Some(ref sidebar_result) = self.last_sidebar_result {
+            if let (Some(rect), Some(char_positions)) = (
+                sidebar_result.agent_input_rect,
+                sidebar_result.agent_input_char_positions.clone(),
+            ) {
+                self.text_input.update_field(
+                    crate::text_input::FieldId::AgentChat,
+                    (rect.x, rect.y, rect.width, rect.height),
+                    char_positions,
+                );
+            }
+        }
     }
 
     /// Render ONLY the toolbar vector graphics into `ctx`.
@@ -5842,6 +5876,18 @@ impl ChartApp {
             if let Some((cols, rows)) = new_size {
                 self.bridge.runtime().block_on(self.agent.resize(cols, rows));
             }
+        }
+
+        // Update TextInputManager geometry for agent chat input field.
+        if let (Some(rect), Some(char_positions)) = (
+            sidebar_result.agent_input_rect,
+            sidebar_result.agent_input_char_positions.clone(),
+        ) {
+            self.text_input.update_field(
+                crate::text_input::FieldId::AgentChat,
+                (rect.x, rect.y, rect.width, rect.height),
+                char_positions,
+            );
         }
 
         self.last_sidebar_result = Some(sidebar_result);

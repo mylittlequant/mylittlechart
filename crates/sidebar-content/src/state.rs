@@ -280,6 +280,16 @@ pub struct SidebarState {
     pub agent_session_active: bool,
     /// Text typed in the agent input box (not yet sent).
     pub agent_input_buffer: String,
+    /// Cursor position in the agent input field (mirrored from TIM).
+    pub agent_input_cursor: usize,
+    /// Selection start in agent input (mirrored from TIM).
+    pub agent_input_selection_start: Option<usize>,
+    /// Selection end in agent input (mirrored from TIM).
+    pub agent_input_selection_end: Option<usize>,
+    /// Whether the blinking cursor is currently visible.
+    pub agent_input_cursor_visible: bool,
+    /// Whether the agent input field is focused.
+    pub agent_input_focused: bool,
     /// Latest render snapshot from the agent session manager.
     ///
     /// Set each frame by `chart-app` before calling `render_right_sidebar`.
@@ -495,6 +505,11 @@ impl Default for SidebarState {
             agent_cli: AgentCli::Claude,
             agent_session_active: false,
             agent_input_buffer: String::new(),
+            agent_input_cursor: 0,
+            agent_input_selection_start: None,
+            agent_input_selection_end: None,
+            agent_input_cursor_visible: false,
+            agent_input_focused: false,
             agent_snapshot: None,
             agent_terminal_rect: None,
             agent_terminal_size: None,

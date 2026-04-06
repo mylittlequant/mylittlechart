@@ -8076,10 +8076,17 @@ impl ChartApp {
         // === Agent panel control clicks ===
         if widget_id == "agent:mode_pty" {
             self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Pty;
+            if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+                self.text_input.blur();
+            }
             return;
         }
         if widget_id == "agent:mode_chat" {
             self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Chat;
+            if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
+                self.text_input.blur();
+            }
+            self.agent_pty_hover_focused = false;
             return;
         }
         if widget_id == "agent:cli_cycle" {
@@ -8087,8 +8094,13 @@ impl ChartApp {
             return;
         }
         if widget_id == "agent:input" {
-            // Focus the agent chat text input field so keyboard events route to it.
-            self.text_input.focus(crate::text_input::FieldId::AgentChat);
+            // Begin edit if not already focused, then reposition cursor from click.
+            if !self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+                self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
+                self.text_input.focus(crate::text_input::FieldId::AgentChat);
+            }
+            // Reposition cursor to the click position inside the field.
+            self.text_input.on_drag_start(x, y);
             eprintln!("[ChartApp] Agent chat input focused");
             return;
         }

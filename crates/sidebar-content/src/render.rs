@@ -9,6 +9,8 @@
 use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
 use zengeld_chart::LayoutRect;
 use zengeld_chart::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig}};
+use zengeld_chart::ui::widgets::types::{WidgetState, WidgetTheme};
+use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
 use zengeld_chart::ToolbarTheme;
 use zengeld_chart::state::command::ObjectCategory;
 use uzor::input::InputCoordinator;
@@ -96,6 +98,17 @@ pub struct RightSidebarResult {
     ///
     /// `char_w = 7.0`, `char_h = 14.0` matches the PTY renderer character grid.
     pub agent_terminal_size: Option<(u16, u16)>,
+
+    /// Agent input field rect (for TIM `update_field`).
+    ///
+    /// `None` when the Agents panel is not rendered or Chat mode is not active.
+    pub agent_input_rect: Option<WidgetRect>,
+
+    /// Agent input char boundary X positions (for TIM click-to-cursor).
+    ///
+    /// Contains `char_count + 1` entries — left edge of each char plus the
+    /// right edge of the last character.  `None` when not rendered.
+    pub agent_input_char_positions: Option<Vec<f64>>,
 }
 
 // =============================================================================
@@ -3673,14 +3686,6 @@ fn render_agents_panel(
         viewport_h.max(60.0)
     };
 
-    let terminal_rect = WidgetRect::new(x, y, inner_w, content_h);
-    // Expose terminal rect so chart-app can implement hover-focus.
-    result.agent_terminal_rect = Some(terminal_rect);
-    // Compute PTY grid dimensions from pixel size (char_w=7.0, char_h=14.0).
-    let pty_cols = ((inner_w / 7.0) as u16).max(1);
-    let pty_rows = ((content_h / 14.0) as u16).max(1);
-    result.agent_terminal_size = Some((pty_cols, pty_rows));
-
     // Determine what to render inside the content area.
     let snapshot = state.agent_snapshot.as_ref();
     let has_pty = matches!(
@@ -3693,27 +3698,40 @@ fn render_agents_panel(
     );
     let show_idle = !has_pty && !has_chat;
 
-    if has_pty {
-        // PTY terminal grid rendering
-        render_agents_pty(ctx, snapshot, x, y, inner_w, content_h);
+    // Render based on the user-selected tab, not the snapshot mode.
+    let is_pty_mode = state.agent_mode == AgentPanelMode::Pty;
+
+    // Only expose terminal rect/size when PTY tab is active — chat mode must
+    // not trigger hover-focus on the terminal.
+    if is_pty_mode {
+        let terminal_rect = WidgetRect::new(x, y, inner_w, content_h);
+        result.agent_terminal_rect = Some(terminal_rect);
+        let pty_cols = ((inner_w / 7.0) as u16).max(1);
+        let pty_rows = ((content_h / 14.0) as u16).max(1);
+        result.agent_terminal_size = Some((pty_cols, pty_rows));
+    }
+
+    if is_pty_mode {
+        if has_pty {
+            render_agents_pty(ctx, snapshot, x, y, inner_w, content_h);
+        } else {
+            // PTY tab selected but no PTY session — show idle.
+            ctx.set_fill_color("#0d0d12");
+            ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
+            if show_idle {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color("#8b8b9e");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Click Start to begin", x + inner_w / 2.0, y + content_h / 2.0);
+            }
+        }
     } else if has_chat {
-        // Chat bubble rendering
         render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h);
     } else {
-        // Idle state
+        // Chat tab selected but no chat session — show idle.
         ctx.set_fill_color("#0d0d12");
         ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
-
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, y);
-        ctx.line_to(x + inner_w, y);
-        ctx.line_to(x + inner_w, y + content_h);
-        ctx.line_to(x, y + content_h);
-        ctx.close_path();
-        ctx.stroke();
-
         if show_idle {
             ctx.set_font("12px sans-serif");
             ctx.set_fill_color("#8b8b9e");
@@ -3730,33 +3748,57 @@ fn render_agents_panel(
         let send_w = 52.0;
         let input_w = inner_w - send_w - gap;
 
-        // Input field
+        // Input field — use draw_input for proper cursor/selection/scrolling.
         let input_rect = WidgetRect::new(x, y, input_w, row_h);
-        ctx.set_fill_color(&theme.background);
-        ctx.fill_rounded_rect(x, y, input_w, row_h, 4.0);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, y);
-        ctx.line_to(x + input_w, y);
-        ctx.line_to(x + input_w, y + row_h);
-        ctx.line_to(x, y + row_h);
-        ctx.close_path();
-        ctx.stroke();
 
-        // Show typed text or placeholder.
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        if state.agent_input_buffer.is_empty() {
-            ctx.set_fill_color(&theme.item_text_muted);
-            ctx.fill_text("Message\u{2026}", x + 8.0, y + row_h / 2.0);
-        } else {
-            ctx.set_fill_color(&theme.item_text);
-            // Truncate to fit the input field width.
-            let display = truncate_to_width(ctx, &state.agent_input_buffer, input_w - 16.0);
-            ctx.fill_text(&display, x + 8.0, y + row_h / 2.0);
+        let input_config = InputConfig {
+            value: state.agent_input_buffer.clone(),
+            placeholder: "Message\u{2026}".to_string(),
+            disabled: false,
+            focused: state.agent_input_focused,
+            cursor: state.agent_input_cursor,
+            selection_start: state.agent_input_selection_start,
+            selection_end: state.agent_input_selection_end,
+            font_size: 12.0,
+            padding: 8.0,
+            radius: 4.0,
+            ..InputConfig::default()
+        };
+
+        let input_widget_theme = WidgetTheme {
+            bg_normal: theme.background.clone(),
+            bg_hover: theme.background.clone(),
+            bg_pressed: theme.background.clone(),
+            bg_disabled: theme.background.clone(),
+            text_normal: theme.item_text.clone(),
+            text_hover: theme.item_text.clone(),
+            text_disabled: theme.item_text_muted.clone(),
+            border_normal: theme.separator.clone(),
+            border_hover: theme.separator.clone(),
+            border_focused: "#3b82f6".to_string(),
+            accent: "#264f78".to_string(),
+            accent_hover: "#264f78".to_string(),
+            success: "#26a69a".to_string(),
+            warning: "#ff9800".to_string(),
+            danger: "#ef5350".to_string(),
+        };
+
+        let input_draw_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &input_widget_theme);
+
+        // Draw blinking cursor when field is focused and cursor is visible.
+        if state.agent_input_focused && state.agent_input_cursor_visible {
+            draw_input_cursor(
+                ctx,
+                input_draw_result.cursor_x,
+                input_draw_result.cursor_y,
+                input_draw_result.cursor_height,
+                "#d1d4dc",
+            );
         }
+
+        // Store rect and char positions for TIM update_field.
+        result.agent_input_rect = Some(input_rect);
+        result.agent_input_char_positions = Some(input_draw_result.char_x_positions);
 
         input_coordinator.register("agent:input", input_rect, uzor::input::Sense::CLICK);
         result.item_rects.push(("agent:input".to_string(), input_rect));
