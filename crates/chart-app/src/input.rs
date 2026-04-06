@@ -7994,12 +7994,13 @@ impl ChartApp {
             return;
         }
         if widget_id == "perf:fps_limit" {
-            // Cycle: 30 → 60 → 120 → 0 (unlimited) → 30
+            // Cycle: 30 → 60 → 120 → 200 → 0 (unlimited) → 30
             let current = self.sidebar_state.performance_data.fps_limit;
             let next = match current {
                 30 => 60,
                 60 => 120,
-                120 => 0,
+                120 => 200,
+                200 => 0,
                 _ => 30,
             };
             self.perf_actions.push(crate::PerfAction::SetFpsLimit(next));
