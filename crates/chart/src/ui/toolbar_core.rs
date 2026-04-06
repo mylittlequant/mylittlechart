@@ -4,7 +4,9 @@
 //! work without core dependencies. Uses `uzor::render::RenderContext` directly and
 //! resolves icons via the chart's own `icons::icon_svg()` registry.
 
-use uzor::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
+use uzor::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
+
+const MINI_MASCOT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot.svg");
 
 // =============================================================================
 // Local type definitions (replace core's WidgetRect and IconId)
@@ -1085,6 +1087,10 @@ where
 
 /// Render an icon by looking up its SVG via the chart's icon registry
 fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, color: &str) {
+    if icon_id.name() == "Bot" {
+        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, rect.x, rect.y, rect.width, rect.height);
+        return;
+    }
     if let Some(svg) = super::icons::icon_svg(icon_id.name()) {
         draw_svg_icon(ctx, svg, rect.x, rect.y, rect.width, rect.height, color);
     }
