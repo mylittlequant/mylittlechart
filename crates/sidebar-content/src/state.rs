@@ -329,6 +329,24 @@ pub struct PerformanceData {
     pub per_core_cpu: Vec<f32>,
     /// GPU memory usage in MB (0 if unavailable).
     pub gpu_mem_mb: f64,
+
+    // ── Internal CPU profiling (microseconds, updated every frame) ────────────
+    /// Total time spent inside ChartApp::tick() this frame.
+    pub tick_us: u64,
+    /// Time spent in indicator recalculation (calculate_for_window calls) this frame.
+    pub indicator_recalc_us: u64,
+    /// Total number of indicator instances across all windows.
+    pub indicator_recalc_count: u32,
+    /// How many indicator instances used the O(1) incremental path last recalc.
+    pub indicator_incremental_count: u32,
+    /// How many indicator instances used the O(N) full-recalc path last recalc.
+    pub indicator_full_count: u32,
+    /// Time spent processing LiveUpdate events (the drain loop) this frame.
+    pub event_process_us: u64,
+    /// Accumulated time spent in calc_auto_scale() calls this frame.
+    pub auto_scale_us: u64,
+    /// Accumulated time spent in calc_moving_averages() calls this frame.
+    pub moving_avg_us: u64,
 }
 
 impl Default for PerformanceData {
@@ -360,6 +378,14 @@ impl Default for PerformanceData {
             gpu_present_us: 0,
             per_core_cpu: Vec::new(),
             gpu_mem_mb: 0.0,
+            tick_us: 0,
+            indicator_recalc_us: 0,
+            indicator_recalc_count: 0,
+            indicator_incremental_count: 0,
+            indicator_full_count: 0,
+            event_process_us: 0,
+            auto_scale_us: 0,
+            moving_avg_us: 0,
         }
     }
 }

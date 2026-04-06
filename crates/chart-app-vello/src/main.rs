@@ -6953,6 +6953,16 @@ impl ApplicationHandler for App<'_> {
                 perf.per_core_cpu = per_core_cpu.clone();
                 perf.scene_build_us = scene_build_us;
                 perf.gpu_render_us = gpu_render_us;
+
+                // Internal CPU profiling fields — read directly from ChartApp.
+                perf.tick_us = pw.chart.last_tick_us;
+                perf.indicator_recalc_us = pw.chart.last_indicator_recalc_us;
+                perf.indicator_recalc_count = pw.chart.indicator_manager.instances_count() as u32;
+                perf.indicator_incremental_count = pw.chart.indicator_manager.last_incremental_count;
+                perf.indicator_full_count = pw.chart.indicator_manager.last_full_count;
+                perf.event_process_us = pw.chart.last_event_process_us;
+                perf.auto_scale_us = pw.chart.last_auto_scale_us;
+                perf.moving_avg_us = pw.chart.last_moving_avg_us;
             }
 
             // ── Write live values to telemetry shared atomics ──────────────────

@@ -3372,6 +3372,45 @@ fn render_performance_panel(
     }
 
     // =========================================================================
+    // PROFILING section — internal CPU timing breakdown
+    // =========================================================================
+    y += section_gap;
+    draw_section(ctx, &mut y, "PROFILING");
+
+    // Tick total
+    draw_row(ctx, &mut y, "Tick", &format!("{}μs", perf.tick_us), &text_color);
+
+    // Events sub-row (indented label)
+    draw_row(ctx, &mut y, "  Events", &format!("{}μs", perf.event_process_us), &text_color);
+
+    // Auto Scale sub-row
+    draw_row(ctx, &mut y, "  Auto Scale", &format!("{}μs", perf.auto_scale_us), &text_color);
+
+    // Moving Avg sub-row
+    draw_row(ctx, &mut y, "  Moving Avg", &format!("{}μs", perf.moving_avg_us), &text_color);
+
+    // Indicator recalc row — color by incremental/full split
+    let indicator_color = if perf.indicator_recalc_count == 0 {
+        &text_color as &str
+    } else if perf.indicator_full_count == 0 {
+        "#4ade80" // all incremental — green
+    } else if perf.indicator_incremental_count > 0 {
+        "#fbbf24" // mixed — yellow
+    } else {
+        "#f87171" // all full recalc — red
+    };
+    draw_row(ctx, &mut y, "  Indicators", &format!("{}μs", perf.indicator_recalc_us), indicator_color);
+
+    // Incremental / full counts
+    if perf.indicator_recalc_count > 0 {
+        draw_row(ctx, &mut y, "    Instances", &format!("{}", perf.indicator_recalc_count), &text_color);
+        draw_row(ctx, &mut y, "    Incremental", &format!("{}", perf.indicator_incremental_count), "#4ade80");
+        if perf.indicator_full_count > 0 {
+            draw_row(ctx, &mut y, "    Full Recalc", &format!("{}", perf.indicator_full_count), "#f87171");
+        }
+    }
+
+    // =========================================================================
     // SETTINGS section (clickable controls)
     // =========================================================================
     y += section_gap;

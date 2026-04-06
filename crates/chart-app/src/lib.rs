@@ -507,6 +507,18 @@ pub struct ChartApp {
     /// handlers call `on_char` / `on_key` / `on_drag_*` instead of touching
     /// scattered per-field state copies.
     pub text_input: text_input::TextInputManager,
+
+    // ── Internal CPU profiling timers (updated each tick, read by sidebar) ────
+    /// Total time spent in the last tick() call, in microseconds.
+    pub last_tick_us: u64,
+    /// Time spent in indicator recalculation (calculate_for_window) in last tick.
+    pub last_indicator_recalc_us: u64,
+    /// Time spent processing LiveUpdate events in the last tick.
+    pub last_event_process_us: u64,
+    /// Accumulated time in calc_auto_scale() calls during the last tick.
+    pub last_auto_scale_us: u64,
+    /// Accumulated time in calc_moving_averages() calls during the last tick.
+    pub last_moving_avg_us: u64,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -830,6 +842,11 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            last_tick_us: 0,
+            last_indicator_recalc_us: 0,
+            last_event_process_us: 0,
+            last_auto_scale_us: 0,
+            last_moving_avg_us: 0,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1101,6 +1118,11 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            last_tick_us: 0,
+            last_indicator_recalc_us: 0,
+            last_event_process_us: 0,
+            last_auto_scale_us: 0,
+            last_moving_avg_us: 0,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1268,6 +1290,11 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            last_tick_us: 0,
+            last_indicator_recalc_us: 0,
+            last_event_process_us: 0,
+            last_auto_scale_us: 0,
+            last_moving_avg_us: 0,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -1899,6 +1926,12 @@ impl ChartApp {
     /// connector-ready events) and runs the alert crossing checker.
     pub fn tick(&mut self, current_time_ms: u64, bar_svc: &mut bar_service::BarService) {
         let _ = current_time_ms;
+        let tick_start = std::time::Instant::now();
+
+        // Reset per-tick accumulators for profiling.
+        self.last_auto_scale_us = 0;
+        self.last_moving_avg_us = 0;
+        self.last_indicator_recalc_us = 0;
 
         // ── Live data: drain the async update channel ─────────────────────
         // The channel is a broadcast — handle Lagged by continuing to drain.
@@ -1906,6 +1939,7 @@ impl ChartApp {
         // crossing checker can be skipped on quiet (no-trade) frames.
         let mut had_trade_update = false;
         let mut _drain_count = 0u32;
+        let events_start = std::time::Instant::now();
         loop {
             let update = match self.live_update_rx.try_recv() {
                 Ok(u) => { _drain_count += 1; u },
@@ -2284,7 +2318,9 @@ impl ChartApp {
 
                             // Auto-scale if enabled.
                             if window.price_scale.scale_mode.is_auto_y() {
+                                let _as_start = std::time::Instant::now();
                                 window.calc_auto_scale();
+                                self.last_auto_scale_us += _as_start.elapsed().as_micros() as u64;
                             }
 
                             let count = window.bars.len();
@@ -2310,7 +2346,9 @@ impl ChartApp {
                             }
                             // Manual mode: no viewport adjustments.
 
+                            let _ma_start = std::time::Instant::now();
                             window.calc_moving_averages();
+                            self.last_moving_avg_us += _ma_start.elapsed().as_micros() as u64;
                         }
                     }
 
@@ -2331,7 +2369,9 @@ impl ChartApp {
                         RecalcMode::PerTick => {
                             // Immediate recalc — pull bars from ALL windows with this symbol
                             // (fixes the bug where only the active window was considered).
+                            let _ri_start = std::time::Instant::now();
                             self.recalc_indicators_for_symbol(&symbol);
+                            self.last_indicator_recalc_us += _ri_start.elapsed().as_micros() as u64;
                         }
                         RecalcMode::PerFrame => {
                             // Defer to end-of-tick flush; all trades in this frame are batched.
@@ -2421,6 +2461,7 @@ impl ChartApp {
                 }
             }
         }
+        self.last_event_process_us = events_start.elapsed().as_micros() as u64;
 
         // ── Alert checker: detect price crossings for every visible symbol ────
         // Skip entirely when no trade arrived this tick — nothing changed.
@@ -2568,6 +2609,7 @@ impl ChartApp {
         // block is a no-op — PerTick was already handled inline above.
         let pending = self.indicator_manager.drain_pending_recalc();
         if !pending.is_empty() {
+            let _deferred_start = std::time::Instant::now();
             for symbol in &pending {
                 // Collect only the ChartId values (cheap u64 copies) for every
                 // window showing this symbol.  Each window may have different
@@ -2593,6 +2635,7 @@ impl ChartApp {
                 // Count one recalc per symbol (regardless of window count).
                 self.recalc_count += 1;
             }
+            self.last_indicator_recalc_us += _deferred_start.elapsed().as_micros() as u64;
             self.sync_sub_panes_from_manager();
         }
 
@@ -2677,6 +2720,8 @@ impl ChartApp {
                 }
             }
         }
+
+        self.last_tick_us = tick_start.elapsed().as_micros() as u64;
     }
 
     // -------------------------------------------------------------------------

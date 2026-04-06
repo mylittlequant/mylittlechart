@@ -566,6 +566,15 @@ pub struct IndicatorManager {
     /// Keyed by `IndicatorInstance.id`. Cleared when an instance is removed,
     /// its params change, or bar history resets.
     compute_caches: HashMap<u64, ComputeCache>,
+
+    // ── Profiling counters (updated each calculate_for_window call) ───────────
+
+    /// Number of indicator instances that used the O(1) incremental path
+    /// in the most recent `calculate_for_window` call.
+    pub last_incremental_count: u32,
+    /// Number of indicator instances that used the O(N) full-recalc path
+    /// in the most recent `calculate_for_window` call.
+    pub last_full_count: u32,
 }
 
 impl IndicatorManager {
@@ -581,6 +590,8 @@ impl IndicatorManager {
             dirty_symbols: HashSet::new(),
             new_bar_symbols: HashSet::new(),
             compute_caches: HashMap::new(),
+            last_incremental_count: 0,
+            last_full_count: 0,
         };
         manager.register_from_catalog();
         manager
@@ -610,6 +621,11 @@ impl IndicatorManager {
         for definition in definitions {
             self.definitions.insert(definition.type_id.clone(), definition);
         }
+    }
+
+    /// Return the total number of active indicator instances.
+    pub fn instances_count(&self) -> usize {
+        self.instances.len()
     }
 
     /// Register a new indicator definition
@@ -1143,6 +1159,10 @@ impl IndicatorManager {
                 full_recalc_tasks.push((id, machine_id, signals_enabled, params.clone()));
             }
         }
+
+        // Update profiling counters after classification.
+        self.last_incremental_count = incremental_ids.len() as u32;
+        self.last_full_count = full_recalc_tasks.len() as u32;
 
         // ── Full-recalc path (rayon parallel) ──────────────────────────────────
 
