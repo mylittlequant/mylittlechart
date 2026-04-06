@@ -6,7 +6,7 @@
 
 use uzor::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
 
-const MINI_MASCOT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot.svg");
+const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot_left.svg");
 
 // =============================================================================
 // Local type definitions (replace core's WidgetRect and IconId)
@@ -1091,11 +1091,7 @@ fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, 
         let mascot_size = 36.0;
         let mx = rect.x + (rect.width - mascot_size) / 2.0;
         let my = rect.y + (rect.height - mascot_size) / 2.0;
-        ctx.save();
-        ctx.translate(mx + mascot_size, my);
-        ctx.scale(-1.0, 1.0);
-        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, 0.0, 0.0, mascot_size, mascot_size);
-        ctx.restore();
+        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, mx, my, mascot_size, mascot_size);
         return;
     }
     if let Some(svg) = super::icons::icon_svg(icon_id.name()) {

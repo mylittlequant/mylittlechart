@@ -13,7 +13,7 @@ use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 
 use super::icons::icon_svg;
 
-const MINI_MASCOT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot.svg");
+const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot_left.svg");
 
 // =============================================================================
 // Public types
@@ -505,7 +505,7 @@ fn render_icon(
     if icon_name == "Bot" {
         let ix = (item_rect.center_x() - icon_size / 2.0).floor();
         let iy = (item_rect.center_y() - icon_size / 2.0).floor();
-        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, ix, iy, icon_size, icon_size);
+        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, ix, iy, icon_size, icon_size);
         return;
     }
     if let Some(svg) = icon_svg(icon_name) {

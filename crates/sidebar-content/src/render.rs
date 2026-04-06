@@ -17,7 +17,7 @@ use uzor::types::Rect as WidgetRect;
 use crate::state::{SidebarState, RightSidebarPanel};
 use crate::types::ObjectItemState;
 
-const MINI_MASCOT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot.svg");
+const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot_left.svg");
 
 // =============================================================================
 // Result type — mirrors zengeld_chart::layout::render_frame::RightSidebarResult
@@ -222,11 +222,7 @@ pub fn render_right_sidebar(
     let icon_x = rect.x + 12.0;
     let icon_y = rect.y + (header_height - icon_size) / 2.0;
     if panel == RightSidebarPanel::Agents {
-        ctx.save();
-        ctx.translate(icon_x + icon_size, icon_y);
-        ctx.scale(-1.0, 1.0);
-        draw_svg_multicolor(ctx, MINI_MASCOT_SVG, 0.0, 0.0, icon_size, icon_size);
-        ctx.restore();
+        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, icon_x, icon_y, icon_size, icon_size);
     } else {
         draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
     }
