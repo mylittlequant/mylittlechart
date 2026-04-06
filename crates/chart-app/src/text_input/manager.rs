@@ -66,6 +66,8 @@ impl TextInputManager {
         register(&mut fields, FieldId::ChartTemplateName,     FieldConfig::text());
         register(&mut fields, FieldId::NewKeyLabel,           FieldConfig::keyboard_only());
         register(&mut fields, FieldId::SymbolSearch,          FieldConfig::search());
+        register(&mut fields, FieldId::AgentPty,              FieldConfig::raw());
+        register(&mut fields, FieldId::AgentChat,             FieldConfig::text());
 
         Self {
             fields,
@@ -212,6 +214,11 @@ impl TextInputManager {
             None => return FieldAction::None,
         };
 
+        // Guard: Raw fields bypass all text-editing logic and return raw bytes.
+        if self.fields.get(&id).map(|s| s.config.capability == InputCapability::Raw).unwrap_or(false) {
+            return FieldAction::RawInput(raw_char_to_bytes(ch));
+        }
+
         let state = match self.fields.get_mut(&id) {
             Some(s) => s,
             None => return FieldAction::None,
@@ -291,6 +298,14 @@ impl TextInputManager {
             Some(id) => id,
             None => return FieldAction::None,
         };
+
+        // Guard: Raw fields bypass all text-editing logic and return raw bytes.
+        if self.fields.get(&id).map(|s| s.config.capability == InputCapability::Raw).unwrap_or(false) {
+            if let Some(bytes) = key_to_pty_bytes(&key) {
+                return FieldAction::RawInput(bytes);
+            }
+            return FieldAction::None;
+        }
 
         let state = match self.fields.get_mut(&id) {
             Some(s) => s,
@@ -599,6 +614,42 @@ impl TextInputManager {
 impl Default for TextInputManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// =============================================================================
+// PTY byte helpers
+// =============================================================================
+
+/// Encode a printable (or special control) character as PTY bytes.
+fn raw_char_to_bytes(ch: char) -> Vec<u8> {
+    if ch == '\r' || ch == '\n' {
+        return vec![b'\r'];
+    }
+    if ch == '\x08' {
+        return vec![0x7f];
+    }
+    if ch == '\x1b' {
+        return vec![0x1b];
+    }
+    if (ch as u32) < 0x20 {
+        return vec![ch as u8];
+    }
+    let mut buf = [0u8; 4];
+    let s = ch.encode_utf8(&mut buf);
+    s.as_bytes().to_vec()
+}
+
+/// Map named key presses to their ANSI escape sequences for PTY forwarding.
+/// Returns `None` for keys that have no PTY representation.
+fn key_to_pty_bytes(key: &KeyPress) -> Option<Vec<u8>> {
+    match key {
+        KeyPress::ArrowLeft => Some(b"\x1b[D".to_vec()),
+        KeyPress::ArrowRight => Some(b"\x1b[C".to_vec()),
+        KeyPress::Home => Some(b"\x1b[H".to_vec()),
+        KeyPress::End => Some(b"\x1b[F".to_vec()),
+        KeyPress::Delete => Some(b"\x1b[3~".to_vec()),
+        _ => None,
     }
 }
 

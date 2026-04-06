@@ -18,6 +18,9 @@ pub enum InputCapability {
     /// Mouse only: click-to-position, drag-select, Ctrl+C/A.
     /// Character input and key navigation are silently ignored.
     Mouse,
+    /// Raw PTY pass-through: all input is forwarded as raw bytes without
+    /// any text-editing semantics. Used for terminal/PTY fields.
+    Raw,
 }
 
 // =============================================================================
@@ -60,6 +63,12 @@ pub enum FieldId {
 
     // Symbol search overlay
     SymbolSearch,
+
+    // Agent PTY / chat fields
+    /// Raw PTY input for the agent terminal pane.
+    AgentPty,
+    /// Text chat input for the agent chat pane.
+    AgentChat,
 }
 
 // =============================================================================
@@ -150,6 +159,18 @@ impl FieldConfig {
             read_only: false,
         }
     }
+
+    /// Raw PTY field: all input is forwarded as raw bytes, no text-editing
+    /// semantics apply. Used for terminal/PTY panes.
+    pub fn raw() -> Self {
+        Self {
+            capability: InputCapability::Raw,
+            char_filter: None,
+            max_len: None,
+            masked: false,
+            read_only: false,
+        }
+    }
 }
 
 // =============================================================================
@@ -168,6 +189,9 @@ pub enum FieldAction {
     Cancel,
     /// Text content changed (useful for live-filter fields like search).
     TextChanged(String),
+    /// Raw PTY bytes to forward to the terminal process.
+    /// Returned when the focused field has `InputCapability::Raw`.
+    RawInput(Vec<u8>),
 }
 
 // =============================================================================

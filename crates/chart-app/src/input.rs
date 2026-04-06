@@ -5575,6 +5575,7 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
+                crate::text_input::FieldAction::RawInput(_) => {}
             }
             return;
         }
@@ -6772,6 +6773,7 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
+                crate::text_input::FieldAction::RawInput(_) => {}
             }
             return;
         }
@@ -8050,12 +8052,67 @@ impl ChartApp {
             return;
         }
         if widget_id == "agent:toggle_session" {
-            self.sidebar_state.agent_session_active = !self.sidebar_state.agent_session_active;
-            eprintln!("[ChartApp] Agent session: {}", if self.sidebar_state.agent_session_active { "started" } else { "stopped" });
+            if self.agent.is_active() {
+                // Stop the active session.
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.block_on(self.agent.stop());
+                }
+                self.sidebar_state.agent_session_active = false;
+                eprintln!("[ChartApp] Agent session stopped");
+            } else {
+                // Start a new session based on the selected mode and CLI.
+                use sidebar_content::state::{AgentPanelMode, AgentCli};
+                use gate4agent::{SessionConfig, CliTool};
+                let tool = match self.sidebar_state.agent_cli {
+                    AgentCli::Claude => CliTool::ClaudeCode,
+                    AgentCli::Codex  => CliTool::Codex,
+                    AgentCli::Gemini => CliTool::Gemini,
+                };
+                let config = SessionConfig {
+                    tool,
+                    ..SessionConfig::default()
+                };
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    match self.sidebar_state.agent_mode {
+                        AgentPanelMode::Pty => {
+                            match handle.block_on(self.agent.start_pty(config)) {
+                                Ok(()) => {
+                                    self.sidebar_state.agent_session_active = true;
+                                    eprintln!("[ChartApp] Agent PTY session started ({:?})", self.sidebar_state.agent_cli);
+                                }
+                                Err(e) => {
+                                    eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
+                                }
+                            }
+                        }
+                        AgentPanelMode::Chat => {
+                            let prompt = self.sidebar_state.agent_input_buffer.clone();
+                            match handle.block_on(self.agent.start_pipe(config, &prompt)) {
+                                Ok(()) => {
+                                    self.sidebar_state.agent_session_active = true;
+                                    self.sidebar_state.agent_input_buffer.clear();
+                                    eprintln!("[ChartApp] Agent Chat session started ({:?})", self.sidebar_state.agent_cli);
+                                }
+                                Err(e) => {
+                                    eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return;
         }
         if widget_id == "agent:send" {
-            // Phase 1 — no-op; Phase 2 will wire this to the agent backend.
+            if self.agent.is_active() {
+                let text = self.sidebar_state.agent_input_buffer.clone();
+                if !text.is_empty() {
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        let _ = handle.block_on(self.agent.send_chat(&text));
+                    }
+                    self.sidebar_state.agent_input_buffer.clear();
+                }
+            }
             return;
         }
 

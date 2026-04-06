@@ -7644,6 +7644,11 @@ impl ApplicationHandler for App<'_> {
                 } else {
                     pw.chart.on_mouse_move(x, chart_y);
 
+                    // Auto-focus agent PTY terminal on hover.
+                    if pw.chart.check_agent_hover(x, chart_y) {
+                        pw.sidebar_dirty_scene = true;
+                    }
+
                     // Update toolbar tooltip based on hovered toolbar button
                     let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
                     let hovered_id = pw.chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
@@ -7683,6 +7688,8 @@ impl ApplicationHandler for App<'_> {
                 pw.chrome_state.tooltip.clear();
                 pw.toolbar_tooltip.clear();
                 pw.chart.on_mouse_leave();
+                // Clear agent PTY hover focus when cursor leaves the window.
+                pw.chart.agent_pty_hover_focused = false;
             }
 
             // ─── Mouse buttons ────────────────────────────────────────────

@@ -84,6 +84,18 @@ pub struct RightSidebarResult {
     /// Populated during signal group rendering when a scrollbar is drawn.
     /// Used by `chart-app` to detect scrollbar handle drags and track clicks.
     pub signal_group_scrollbar_rects: Vec<(u64, WidgetRect, WidgetRect, f64, f64)>,
+
+    /// Bounding rect of the agent terminal / content area in the Agents panel.
+    ///
+    /// `None` when the Agents panel is not rendered.  Used by `chart-app`'s
+    /// `CursorMoved` handler to auto-focus the PTY terminal on hover.
+    pub agent_terminal_rect: Option<WidgetRect>,
+
+    /// PTY terminal size in columns and rows, computed from the content area
+    /// pixel dimensions.  `None` when the Agents panel is not rendered.
+    ///
+    /// `char_w = 7.0`, `char_h = 14.0` matches the PTY renderer character grid.
+    pub agent_terminal_size: Option<(u16, u16)>,
 }
 
 // =============================================================================
@@ -3505,12 +3517,12 @@ fn render_performance_panel(
 
 /// Renders the AI agents panel.
 ///
-/// Phase 1 — UI shell only.  No agent backend is connected.  Renders:
+/// Renders:
 /// - Mode selector (Terminal / Chat)
 /// - CLI cycle button (Claude / Codex / Gemini)
 /// - Start/Stop session toggle
-/// - Placeholder content area
-/// - Input + Send row at bottom
+/// - Content area: PTY grid, chat bubbles, or idle state
+/// - Input + Send row at bottom (Chat mode only)
 fn render_agents_panel(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
@@ -3522,6 +3534,7 @@ fn render_agents_panel(
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
     use crate::state::AgentPanelMode;
+    use crate::agent_types::AgentSnapshotMode;
 
     let pad = 12.0;
     let row_h = 28.0;
@@ -3648,10 +3661,51 @@ fn render_agents_panel(
         y += btn_h + gap * 2.0;
     }
 
-    // ── Content area placeholder ──────────────────────────────────────────────
-    {
-        let content_h = 160.0;
-        ctx.set_fill_color(&theme.background);
+    // ── Dynamic content area ──────────────────────────────────────────────────
+    // Determine if chat mode is active — input row is shown only for Chat.
+    let is_chat_mode = state.agent_mode == AgentPanelMode::Chat;
+    let input_h = row_h;
+    let input_gap = gap;
+    // controls above the content took: (btn_h + gap) * 2 + (btn_h + gap*2) + pad = 114px
+    let controls_h = btn_h + gap + btn_h + gap + btn_h + gap * 2.0 + pad;
+    // viewport available = rect.height - header_height (40) - controls_h
+    // We approximate: use rect.height - 40.0 (header) - controls_h as the total available.
+    let viewport_h = rect.height - 40.0 - controls_h;
+    let content_h = if is_chat_mode {
+        (viewport_h - input_h - input_gap).max(60.0)
+    } else {
+        viewport_h.max(60.0)
+    };
+
+    let terminal_rect = WidgetRect::new(x, y, inner_w, content_h);
+    // Expose terminal rect so chart-app can implement hover-focus.
+    result.agent_terminal_rect = Some(terminal_rect);
+    // Compute PTY grid dimensions from pixel size (char_w=7.0, char_h=14.0).
+    let pty_cols = ((inner_w / 7.0) as u16).max(1);
+    let pty_rows = ((content_h / 14.0) as u16).max(1);
+    result.agent_terminal_size = Some((pty_cols, pty_rows));
+
+    // Determine what to render inside the content area.
+    let snapshot = state.agent_snapshot.as_ref();
+    let has_pty = matches!(
+        snapshot.map(|s| &s.mode),
+        Some(AgentSnapshotMode::Pty(_))
+    );
+    let has_chat = matches!(
+        snapshot.map(|s| &s.mode),
+        Some(AgentSnapshotMode::Chat(_))
+    );
+    let show_idle = !has_pty && !has_chat;
+
+    if has_pty {
+        // PTY terminal grid rendering
+        render_agents_pty(ctx, snapshot, x, y, inner_w, content_h);
+    } else if has_chat {
+        // Chat bubble rendering
+        render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h);
+    } else {
+        // Idle state
+        ctx.set_fill_color("#0d0d12");
         ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
 
         ctx.set_stroke_color(&theme.separator);
@@ -3664,23 +3718,23 @@ fn render_agents_panel(
         ctx.close_path();
         ctx.stroke();
 
-        if !state.agent_session_active {
+        if show_idle {
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(&theme.item_text_muted);
+            ctx.set_fill_color("#8b8b9e");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Session not started", x + inner_w / 2.0, y + content_h / 2.0);
+            ctx.fill_text("Click Start to begin", x + inner_w / 2.0, y + content_h / 2.0);
         }
-
-        y += content_h + gap;
     }
 
-    // ── Input row + Send button ───────────────────────────────────────────────
-    {
+    y += content_h + gap;
+
+    // ── Input row + Send button (Chat mode only) ──────────────────────────────
+    if is_chat_mode {
         let send_w = 52.0;
         let input_w = inner_w - send_w - gap;
 
-        // Input field placeholder
+        // Input field
         let input_rect = WidgetRect::new(x, y, input_w, row_h);
         ctx.set_fill_color(&theme.background);
         ctx.fill_rounded_rect(x, y, input_w, row_h, 4.0);
@@ -3694,13 +3748,22 @@ fn render_agents_panel(
         ctx.close_path();
         ctx.stroke();
 
+        // Show typed text or placeholder.
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Message…", x + 8.0, y + row_h / 2.0);
+        if state.agent_input_buffer.is_empty() {
+            ctx.set_fill_color(&theme.item_text_muted);
+            ctx.fill_text("Message\u{2026}", x + 8.0, y + row_h / 2.0);
+        } else {
+            ctx.set_fill_color(&theme.item_text);
+            // Truncate to fit the input field width.
+            let display = truncate_to_width(ctx, &state.agent_input_buffer, input_w - 16.0);
+            ctx.fill_text(&display, x + 8.0, y + row_h / 2.0);
+        }
 
-        let _ = input_rect; // registered for future use in Phase 2
+        input_coordinator.register("agent:input", input_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:input".to_string(), input_rect));
 
         // Send button
         let send_x = x + input_w + gap;
@@ -3719,7 +3782,316 @@ fn render_agents_panel(
         result.item_rects.push(("agent:send".to_string(), send_rect));
 
         y += row_h + pad;
+    } else {
+        // PTY mode — no input row, just bottom padding.
+        y += pad;
     }
 
     y - content_y
+}
+
+// =============================================================================
+// PTY terminal grid renderer
+// =============================================================================
+
+/// Render a PTY terminal grid into the content area.
+fn render_agents_pty(
+    ctx: &mut dyn RenderContext,
+    snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    use crate::agent_types::AgentSnapshotMode;
+
+    // Terminal black background.
+    ctx.set_fill_color("#000000");
+    ctx.fill_rounded_rect(x, y, w, h, 4.0);
+
+    let grid = match snapshot.and_then(|s| {
+        if let AgentSnapshotMode::Pty(ref g) = s.mode { Some(g) } else { None }
+    }) {
+        Some(g) => g,
+        None => return,
+    };
+
+    let char_w = 7.0_f64;
+    let char_h = 14.0_f64;
+    // Text baseline offset from top of cell (ascender ≈ 70% of line height).
+    let baseline_offset = char_h * 0.78;
+
+    ctx.save();
+    ctx.clip_rect(x, y, w, h);
+
+    for (row_idx, row) in grid.cells.iter().enumerate() {
+        let cell_y = y + row_idx as f64 * char_h;
+        // Skip rows that are entirely outside the visible area.
+        if cell_y >= y + h {
+            break;
+        }
+        for (col_idx, cell) in row.iter().enumerate() {
+            let cell_x = x + col_idx as f64 * char_w;
+            if cell_x >= x + w {
+                break;
+            }
+
+            // Background: draw if not default black.
+            if cell.bg != [0, 0, 0] {
+                let bg_hex = rgb_to_hex(cell.bg);
+                ctx.set_fill_color(&bg_hex);
+                ctx.fill_rect(cell_x, cell_y, char_w, char_h);
+            }
+
+            // Character: skip space (no-op).
+            if cell.ch == ' ' {
+                continue;
+            }
+
+            // Foreground text.
+            let fg_hex = rgb_to_hex(cell.fg);
+            ctx.set_fill_color(&fg_hex);
+            if cell.bold {
+                ctx.set_font("bold 11px monospace");
+            } else {
+                ctx.set_font("11px monospace");
+            }
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Alphabetic);
+
+            let mut ch_buf = [0u8; 4];
+            let ch_str = cell.ch.encode_utf8(&mut ch_buf);
+            ctx.fill_text(ch_str, cell_x, cell_y + baseline_offset);
+        }
+    }
+
+    // Cursor: a small block at the cursor position.
+    let cur_row = grid.cursor_row as usize;
+    let cur_col = grid.cursor_col as usize;
+    let cur_x = x + cur_col as f64 * char_w;
+    let cur_y = y + cur_row as f64 * char_h;
+    if cur_x < x + w && cur_y < y + h {
+        ctx.set_fill_color("#cccccc");
+        ctx.set_global_alpha(0.7);
+        ctx.fill_rect(cur_x, cur_y, char_w, char_h);
+        ctx.set_global_alpha(1.0);
+    }
+
+    ctx.restore();
+}
+
+// =============================================================================
+// Chat bubble renderer
+// =============================================================================
+
+/// Render chat messages as bubbles inside the content area.
+fn render_agents_chat(
+    ctx: &mut dyn RenderContext,
+    snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
+    theme: &ToolbarTheme,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    use crate::agent_types::{AgentSnapshotMode, ChatRole};
+
+    // Dark content area background.
+    ctx.set_fill_color("#0d0d12");
+    ctx.fill_rounded_rect(x, y, w, h, 4.0);
+
+    let messages = match snapshot.and_then(|s| {
+        if let AgentSnapshotMode::Chat(ref msgs) = s.mode { Some(msgs) } else { None }
+    }) {
+        Some(m) => m,
+        None => return,
+    };
+
+    if messages.is_empty() {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#8b8b9e");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("No messages yet", x + w / 2.0, y + h / 2.0);
+        return;
+    }
+
+    ctx.save();
+    ctx.clip_rect(x, y, w, h);
+
+    let bubble_pad_x = 8.0;
+    let bubble_pad_y = 5.0;
+    let bubble_gap = 6.0;
+    let max_bubble_w = w - 24.0; // leave side margins
+    let line_h_normal = 17.0;
+    let line_h_mono = 14.0;
+
+    let mut cursor_y = y + 8.0;
+
+    for msg in messages {
+        match msg.role {
+            ChatRole::User => {
+                // Right-aligned indigo bubble.
+                ctx.set_font("13px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                let n_lines = lines.len().max(1);
+                let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
+                let text_w = lines.iter()
+                    .map(|l| ctx.measure_text(l))
+                    .fold(0.0_f64, f64::max)
+                    .min(max_bubble_w - bubble_pad_x * 2.0);
+                let bubble_w = (text_w + bubble_pad_x * 2.0).max(40.0).min(max_bubble_w);
+                let bx = x + w - bubble_w - 8.0;
+
+                // Bubble background.
+                ctx.set_fill_color("#1e1e3f");
+                ctx.fill_rounded_rect(bx, cursor_y, bubble_w, bubble_h, 6.0);
+                // Subtle border.
+                ctx.set_stroke_color("#6366f1");
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(bx, cursor_y);
+                ctx.line_to(bx + bubble_w, cursor_y);
+                ctx.line_to(bx + bubble_w, cursor_y + bubble_h);
+                ctx.line_to(bx, cursor_y + bubble_h);
+                ctx.close_path();
+                ctx.stroke();
+
+                ctx.set_fill_color("#e0e0ff");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                for (li, line) in lines.iter().enumerate() {
+                    ctx.fill_text(line, bx + bubble_pad_x, cursor_y + bubble_pad_y + li as f64 * line_h_normal);
+                }
+                cursor_y += bubble_h + bubble_gap;
+            }
+
+            ChatRole::Assistant => {
+                // Left-aligned, no bubble, subtle text.
+                ctx.set_font("13px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                let text_h = lines.len() as f64 * line_h_normal;
+
+                ctx.set_fill_color(&theme.item_text);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                for (li, line) in lines.iter().enumerate() {
+                    ctx.fill_text(line, x + 8.0, cursor_y + li as f64 * line_h_normal);
+                }
+                cursor_y += text_h + bubble_gap;
+            }
+
+            ChatRole::Tool => {
+                // Tool output — monospace, dark translucent bg.
+                let tool_label = msg.tool_name.as_deref().unwrap_or("tool");
+                let header = format!("[{}]", tool_label);
+                ctx.set_font("bold 11px monospace");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                let n_lines = lines.len().max(1);
+                let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
+
+                ctx.set_fill_color("#0a0a14");
+                ctx.fill_rounded_rect(x + 4.0, cursor_y, w - 12.0, bubble_h, 3.0);
+
+                ctx.set_fill_color("#6b7280");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.fill_text(&header, x + 4.0 + bubble_pad_x, cursor_y + bubble_pad_y);
+
+                ctx.set_fill_color("#a0a0b0");
+                ctx.set_font("11px monospace");
+                for (li, line) in lines.iter().enumerate() {
+                    ctx.fill_text(
+                        line,
+                        x + 4.0 + bubble_pad_x,
+                        cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono,
+                    );
+                }
+                cursor_y += bubble_h + bubble_gap;
+            }
+
+            ChatRole::Thinking => {
+                // Italic muted gray.
+                ctx.set_font("italic 12px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
+                let text_h = lines.len() as f64 * line_h_normal;
+
+                ctx.set_fill_color("#8b8b9e");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                for (li, line) in lines.iter().enumerate() {
+                    ctx.fill_text(line, x + 8.0, cursor_y + li as f64 * line_h_normal);
+                }
+                cursor_y += text_h + bubble_gap;
+            }
+
+            ChatRole::Error => {
+                // Red error text.
+                ctx.set_font("12px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
+                let text_h = lines.len() as f64 * line_h_normal;
+
+                ctx.set_fill_color("#ef4444");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                for (li, line) in lines.iter().enumerate() {
+                    ctx.fill_text(line, x + 8.0, cursor_y + li as f64 * line_h_normal);
+                }
+                cursor_y += text_h + bubble_gap;
+            }
+        }
+
+        // Stop rendering if we've exceeded the visible area.
+        if cursor_y > y + h {
+            break;
+        }
+    }
+
+    ctx.restore();
+}
+
+// =============================================================================
+// Agent rendering helpers
+// =============================================================================
+
+/// Convert an RGB triple to a CSS hex color string like `"#rrggbb"`.
+fn rgb_to_hex(rgb: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])
+}
+
+/// Simple word-wrap: split `text` into lines that each fit within `max_w` px.
+///
+/// Splits on space boundaries.  Words wider than `max_w` are placed on their
+/// own line without further splitting.  The current font on `ctx` is used for
+/// measurement — set font BEFORE calling this function.
+fn word_wrap_text(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for paragraph in text.split('\n') {
+        let words: Vec<&str> = paragraph.split(' ').collect();
+        let mut current = String::new();
+        for word in &words {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{} {}", current, word)
+            };
+            if ctx.measure_text(&candidate) <= max_w {
+                current = candidate;
+            } else {
+                if !current.is_empty() {
+                    lines.push(current);
+                }
+                current = word.to_string();
+            }
+        }
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }

@@ -14,6 +14,7 @@
 //! app.on_click(x, y);
 //! ```
 
+pub mod agent;
 pub mod input;
 pub mod preset_cache;
 pub mod scroll_dispatch;
@@ -508,6 +509,19 @@ pub struct ChartApp {
     /// scattered per-field state copies.
     pub text_input: text_input::TextInputManager,
 
+    /// Agent session manager — owns PTY and pipe sessions.
+    ///
+    /// Call `drain_events` each frame (in `tick`) to process incoming terminal
+    /// output. Call `snapshot` to read rendering state without OS handles.
+    pub agent: agent::AgentSessionManager,
+
+    /// True when the PTY panel received focus via hover rather than a click.
+    ///
+    /// Hover-focus is weaker than click-focus: it is cleared when the cursor
+    /// leaves the PTY area, whereas click-focus persists until an explicit
+    /// blur.
+    pub agent_pty_hover_focused: bool,
+
     // ── Internal CPU profiling timers (updated each tick, read by sidebar) ────
     /// Total time spent in the last tick() call, in microseconds.
     pub last_tick_us: u64,
@@ -841,6 +855,8 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            agent: agent::AgentSessionManager::new(),
+            agent_pty_hover_focused: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1117,6 +1133,8 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            agent: agent::AgentSessionManager::new(),
+            agent_pty_hover_focused: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1289,6 +1307,8 @@ impl ChartApp {
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             text_input: text_input::TextInputManager::new(),
+            agent: agent::AgentSessionManager::new(),
+            agent_pty_hover_focused: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -4086,6 +4106,10 @@ impl ChartApp {
         // Sync sub-pane pixel geometry into window.sub_panes so that
         // PanSubPane handlers and other &mut code see up-to-date values.
         self.sync_sub_pane_geometry();
+
+        // Snapshot agent state for the sidebar renderer (agents panel).
+        // Done here in prepare_frame (&mut self) because render_to_scene takes &self.
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot());
     }
 
     /// Convenience wrapper: calls `prepare_frame`, `render_to_scene`, then
@@ -5459,6 +5483,7 @@ impl ChartApp {
         // window.  The caller (chart-app-vello) composites the cached
         // sidebar_scene on top via Scene::append, visually covering these
         // pixels when the scene is unchanged.
+
         let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
             || self.panel_app.user_settings_state.show_welcome_wizard;
         let out_last_sidebar_result: Option<sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
@@ -5623,6 +5648,28 @@ impl ChartApp {
         self.search_modal_result = output.search_modal_result;
         self.context_menu_result = output.context_menu_result;
         self.last_sidebar_result = output.last_sidebar_result;
+
+        // Persist agent terminal rect on sidebar_state for hover-focus in CursorMoved.
+        self.sidebar_state.agent_terminal_rect = self
+            .last_sidebar_result
+            .as_ref()
+            .and_then(|r| r.agent_terminal_rect)
+            .map(|r| (r.x as f32, r.y as f32, r.width as f32, r.height as f32));
+
+        // Resize PTY when the terminal content area changes grid dimensions.
+        let new_size = self
+            .last_sidebar_result
+            .as_ref()
+            .and_then(|r| r.agent_terminal_size);
+        if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
+            self.sidebar_state.agent_terminal_size = new_size;
+            if let Some((cols, rows)) = new_size {
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.block_on(self.agent.resize(cols, rows));
+                }
+            }
+        }
+
         self.last_watchlist_modal_result = output.last_watchlist_modal_result;
         self.last_wl_group_name_result = output.last_wl_group_name_result;
         self.leaf_tab_hit_zones = output.leaf_tab_hit_zones;
@@ -5773,6 +5820,9 @@ impl ChartApp {
         let sidebar_rect = LayoutRect::new(sidebar_x, sidebar_y, sidebar_w, sidebar_h);
         let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
 
+        // Provide current agent state to sidebar for the Agents panel.
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot());
+
         let sidebar_result = sidebar_content::render::render_right_sidebar(
             ctx,
             &sidebar_rect,
@@ -5781,7 +5831,70 @@ impl ChartApp {
             &mut self.input_coordinator.borrow_mut(),
         );
 
+        // Persist agent terminal rect for hover-focus.
+        self.sidebar_state.agent_terminal_rect = sidebar_result
+            .agent_terminal_rect
+            .map(|r| (r.x as f32, r.y as f32, r.width as f32, r.height as f32));
+
+        // Resize PTY when the terminal content area changes grid dimensions.
+        let new_size = sidebar_result.agent_terminal_size;
+        if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
+            self.sidebar_state.agent_terminal_size = new_size;
+            if let Some((cols, rows)) = new_size {
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.block_on(self.agent.resize(cols, rows));
+                }
+            }
+        }
+
         self.last_sidebar_result = Some(sidebar_result);
+    }
+
+    // -------------------------------------------------------------------------
+    // Agent hover-focus
+    // -------------------------------------------------------------------------
+
+    /// Update `agent_pty_hover_focused` based on the current mouse position.
+    ///
+    /// Call from the `CursorMoved` handler in `chart-app-vello` with the
+    /// chart-relative coordinates (i.e. after subtracting chrome height from
+    /// the window `y`).  Returns `true` if the hover state changed, indicating
+    /// that the sidebar scene should be marked dirty.
+    ///
+    /// The hover focus is *transient* — it is cleared automatically when the
+    /// cursor leaves the terminal rect.  A click inside the rect should promote
+    /// to a persistent click-focus (handled separately in the click handler).
+    pub fn check_agent_hover(&mut self, chart_x: f64, chart_y: f64) -> bool {
+        use sidebar_content::state::RightSidebarPanel;
+
+        let agents_open = self.sidebar_state.is_right_open()
+            && self.sidebar_state.right_panel == RightSidebarPanel::Agents;
+
+        if !agents_open {
+            if self.agent_pty_hover_focused {
+                self.agent_pty_hover_focused = false;
+                return true;
+            }
+            return false;
+        }
+
+        let inside = self
+            .sidebar_state
+            .agent_terminal_rect
+            .map(|(rx, ry, rw, rh)| {
+                let rx = rx as f64;
+                let ry = ry as f64;
+                let rw = rw as f64;
+                let rh = rh as f64;
+                chart_x >= rx && chart_x < rx + rw && chart_y >= ry && chart_y < ry + rh
+            })
+            .unwrap_or(false);
+
+        if inside != self.agent_pty_hover_focused {
+            self.agent_pty_hover_focused = inside;
+            return true;
+        }
+        false
     }
 
     // -------------------------------------------------------------------------

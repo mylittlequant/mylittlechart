@@ -280,6 +280,25 @@ pub struct SidebarState {
     pub agent_session_active: bool,
     /// Text typed in the agent input box (not yet sent).
     pub agent_input_buffer: String,
+    /// Latest render snapshot from the agent session manager.
+    ///
+    /// Set each frame by `chart-app` before calling `render_right_sidebar`.
+    /// `None` when no session has produced a snapshot yet.
+    pub agent_snapshot: Option<crate::agent_types::AgentRenderSnapshot>,
+
+    /// Bounding rect of the agent terminal content area, in sidebar-local
+    /// coordinates (origin at sidebar top-left).
+    ///
+    /// Updated by `chart-app` after each `render_right_sidebar` call using
+    /// `RightSidebarResult::agent_terminal_rect`.  `None` when the Agents
+    /// panel is not open.
+    pub agent_terminal_rect: Option<(f32, f32, f32, f32)>,
+
+    /// Last known PTY terminal size (cols, rows) computed from pixel dimensions.
+    ///
+    /// Persisted here so `apply_render_output` can detect changes and call
+    /// `AgentSessionManager::resize` only when the grid size actually changes.
+    pub agent_terminal_size: Option<(u16, u16)>,
 }
 
 // =============================================================================
@@ -476,6 +495,9 @@ impl Default for SidebarState {
             agent_cli: AgentCli::Claude,
             agent_session_active: false,
             agent_input_buffer: String::new(),
+            agent_snapshot: None,
+            agent_terminal_rect: None,
+            agent_terminal_size: None,
         }
     }
 }
