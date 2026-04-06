@@ -3882,7 +3882,7 @@ fn render_agents_pty(
             }
 
             // Character: skip space (no-op).
-            if cell.ch == ' ' {
+            if cell.ch == " " {
                 continue;
             }
 
@@ -3897,9 +3897,7 @@ fn render_agents_pty(
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Alphabetic);
 
-            let mut ch_buf = [0u8; 4];
-            let ch_str = cell.ch.encode_utf8(&mut ch_buf);
-            ctx.fill_text(ch_str, cell_x, cell_y + baseline_offset);
+            ctx.fill_text(&cell.ch, cell_x, cell_y + baseline_offset);
         }
     }
 

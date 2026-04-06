@@ -2740,7 +2740,9 @@ impl ChartApp {
             }
         }
 
-        self.agent.drain_events();
+        if self.agent.drain_events() {
+            self.sidebar_data_dirty = true;
+        }
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
     }
 

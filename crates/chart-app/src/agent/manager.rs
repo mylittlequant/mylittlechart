@@ -145,20 +145,29 @@ impl AgentSessionManager {
     }
 
     /// Drain events from the active session. Call every frame.
-    pub fn drain_events(&mut self) {
+    ///
+    /// Returns `true` if any events were processed, `false` if both channels
+    /// were empty. Callers can use the return value to decide whether to
+    /// redraw dependent UI (e.g. the agent sidebar panel).
+    pub fn drain_events(&mut self) -> bool {
+        let mut had_events = false;
+
         // Drain PTY events
         if let Some(ref mut rx) = self.pty_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(event) => match event {
-                        AgentEvent::PtyRaw { data } => {
-                            self.pty_parser.process(data.as_bytes());
+                    Ok(event) => {
+                        had_events = true;
+                        match event {
+                            AgentEvent::PtyRaw { data } => {
+                                self.pty_parser.process(data.as_bytes());
+                            }
+                            AgentEvent::Exited { .. } => {
+                                self.session_active = false;
+                            }
+                            _ => {}
                         }
-                        AgentEvent::Exited { .. } => {
-                            self.session_active = false;
-                        }
-                        _ => {}
-                    },
+                    }
                     Err(broadcast::error::TryRecvError::Empty) => break,
                     Err(broadcast::error::TryRecvError::Closed) => {
                         self.session_active = false;
@@ -173,59 +182,99 @@ impl AgentSessionManager {
         if let Some(ref mut rx) = self.pipe_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(event) => match event {
-                        AgentEvent::PipeText { text, .. } => {
-                            if let Some(last) = self.chat_messages.last_mut() {
-                                if last.role == ChatRole::Assistant {
-                                    last.content.push_str(&text);
-                                    continue;
+                    Ok(event) => {
+                        had_events = true;
+                        match event {
+                            AgentEvent::PipeSessionStart { session_id, model, .. } => {
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Tool,
+                                    content: format!(
+                                        "{} · session {}",
+                                        model,
+                                        &session_id[..session_id.len().min(8)]
+                                    ),
+                                    tool_name: None,
+                                });
+                            }
+                            AgentEvent::PipeText { text, is_delta } => {
+                                if is_delta {
+                                    // Streaming delta — append to current assistant message.
+                                    if let Some(last) = self.chat_messages.last_mut() {
+                                        if last.role == ChatRole::Assistant {
+                                            last.content.push_str(&text);
+                                            continue;
+                                        }
+                                    }
+                                    // No existing assistant message — create one.
+                                    self.chat_messages.push(ChatMessage {
+                                        role: ChatRole::Assistant,
+                                        content: text,
+                                        tool_name: None,
+                                    });
+                                } else {
+                                    // Complete message — always start a new assistant block.
+                                    self.chat_messages.push(ChatMessage {
+                                        role: ChatRole::Assistant,
+                                        content: text,
+                                        tool_name: None,
+                                    });
                                 }
                             }
-                            self.chat_messages.push(ChatMessage {
-                                role: ChatRole::Assistant,
-                                content: text,
-                                tool_name: None,
-                            });
-                        }
-                        AgentEvent::PipeToolStart { name, .. } => {
-                            self.chat_messages.push(ChatMessage {
-                                role: ChatRole::Tool,
-                                content: format!("Running {}...", name),
-                                tool_name: Some(name),
-                            });
-                        }
-                        AgentEvent::PipeToolResult { id: _, output: _, is_error: _, .. } => {
-                            // Tool result arrived — mark the tool message as done if present
-                            if let Some(last) = self.chat_messages.last_mut() {
-                                if last.role == ChatRole::Tool {
-                                    if let Some(ref name) = last.tool_name.clone() {
-                                        last.content = format!("{}: done", name);
+                            AgentEvent::PipeToolStart { name, .. } => {
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Tool,
+                                    content: format!("Running {}...", name),
+                                    tool_name: Some(name),
+                                });
+                            }
+                            AgentEvent::PipeToolResult { id: _, output: _, is_error: _, .. } => {
+                                // Tool result arrived — mark the tool message as done if present
+                                if let Some(last) = self.chat_messages.last_mut() {
+                                    if last.role == ChatRole::Tool {
+                                        if let Some(ref name) = last.tool_name.clone() {
+                                            last.content = format!("{}: done", name);
+                                        }
                                     }
                                 }
                             }
+                            AgentEvent::PipeThinking { text } => {
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Thinking,
+                                    content: text,
+                                    tool_name: None,
+                                });
+                            }
+                            AgentEvent::Error { message } => {
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Error,
+                                    content: message,
+                                    tool_name: None,
+                                });
+                            }
+                            AgentEvent::PipeTurnComplete { input_tokens, output_tokens } => {
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Tool,
+                                    content: format!(
+                                        "in {} / out {} tokens",
+                                        input_tokens, output_tokens
+                                    ),
+                                    tool_name: None,
+                                });
+                            }
+                            AgentEvent::PipeSessionEnd { result, is_error, .. } => {
+                                let status = if is_error { "error" } else { "done" };
+                                self.chat_messages.push(ChatMessage {
+                                    role: ChatRole::Tool,
+                                    content: format!("Session {} · {}", status, result),
+                                    tool_name: None,
+                                });
+                            }
+                            AgentEvent::Exited { .. } => {
+                                self.session_active = false;
+                            }
+                            _ => {}
                         }
-                        AgentEvent::PipeThinking { text } => {
-                            self.chat_messages.push(ChatMessage {
-                                role: ChatRole::Thinking,
-                                content: text,
-                                tool_name: None,
-                            });
-                        }
-                        AgentEvent::Error { message } => {
-                            self.chat_messages.push(ChatMessage {
-                                role: ChatRole::Error,
-                                content: message,
-                                tool_name: None,
-                            });
-                        }
-                        AgentEvent::PipeTurnComplete { .. } => {
-                            // Turn done — ready for next input
-                        }
-                        AgentEvent::Exited { .. } => {
-                            self.session_active = false;
-                        }
-                        _ => {}
-                    },
+                    }
                     Err(broadcast::error::TryRecvError::Empty) => break,
                     Err(broadcast::error::TryRecvError::Closed) => {
                         self.session_active = false;
@@ -235,6 +284,8 @@ impl AgentSessionManager {
                 }
             }
         }
+
+        had_events
     }
 
     /// Write a string to the active PTY session. Must be called from async context.
@@ -313,8 +364,13 @@ impl AgentSessionManager {
                         let fg =
                             vt100_color_to_rgb(cell.fgcolor(), [204, 204, 204]);
                         let bg = vt100_color_to_rgb(cell.bgcolor(), [0, 0, 0]);
+                        let contents = cell.contents();
                         grid.cells[row as usize][col as usize] = TermCell {
-                            ch: cell.contents().chars().next().unwrap_or(' '),
+                            ch: if contents.is_empty() {
+                                " ".to_string()
+                            } else {
+                                contents
+                            },
                             fg,
                             bg,
                             bold: cell.bold(),

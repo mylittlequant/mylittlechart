@@ -6,7 +6,7 @@
 /// A single terminal cell with character and colors.
 #[derive(Clone, Debug)]
 pub struct TermCell {
-    pub ch: char,
+    pub ch: String,
     pub fg: [u8; 3], // RGB
     pub bg: [u8; 3], // RGB
     pub bold: bool,
@@ -15,7 +15,7 @@ pub struct TermCell {
 impl Default for TermCell {
     fn default() -> Self {
         Self {
-            ch: ' ',
+            ch: " ".to_string(),
             fg: [204, 204, 204], // light gray
             bg: [0, 0, 0],       // black
             bold: false,
