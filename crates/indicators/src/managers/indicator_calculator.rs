@@ -265,6 +265,88 @@ impl IndicatorCalculator {
 
     }
 
+    /// Build a fresh ComputeInstance from indicator_id + params snapshot.
+    /// Returns None if the indicator is not found in the catalog.
+    pub(crate) fn build_compute_instance(
+        indicator_id: BarIndicatorId,
+        params: &HashMap<String, IndicatorValue>,
+    ) -> Option<ComputeInstance> {
+        let periods = Self::extract_periods(params);
+        let mut config = IndicatorConfig::new(
+            indicator_id,
+            format!("{:?}", indicator_id),
+            periods,
+        );
+        Self::add_additional_params(&mut config, params);
+        ComputeInstance::create(&config).ok()
+    }
+
+    /// Feed one bar into an existing ComputeInstance and return the output value.
+    pub(crate) fn feed_bar(
+        instance: &mut ComputeInstance,
+        bar: &crate::Bar,
+    ) -> ComputeValue {
+        instance.update_bar(bar.open, bar.high, bar.low, bar.close, bar.volume, Some(bar.time))
+    }
+
+    /// Extract single-bar outputs from a ComputeValue using rendering metadata.
+    ///
+    /// Returns a HashMap of output_name -> f64.  Falls back to `"value"` key
+    /// when no rendering metadata is available.
+    pub(crate) fn extract_single_outputs(
+        indicator_id: BarIndicatorId,
+        value: ComputeValue,
+    ) -> HashMap<String, f64> {
+        let rendering = crate::catalog::get_rendering(indicator_id);
+        let mut out = HashMap::new();
+        if let Some(meta) = rendering {
+            for spec in &meta.outputs {
+                let v = crate::catalog::ValueAdapter::extract(&value, &spec.value_extractor)
+                    .unwrap_or(f64::NAN);
+                out.insert(spec.name.clone(), v);
+            }
+        } else {
+            out.insert("value".to_string(), value.main());
+        }
+        out
+    }
+
+    /// Compute a stable FNV-1a fingerprint over an indicator's id + sorted params.
+    ///
+    /// Used to detect parameter changes without storing a full params clone.
+    pub(crate) fn params_fingerprint(
+        indicator_id: BarIndicatorId,
+        params: &HashMap<String, IndicatorValue>,
+    ) -> u64 {
+        const FNV_OFFSET: u64 = 14695981039346656037;
+        const FNV_PRIME: u64 = 1099511628211;
+
+        let mut hash = FNV_OFFSET;
+        let fnv_byte = |h: &mut u64, b: u8| {
+            *h ^= b as u64;
+            *h = h.wrapping_mul(FNV_PRIME);
+        };
+
+        // Hash the indicator id string
+        for b in format!("{:?}", indicator_id).bytes() {
+            fnv_byte(&mut hash, b);
+        }
+
+        // Sort keys for determinism, then hash each key+value pair
+        let mut pairs: Vec<(&String, &IndicatorValue)> = params.iter().collect();
+        pairs.sort_by_key(|(k, _)| k.as_str());
+        for (k, v) in pairs {
+            for b in k.bytes() {
+                fnv_byte(&mut hash, b);
+            }
+            for b in format!("{:?}", v).bytes() {
+                fnv_byte(&mut hash, b);
+            }
+        }
+
+        hash
+    }
+
     /// Parse a string to MovingAverageType
     fn parse_ma_type_string(s: &str) -> Option<crate::bar_indicators::average::moving_average::MovingAverageType> {
         use crate::bar_indicators::average::moving_average::MovingAverageType;

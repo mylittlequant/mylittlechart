@@ -505,6 +505,27 @@ impl IndicatorInstance {
     }
 }
 
+/// Runtime stateful compute cache for one indicator on one window.
+///
+/// Lives in `IndicatorManager::compute_caches` (keyed by `IndicatorInstance.id`),
+/// NOT inside `IndicatorInstance`, so `IndicatorInstance` stays `Clone + Serialize`.
+///
+/// Dropped whenever the indicator is removed, params change, or bars are reset.
+pub(crate) struct ComputeCache {
+    /// The live stateful compute engine (480-variant enum, NOT Clone).
+    pub instance: crate::IndicatorInstance,
+    /// How many bars were fed into `instance` so far.
+    pub fed_bar_count: usize,
+    /// FNV-1a fingerprint of (indicator_id, params) at cache creation time.
+    /// A mismatch triggers a full rebuild.
+    pub config_fingerprint: u64,
+    /// Snapshot of the last bar fed, used to detect last-bar updates.
+    pub last_fed_bar: Option<crate::Bar>,
+    /// Signal engine for incremental signal generation; present only when
+    /// `signals_enabled == true` and a default signal profile exists.
+    pub signal_engine: Option<crate::signals::rules::SignalEngine>,
+}
+
 /// Manages indicator definitions and instances
 pub struct IndicatorManager {
     /// Available indicator definitions
@@ -534,6 +555,13 @@ pub struct IndicatorManager {
     /// Symbols where a new bar formed since the last flush.
     /// Used by PerBar mode — only these symbols trigger recalculation.
     new_bar_symbols: HashSet<String>,
+
+    // ── Incremental computation cache ─────────────────────────────────────────
+
+    /// Per-instance stateful compute caches for incremental indicator updates.
+    /// Keyed by `IndicatorInstance.id`. Cleared when an instance is removed,
+    /// its params change, or bar history resets.
+    compute_caches: HashMap<u64, ComputeCache>,
 }
 
 impl IndicatorManager {
@@ -548,6 +576,7 @@ impl IndicatorManager {
             recalc_mode: RecalcMode::default(),
             dirty_symbols: HashSet::new(),
             new_bar_symbols: HashSet::new(),
+            compute_caches: HashMap::new(),
         };
         manager.register_from_catalog();
         manager
@@ -566,6 +595,7 @@ impl IndicatorManager {
         self.current_render_window_id.set(None);
         self.dirty_symbols.clear();
         self.new_bar_symbols.clear();
+        self.compute_caches.clear();
     }
 
     /// Register all indicators from the unified catalog (480+ indicators)
@@ -653,6 +683,7 @@ impl IndicatorManager {
             if let Some(ids) = self.by_symbol.get_mut(&instance.symbol) {
                 ids.retain(|&i| i != id);
             }
+            self.compute_caches.remove(&id);
             Some(instance)
         } else {
             None
@@ -679,6 +710,7 @@ impl IndicatorManager {
                     ids.retain(|&i| i != id);
                 }
             }
+            self.compute_caches.remove(&id);
         }
     }
 
@@ -701,6 +733,7 @@ impl IndicatorManager {
                     ids.retain(|&i| i != id);
                 }
             }
+            self.compute_caches.remove(&id);
         }
         if count > 0 {
             eprintln!("[IndicatorManager] Purged {} group indicators for window {}", count, target_window_id);
@@ -722,6 +755,7 @@ impl IndicatorManager {
                     ids.retain(|&i| i != id);
                 }
             }
+            self.compute_caches.remove(&id);
         }
         if count > 0 {
             eprintln!("[IndicatorManager] Purged all {} instances for window {}", count, target_window_id);
@@ -1022,13 +1056,16 @@ impl IndicatorManager {
         }
     }
 
-    /// Calculate only the instances for a symbol that belong to a specific window,
-    /// using rayon to compute multiple indicators in parallel.
+    /// Calculate only the instances for a symbol that belong to a specific window.
     ///
-    /// This is the correct method to use when multiple windows show the same symbol
-    /// on different timeframes — each window provides its own bars slice, so only
-    /// instances scoped to that window (via `window_id`) should be recalculated
-    /// against those bars.
+    /// Uses an **incremental path** (O(1) per indicator) when:
+    /// - A `ComputeCache` exists for the instance,
+    /// - The params fingerprint matches (no parameter changes),
+    /// - Exactly one new bar was appended since the last call, AND
+    /// - The last bar's OHLCV is unchanged.
+    ///
+    /// Falls back to a **full recalc** (rayon parallel, O(N)) for all other
+    /// cases: first call, parameter changes, scroll prepend, last-bar update.
     ///
     /// Instances whose `window_id` is `None` (unscoped / legacy) are skipped;
     /// they should be handled by `calculate_all_for_symbol` when appropriate.
@@ -1046,7 +1083,7 @@ impl IndicatorManager {
             return;
         }
 
-        // Convert bars once, shared across all parallel tasks.
+        // Convert bars once, shared across all computation paths.
         let converted_bars: Vec<crate::Bar> = bars.iter().map(|b| crate::Bar {
             time: b.timestamp,
             open: b.open,
@@ -1056,53 +1093,272 @@ impl IndicatorManager {
             volume: b.volume,
         }).collect();
 
-        // Collect inputs for instances belonging to this window only.
-        let tasks: Vec<(u64, Option<crate::BarIndicatorId>, bool, HashMap<String, IndicatorValue>)> = ids
-            .iter()
-            .filter_map(|&id| {
-                let inst = self.instances.get(&id)?;
-                // Only include instances explicitly scoped to this window.
-                if inst.window_id != Some(window_id) {
-                    return None;
-                }
-                let def = self.definitions.get(&inst.type_id)?;
-                Some((id, def.machine_id, inst.signals_enabled, inst.params.clone()))
-            })
-            .collect();
+        let current_bar_count = converted_bars.len();
 
-        if tasks.is_empty() {
-            return;
+        // ── Classify each instance into incremental or full-recalc bucket ──────
+
+        // (id, machine_id, signals_enabled, params_clone)
+        type TaskMeta = (u64, Option<crate::BarIndicatorId>, bool, HashMap<String, IndicatorValue>);
+
+        let mut incremental_ids: Vec<u64> = Vec::new();
+        let mut full_recalc_tasks: Vec<TaskMeta> = Vec::new();
+
+        for &id in &ids {
+            let inst = match self.instances.get(&id) {
+                Some(i) => i,
+                None => continue,
+            };
+            if inst.window_id != Some(window_id) {
+                continue;
+            }
+            let def = match self.definitions.get(&inst.type_id) {
+                Some(d) => d,
+                None => continue,
+            };
+            let machine_id = def.machine_id;
+            let signals_enabled = inst.signals_enabled;
+            let params = &inst.params;
+
+            // Check if we can use the incremental path.
+            let can_increment = if let (Some(mid), Some(cache)) = (machine_id, self.compute_caches.get(&id)) {
+                let fingerprint = IndicatorCalculator::params_fingerprint(mid, params);
+                let fingerprint_ok = cache.config_fingerprint == fingerprint;
+                let bar_diff = current_bar_count.wrapping_sub(cache.fed_bar_count);
+                // Only one new bar, and fingerprint still matches.
+                fingerprint_ok && bar_diff == 1 && current_bar_count > 0
+            } else {
+                false
+            };
+
+            if can_increment {
+                incremental_ids.push(id);
+            } else {
+                full_recalc_tasks.push((id, machine_id, signals_enabled, params.clone()));
+            }
         }
 
-        // Parallel computation phase.
-        type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::signal::Signal>);
-        let results: Vec<TaskResult> = tasks
-            .into_par_iter()
-            .map(|(id, machine_id, signals_enabled, params)| {
-                let bars: &[crate::Bar] = &converted_bars;
-                if let Some(indicator_id) = machine_id {
-                    if signals_enabled {
-                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars) {
-                            return (id, Some(result.values), result.signals);
-                        }
-                    } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars) {
-                        return (id, Some(values), Vec::new());
-                    }
-                }
-                (id, None, Vec::new())
-            })
-            .collect();
+        // ── Full-recalc path (rayon parallel) ──────────────────────────────────
 
-        // Write-back phase.
-        for (id, values_opt, signals) in results {
-            if let Some(instance) = self.instances.get_mut(&id) {
-                if let Some(values) = values_opt {
-                    for (output_name, output_values) in values {
-                        instance.set_values(&output_name, output_values);
+        if !full_recalc_tasks.is_empty() {
+            type TaskResult = (u64, Option<HashMap<String, Vec<f64>>>, Vec<crate::signals::signal::Signal>);
+            let results: Vec<TaskResult> = full_recalc_tasks
+                .into_par_iter()
+                .map(|(id, machine_id, signals_enabled, params)| {
+                    let bars: &[crate::Bar] = &converted_bars;
+                    if let Some(indicator_id) = machine_id {
+                        if signals_enabled {
+                            if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars) {
+                                return (id, Some(result.values), result.signals);
+                            }
+                        } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars) {
+                            return (id, Some(values), Vec::new());
+                        }
+                    }
+                    (id, None, Vec::new())
+                })
+                .collect();
+
+            // Write-back + build ComputeCache for each full-recalc result.
+            for (id, values_opt, signals) in results {
+                if let Some(instance) = self.instances.get_mut(&id) {
+                    if let Some(values) = values_opt {
+                        for (output_name, output_values) in values {
+                            instance.set_values(&output_name, output_values);
+                        }
+                    }
+                    if instance.signals_enabled {
+                        instance.signals = signals;
                     }
                 }
-                if instance.signals_enabled {
-                    instance.signals = signals;
+
+                // Rebuild ComputeCache so future ticks can use the incremental path.
+                let (machine_id, signals_enabled, params_ref) = match self.instances.get(&id) {
+                    Some(inst) => {
+                        let def = self.definitions.get(&inst.type_id);
+                        (def.and_then(|d| d.machine_id), inst.signals_enabled, inst.params.clone())
+                    }
+                    None => continue,
+                };
+
+                if let Some(indicator_id) = machine_id {
+                    if let Some(mut fresh_instance) = IndicatorCalculator::build_compute_instance(indicator_id, &params_ref) {
+                        for bar in &converted_bars {
+                            IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
+                        }
+                        let fingerprint = IndicatorCalculator::params_fingerprint(indicator_id, &params_ref);
+                        let last_bar = converted_bars.last().cloned();
+
+                        // Build optional signal engine for incremental signal path.
+                        let signal_engine = if signals_enabled {
+                            crate::signals::rules::default_profile(indicator_id)
+                                .map(|p| crate::signals::rules::SignalEngine::from_profile(&p))
+                        } else {
+                            None
+                        };
+
+                        self.compute_caches.insert(id, ComputeCache {
+                            instance: fresh_instance,
+                            fed_bar_count: current_bar_count,
+                            config_fingerprint: fingerprint,
+                            last_fed_bar: last_bar,
+                            signal_engine,
+                        });
+                    }
+                }
+            }
+        }
+
+        // ── Incremental path (sequential, O(1) per instance) ───────────────────
+
+        for id in incremental_ids {
+            // Safety: classified as incremental → cache exists and bar_diff == 1.
+            let new_bar = match converted_bars.last() {
+                Some(b) => b.clone(),
+                None => continue,
+            };
+
+            // Detect whether the last-bar OHLCV actually changed since the
+            // previous call.  If it did, fall through to full recalc for this
+            // instance rather than corrupting the stateful engine.
+            let last_bar_changed = {
+                let cache = match self.compute_caches.get(&id) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                match &cache.last_fed_bar {
+                    Some(prev) => {
+                        prev.close != new_bar.close
+                            || prev.high  != new_bar.high
+                            || prev.low   != new_bar.low
+                            || prev.open  != new_bar.open
+                    }
+                    // No previous bar recorded — treat as changed to be safe.
+                    None => true,
+                }
+            };
+
+            if last_bar_changed {
+                // The "new bar" slot was actually an updated version of what we
+                // thought was the previous confirmed bar.  This can happen in
+                // PerTick mode when the bar count grows by 1 and the last bar
+                // is live.  Fall back to full recalc for this instance.
+                let (machine_id_opt, signals_enabled, params_clone) = match self.instances.get(&id) {
+                    Some(inst) => {
+                        let def = self.definitions.get(&inst.type_id);
+                        (def.and_then(|d| d.machine_id), inst.signals_enabled, inst.params.clone())
+                    }
+                    None => continue,
+                };
+
+                if let Some(indicator_id) = machine_id_opt {
+                    let bars_slice: &[crate::Bar] = &converted_bars;
+                    let (values_opt, signals) = if signals_enabled {
+                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params_clone, bars_slice) {
+                            (Some(result.values), result.signals)
+                        } else {
+                            (None, Vec::new())
+                        }
+                    } else {
+                        let v = IndicatorCalculator::calculate_with_id(indicator_id, &params_clone, bars_slice);
+                        (v, Vec::new())
+                    };
+
+                    if let Some(instance) = self.instances.get_mut(&id) {
+                        if let Some(values) = values_opt {
+                            for (output_name, output_values) in values {
+                                instance.set_values(&output_name, output_values);
+                            }
+                        }
+                        if instance.signals_enabled {
+                            instance.signals = signals;
+                        }
+                    }
+
+                    // Rebuild cache after fallback recalc.
+                    if let Some(mut fresh_instance) = IndicatorCalculator::build_compute_instance(indicator_id, &params_clone) {
+                        for bar in &converted_bars {
+                            IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
+                        }
+                        let signal_engine = if signals_enabled {
+                            crate::signals::rules::default_profile(indicator_id)
+                                .map(|p| crate::signals::rules::SignalEngine::from_profile(&p))
+                        } else {
+                            None
+                        };
+                        self.compute_caches.insert(id, ComputeCache {
+                            instance: fresh_instance,
+                            fed_bar_count: current_bar_count,
+                            config_fingerprint: IndicatorCalculator::params_fingerprint(indicator_id, &params_clone),
+                            last_fed_bar: converted_bars.last().cloned(),
+                            signal_engine,
+                        });
+                    }
+                }
+
+                continue;
+            }
+
+            // Happy path: one genuinely new bar, no OHLCV change on the
+            // "new bar" slot.  Feed the bar, append output values.
+            let (machine_id_opt, signals_enabled, indicator_name) = match self.instances.get(&id) {
+                Some(inst) => {
+                    let def = self.definitions.get(&inst.type_id);
+                    (
+                        def.and_then(|d| d.machine_id),
+                        inst.signals_enabled,
+                        format!("{}", inst.name),
+                    )
+                }
+                None => continue,
+            };
+
+            let indicator_id = match machine_id_opt {
+                Some(mid) => mid,
+                None => continue,
+            };
+
+            let cache = match self.compute_caches.get_mut(&id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let value = IndicatorCalculator::feed_bar(&mut cache.instance, &new_bar);
+            let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value.clone());
+
+            // Append new bar index to each signal engine if present.
+            let new_signals: Vec<crate::signals::signal::Signal> = if signals_enabled {
+                if let Some(ref mut engine) = cache.signal_engine {
+                    let is_last_bar = true;
+                    engine.process(
+                        &value,
+                        new_bar.open,
+                        new_bar.high,
+                        new_bar.low,
+                        new_bar.close,
+                        new_bar.volume,
+                        new_bar.time,
+                        &indicator_name,
+                        is_last_bar,
+                    )
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            // Update cache metadata.
+            cache.fed_bar_count = current_bar_count;
+            cache.last_fed_bar = Some(new_bar);
+
+            // Append the new output values to the instance's value Vecs.
+            if let Some(instance) = self.instances.get_mut(&id) {
+                let values_map = Arc::make_mut(&mut instance.values);
+                for (key, val) in outputs {
+                    values_map.entry(key).or_default().push(val);
+                }
+                if signals_enabled && !new_signals.is_empty() {
+                    instance.signals.extend(new_signals);
                 }
             }
         }
