@@ -633,7 +633,6 @@ pub enum TemplateAction {
 pub enum PerfAction {
     SetFpsLimit(u32),
     SetMsaa(u8),
-    SetMaxBars(usize),
     SetRecalcMode(String),
     TogglePerfLog,
     SetBackend(String),

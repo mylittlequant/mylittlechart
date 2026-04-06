@@ -3442,19 +3442,6 @@ fn render_performance_panel(
         theme,
     );
 
-    // Max Bars
-    draw_control_row(
-        ctx,
-        input_coordinator,
-        result,
-        &mut y,
-        "Max Bars",
-        &(if perf.max_bars == 0 { "Unlimited".to_string() } else { format!("{}", perf.max_bars) }),
-        "perf:max_bars",
-        accent,
-        theme,
-    );
-
     // Recalc Mode
     draw_control_row(
         ctx,

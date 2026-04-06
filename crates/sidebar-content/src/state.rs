@@ -288,8 +288,6 @@ pub struct PerformanceData {
     pub fps_limit: u32,
     /// Current MSAA sample count (0=off, 4, 8, 16).
     pub msaa_samples: u8,
-    /// Maximum bars per window (0 = unlimited).
-    pub max_bars: usize,
     /// Current RecalcMode label.
     pub recalc_mode: String,
     /// Number of open windows.
@@ -357,7 +355,6 @@ impl Default for PerformanceData {
             lag_events: 0,
             fps_limit: 60,
             msaa_samples: 16,
-            max_bars: 0,
             recalc_mode: "PerFrame".to_string(),
             window_count: 0,
             active_connectors: 0,

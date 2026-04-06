@@ -615,8 +615,6 @@ struct App<'s> {
     fps_limit: u32,
     /// Current MSAA sample count (0=off, 4, 8, 16).
     msaa_samples: u8,
-    /// Maximum bars per window (0 = unlimited).
-    max_bars: usize,
     /// Whether frame timing logs are printed to stderr (toggled from Performance panel).
     perf_log_enabled: bool,
     /// Current selected render backend.
@@ -2378,7 +2376,6 @@ impl App<'_> {
             last_frame_time_ms: 16.0,
             fps_limit: ds_init.fps_limit,
             msaa_samples: ds_init.msaa_samples,
-            max_bars: ds_init.max_bars,
             perf_log_enabled: false,
             render_backend: {
                 use sidebar_content::state::RenderBackend;
@@ -4039,6 +4036,21 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // ── FPS cap guard — must be the very first check ─────────────────────
+        // winit wakes the event loop on every mouse event (CursorMoved at
+        // 125-500 Hz), which preempts the WaitUntil timer set at the end of
+        // this method.  We exit early here so no scene work or GPU submission
+        // happens until the target frame interval has actually elapsed.
+        if self.fps_limit > 0 {
+            let target_dt = std::time::Duration::from_secs_f64(1.0 / self.fps_limit as f64);
+            if self.last_frame_instant.elapsed() < target_dt {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    self.last_frame_instant + target_dt,
+                ));
+                return;
+            }
+        }
+
         let _t0 = std::time::Instant::now();
 
         // ── Frame timing ────────────────────────────────────────────────────
@@ -4444,13 +4456,6 @@ impl ApplicationHandler for App<'_> {
                         ds.msaa_samples = v;
                         ds.save();
                         eprintln!("[App] MSAA → {}", v);
-                    }
-                    chart_app::PerfAction::SetMaxBars(v) => {
-                        self.max_bars = v;
-                        let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                        ds.max_bars = v;
-                        ds.save();
-                        eprintln!("[App] Max bars → {}", v);
                     }
                     chart_app::PerfAction::SetRecalcMode(ref mode) => {
                         self.app_state.recalc_mode = match mode.as_str() {
@@ -6924,7 +6929,6 @@ impl ApplicationHandler for App<'_> {
             let frame_time_ms = self.last_frame_time_ms;
             let recalc_label = format!("{:?}", self.app_state.recalc_mode);
             let msaa_samples = self.msaa_samples;
-            let max_bars = self.max_bars;
             let perf_log_enabled = self.perf_log_enabled;
             let render_backend = self.render_backend;
 
@@ -6955,16 +6959,6 @@ impl ApplicationHandler for App<'_> {
 
             let mut total_bars_all: u64 = 0;
             for pw in self.windows.values_mut() {
-                // Trim bars if max_bars is set
-                if max_bars > 0 {
-                    for w in pw.chart.panel_app.panel_grid.windows_mut().values_mut() {
-                        if w.bars.len() > max_bars {
-                            let excess = w.bars.len() - max_bars;
-                            w.bars.drain(..excess);
-                        }
-                    }
-                }
-
                 let total_bars: usize = pw.chart.panel_app.panel_grid.windows()
                     .values()
                     .map(|w| w.bars.len())
@@ -6980,7 +6974,6 @@ impl ApplicationHandler for App<'_> {
                 perf.lag_events = lag_events;
                 perf.fps_limit = fps_limit;
                 perf.msaa_samples = msaa_samples;
-                perf.max_bars = max_bars;
                 perf.recalc_mode = recalc_label.clone();
                 perf.window_count = window_count;
                 perf.active_connectors = active_connectors;

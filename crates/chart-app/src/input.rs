@@ -8018,19 +8018,6 @@ impl ChartApp {
             eprintln!("[ChartApp] perf: MSAA -> {}", if next == 0 { "off".to_string() } else { format!("{}x", next) });
             return;
         }
-        if widget_id == "perf:max_bars" {
-            // Cycle: 0 (unlimited) → 2000 → 5000 → 10000 → 0
-            let current = self.sidebar_state.performance_data.max_bars;
-            let next = match current {
-                0 => 2000,
-                2000 => 5000,
-                5000 => 10000,
-                _ => 0,
-            };
-            self.perf_actions.push(crate::PerfAction::SetMaxBars(next));
-            eprintln!("[ChartApp] perf: max bars -> {}", if next == 0 { "unlimited".to_string() } else { format!("{}", next) });
-            return;
-        }
         if widget_id == "perf:recalc_mode" {
             // Cycle: PerFrame → PerBar → PerTick → PerFrame
             let current = self.sidebar_state.performance_data.recalc_mode.clone();
