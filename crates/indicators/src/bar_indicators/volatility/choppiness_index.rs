@@ -9,6 +9,7 @@ use crate::bar_indicators::average::MovingAverageType;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Choppiness Index индикатор
+#[derive(Clone)]
 pub struct ChoppinessIndex {
     period: usize,
     

@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::types::TimeService;
 
+#[derive(Clone)]
 pub struct HourOfDayEffect {
     pub value: f64,
 }

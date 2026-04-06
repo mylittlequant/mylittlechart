@@ -3,6 +3,7 @@
 use crate::bar_indicators::signal_processing::fft::FastFourierTransform;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct SpectralEntropy {
     window: usize,
     fft: FastFourierTransform,

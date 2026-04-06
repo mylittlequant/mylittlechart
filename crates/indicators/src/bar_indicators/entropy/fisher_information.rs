@@ -1,6 +1,7 @@
 // Rolling Fisher Information proxy for Gaussian mean: I = n / var(returns)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct RollingFisherInformation {
     window: usize,
     rets: Vec<f64>,

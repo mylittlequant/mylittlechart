@@ -3,7 +3,8 @@
 use crate::bar_indicators::momentum::dpo::DetrendedPriceOscillator;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct DpoPercent {
     dpo: DetrendedPriceOscillator,
     value: f64,

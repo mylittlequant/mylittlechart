@@ -5,6 +5,7 @@ use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// CMO calculation mode.
+#[derive(Clone)]
 pub enum CmoMode {
     /// Classic mode using SMA/buffer-based calculation.
     Classic,
@@ -34,6 +35,7 @@ pub enum CmoMode {
 ///
 /// Supports two modes: Wilder (uses MAs) and Classic (uses buffers).
 /// O(1) per update in Wilder mode, O(period) in Classic mode.
+#[derive(Clone)]
 pub struct Cmo {
     period: usize,
     ma_type: MovingAverageType,  // Store catalog type, no pattern matching needed

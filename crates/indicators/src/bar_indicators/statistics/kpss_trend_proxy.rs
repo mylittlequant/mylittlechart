@@ -1,5 +1,6 @@
 // KPSS-trend proxy: test against deterministic trend (demean + detrend)
 
+#[derive(Clone)]
 pub struct KpssTrendProxy {
     window: usize,
     buf: Vec<f64>,

@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Sample Entropy индикатор
+#[derive(Clone)]
 pub struct SampleEntropy {
     period: usize,              // Период анализа
     m: usize,                   // Длина паттерна (обычно 2)

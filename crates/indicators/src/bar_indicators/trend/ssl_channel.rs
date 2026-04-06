@@ -21,6 +21,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// - Бычий тренд: SSL_Up > SSL_Down
 /// - Медвежий тренд: SSL_Up < SSL_Down
 /// - Смена тренда: пересечение SSL_Up и SSL_Down
+#[derive(Clone)]
 pub struct SslChannel {
     ma_type: MovingAverageType,
     period: usize,

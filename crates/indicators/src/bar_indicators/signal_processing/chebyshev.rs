@@ -21,6 +21,7 @@ pub enum FilterType {
 }
 
 /// Chebyshev Filter
+#[derive(Clone)]
 pub struct ChebyshevFilter {
     // Параметры фильтра
     chebyshev_type: ChebyshevType,

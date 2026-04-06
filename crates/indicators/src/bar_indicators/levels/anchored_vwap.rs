@@ -20,6 +20,7 @@ impl Default for AnchoredVwapParams {
     }
 }
 
+#[derive(Clone)]
 pub struct AnchoredVwap {
     #[allow(dead_code)]
     params: AnchoredVwapParams,

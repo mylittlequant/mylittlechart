@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::average::sma::Sma;
 
+#[derive(Clone)]
 pub struct CointegrationProxy {
     window: usize,
     sma: Sma,

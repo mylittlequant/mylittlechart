@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Показатель Херста (R/S анализ)
+#[derive(Clone)]
 pub struct HurstExponent {
     period: usize,
     min_period: usize, // Минимальный период для расчета

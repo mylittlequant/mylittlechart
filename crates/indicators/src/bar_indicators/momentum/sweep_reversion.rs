@@ -41,6 +41,7 @@ impl Default for SweepReversionParams {
 }
 
 /// Индикатор свипов/возвратов
+#[derive(Clone)]
 pub struct SweepReversionIndex {
     params: SweepReversionParams,
     highest: Highest,

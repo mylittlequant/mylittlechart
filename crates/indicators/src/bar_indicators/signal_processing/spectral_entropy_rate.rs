@@ -3,6 +3,7 @@
 use crate::bar_indicators::signal_processing::spectral_entropy::SpectralEntropy;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct SpectralEntropyRate {
     inner: SpectralEntropy,
     alpha: f64, // EMA smoothing

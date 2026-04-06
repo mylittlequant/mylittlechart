@@ -7,6 +7,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Alligator - индикатор "Аллигатор" Билла Вильямса
 /// Состоит из трех сглаженных скользящих средних с разными периодами и смещениями
+#[derive(Clone)]
 pub struct Alligator {
     // Три линии аллигатора
     jaw: MovingAverageProvider,    // Челюсть (синяя линия) - 13-периодная SMA, смещение 8
@@ -162,6 +163,7 @@ impl Alligator {
 
 /// Awesome Oscillator - индикатор AO Билла Вильямса
 /// Разность между 5-периодной и 34-периодной простыми скользящими средними медианных цен
+#[derive(Clone)]
 pub struct AwesomeOscillator {
     sma5: MovingAverageProvider,
     sma34: MovingAverageProvider,
@@ -289,6 +291,7 @@ impl AwesomeOscillator {
 
 /// Acceleration/Deceleration - индикатор AC Билла Вильямса
 /// Разность между AO и его 5-периодной простой скользящей средней
+#[derive(Clone)]
 pub struct AccelerationDeceleration {
     awesome_oscillator: AwesomeOscillator,
     ao_sma: MovingAverageProvider,
@@ -379,6 +382,7 @@ impl AccelerationDeceleration {
 
 /// Market Facilitation Index - индикатор MFI Билла Вильямса
 /// Измеряет эффективность движения цены на единицу объема
+#[derive(Clone)]
 pub struct MarketFacilitationIndex {
     mfi_values: ArrayVec<f64, 512>,
     volume_values: ArrayVec<f64, 512>,

@@ -8,6 +8,7 @@ use crate::bar_indicators::average::moving_average::{MovingAverageProvider, Movi
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Mass Index индикатор
+#[derive(Clone)]
 pub struct MassIndex {
     ema_period: usize,
     sum_period: usize,

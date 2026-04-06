@@ -4,7 +4,8 @@ use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::stochastics::Stochastics;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct Kdj {
     stoch: Stochastics,
     d_ma: MovingAverageProvider,

@@ -3,6 +3,7 @@
 use crate::bar_indicators::signal_processing::spectral_rolloff::SpectralRolloff;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct SpectralRolloffPercentile {
     inner: SpectralRolloff,
     window: usize,

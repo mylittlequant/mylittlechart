@@ -8,6 +8,7 @@ use crate::bar_indicators::average::moving_average::{MovingAverageProvider, Movi
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// NVI/PVI индикатор
+#[derive(Clone)]
 pub struct NegativePositiveVolumeIndex {
     // Периоды для скользящих средних
     nvi_ma_period: usize,

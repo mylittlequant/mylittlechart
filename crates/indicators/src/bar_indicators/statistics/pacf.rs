@@ -1,6 +1,7 @@
 // Rolling Partial Autocorrelation Function (PACF) at given lag k via Levinson-Durbin on window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct Pacf {
     window: usize,
     lag: usize,

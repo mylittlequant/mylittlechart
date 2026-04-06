@@ -30,6 +30,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// # Implementation
 ///
 /// Calculates four ROC values, smooths each with MA, applies weights, sums them.
+#[derive(Clone)]
 pub struct KnowSureThing {
     roc_periods: [usize; 4],
     sma_periods: [usize; 4],

@@ -5,7 +5,8 @@
 use crate::bar_indicators::candles::pattern_recognition::{AdvancedPatternRecognition, PatternType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct ThreeBlackCrows {
     recognizer: AdvancedPatternRecognition,
     value: f64,

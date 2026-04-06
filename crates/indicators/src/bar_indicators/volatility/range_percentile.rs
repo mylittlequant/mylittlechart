@@ -1,6 +1,7 @@
 // Range Percentile over rolling window using (High-Low)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct RangePercentile {
     window: usize,
     buffer: Vec<f64>,

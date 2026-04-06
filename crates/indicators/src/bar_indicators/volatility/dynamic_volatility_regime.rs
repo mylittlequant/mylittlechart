@@ -80,6 +80,7 @@ impl DynamicVolatilityRegimeResult {
 }
 
 /// Dynamic Volatility Regime индикатор
+#[derive(Clone)]
 pub struct DynamicVolatilityRegime {
     // Переиспользуем существующие компоненты
     atr: Atr,                               // ATR для базовой волатильности

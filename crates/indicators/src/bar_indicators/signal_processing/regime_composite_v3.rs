@@ -5,6 +5,7 @@ use crate::bar_indicators::signal_processing::spectral_energy_ratio::SpectralEne
 use crate::bar_indicators::volatility::vol_of_vol::{VoVSource, VolOfVol};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RegimeCompositeV3 {
     ser: SpectralEnergyRatio,
     vov: VolOfVol,

@@ -4,6 +4,7 @@ use crate::bar_indicators::signal_processing::spectral_slope::SpectralSlope;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::utils::math::percentile::quickselect_nth;
 
+#[derive(Clone)]
 pub struct SpectralSlopeRobustPercentile {
     inner: SpectralSlope,
     window: usize,

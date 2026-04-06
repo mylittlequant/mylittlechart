@@ -6,6 +6,7 @@ use crate::bar_indicators::channels::percentile_channels::{
 };
 use crate::bar_indicators::levels::rolling_midline::RollingMidline;
 
+#[derive(Clone)]
 pub struct DistanceToLevels {
     mid: RollingMidline,
     pct: PercentileChannels,

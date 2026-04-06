@@ -84,6 +84,7 @@ impl FloorTraderPivotLevels {
 }
 
 /// Floor Trader Pivots индикатор
+#[derive(Clone)]
 pub struct FloorTraderPivots {
     // Текущие уровни пивот
     current_levels: Option<FloorTraderPivotLevels>,

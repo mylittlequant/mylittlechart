@@ -1,6 +1,7 @@
 // Volume Z-Score over rolling window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct VolumeZscore {
     window: usize,
     buf: Vec<f64>,

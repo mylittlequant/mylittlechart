@@ -27,7 +27,8 @@ use crate::bar_indicators::utils::true_range::true_range;
 /// # Implementation
 ///
 /// Uses O(1) running sums for efficient calculation.
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct UltimateOscillator {
     period1: usize,  // Короткий период (обычно 7)
     period2: usize,  // Средний период (обычно 14)

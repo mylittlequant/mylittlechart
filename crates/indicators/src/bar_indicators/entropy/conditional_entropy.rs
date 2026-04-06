@@ -1,6 +1,7 @@
 // Conditional Entropy H(Y|X) proxy using discrete bins for r_t (Y) and r_{t-1} (X)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct ConditionalEntropy {
     window: usize,
     bins: usize,

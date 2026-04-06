@@ -9,7 +9,8 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct EhlersCyberCycle {
     alpha: f64,
     coeff1: f64,  // (1 - 0.5*alpha)^2

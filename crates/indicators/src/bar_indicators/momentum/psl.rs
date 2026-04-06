@@ -4,6 +4,7 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Psl {
     period: usize,
     buffer: ArrayVec<u8, 512>,

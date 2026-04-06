@@ -5,6 +5,7 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Lowest {
     period: usize,
     buffer: ArrayVec<f64, 512>,

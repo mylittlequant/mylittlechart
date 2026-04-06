@@ -4,6 +4,7 @@
 use super::kc::Kc;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Kp {
     kc: Kc,
     value: f64,

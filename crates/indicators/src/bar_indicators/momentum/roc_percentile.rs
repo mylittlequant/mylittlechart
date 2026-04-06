@@ -1,6 +1,7 @@
 // Percentile Rate-of-Change over window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct RocPercentile {
     period: usize,
     window: usize,

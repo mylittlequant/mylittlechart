@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// VAR Model - Vector AutoRegression
+#[derive(Clone)]
 pub struct Var {
     // Параметры модели
     p: usize,                    // Порядок VAR (количество лагов)

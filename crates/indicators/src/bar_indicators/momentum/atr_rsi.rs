@@ -62,6 +62,7 @@ impl AtrRsiResult {
 }
 
 /// ATR-Normalized RSI индикатор
+#[derive(Clone)]
 pub struct AtrRsi {
     // Переиспользуем существующие компоненты
     atr: Atr,                    // ATR индикатор
@@ -475,8 +476,8 @@ mod tests {
         let mut price = 100.0;
         for i in 0..25 {
             price -= 0.5;
-            let result = atr_rsi.update_bar(price, price + 0.1, price - 0.1, price, 1000.0);
-            
+            let _result = atr_rsi.update_bar(price, price + 0.1, price - 0.1, price, 1000.0);
+
             if i > 20 && atr_rsi.is_ready() {
                 let signal = atr_rsi.trading_signal();
                 // При падающих ценах может быть сигнал покупки

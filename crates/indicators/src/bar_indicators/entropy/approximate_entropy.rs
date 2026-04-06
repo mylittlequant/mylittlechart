@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Approximate Entropy индикатор
+#[derive(Clone)]
 pub struct ApproximateEntropy {
     period: usize,              // Период анализа
     m: usize,                   // Длина паттерна (обычно 2)

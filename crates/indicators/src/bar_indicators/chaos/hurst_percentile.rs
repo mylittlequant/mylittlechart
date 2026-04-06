@@ -3,6 +3,7 @@
 use crate::bar_indicators::chaos::hurst_exponent::HurstExponent;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct HurstPercentile {
     inner: HurstExponent,
     window: usize,

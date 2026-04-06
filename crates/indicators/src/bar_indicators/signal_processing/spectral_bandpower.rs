@@ -203,6 +203,7 @@ impl SpectralBandpowerHigh {
 }
 
 /// Base SpectralBandpower that returns all 3 bands (low, mid, high) at once
+#[derive(Clone)]
 pub struct SpectralBandpower {
     window: usize,
     fft: FastFourierTransform,

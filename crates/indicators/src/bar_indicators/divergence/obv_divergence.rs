@@ -3,6 +3,7 @@ use crate::bar_indicators::momentum::obv::Obv;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ObvDivergence {
     detector: DivergenceDetector,
     obv: Obv,

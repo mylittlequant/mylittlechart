@@ -3,6 +3,7 @@ use crate::bar_indicators::momentum::macd_histogram::MacdHistogram;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct MacdHistogramDivergence {
     detector: DivergenceDetector,
     macd_hist: MacdHistogram,

@@ -26,6 +26,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// # Implementation
 ///
 /// Uses True Range for normalization. O(1) per update with rolling sums.
+#[derive(Clone)]
 pub struct VortexIndicator {
     period: usize,
 

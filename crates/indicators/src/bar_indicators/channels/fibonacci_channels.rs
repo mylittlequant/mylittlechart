@@ -415,7 +415,7 @@ mod tests {
             fc.update_bar(price, price + 2.0, price - 2.0, price, 1000.0);
         }
         // Fibonacci channels need swings to be detected
-        let channels = fc.get_channels();
+        let _channels = fc.get_channels();
         // May or may not be ready depending on swing detection
     }
 

@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct PriceVolumeCoherenceProxy {
     window: usize,
     buf_price: Vec<f64>,

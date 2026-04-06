@@ -512,8 +512,12 @@ impl IndicatorInstance {
 ///
 /// Dropped whenever the indicator is removed, params change, or bars are reset.
 pub(crate) struct ComputeCache {
-    /// The live stateful compute engine (480-variant enum, NOT Clone).
+    /// The live stateful compute engine (480-variant enum, Clone).
     pub instance: crate::IndicatorInstance,
+    /// Snapshot of `instance` at N-1 bars (before the last bar was fed).
+    /// Used to avoid full O(N) recalc when the live bar is updated by a new tick:
+    /// restore from checkpoint, feed the updated bar, replace last output value.
+    pub checkpoint: Option<crate::IndicatorInstance>,
     /// How many bars were fed into `instance` so far.
     pub fed_bar_count: usize,
     /// FNV-1a fingerprint of (indicator_id, params) at cache creation time.
@@ -1120,12 +1124,15 @@ impl IndicatorManager {
             let params = &inst.params;
 
             // Check if we can use the incremental path.
+            // bar_diff == 1: one new confirmed bar → feed it, append output.
+            // bar_diff == 0: same bar count but live bar updated by tick → restore
+            //               from checkpoint, feed updated bar, replace last output.
             let can_increment = if let (Some(mid), Some(cache)) = (machine_id, self.compute_caches.get(&id)) {
                 let fingerprint = IndicatorCalculator::params_fingerprint(mid, params);
                 let fingerprint_ok = cache.config_fingerprint == fingerprint;
                 let bar_diff = current_bar_count.wrapping_sub(cache.fed_bar_count);
-                // Only one new bar, and fingerprint still matches.
-                fingerprint_ok && bar_diff == 1 && current_bar_count > 0
+                // One new bar OR same bar count (live-bar tick update), fingerprint ok.
+                fingerprint_ok && (bar_diff == 1 || bar_diff == 0) && current_bar_count > 0
             } else {
                 false
             };
@@ -1182,7 +1189,14 @@ impl IndicatorManager {
 
                 if let Some(indicator_id) = machine_id {
                     if let Some(mut fresh_instance) = IndicatorCalculator::build_compute_instance(indicator_id, &params_ref) {
-                        for bar in &converted_bars {
+                        // Feed all bars; capture checkpoint at N-1 (before last bar).
+                        let mut checkpoint: Option<crate::IndicatorInstance> = None;
+                        let bar_count = converted_bars.len();
+                        for (i, bar) in converted_bars.iter().enumerate() {
+                            if i + 1 == bar_count {
+                                // About to feed the last bar — save N-1 state.
+                                checkpoint = Some(fresh_instance.clone());
+                            }
                             IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
                         }
                         let fingerprint = IndicatorCalculator::params_fingerprint(indicator_id, &params_ref);
@@ -1198,6 +1212,7 @@ impl IndicatorManager {
 
                         self.compute_caches.insert(id, ComputeCache {
                             instance: fresh_instance,
+                            checkpoint,
                             fed_bar_count: current_bar_count,
                             config_fingerprint: fingerprint,
                             last_fed_bar: last_bar,
@@ -1211,37 +1226,91 @@ impl IndicatorManager {
         // ── Incremental path (sequential, O(1) per instance) ───────────────────
 
         for id in incremental_ids {
-            // Safety: classified as incremental → cache exists and bar_diff == 1.
-            let new_bar = match converted_bars.last() {
+            // Resolve bar_diff and last_bar_changed from cache.
+            let current_bar = match converted_bars.last() {
                 Some(b) => b.clone(),
                 None => continue,
             };
 
-            // Detect whether the last-bar OHLCV actually changed since the
-            // previous call.  If it did, fall through to full recalc for this
-            // instance rather than corrupting the stateful engine.
-            let last_bar_changed = {
+            let (bar_diff, last_bar_changed) = {
                 let cache = match self.compute_caches.get(&id) {
                     Some(c) => c,
                     None => continue,
                 };
-                match &cache.last_fed_bar {
+                let diff = current_bar_count.wrapping_sub(cache.fed_bar_count);
+                let changed = match &cache.last_fed_bar {
                     Some(prev) => {
-                        prev.close != new_bar.close
-                            || prev.high  != new_bar.high
-                            || prev.low   != new_bar.low
-                            || prev.open  != new_bar.open
+                        prev.close != current_bar.close
+                            || prev.high  != current_bar.high
+                            || prev.low   != current_bar.low
+                            || prev.open  != current_bar.open
                     }
-                    // No previous bar recorded — treat as changed to be safe.
                     None => true,
-                }
+                };
+                (diff, changed)
             };
 
+            // ── Case 1: bar_diff == 0, same bar count but last bar updated by tick ──
+            // Use checkpoint (N-1 state) to replay only the updated last bar.
+            if bar_diff == 0 {
+                if !last_bar_changed {
+                    // Nothing changed — skip entirely.
+                    continue;
+                }
+
+                // Checkpoint path: restore N-1 state, feed the updated last bar.
+                let (machine_id_opt, signals_enabled) = match self.instances.get(&id) {
+                    Some(inst) => {
+                        let def = self.definitions.get(&inst.type_id);
+                        (def.and_then(|d| d.machine_id), inst.signals_enabled)
+                    }
+                    None => continue,
+                };
+
+                let indicator_id = match machine_id_opt {
+                    Some(mid) => mid,
+                    None => continue,
+                };
+
+                let cache = match self.compute_caches.get_mut(&id) {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                if let Some(cp) = &cache.checkpoint {
+                    // Clone the N-1 checkpoint and feed the updated last bar.
+                    let mut working = cp.clone();
+                    let value = IndicatorCalculator::feed_bar(&mut working, &current_bar);
+                    let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value);
+
+                    // Replace the last value in each output series (not append).
+                    cache.instance = working;
+                    cache.last_fed_bar = Some(current_bar.clone());
+
+                    if let Some(instance) = self.instances.get_mut(&id) {
+                        let values_map = Arc::make_mut(&mut instance.values);
+                        for (key, val) in outputs {
+                            if let Some(vec) = values_map.get_mut(&key) {
+                                if let Some(last) = vec.last_mut() {
+                                    *last = val;
+                                }
+                            }
+                        }
+                        // Signals are only generated on bar close — skip for tick updates.
+                        let _ = signals_enabled;
+                    }
+                } else {
+                    // No checkpoint available (e.g. single-bar history) — no update needed.
+                }
+
+                continue;
+            }
+
+            // ── Case 2: bar_diff == 1, last bar is genuinely new ──
+            // Sub-case 2a: the new bar slot has OHLCV changes from the prev last bar.
+            // This can happen in PerTick mode when the live bar count just grew by 1.
+            // Fall back to full recalc for correctness.
             if last_bar_changed {
-                // The "new bar" slot was actually an updated version of what we
-                // thought was the previous confirmed bar.  This can happen in
-                // PerTick mode when the bar count grows by 1 and the last bar
-                // is live.  Fall back to full recalc for this instance.
                 let (machine_id_opt, signals_enabled, params_clone) = match self.instances.get(&id) {
                     Some(inst) => {
                         let def = self.definitions.get(&inst.type_id);
@@ -1276,7 +1345,12 @@ impl IndicatorManager {
 
                     // Rebuild cache after fallback recalc.
                     if let Some(mut fresh_instance) = IndicatorCalculator::build_compute_instance(indicator_id, &params_clone) {
-                        for bar in &converted_bars {
+                        let mut checkpoint: Option<crate::IndicatorInstance> = None;
+                        let bar_count = converted_bars.len();
+                        for (i, bar) in converted_bars.iter().enumerate() {
+                            if i + 1 == bar_count {
+                                checkpoint = Some(fresh_instance.clone());
+                            }
                             IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
                         }
                         let signal_engine = if signals_enabled {
@@ -1287,6 +1361,7 @@ impl IndicatorManager {
                         };
                         self.compute_caches.insert(id, ComputeCache {
                             instance: fresh_instance,
+                            checkpoint,
                             fed_bar_count: current_bar_count,
                             config_fingerprint: IndicatorCalculator::params_fingerprint(indicator_id, &params_clone),
                             last_fed_bar: converted_bars.last().cloned(),
@@ -1298,8 +1373,9 @@ impl IndicatorManager {
                 continue;
             }
 
-            // Happy path: one genuinely new bar, no OHLCV change on the
-            // "new bar" slot.  Feed the bar, append output values.
+            // ── Case 2b: bar_diff == 1, clean new bar — happy path ──
+            // Save current instance as the new checkpoint (N-1 state for the next
+            // tick update), then feed the new bar and append its output values.
             let (machine_id_opt, signals_enabled, indicator_name) = match self.instances.get(&id) {
                 Some(inst) => {
                     let def = self.definitions.get(&inst.type_id);
@@ -1322,21 +1398,24 @@ impl IndicatorManager {
                 None => continue,
             };
 
-            let value = IndicatorCalculator::feed_bar(&mut cache.instance, &new_bar);
+            // Save current instance (N-1) as the checkpoint before feeding the new bar.
+            cache.checkpoint = Some(cache.instance.clone());
+
+            let value = IndicatorCalculator::feed_bar(&mut cache.instance, &current_bar);
             let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value.clone());
 
-            // Append new bar index to each signal engine if present.
+            // Process signals on confirmed bar close.
             let new_signals: Vec<crate::signals::signal::Signal> = if signals_enabled {
                 if let Some(ref mut engine) = cache.signal_engine {
                     let is_last_bar = true;
                     engine.process(
                         &value,
-                        new_bar.open,
-                        new_bar.high,
-                        new_bar.low,
-                        new_bar.close,
-                        new_bar.volume,
-                        new_bar.time,
+                        current_bar.open,
+                        current_bar.high,
+                        current_bar.low,
+                        current_bar.close,
+                        current_bar.volume,
+                        current_bar.time,
                         &indicator_name,
                         is_last_bar,
                     )
@@ -1349,7 +1428,7 @@ impl IndicatorManager {
 
             // Update cache metadata.
             cache.fed_bar_count = current_bar_count;
-            cache.last_fed_bar = Some(new_bar);
+            cache.last_fed_bar = Some(current_bar);
 
             // Append the new output values to the instance's value Vecs.
             if let Some(instance) = self.instances.get_mut(&id) {

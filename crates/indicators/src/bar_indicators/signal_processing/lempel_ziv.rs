@@ -1,6 +1,7 @@
 // Lempel–Ziv complexity (binaryized returns sign sequence, rolling window)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct LempelZivComplexity {
     window: usize,
     bits: Vec<u8>,

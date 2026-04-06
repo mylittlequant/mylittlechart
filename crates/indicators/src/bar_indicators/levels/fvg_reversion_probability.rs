@@ -4,12 +4,14 @@ use crate::bar_indicators::levels::fvg_detector::FvgDetector;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 struct PendingGap {
     upper: f64,
     lower: f64,
     remain: usize,
 }
 
+#[derive(Clone)]
 pub struct FvgReversionProbability {
     det: FvgDetector,
     horizon: usize,

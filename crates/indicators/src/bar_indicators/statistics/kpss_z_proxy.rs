@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::statistics::kpss_proxy::KpssProxy;
 
+#[derive(Clone)]
 pub struct KpssZProxy {
     inner: KpssProxy,
     window: usize,

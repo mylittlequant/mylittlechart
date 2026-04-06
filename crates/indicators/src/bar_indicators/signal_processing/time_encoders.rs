@@ -7,6 +7,7 @@ pub struct TimeBuckets {
     pub session: u8, // 0..3 (Asia/Europe/US/Overnight for crypto ~UTC buckets)
 }
 
+#[derive(Clone)]
 pub struct TimeEncoders {
     pub buckets: TimeBuckets,
 }

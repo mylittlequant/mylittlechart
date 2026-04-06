@@ -48,6 +48,7 @@ impl WaveletCoefficients {
 }
 
 /// Wavelet Transform
+#[derive(Clone)]
 pub struct WaveletTransform {
     // Временные данные
     time_series: ArrayVec<f64, 512>,

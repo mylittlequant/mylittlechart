@@ -1,6 +1,7 @@
 // Rolling Lo-MacKinlay Variance Ratio test (simple m-step version) on returns
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct VarianceRatio {
     window: usize,
     m: usize,

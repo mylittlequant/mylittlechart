@@ -3,6 +3,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Dc {
     period: usize,
     highs: arrayvec::ArrayVec<f64, 512>,

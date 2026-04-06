@@ -1,6 +1,7 @@
 // Realized Volatility Z-Score: zscore of rolling close-to-close volatility
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct RealizedVolZscore {
     // for vol estimation over returns
     vol_period: usize,

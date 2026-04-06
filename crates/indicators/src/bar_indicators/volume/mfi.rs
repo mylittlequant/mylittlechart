@@ -7,6 +7,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Money Flow Index индикатор
+#[derive(Clone)]
 pub struct Mfi {
     period: usize,
     money_flows: ArrayVec<f64, 512>,  // Positive/Negative money flows

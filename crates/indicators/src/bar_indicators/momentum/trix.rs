@@ -27,6 +27,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// # Implementation
 ///
 /// Uses three cascaded EMAs followed by ROC calculation.
+#[derive(Clone)]
 pub struct Trix {
     period: usize,
     signal_period: usize,

@@ -66,6 +66,7 @@ impl RocketRsiResult {
 }
 
 /// Ehlers Rocket RSI индикатор
+#[derive(Clone)]
 pub struct EhlersRocketRsi {
     // Переиспользуем существующие компоненты
     price_smoother: MovingAverageProvider,    // Первичное сглаживание цены

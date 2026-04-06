@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Amat {
     pub fast_period: usize,
     pub slow_period: usize,

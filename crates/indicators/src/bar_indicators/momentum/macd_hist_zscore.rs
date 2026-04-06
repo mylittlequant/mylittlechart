@@ -4,6 +4,7 @@ use crate::bar_indicators::average::MovingAverageType;
 use crate::bar_indicators::momentum::macd::Macd;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct MacdHistZscore {
     macd: Macd,
     window: usize,

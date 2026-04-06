@@ -1,6 +1,7 @@
 // Rolling Jensen-Shannon divergence between two adjacent halves of a window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct JSDivergence {
     window: usize,
     bins: usize,

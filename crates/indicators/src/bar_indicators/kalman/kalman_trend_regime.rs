@@ -3,6 +3,7 @@
 use crate::bar_indicators::kalman::basic_kalman_filter::BasicKalmanFilter;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct KalmanTrendRegime {
     kf: BasicKalmanFilter,
     window: usize,

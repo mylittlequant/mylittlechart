@@ -51,6 +51,7 @@ impl DeMarkPivotLevels {
 }
 
 /// DeMark Pivot Points индикатор
+#[derive(Clone)]
 pub struct DeMarkPivots {
     // Текущие уровни
     current_levels: DeMarkPivotLevels,

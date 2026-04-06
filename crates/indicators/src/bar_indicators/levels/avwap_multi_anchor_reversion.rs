@@ -3,6 +3,7 @@
 use crate::bar_indicators::levels::anchored_vwap::{AnchoredVwap, AnchoredVwapParams};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct AvwapMultiAnchorReversion {
     anchors: Vec<AnchoredVwap>,
     window: usize,

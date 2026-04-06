@@ -38,6 +38,7 @@ pub struct ExecutionQuality {
 }
 
 /// Анализатор микроструктуры рынка
+#[derive(Clone)]
 pub struct MarketMicrostructure {
     period: usize,
     

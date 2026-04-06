@@ -122,6 +122,7 @@ impl Default for PocAnalysis {
 }
 
 /// Point of Control детектор
+#[derive(Clone)]
 pub struct PocDetector {
     // Параметры
     price_precision: u32,               // Точность цены (количество знаков после запятой)

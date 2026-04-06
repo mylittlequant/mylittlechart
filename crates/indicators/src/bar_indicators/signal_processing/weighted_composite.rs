@@ -5,6 +5,7 @@
 use crate::bar_indicators::average::sma::Sma;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct WeightedComposite {
     // weights for 4 components
     w: [f64; 4],

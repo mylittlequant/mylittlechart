@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct EngleGrangerTrendProxy {
     window: usize,
     // rolling buffers for close and time

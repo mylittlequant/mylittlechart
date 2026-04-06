@@ -109,7 +109,7 @@ mod tests {
         // RMA with period 14 has α = 1/14 ≈ 0.0714
         // EMA with period 27 has α = 2/28 ≈ 0.0714
         // So RMA(14) ≈ EMA(27) in terms of smoothing
-        let rma = Rma::new(14);
+        let _rma = Rma::new(14);
         let alpha = 1.0 / 14.0;
         assert!((alpha - 0.0714_f64).abs() < 0.001);
     }

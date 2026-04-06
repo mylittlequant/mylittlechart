@@ -161,7 +161,8 @@ impl FilterResult {
 }
 
 /// Basic Kalman Filter
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct BasicKalmanFilter {
     // Параметры модели
     dt: f64,                        // Временной шаг

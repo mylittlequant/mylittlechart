@@ -61,6 +61,7 @@ impl ClassicPivotLevels {
 }
 
 /// Classic Pivot Points индикатор
+#[derive(Clone)]
 pub struct PivotPoints {
     // Текущие уровни
     current_levels: ClassicPivotLevels,

@@ -20,6 +20,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 ///
 /// Uses ring buffer for high/low tracking. O(period) per update.
 /// Maximum period is 512.
+#[derive(Clone)]
 pub struct WilliamsR {
     period: usize,
     highs: ArrayVec<f64, 512>,

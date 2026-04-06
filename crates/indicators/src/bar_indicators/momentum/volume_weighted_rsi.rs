@@ -64,6 +64,7 @@ impl VolumeWeightedRsiResult {
 
 /// Volume Weighted RSI индикатор
 /// 🚀 Refactored: regular RSI теперь использует стандартный Rsi struct
+#[derive(Clone)]
 pub struct VolumeWeightedRsi {
     // Параметры
     period: usize,

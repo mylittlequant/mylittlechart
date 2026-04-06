@@ -1,6 +1,7 @@
 // Rolling KL divergence between two adjacent halves of a window of log-returns
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct KLDivergence {
     window: usize,
     bins: usize,

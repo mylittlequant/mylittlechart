@@ -4,6 +4,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::statistics::engle_granger_adf_proxy::EngleGrangerAdfProxy;
 use crate::bar_indicators::statistics::kpss_proxy::KpssProxy;
 
+#[derive(Clone)]
 pub struct AdfKpssComposite {
     adf: EngleGrangerAdfProxy,
     kpss_level: KpssProxy,

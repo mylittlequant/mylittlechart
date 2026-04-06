@@ -8,6 +8,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Accumulation/Distribution Line индикатор
+#[derive(Clone)]
 pub struct AccumulationDistribution {
     // Текущее значение A/D Line
     ad_value: f64,

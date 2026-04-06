@@ -25,6 +25,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// # Implementation
 ///
 /// Uses ring buffer. O(1) update complexity. Maximum period is 512.
+#[derive(Clone)]
 pub struct Roc {
     period: usize,
     buffer: ArrayVec<f64, 512>,

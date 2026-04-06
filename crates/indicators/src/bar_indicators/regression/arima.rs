@@ -7,6 +7,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// ARIMA Model - AutoRegressive Integrated Moving Average
+#[derive(Clone)]
 pub struct Arima {
     // Параметры модели
     p: usize, // AR order (авторегрессия)
@@ -372,6 +373,7 @@ impl Arima {
 }
 
 /// ARIMAX Model - ARIMA with eXogenous variables
+#[derive(Clone)]
 pub struct ArimaX {
     arima: Arima,
     

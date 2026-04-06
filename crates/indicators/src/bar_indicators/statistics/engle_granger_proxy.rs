@@ -3,6 +3,7 @@
 use crate::bar_indicators::statistics::cointegration_proxy::CointegrationProxy;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct EngleGrangerProxy {
     inner: CointegrationProxy,
     pub t_stat: f64,

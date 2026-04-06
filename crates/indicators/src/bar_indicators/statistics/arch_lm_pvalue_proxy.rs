@@ -3,6 +3,7 @@
 use crate::bar_indicators::statistics::arch_lm_proxy::ArchLmProxy;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ArchLmPvalueProxy {
     inner: ArchLmProxy,
     dof: usize,

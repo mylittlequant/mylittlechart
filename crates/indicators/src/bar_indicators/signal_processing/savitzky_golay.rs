@@ -14,6 +14,7 @@ pub enum DerivativeOrder {
 }
 
 /// Savitzky-Golay Filter
+#[derive(Clone)]
 pub struct SavitzkyGolayFilter {
     // Параметры фильтра
     window_size: usize,                         // Размер окна (должен быть нечетным)

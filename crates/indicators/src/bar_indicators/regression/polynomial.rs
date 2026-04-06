@@ -7,6 +7,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::ohlcv_field::OhlcvField;
 
 /// Polynomial Regression Model
+#[derive(Clone)]
 pub struct PolynomialRegression {
     // Параметры модели
     degree: usize,                      // Степень полинома

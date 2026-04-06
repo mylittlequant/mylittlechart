@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct WeekdayEffect {
     counts: [usize; 7],
     sums: [f64; 7],

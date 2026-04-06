@@ -1,5 +1,6 @@
 // Simplified CUSUM break detector: accumulate returns deviations; emit score of break intensity
 
+#[derive(Clone)]
 pub struct CusumBreakDetector {
     threshold: f64,
     kappa: f64,

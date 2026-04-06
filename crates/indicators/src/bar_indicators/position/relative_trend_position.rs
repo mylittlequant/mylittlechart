@@ -6,6 +6,7 @@ use crate::bar_indicators::levels::anchored_vwap::{
     AnchoredVwap, AnchoredVwapParams, AvwapAnchorMode,
 };
 
+#[derive(Clone)]
 pub struct RelativeTrendPosition {
     sma: Sma,
     avwap: AnchoredVwap,

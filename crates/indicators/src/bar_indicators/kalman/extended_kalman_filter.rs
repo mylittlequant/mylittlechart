@@ -10,21 +10,28 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 pub trait StateFunction: Send + Sync {
     fn apply(&self, state: &[f64; 2], dt: f64) -> [f64; 2];
     fn jacobian(&self, state: &[f64; 2], dt: f64) -> [[f64; 2]; 2];
+    fn clone_box(&self) -> Box<dyn StateFunction>;
 }
 
 /// Нелинейная функция наблюдения
 pub trait ObservationFunction: Send + Sync {
     fn apply(&self, state: &[f64; 2]) -> f64;
     fn jacobian(&self, state: &[f64; 2]) -> [f64; 2];
+    fn clone_box(&self) -> Box<dyn ObservationFunction>;
 }
 
 /// Модель постоянной скорости с нелинейными эффектами
+#[derive(Clone)]
 pub struct NonlinearMotionModel {
     pub friction_coefficient: f64,  // Коэффициент трения
     pub acceleration_noise: f64,    // Шум ускорения
 }
 
 impl StateFunction for NonlinearMotionModel {
+    fn clone_box(&self) -> Box<dyn StateFunction> {
+        Box::new(self.clone())
+    }
+
     fn apply(&self, state: &[f64; 2], dt: f64) -> [f64; 2] {
         let position = state[0];
         let velocity = state[1];
@@ -57,6 +64,7 @@ impl StateFunction for NonlinearMotionModel {
 }
 
 /// Нелинейная модель наблюдения (например, с логарифмическим преобразованием)
+#[derive(Clone)]
 pub struct NonlinearObservationModel {
     pub observation_type: ObservationType,
 }
@@ -70,6 +78,10 @@ pub enum ObservationType {
 }
 
 impl ObservationFunction for NonlinearObservationModel {
+    fn clone_box(&self) -> Box<dyn ObservationFunction> {
+        Box::new(self.clone())
+    }
+
     fn apply(&self, state: &[f64; 2]) -> f64 {
         let position = state[0];
         
@@ -616,6 +628,29 @@ impl ExtendedKalmanFilter {
         self.jacobian_condition_numbers.clear();
         self.nonlinearity_measures.clear();
         self.is_initialized = false;
+    }
+}
+
+impl Clone for ExtendedKalmanFilter {
+    fn clone(&self) -> Self {
+        Self {
+            state_function: self.state_function.clone_box(),
+            observation_function: self.observation_function.clone_box(),
+            dt: self.dt,
+            process_noise: self.process_noise,
+            measurement_noise: self.measurement_noise,
+            state: self.state,
+            covariance: self.covariance,
+            current_result: self.current_result.clone(),
+            state_history: self.state_history.clone(),
+            innovation_history: self.innovation_history.clone(),
+            linearization_errors: self.linearization_errors.clone(),
+            adaptive_noise: self.adaptive_noise,
+            innovation_variance: self.innovation_variance,
+            jacobian_condition_numbers: self.jacobian_condition_numbers.clone(),
+            nonlinearity_measures: self.nonlinearity_measures.clone(),
+            is_initialized: self.is_initialized,
+        }
     }
 }
 

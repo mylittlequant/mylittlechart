@@ -6,6 +6,7 @@ use crate::bar_indicators::volatility::atr_percentile::AtrPercentile;
 use crate::bar_indicators::volatility::close_to_close_vol_percentile::CloseVolPercentile;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct KalmanRegimeComposite {
     regime: KalmanRegimeScore,
     atrp: AtrPercentile,

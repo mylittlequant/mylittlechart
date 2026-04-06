@@ -126,6 +126,7 @@ impl CamarillaPivotLevels {
 }
 
 /// Camarilla Pivots индикатор
+#[derive(Clone)]
 pub struct CamarillaPivots {
     // Текущие уровни пивот
     current_levels: Option<CamarillaPivotLevels>,

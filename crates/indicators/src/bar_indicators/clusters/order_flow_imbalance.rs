@@ -53,6 +53,7 @@ impl PriceLevel {
 }
 
 /// Анализатор дисбаланса order flow
+#[derive(Clone)]
 pub struct OrderFlowImbalance {
     period: usize,
     tick_size: f64, // Минимальный размер тика для группировки цен

@@ -9,6 +9,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// - plus_di: индекс положительного направленного движения (+DI)
 /// - minus_di: индекс отрицательного направленного движения (-DI)
 /// - adx: индекс силы тренда (ADX)
+#[derive(Clone)]
 pub struct Dm {
     period: usize,
     tr_buf: ArrayVec<f64, 512>,

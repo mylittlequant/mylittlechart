@@ -153,6 +153,7 @@ impl AdaptiveVolatilityRegimeResult {
 }
 
 /// Adaptive Volatility Regime индикатор
+#[derive(Clone)]
 pub struct AdaptiveVolatilityRegime {
     // Переиспользуем существующие компоненты для расчета волатильности
     atr: Atr,                               // ATR

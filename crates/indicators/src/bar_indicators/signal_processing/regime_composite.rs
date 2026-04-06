@@ -39,6 +39,7 @@ impl Default for RegimeCompositeParams {
     }
 }
 
+#[derive(Clone)]
 pub struct RegimeComposite {
     vhf: Vhf,
     fd: FractalDimension,

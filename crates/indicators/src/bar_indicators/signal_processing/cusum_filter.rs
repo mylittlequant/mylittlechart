@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct CusumFilter {
     threshold: f64,
     last_close: Option<f64>,

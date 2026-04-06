@@ -4,6 +4,7 @@ use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::utils::math::percentile::median;
 
+#[derive(Clone)]
 pub struct EwmacRobust {
     fast_period: usize,
     slow_period: usize,

@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::volatility::vol_of_vol_percentile::VolOfVolPercentile;
 
+#[derive(Clone)]
 pub struct VolOfVolPercentileTrend {
     inner: VolOfVolPercentile,
     alpha: f64,

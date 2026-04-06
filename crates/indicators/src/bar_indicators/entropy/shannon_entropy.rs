@@ -16,6 +16,7 @@ pub enum MarketEntropyState {
 }
 
 /// Shannon Entropy индикатор
+#[derive(Clone)]
 pub struct ShannonEntropy {
     period: usize,              // Период анализа
     bins: usize,                // Количество корзин для гистограммы

@@ -3,7 +3,8 @@
 use crate::bar_indicators::momentum::rsi::Rsi;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct IftRsi {
     rsi: Rsi,
     value: f64,

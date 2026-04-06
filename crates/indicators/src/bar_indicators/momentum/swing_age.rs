@@ -1,5 +1,6 @@
 // Swing Age: bars since last local high/low (naive HH/LL detectors)
 
+#[derive(Clone)]
 pub struct SwingAge {
     lookback: usize,
     highs: Vec<f64>,

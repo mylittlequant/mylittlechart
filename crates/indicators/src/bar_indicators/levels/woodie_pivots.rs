@@ -126,6 +126,7 @@ impl WoodiePivotLevels {
 }
 
 /// Woodie Pivots индикатор
+#[derive(Clone)]
 pub struct WoodiePivots {
     // Текущие уровни пивот
     current_levels: Option<WoodiePivotLevels>,

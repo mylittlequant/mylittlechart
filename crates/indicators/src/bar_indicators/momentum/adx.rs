@@ -26,7 +26,8 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// # Implementation
 ///
 /// Uses Wilder's smoothing (RMA). O(1) update complexity.
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct Adx {
     period: usize,
     

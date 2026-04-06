@@ -4,6 +4,7 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ZigZagCandle {
     pub swing_bars: usize,
     pub period: usize,
@@ -115,7 +116,7 @@ mod tests {
             ind.update(price, i);
         }
         // Should have detected some swings
-        assert!(ind.swings().len() >= 0); // May or may not have swings depending on price action
+        let _ = ind.swings().len(); // May or may not have swings depending on price action
     }
 
     #[test]

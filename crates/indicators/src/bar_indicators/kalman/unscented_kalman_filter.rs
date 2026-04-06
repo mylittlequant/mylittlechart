@@ -153,6 +153,7 @@ impl Matrix2x2 {
 }
 
 /// Unscented Kalman Filter
+#[derive(Clone)]
 pub struct UnscentedKalmanFilter {
     // Параметры фильтра
     dt: f64,

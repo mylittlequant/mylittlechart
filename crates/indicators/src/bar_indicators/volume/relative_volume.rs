@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RelativeVolume {
     window: usize,
     vol_buffer: Vec<f64>,

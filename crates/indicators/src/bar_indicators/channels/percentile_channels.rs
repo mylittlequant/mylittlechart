@@ -4,11 +4,13 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::ohlcv_field::OhlcvField;
 use crate::bar_indicators::utils::math::percentile::quickselect_nth;
 
+#[derive(Clone)]
 pub enum PercentileBasis {
     Close,
     Range,
 }
 
+#[derive(Clone)]
 pub struct PercentileChannels {
     window: usize,
     basis: PercentileBasis,

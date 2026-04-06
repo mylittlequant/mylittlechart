@@ -1,6 +1,7 @@
 // Momentum Z-Score: zscore of close change over lookback with rolling window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct MomentumZscore {
     diff_period: usize,
     window: usize,

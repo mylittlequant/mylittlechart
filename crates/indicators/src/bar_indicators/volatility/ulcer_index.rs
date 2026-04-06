@@ -7,6 +7,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Ulcer Index индикатор
+#[derive(Clone)]
 pub struct UlcerIndex {
     period: usize,
     

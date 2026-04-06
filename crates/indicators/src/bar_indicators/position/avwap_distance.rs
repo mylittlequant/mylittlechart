@@ -5,6 +5,7 @@ use crate::bar_indicators::levels::anchored_vwap::{
     AnchoredVwap, AnchoredVwapParams, AvwapAnchorMode,
 };
 
+#[derive(Clone)]
 pub struct AvwapDistance {
     avwap: AnchoredVwap,
     pub value: f64,

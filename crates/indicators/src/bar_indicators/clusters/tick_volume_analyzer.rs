@@ -6,6 +6,7 @@ use crate::types::Tick;
 use arrayvec::ArrayVec;
 
 /// Анализатор тикового объема
+#[derive(Clone)]
 pub struct TickVolumeAnalyzer {
     period: usize,
     ticks: ArrayVec<Tick, 1024>,

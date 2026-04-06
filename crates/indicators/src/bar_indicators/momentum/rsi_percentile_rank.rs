@@ -5,7 +5,8 @@ use crate::bar_indicators::utils::math::percentile::percentile_rank;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct RsiPercentileRank {
     rsi: Rsi,
     window: usize,

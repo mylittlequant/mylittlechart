@@ -280,7 +280,7 @@ mod tests {
         let mut dc = DonchianChannel::new(20);
         for i in 0..25 {
             let price = 100.0 + (i as f64 * 0.2).sin() * 10.0;
-            let (upper, lower, middle) = dc.update_bar(price, price + 1.0, price - 1.0, price, 1000.0);
+            let (upper, lower, _middle) = dc.update_bar(price, price + 1.0, price - 1.0, price, 1000.0);
             if dc.is_ready() {
                 assert!(upper >= lower, "Upper should be >= lower");
                 assert!(dc.channel_width() >= 0.0, "Channel width should be non-negative");

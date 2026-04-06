@@ -298,7 +298,7 @@ mod tests {
         assert!(sig.validate_params(&params).is_ok());
 
         // Invalid: fast >= slow
-        let params = vec![
+        let _params = vec![
             ("efficiency_ratio_period", ParamValue::USize(10)),
             ("fast_sc_period", ParamValue::USize(30)),
             ("slow_sc_period", ParamValue::USize(30)),

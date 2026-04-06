@@ -3,7 +3,8 @@
 use crate::bar_indicators::momentum::adx::Adx;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct AdxSlope {
     adx: Adx,
     prev: f64,

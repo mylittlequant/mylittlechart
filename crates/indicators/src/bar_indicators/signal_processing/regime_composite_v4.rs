@@ -8,6 +8,7 @@ use crate::bar_indicators::volatility::{
 };
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RegimeCompositeV4 {
     hurst: HurstExponent,
     dfa: Dfa,

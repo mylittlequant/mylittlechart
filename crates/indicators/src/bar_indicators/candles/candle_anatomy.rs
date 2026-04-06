@@ -11,6 +11,7 @@ pub struct CandleAnatomyValue {
     pub long_lower: bool,
 }
 
+#[derive(Clone)]
 pub struct CandleAnatomy {
     pub value: CandleAnatomyValue,
     pub lower_thr: f64,

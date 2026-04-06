@@ -78,6 +78,7 @@ impl MarketRegimeResult {
 }
 
 /// Market Regime Filter индикатор
+#[derive(Clone)]
 pub struct MarketRegimeFilter {
     // Переиспользуем существующие компоненты
     fast_ma: MovingAverageProvider,          // Быстрая MA для тренда

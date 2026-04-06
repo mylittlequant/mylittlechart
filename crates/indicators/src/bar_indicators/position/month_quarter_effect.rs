@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct MonthQuarterEffect {
     month_counts: [usize; 12],
     month_sums: [f64; 12],

@@ -1,6 +1,7 @@
 // HL Value Area Proxy: rolling middle and bandwidth percentile from High/Low
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct HlValueArea {
     window: usize,
     mids: Vec<f64>,

@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Chaikin Money Flow индикатор
+#[derive(Clone)]
 pub struct ChaikinMoneyFlow {
     period: usize,
 

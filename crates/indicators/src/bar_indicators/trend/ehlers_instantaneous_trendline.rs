@@ -58,6 +58,7 @@ impl InstantaneousTrendlineResult {
 }
 
 /// Ehlers Instantaneous Trendline индикатор
+#[derive(Clone)]
 pub struct EhlersInstantaneousTrendline {
     // Переиспользуем существующие MA компоненты
     smoothing_ma: MovingAverageProvider,     // MA для сглаживания

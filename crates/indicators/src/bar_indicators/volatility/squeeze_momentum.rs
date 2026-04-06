@@ -25,6 +25,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// Сигналы:
 /// - Squeeze ON: низкая волатильность, готовность к движению
 /// - Squeeze OFF: начало движения, направление определяется momentum
+#[derive(Clone)]
 pub struct SqueezeMomentum {
     bb_period: usize,
     kc_period: usize,

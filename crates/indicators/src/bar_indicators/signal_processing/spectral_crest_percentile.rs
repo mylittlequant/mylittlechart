@@ -3,6 +3,7 @@
 use crate::bar_indicators::signal_processing::spectral_crest::SpectralCrest;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct SpectralCrestPercentile {
     inner: SpectralCrest,
     window: usize,

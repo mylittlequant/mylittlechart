@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::average::sma::Sma;
 
+#[derive(Clone)]
 pub struct EngleGrangerAdfProxy {
     window: usize,
     sma: Sma,

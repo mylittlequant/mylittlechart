@@ -8,6 +8,7 @@ use super::hurst_exponent::HurstExponent;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Осциллятор хаоса
+#[derive(Clone)]
 pub struct ChaosOscillator {
     period: usize,
     

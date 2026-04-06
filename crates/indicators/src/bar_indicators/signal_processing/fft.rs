@@ -87,6 +87,7 @@ impl FrequencyDomain {
 }
 
 /// Fast Fourier Transform
+#[derive(Clone)]
 pub struct FastFourierTransform {
     // Временные данные
     time_series: ArrayVec<f64, 512>,

@@ -658,6 +658,7 @@ impl IndicatorConfig {
 
 
 /// Unified wrapper over concrete indicator implementations with scalar output
+#[derive(Clone)]
 pub enum IndicatorInstance {
     // Core simple
     Sma(Sma),

@@ -4,7 +4,8 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::dpo::DetrendedPriceOscillator;
 use arrayvec::ArrayVec;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct DpoBands {
     dpo: DetrendedPriceOscillator,
     window: usize,

@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::statistics::variance_ratio::VarianceRatio;
 
+#[derive(Clone)]
 pub struct VarianceRatioAggregate {
     #[allow(dead_code)]
     windows: Vec<usize>,

@@ -5,7 +5,8 @@ use crate::bar_indicators::utils::math::percentile::quickselect_nth;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use arrayvec::ArrayVec;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct RsiPercentileBands {
     rsi: Rsi,
     window: usize,

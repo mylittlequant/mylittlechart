@@ -33,6 +33,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 ///
 /// Uses internal RSI indicator and applies Stochastic formula to RSI values.
 /// Supports configurable MA types for smoothing %K and %D lines.
+#[derive(Clone)]
 pub struct StochasticRsi {
     stoch_period: usize,
     k_period: usize,

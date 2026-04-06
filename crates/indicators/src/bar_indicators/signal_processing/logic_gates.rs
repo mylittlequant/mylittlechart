@@ -12,6 +12,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::rsi::Rsi;
 
 /// AND Gate: Returns true when both RSIs agree on overbought (>70) or oversold (<30)
+#[derive(Clone)]
 pub struct AndGate {
     rsi_short: Rsi,
     rsi_long: Rsi,
@@ -67,6 +68,7 @@ impl AndGate {
 }
 
 /// OR Gate: Returns true when either RSI is overbought (>70) or oversold (<30)
+#[derive(Clone)]
 pub struct OrGate {
     rsi_short: Rsi,
     rsi_long: Rsi,
@@ -123,6 +125,7 @@ impl OrGate {
 
 /// XOR Gate: Returns true when RSIs disagree (divergence)
 /// True when one is overbought and other is not, or one is oversold and other is not
+#[derive(Clone)]
 pub struct XorGate {
     rsi_short: Rsi,
     rsi_long: Rsi,
@@ -181,6 +184,7 @@ impl XorGate {
 
 /// SignCombiner: Combines RSI signals into {-1, 0, 1}
 /// +1 if both bullish (RSI < 30), -1 if both bearish (RSI > 70), 0 otherwise
+#[derive(Clone)]
 pub struct SignCombiner {
     rsi_short: Rsi,
     rsi_long: Rsi,

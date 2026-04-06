@@ -4,6 +4,7 @@
 use super::atr::Atr;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Vr {
     atr_fast: Atr,
     atr_slow: Atr,

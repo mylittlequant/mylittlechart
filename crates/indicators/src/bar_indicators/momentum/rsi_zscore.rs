@@ -3,6 +3,7 @@
 use crate::bar_indicators::momentum::rsi::Rsi;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RsiZscore {
     rsi: Rsi,
     window: usize,

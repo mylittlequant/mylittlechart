@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct WickSpike {
     window: usize,
     upper_buf: Vec<f64>,

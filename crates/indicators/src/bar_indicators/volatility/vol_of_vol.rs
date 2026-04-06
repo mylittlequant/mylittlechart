@@ -4,11 +4,13 @@ use crate::bar_indicators::average::MovingAverageType;
 use crate::bar_indicators::volatility::atr::Atr;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub enum VoVSource {
     Atr(usize, MovingAverageType),
     AbsReturn,
 }
 
+#[derive(Clone)]
 pub struct VolOfVol {
     source: VoVSource,
     // internal state

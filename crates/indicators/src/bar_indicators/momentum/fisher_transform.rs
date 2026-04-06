@@ -28,6 +28,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// # Implementation
 ///
 /// Uses EMA smoothing and natural log transformation. O(period) per update.
+#[derive(Clone)]
 pub struct FisherTransform {
     period: usize,
     smooth_period: usize,

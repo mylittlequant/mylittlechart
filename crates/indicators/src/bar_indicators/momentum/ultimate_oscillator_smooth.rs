@@ -4,7 +4,8 @@ use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::momentum::ultimate_oscillator::UltimateOscillator;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct UltimateOscillatorSmooth {
     uo: UltimateOscillator,
     ema: MovingAverageProvider,

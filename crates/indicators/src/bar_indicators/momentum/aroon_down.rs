@@ -3,7 +3,8 @@
 use crate::bar_indicators::momentum::aroon::Aroon;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct AroonDown {
     aroon: Aroon,
     value: f64,

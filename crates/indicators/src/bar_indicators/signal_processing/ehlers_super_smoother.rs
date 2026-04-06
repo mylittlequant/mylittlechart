@@ -52,6 +52,7 @@ impl SuperSmootherResult {
 }
 
 /// Ehlers Super Smoother индикатор
+#[derive(Clone)]
 pub struct EhlersSuperSmoother {
     // Коэффициенты фильтра
     a1: f64,                     // Коэффициент для текущей цены

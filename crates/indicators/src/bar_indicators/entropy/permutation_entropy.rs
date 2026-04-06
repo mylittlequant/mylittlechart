@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Permutation Entropy индикатор
+#[derive(Clone)]
 pub struct PermutationEntropy {
     period: usize,              // Период анализа
     order: usize,               // Порядок перестановки (3-7)

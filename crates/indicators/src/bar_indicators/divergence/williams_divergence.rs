@@ -3,6 +3,7 @@ use crate::bar_indicators::momentum::williams_r::WilliamsR;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct WilliamsDivergence {
     detector: DivergenceDetector,
     williams: WilliamsR,

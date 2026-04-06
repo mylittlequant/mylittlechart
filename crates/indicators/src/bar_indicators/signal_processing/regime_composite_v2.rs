@@ -7,6 +7,7 @@ use crate::bar_indicators::signal_processing::spectral_rolloff::SpectralRolloff;
 use crate::bar_indicators::volatility::atr_percentile::AtrPercentile;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RegimeCompositeV2 {
     flat: SpectralFlatness,
     roll: SpectralRolloff,

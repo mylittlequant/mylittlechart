@@ -8,6 +8,7 @@ use crate::bar_indicators::average::moving_average::{MovingAverageProvider, Movi
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Volume Price Trend индикатор
+#[derive(Clone)]
 pub struct VolumePriceTrend {
     // Период для сигнальной линии
     signal_period: usize,

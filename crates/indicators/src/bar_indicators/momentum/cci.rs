@@ -25,6 +25,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 ///
 /// Uses configurable MA and ring buffer for mean deviation. O(period) per update.
 /// Maximum period is 512.
+#[derive(Clone)]
 pub struct Cci {
     period: usize,
     scalar: f64,

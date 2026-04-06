@@ -6,6 +6,7 @@ use crate::bar_indicators::volatility::atr::Atr;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// ATR Channels: Middle = MA(Close), Upper = Middle + k*ATR, Lower = Middle - k*ATR
+#[derive(Clone)]
 pub struct AtrChannels {
     ma: MovingAverageProvider,
     atr: Atr,

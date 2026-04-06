@@ -4,6 +4,7 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ZigZagLookahead {
     pub lookahead: usize,
     pub period: usize,
@@ -122,7 +123,7 @@ mod tests {
             ind.update(price, i);
         }
         // May have some confirmed swings
-        assert!(ind.swings().len() >= 0);
+        let _ = ind.swings().len();
     }
 
     #[test]

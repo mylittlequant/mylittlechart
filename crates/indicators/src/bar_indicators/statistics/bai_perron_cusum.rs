@@ -3,6 +3,7 @@
 use crate::bar_indicators::statistics::cusum_break_detector::CusumBreakDetector;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct BaiPerronCusum {
     inner: CusumBreakDetector,
     seg_window: usize,

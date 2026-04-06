@@ -5,6 +5,7 @@ use crate::bar_indicators::average::MovingAverageType;
 use crate::bar_indicators::volatility::atr::Atr;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct AtrPercentile {
     atr: Atr,
     window: usize,

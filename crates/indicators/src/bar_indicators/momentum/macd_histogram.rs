@@ -3,7 +3,8 @@
 use crate::bar_indicators::momentum::macd::Macd;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct MacdHistogram {
     macd: Macd,
     value: f64,

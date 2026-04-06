@@ -34,6 +34,7 @@ impl AnalyticSignal {
 }
 
 /// Hilbert Transform
+#[derive(Clone)]
 pub struct HilbertTransform {
     // Временные данные
     time_series: ArrayVec<f64, 512>,

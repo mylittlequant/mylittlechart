@@ -3,6 +3,7 @@
 use crate::bar_indicators::signal_processing::spectral_slope::SpectralSlope;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct SpectralSlopeZscore {
     inner: SpectralSlope,
     window: usize,

@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Фрактальная размерность по методу Хигучи
+#[derive(Clone)]
 pub struct FractalDimension {
     period: usize,
     max_k: usize, // Максимальное значение k для алгоритма Хигучи

@@ -4,7 +4,8 @@ use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::momentum::rsi::Rsi;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct Tdi {
     rsi: Rsi,
     signal_ma: MovingAverageProvider,

@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct DayOfMonthWeekOfQuarterEffect {
     dom_counts: [usize; 31],
     dom_sums: [f64; 31],

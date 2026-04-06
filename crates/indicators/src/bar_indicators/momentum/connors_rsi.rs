@@ -74,6 +74,7 @@ impl ConnorsRsiResult {
 /// # Implementation
 ///
 /// Combines three normalized components. O(1) per update with rolling buffers.
+#[derive(Clone)]
 pub struct ConnorsRsi {
     updown_period: usize,
     roc_period: usize,

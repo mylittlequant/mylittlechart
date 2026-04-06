@@ -63,6 +63,7 @@ impl ParticleFilterResult {
 }
 
 /// Генератор псевдослучайных чисел (упрощенный)
+#[derive(Clone)]
 struct SimpleRng {
     state: u64,
 }
@@ -105,6 +106,7 @@ impl SimpleRng {
 }
 
 /// Particle Filter
+#[derive(Clone)]
 pub struct ParticleFilter {
     // Параметры фильтра
     num_particles: usize,

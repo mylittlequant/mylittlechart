@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 pub struct FvgDetector {
     pub bull_fvg: bool,
     pub bear_fvg: bool,

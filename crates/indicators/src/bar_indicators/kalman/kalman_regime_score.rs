@@ -3,6 +3,7 @@
 use crate::bar_indicators::kalman::kalman_trend_slope::KalmanTrendSlope;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct KalmanRegimeScore {
     inner: KalmanTrendSlope,
     mean: f64,

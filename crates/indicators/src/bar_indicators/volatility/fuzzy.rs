@@ -71,6 +71,7 @@ pub struct FuzzyCandle {
     pub lower_wick_size: CandleWickSize,
 }
 
+#[derive(Clone)]
 pub struct FuzzyCandlesticks {
     period: usize,
     threshold1: f64,

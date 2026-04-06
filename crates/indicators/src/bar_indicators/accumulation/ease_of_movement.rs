@@ -10,6 +10,7 @@ use crate::bar_indicators::average::moving_average::{MovingAverageProvider, Movi
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Ease of Movement индикатор
+#[derive(Clone)]
 pub struct EaseOfMovement {
     scale_factor: f64,
     period: usize,

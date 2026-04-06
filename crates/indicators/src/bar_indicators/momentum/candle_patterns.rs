@@ -11,6 +11,7 @@ pub enum CandlePattern {
     ShootingStar,
 }
 
+#[derive(Clone)]
 pub struct CandlePatterns {
     prev_bar: Option<(f64, f64, f64, f64)>, // (open, high, low, close)
     current_pattern: CandlePattern,

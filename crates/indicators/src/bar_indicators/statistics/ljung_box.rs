@@ -1,6 +1,7 @@
 // Rolling Ljung-Box Q statistic over k lags on returns; outputs Q (proxy for p-value usage upstream)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct LjungBox {
     window: usize,
     lags: usize,

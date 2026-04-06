@@ -1,6 +1,7 @@
 // Normalized Range and NR flags (NR4/NR7) plus percentile of range
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct NrRange {
     window: usize,
     ranges: Vec<f64>,

@@ -26,6 +26,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// # Implementation
 ///
 /// Uses four EMA instances for double smoothing. O(1) update complexity.
+#[derive(Clone)]
 pub struct TrueStrengthIndex {
     first_smoothing: usize,
     second_smoothing: usize,

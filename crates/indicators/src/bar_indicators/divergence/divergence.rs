@@ -21,7 +21,7 @@ pub struct DivergenceSignal {
     pub dtype: DivergenceType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DivergenceDetector {
     pub signals: ArrayVec<DivergenceSignal, 512>,
     pub last_signal: Option<DivergenceSignal>,

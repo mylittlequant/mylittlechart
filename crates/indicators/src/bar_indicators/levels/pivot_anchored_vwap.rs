@@ -1,6 +1,7 @@
 // Pivot-Anchored VWAP: anchor at last detected pivot high/low (simple HH/LL)
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct PivotAnchoredVwap {
     lookback: usize,
     highs: Vec<f64>,

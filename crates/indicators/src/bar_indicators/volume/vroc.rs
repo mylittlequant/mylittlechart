@@ -8,6 +8,7 @@ use crate::bar_indicators::average::moving_average::{MovingAverageProvider, Movi
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// Volume Rate of Change индикатор
+#[derive(Clone)]
 pub struct VolumeRateOfChange {
     period: usize,
     signal_period: usize,

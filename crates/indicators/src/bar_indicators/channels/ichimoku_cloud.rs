@@ -491,7 +491,7 @@ mod tests {
     fn test_ichimoku_cloud_creation() {
         let ic = IchimokuCloud::new();
         assert!(!ic.is_ready());
-        let (tenkan, kijun, senkou_b, displacement) = ic.get_params();
+        let (tenkan, kijun, _senkou_b, _displacement) = ic.get_params();
         assert_eq!(tenkan, 9);
         assert_eq!(kijun, 26);
     }

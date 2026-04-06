@@ -135,6 +135,7 @@ impl MultiTimeframeMomentumResult {
 }
 
 /// Multi-ResearchTimeframe Momentum Divergence индикатор
+#[derive(Clone)]
 pub struct MultiTimeframeMomentumDivergence {
     // Переиспользуем MovingAverage для разных таймфреймов
     short_momentum_ma: MovingAverageProvider,        // Короткий momentum (5 периодов)

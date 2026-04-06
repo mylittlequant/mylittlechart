@@ -143,6 +143,7 @@ impl NeuralMomentumNetworkResult {
 }
 
 /// Neural Momentum Network индикатор
+#[derive(Clone)]
 pub struct NeuralMomentumNetwork {
     // Переиспользуем существующие компоненты для расчета входных признаков
     rsi_ma: MovingAverageProvider,              // RSI-подобный индикатор

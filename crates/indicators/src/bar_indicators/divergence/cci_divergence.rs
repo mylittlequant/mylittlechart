@@ -3,6 +3,7 @@ use crate::bar_indicators::momentum::cci::Cci;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct CciDivergence {
     detector: DivergenceDetector,
     cci: Cci,

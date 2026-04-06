@@ -19,6 +19,7 @@ pub enum CmoMaType {
 }
 
 /// Chande Momentum Oscillator для VIDYA
+#[derive(Clone)]
 pub struct ChandeMomentumOscillator {
     period: usize,
     ma_type: CmoMaType,
@@ -216,6 +217,7 @@ impl VidyaResult {
 }
 
 /// Variable Index Dynamic Average
+#[derive(Clone)]
 pub struct VariableIndexDynamicAverage {
     // Параметры
     period: usize,

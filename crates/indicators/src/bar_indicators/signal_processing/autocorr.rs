@@ -1,6 +1,7 @@
 // Return Autocorrelation at lag L over rolling window N
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct Autocorr {
     lag: usize,
     window: usize,

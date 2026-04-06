@@ -79,6 +79,7 @@ impl MarketSentiment {
 }
 
 /// TRIN (Arms Index) индикатор
+#[derive(Clone)]
 pub struct Trin {
     // Текущее значение TRIN
     current_value: f64,

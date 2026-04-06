@@ -16,6 +16,7 @@ pub enum FilterType {
 }
 
 /// Butterworth Filter
+#[derive(Clone)]
 pub struct ButterworthFilter {
     // Параметры фильтра
     filter_type: FilterType,

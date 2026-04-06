@@ -4,7 +4,8 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::macd::Macd;
 
 /// Schaff Trend Cycle (STC): Stochastic of MACD
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct Stc {
     macd: Macd,
     k_ma: MovingAverageProvider, // smoothing for %K

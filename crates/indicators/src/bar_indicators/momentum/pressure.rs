@@ -7,6 +7,7 @@ use crate::bar_indicators::average::moving_average::{
 };
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct Pressure {
     atr: Atr,
     avg_volume: MovingAverageWithField,

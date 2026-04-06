@@ -104,6 +104,7 @@ impl VolatilityBreakoutResult {
 }
 
 /// Volatility Breakout Detector индикатор
+#[derive(Clone)]
 pub struct VolatilityBreakoutDetector {
     // Переиспользуем существующие компоненты
     atr: Atr,                            // ATR для основной волатильности
@@ -686,12 +687,12 @@ mod tests {
             let base_price = 100.0;
             let volatility = if i > 15 { 3.0 } else { 0.5 };
             let price = base_price + i as f64 * 0.2;
-            
-            let result = vbd.update_bar(
-                price, 
-                price + volatility, 
-                price - volatility, 
-                price, 
+
+            let _result = vbd.update_bar(
+                price,
+                price + volatility,
+                price - volatility,
+                price,
                 1000.0
             );
             

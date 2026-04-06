@@ -3,6 +3,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::entropy::mutual_information::MutualInformation;
 
+#[derive(Clone)]
 pub struct CrossMutualInformationLags {
     indicators: Vec<MutualInformation>,
     #[allow(dead_code)]

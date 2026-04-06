@@ -3,7 +3,8 @@
 use crate::bar_indicators::kalman::basic_kalman_filter::BasicKalmanFilter;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct RtsSmoother {
     kf: BasicKalmanFilter,
     last_value: f64,

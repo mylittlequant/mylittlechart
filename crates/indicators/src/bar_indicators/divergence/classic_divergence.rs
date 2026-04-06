@@ -2,6 +2,7 @@ use crate::bar_indicators::divergence::divergence::{DivergenceDetector, Divergen
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ClassicDivergence {
     detector: DivergenceDetector,
     prices: ArrayVec<f64, 512>,

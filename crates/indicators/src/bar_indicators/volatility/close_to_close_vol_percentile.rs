@@ -1,6 +1,7 @@
 // Close-to-Close Volatility Percentile over rolling window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct CloseVolPercentile {
     #[allow(dead_code)]
     vol_window: usize,

@@ -1,5 +1,6 @@
 // Half-Life of Mean Reversion (Ornstein–Uhlenbeck proxy) from AR(1) phi: hl = -ln(2)/ln(phi)
 
+#[derive(Clone)]
 pub struct HalfLifeMr {
     window: usize,
     vals: Vec<f64>,

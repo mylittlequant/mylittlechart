@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct BosChochDetector {
     lookback: usize,
     highs: Vec<f64>,

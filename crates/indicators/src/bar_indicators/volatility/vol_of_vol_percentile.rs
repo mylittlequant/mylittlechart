@@ -3,6 +3,7 @@
 use crate::bar_indicators::average::MovingAverageType;
 use crate::bar_indicators::volatility::vol_of_vol::{VoVSource, VolOfVol};
 
+#[derive(Clone)]
 pub struct VolOfVolPercentile {
     vov: VolOfVol,
     window: usize,

@@ -4,6 +4,7 @@ use crate::bar_indicators::levels::fvg_detector::FvgDetector;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 pub struct FvgIntensityAltScore {
     det: FvgDetector,
     alpha: f64,

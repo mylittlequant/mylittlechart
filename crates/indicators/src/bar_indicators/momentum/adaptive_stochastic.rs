@@ -74,6 +74,7 @@ impl AdaptiveStochasticResult {
 }
 
 /// Adaptive Stochastic индикатор
+#[derive(Clone)]
 pub struct AdaptiveStochastic {
     // Переиспользуем существующие компоненты
     atr: Atr,                        // ATR для анализа волатильности
@@ -604,8 +605,8 @@ mod tests {
         // Создаем условия для перепроданности
         for i in 0..20 {
             let price = 100.0 - i as f64 * 2.0; // Падающие цены
-            let result = adaptive_stoch.update_bar(price, price + 0.5, price - 0.5, price, 1000.0);
-            
+            let _result = adaptive_stoch.update_bar(price, price + 0.5, price - 0.5, price, 1000.0);
+
             if i > 15 && adaptive_stoch.is_ready() {
                 let signal = adaptive_stoch.trading_signal();
                 let crossover = adaptive_stoch.crossover_signal();

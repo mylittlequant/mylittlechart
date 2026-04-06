@@ -26,7 +26,8 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// # Implementation
 ///
 /// Uses sliding window for historical prices. O(period) per update.
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct DetrendedPriceOscillator {
     period: usize,
     lookback_offset: usize,

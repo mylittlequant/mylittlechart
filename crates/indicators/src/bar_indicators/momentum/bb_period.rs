@@ -5,6 +5,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::average::moving_average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct BbPeriod {
     period: usize,
     stddev_mult: f64,

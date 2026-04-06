@@ -1,6 +1,7 @@
 // Rolling Mutual Information between r_t and r_{t-lag} using fixed bins and O(1) histogram updates
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct MutualInformation {
     window: usize,
     lag: usize,

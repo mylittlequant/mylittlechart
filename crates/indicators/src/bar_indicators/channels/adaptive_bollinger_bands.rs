@@ -691,15 +691,15 @@ mod tests {
         // Период низкой волатильности
         for i in 0..15 {
             let price = 100.0 + (i as f64 * 0.01);
-            let result = abb.update_bar(price, price + 0.01, price - 0.01, price, 1000.0);
+            let _result = abb.update_bar(price, price + 0.01, price - 0.01, price, 1000.0);
         }
         let low_vol_period = abb.current_period;
         let low_vol_multiplier = abb.current_multiplier;
-        
+
         // Период высокой волатильности
         for i in 15..30 {
             let price = 100.0 + (i as f64 * 0.5 * (i as f64).sin());
-            let result = abb.update_bar(price, price + 2.0, price - 2.0, price, 1000.0);
+            let _result = abb.update_bar(price, price + 2.0, price - 2.0, price, 1000.0);
         }
         let high_vol_period = abb.current_period;
         let high_vol_multiplier = abb.current_multiplier;

@@ -23,6 +23,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 ///
 /// Uses ring buffer for high/low tracking. O(period_k) per update for min/max scan.
 /// Maximum period is 512.
+#[derive(Clone)]
 pub struct Stochastics {
     period_k: usize,
     period_d: usize,

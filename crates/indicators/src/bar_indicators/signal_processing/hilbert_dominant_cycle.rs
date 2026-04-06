@@ -57,6 +57,7 @@ impl DominantCycleResult {
 }
 
 /// Hilbert Transform Dominant Cycle индикатор
+#[derive(Clone)]
 pub struct HilbertDominantCycle {
     // Буферы для Hilbert Transform (требуется минимум 7 значений)
     prices: ArrayVec<f64, 32>,

@@ -14,7 +14,8 @@ use crate::bar_indicators::momentum::adx::Adx;
 /// - When +DI > -DI: uptrend
 /// - When -DI > +DI: downtrend
 /// - Crossovers signal potential trend changes
-#[derive(Debug)]
+
+#[derive(Clone)]
 pub struct DiPlusMinus {
     adx: Adx,
 }

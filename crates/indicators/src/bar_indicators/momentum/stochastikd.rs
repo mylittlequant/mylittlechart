@@ -6,6 +6,7 @@ use arrayvec::ArrayVec;
 use std::collections::VecDeque;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct StochastikD {
     period_k: usize,
     period_d: usize,

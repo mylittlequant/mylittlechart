@@ -3,6 +3,7 @@ use crate::bar_indicators::momentum::stochastics::Stochastics;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct StochasticDivergence {
     detector: DivergenceDetector,
     stoch: Stochastics,

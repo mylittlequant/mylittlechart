@@ -1,6 +1,7 @@
 // Rolling Midline: average of High/Low over window
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct RollingMidline {
     window: usize,
     sum: f64,

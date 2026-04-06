@@ -7,6 +7,7 @@ use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
 /// GARCH Model - Generalized AutoRegressive Conditional Heteroskedasticity
+#[derive(Clone)]
 pub struct Garch {
     // Параметры модели
     p: usize, // ARCH order (лаги квадратов остатков)
@@ -405,6 +406,7 @@ impl Garch {
 }
 
 /// EGARCH Model - Exponential GARCH with asymmetric effects
+#[derive(Clone)]
 pub struct EGarch {
     // Базовые параметры
     p: usize, // ARCH order

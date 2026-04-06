@@ -3,6 +3,7 @@
 use crate::bar_indicators::utils::math::percentile::quartiles;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct RollingQuartiles {
     window: usize,
     buf: Vec<f64>,

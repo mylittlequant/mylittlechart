@@ -20,6 +20,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 /// # Implementation
 ///
 /// Cumulative calculation. O(1) per update.
+#[derive(Clone)]
 pub struct Obv {
     value: f64,
     prev_close: f64,

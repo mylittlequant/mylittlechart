@@ -4,6 +4,7 @@
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct ZigZagClassic {
     pub threshold_percent: Option<f64>,
     pub threshold_abs: Option<f64>,

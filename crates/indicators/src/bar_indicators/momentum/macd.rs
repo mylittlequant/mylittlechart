@@ -21,6 +21,7 @@ use crate::bar_indicators::ohlcv_field::OhlcvField;
 /// # Implementation
 ///
 /// Uses configurable moving averages for all three components. O(1) update complexity.
+#[derive(Clone)]
 pub struct Macd {
     fast_ma: MovingAverageProvider,
     slow_ma: MovingAverageProvider,

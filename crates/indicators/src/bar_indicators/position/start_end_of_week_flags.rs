@@ -2,6 +2,7 @@
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct StartEndOfWeekFlags {
     window_days: u32,
     pub start_flag: f64,

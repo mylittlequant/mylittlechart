@@ -38,6 +38,7 @@ impl MesaAdaptiveResult {
 }
 
 /// MESA Adaptive Moving Average индикатор
+#[derive(Clone)]
 pub struct MesaAdaptiveMA {
     // Переиспользуем существующие MA компоненты
     fast_ma: MovingAverageProvider,      // Быстрая MA для I компонента

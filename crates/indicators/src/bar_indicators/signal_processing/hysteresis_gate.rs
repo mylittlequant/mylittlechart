@@ -6,6 +6,7 @@
 use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::rsi::Rsi;
 
+#[derive(Clone)]
 pub struct HysteresisGate {
     lower: f64,
     upper: f64,

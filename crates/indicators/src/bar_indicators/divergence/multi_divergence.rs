@@ -5,6 +5,7 @@ use crate::bar_indicators::momentum::macd::Macd;
 use arrayvec::ArrayVec;
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct MultiDivergence {
     detector: DivergenceDetector,
     rsi: Rsi,

@@ -28,6 +28,7 @@ pub enum LevelType {
 }
 
 /// Анализатор объемно-взвешенных ценовых уровней
+#[derive(Clone)]
 pub struct VolumeWeightedPriceLevels {
     period: usize,
     price_precision: f64,

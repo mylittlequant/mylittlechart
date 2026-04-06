@@ -117,6 +117,7 @@ impl AdaptationResult {
 }
 
 /// Adaptive Moving Average
+#[derive(Clone)]
 pub struct AdaptiveMovingAverage {
     // Основные параметры
     period: usize,

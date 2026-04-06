@@ -4,6 +4,7 @@ use crate::bar_indicators::indicator_value::IndicatorValue;
 use crate::bar_indicators::momentum::highest::Highest;
 use crate::bar_indicators::momentum::lowest::Lowest;
 
+#[derive(Clone)]
 pub struct SfpDetector {
     #[allow(dead_code)]
     lookback: usize,

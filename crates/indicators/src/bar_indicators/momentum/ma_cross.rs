@@ -3,6 +3,7 @@
 use crate::bar_indicators::average::{MovingAverageProvider, MovingAverageType};
 use crate::bar_indicators::indicator_value::IndicatorValue;
 
+#[derive(Clone)]
 pub struct MaCross {
     fast_period: usize,
     slow_period: usize,

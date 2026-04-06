@@ -5,6 +5,7 @@
 // Measures information flow from volume to price
 
 use crate::bar_indicators::indicator_value::IndicatorValue;
+#[derive(Clone)]
 pub struct TransferEntropy {
     window: usize,
     lag: usize,
