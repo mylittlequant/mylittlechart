@@ -114,13 +114,16 @@ impl ChartApp {
             AgentCli::Codex  => CliTool::Codex,
             AgentCli::Gemini => CliTool::Gemini,
         };
-        let config = SessionConfig { tool, ..SessionConfig::default() };
+        let workdir = self.agent.cli_workdir(cli);
+        let _ = std::fs::create_dir_all(&workdir);
+        eprintln!("[gate4agent] ensure_pty cli={:?} cwd={}", cli, workdir.display());
+        let config = SessionConfig { tool, working_dir: workdir, ..SessionConfig::default() };
         match self.bridge.runtime().block_on(self.agent.start_pty(cli, config)) {
             Ok(()) => {
                 self.sidebar_state.agent_session_active = true;
-                eprintln!("[ChartApp] Agent PTY auto-started ({:?})", cli);
+                eprintln!("[gate4agent] PTY auto-started ({:?})", cli);
             }
-            Err(e) => eprintln!("[ChartApp] Failed to auto-start agent PTY: {}", e),
+            Err(e) => eprintln!("[gate4agent] Failed to auto-start PTY: {}", e),
         }
     }
 

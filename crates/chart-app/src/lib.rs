@@ -1967,6 +1967,14 @@ impl ChartApp {
             ] {
                 self.agent.load_latest_history(cli);
             }
+            // If sidebar was restored with the Agents panel + PTY mode, spawn the
+            // PTY now so the user sees a live terminal on reload (otherwise PTY
+            // only spawns on first click, leaving an empty box).
+            if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents
+                && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty
+            {
+                self.ensure_agent_session_for_mode();
+            }
         }
 
         // Reset per-tick accumulators for profiling.
