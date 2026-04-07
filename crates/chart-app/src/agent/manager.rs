@@ -160,7 +160,9 @@ impl AgentSessionManager {
                         had_events = true;
                         match event {
                             AgentEvent::PtyRaw { data } => {
-                                self.pty_parser.process(data.as_bytes());
+                                // data is now Vec<u8> — feed raw bytes directly
+                                // to vt100 (it handles split UTF-8 sequences).
+                                self.pty_parser.process(&data);
                             }
                             AgentEvent::Exited { .. } => {
                                 self.session_active = false;
@@ -348,7 +350,16 @@ impl AgentSessionManager {
     ///
     /// No OS handles are included — safe to clone and send to a render thread.
     pub fn snapshot(&self) -> AgentRenderSnapshot {
+        // Even when no session is active, preserve chat history so the user
+        // sees previous messages instead of "Click Start to begin". A new
+        // session will be lazy-started on the next send.
         if !self.session_active {
+            if !self.chat_messages.is_empty() {
+                return AgentRenderSnapshot {
+                    mode: AgentSnapshotMode::Chat(self.chat_messages.clone()),
+                    session_active: false,
+                };
+            }
             return AgentRenderSnapshot {
                 mode: AgentSnapshotMode::Idle,
                 session_active: false,

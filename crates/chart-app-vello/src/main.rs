@@ -4036,12 +4036,45 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // ── Agents panel: drain PTY events and force redraw every wake-up ───
+        // PTY data arrives on a background thread via broadcast channel and
+        // does not wake winit on its own. We must:
+        //   1. Drain pending events into the vt100 parser BEFORE the FPS cap
+        //      early-return, otherwise data piles up for seconds.
+        //   2. Mark the sidebar dirty when bytes arrive.
+        //   3. request_redraw() the window so winit doesn't sleep on
+        //      WaitUntil between frames — this drives the loop at full FPS
+        //      while the Agents panel is open.
+        let mut agents_open_anywhere = false;
+        for pw in self.windows.values_mut() {
+            if pw.chart.sidebar_state.is_right_open()
+                && pw.chart.sidebar_state.right_panel
+                    == sidebar_content::state::RightSidebarPanel::Agents
+            {
+                agents_open_anywhere = true;
+                if pw.chart.agent.drain_events() {
+                    pw.chart.sidebar_data_dirty = true;
+                    pw.sidebar_dirty_scene = true;
+                }
+                // Keep sidebar_state.agent_session_active in sync with the
+                // manager: sessions can exit on their own (PipeSessionEnd,
+                // process death) without going through a UI handler.
+                pw.chart.sidebar_state.agent_session_active = pw.chart.agent.is_active();
+                // Always mark dirty so cursor blink and incoming data render.
+                pw.sidebar_dirty_scene = true;
+                pw.window.request_redraw();
+            }
+        }
+
         // ── FPS cap guard — must be the very first check ─────────────────────
         // winit wakes the event loop on every mouse event (CursorMoved at
         // 125-500 Hz), which preempts the WaitUntil timer set at the end of
         // this method.  We exit early here so no scene work or GPU submission
         // happens until the target frame interval has actually elapsed.
-        if self.fps_limit > 0 {
+        //
+        // EXCEPTION: when an Agents panel is open we must NOT skip frames —
+        // PTY output needs to be rendered as fast as possible.
+        if self.fps_limit > 0 && !agents_open_anywhere {
             let target_dt = std::time::Duration::from_secs_f64(1.0 / self.fps_limit as f64);
             if self.last_frame_instant.elapsed() < target_dt {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -7147,17 +7180,10 @@ impl ApplicationHandler for App<'_> {
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
             }
-            // Force-redraw sidebar every frame when Agents panel is open so PTY
-            // streams render in real-time (no waiting for dirty flags). Also drains
-            // pending agent events so the snapshot is fresh on every render.
-            if pw.chart.sidebar_state.is_right_open()
-                && pw.chart.sidebar_state.right_panel
-                    == sidebar_content::state::RightSidebarPanel::Agents
-            {
-                let _ = pw.chart.agent.drain_events();
-                pw.sidebar_dirty_scene = true;
-            }
         }
+        // Note: Agents-panel force-redraw is handled at the very top of
+        // about_to_wait so it runs even when the FPS cap would otherwise
+        // early-return. See `agents_open_anywhere` block above.
 
         let _t7 = std::time::Instant::now();
 
@@ -7366,7 +7392,9 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Set event loop control flow based on FPS limit ──────────────────
-        if self.fps_limit > 0 {
+        // When Agents panel is open we use Poll mode to drive PTY rendering
+        // at maximum FPS regardless of the user-configured cap.
+        if self.fps_limit > 0 && !agents_open_anywhere {
             let target_dt = std::time::Duration::from_secs_f64(1.0 / self.fps_limit as f64);
             let elapsed = self.last_frame_instant.elapsed();
             if elapsed < target_dt {
