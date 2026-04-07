@@ -3641,8 +3641,8 @@ fn render_agents_panel(
         y += btn_h + gap;
     }
 
-    // ── Debug session-picker button ───────────────────────────────────────────
-    {
+    // ── Session-history button (Chat mode only) ───────────────────────────────
+    if state.agent_mode == AgentPanelMode::Chat {
         let n = state.agent_past_session_count;
         let label = format!("prev sessions ({})", n);
         let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);

@@ -5605,28 +5605,32 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(bytes) => {
-                    let cli = self.sidebar_state.agent_cli;
-                    if self.agent.is_active(cli) {
-                        let text = String::from_utf8_lossy(&bytes).to_string();
-                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
-                    }
+                crate::text_input::FieldAction::RawInput(_) => {
+                    // RawInput is for AgentPty, not HexColor — ignore here.
                 }
+            }
+            return;
+        }
+        // Agent PTY input — route raw characters directly to the PTY.
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
+            let action = self.text_input.on_char(ch);
+            if let crate::text_input::FieldAction::RawInput(bytes) = action {
+                let cli = self.sidebar_state.agent_cli;
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
             }
             return;
         }
         // Agent chat input — route printable characters and Enter to TextInputManager.
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             if ch == '\r' || ch == '\n' {
-                // Enter sends the message via the agent:send path.
+                // Enter lazy-spawns a session if needed and sends the message.
                 let cli = self.sidebar_state.agent_cli;
-                if self.agent.is_active(cli) {
-                    let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-                    if !text.is_empty() {
-                        let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
-                        self.sidebar_state.agent_input_buffer.clear();
-                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                    }
+                let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                if !text.is_empty() {
+                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
+                    self.sidebar_state.agent_input_buffer.clear();
+                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
                 }
             } else {
                 let _action = self.text_input.on_char(ch);
@@ -6828,13 +6832,20 @@ impl ChartApp {
                     }
                 }
                 crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(bytes) => {
-                    let cli = self.sidebar_state.agent_cli;
-                    if self.agent.is_active(cli) {
-                        let text = String::from_utf8_lossy(&bytes).to_string();
-                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
-                    }
+                crate::text_input::FieldAction::RawInput(_) => {
+                    // RawInput is for AgentPty, not HexColor — ignore here.
                 }
+            }
+            return;
+        }
+
+        // ── Agent PTY key routing ──────────────────────────────────────────────
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
+            let action = self.text_input.on_key(key);
+            if let crate::text_input::FieldAction::RawInput(bytes) = action {
+                let cli = self.sidebar_state.agent_cli;
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
             }
             return;
         }
@@ -8121,10 +8132,16 @@ impl ChartApp {
                 self.text_input.blur();
             }
             self.agent_pty_hover_focused = false;
+            // Populate chat view with latest history from disk on switch to Chat mode.
+            let cli = self.sidebar_state.agent_cli;
+            self.agent.load_latest_history(cli);
             return;
         }
         if widget_id == "agent:cli_cycle" {
             self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
+            // Populate chat view with latest history for the newly selected CLI.
+            let cli = self.sidebar_state.agent_cli;
+            self.agent.load_latest_history(cli);
             return;
         }
         if widget_id == "agent:load_prev_session" {
@@ -8204,28 +8221,14 @@ impl ChartApp {
             };
             if !text.is_empty() {
                 let cli = self.sidebar_state.agent_cli;
-                if !self.agent.is_active(cli) {
-                    use sidebar_content::state::AgentCli;
-                    use gate4agent::{SessionConfig, CliTool};
-                    let tool = match cli {
-                        AgentCli::Claude => CliTool::ClaudeCode,
-                        AgentCli::Codex  => CliTool::Codex,
-                        AgentCli::Gemini => CliTool::Gemini,
-                    };
-                    let config = SessionConfig { tool, ..SessionConfig::default() };
-                    match self.bridge.runtime().block_on(self.agent.start_pipe(cli, config, &text)) {
-                        Ok(()) => {
-                            self.sidebar_state.agent_session_active = true;
-                            self.sidebar_state.agent_input_buffer.clear();
-                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                            eprintln!("[ChartApp] Agent Chat session started ({:?})", cli);
-                        }
-                        Err(e) => eprintln!("[ChartApp] Failed to start agent Chat: {}", e),
+                // send_chat lazy-spawns on the first call — no need to check is_active.
+                match self.bridge.runtime().block_on(self.agent.send_chat(cli, &text)) {
+                    Ok(()) => {
+                        self.sidebar_state.agent_session_active = true;
+                        self.sidebar_state.agent_input_buffer.clear();
+                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
                     }
-                } else {
-                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
-                    self.sidebar_state.agent_input_buffer.clear();
-                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                    Err(e) => eprintln!("[ChartApp] Failed to send agent chat: {}", e),
                 }
             }
             return;

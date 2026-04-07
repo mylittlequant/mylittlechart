@@ -1956,10 +1956,17 @@ impl ChartApp {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
-        // Autostart all CLI sessions on the very first tick (runtime is ready here).
+        // Load latest CLI history on the very first tick (runtime is ready here).
+        // Sessions are no longer autostarted — they lazy-spawn on first user input.
         if !self.agent_autostarted {
             self.agent_autostarted = true;
-            self.bridge.runtime().block_on(self.agent.autostart_all());
+            for cli in [
+                gate4agent::AgentCli::Claude,
+                gate4agent::AgentCli::Codex,
+                gate4agent::AgentCli::Gemini,
+            ] {
+                self.agent.load_latest_history(cli);
+            }
         }
 
         // Reset per-tick accumulators for profiling.
