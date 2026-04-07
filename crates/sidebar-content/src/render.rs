@@ -96,7 +96,7 @@ pub struct RightSidebarResult {
     /// PTY terminal size in columns and rows, computed from the content area
     /// pixel dimensions.  `None` when the Agents panel is not rendered.
     ///
-    /// `char_w = 7.0`, `char_h = 14.0` matches the PTY renderer character grid.
+    /// `char_w = 7.0`, `char_h = 19.0` matches the PTY renderer character grid.
     pub agent_terminal_size: Option<(u16, u16)>,
 
     /// Agent input field rect (for TIM `update_field`).
@@ -121,8 +121,22 @@ pub struct RightSidebarResult {
     /// Combined with `agent_content_rect.height` to compute the scroll max.
     pub agent_chat_content_height: f64,
 
-    /// Total content height of the agent PTY area (pixels = rows * 14.0).
+    /// Total content height of the agent PTY area (pixels = rows * 19.0).
     pub agent_pty_content_height: f64,
+
+    /// Scrollbar handle rect for the agent chat area.
+    pub agent_chat_scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect for the agent chat area.
+    pub agent_chat_scrollbar_track_rect: Option<WidgetRect>,
+    /// Scrollbar handle rect for the agent PTY area.
+    pub agent_pty_scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect for the agent PTY area.
+    pub agent_pty_scrollbar_track_rect: Option<WidgetRect>,
+
+    /// Viewport height of the agent chat area (for drag math).
+    pub agent_chat_viewport_h: f64,
+    /// Viewport height of the agent PTY area (for drag math).
+    pub agent_pty_viewport_h: f64,
 }
 
 // =============================================================================
@@ -3738,7 +3752,7 @@ fn render_agents_panel(
         let terminal_rect = WidgetRect::new(x, y, inner_w, content_h);
         result.agent_terminal_rect = Some(terminal_rect);
         let pty_cols = ((inner_w / 7.0) as u16).max(1);
-        let pty_rows = ((content_h / 14.0) as u16).max(1);
+        let pty_rows = ((content_h / 19.0) as u16).max(1);
         result.agent_terminal_size = Some((pty_cols, pty_rows));
     }
 
@@ -3751,11 +3765,15 @@ fn render_agents_panel(
             let pty_rows = snapshot
                 .and_then(|s| if let crate::agent_types::AgentSnapshotMode::Pty(ref g) = s.mode { Some(g.rows) } else { None })
                 .unwrap_or(24) as f64;
-            let pty_content_h = pty_rows * 14.0;
+            let pty_content_h = pty_rows * 19.0;
             result.agent_pty_content_height = pty_content_h;
             let max_pty_scroll = (pty_content_h - content_h).max(0.0);
             let pty_scroll = state.pty_scroll.offset.clamp(0.0, max_pty_scroll);
-            render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h, pty_scroll);
+            if let Some((handle_rect, track_rect)) = render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h, pty_scroll) {
+                result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
+                result.agent_pty_scrollbar_track_rect = Some(track_rect);
+            }
+            result.agent_pty_viewport_h = content_h;
         } else {
             // PTY tab selected but no data yet — render empty terminal area.
             ctx.set_fill_color("#0d0d12");
@@ -3766,7 +3784,11 @@ fn render_agents_panel(
         result.agent_chat_content_height = chat_content_h;
         let max_chat_scroll = (chat_content_h - content_h).max(0.0);
         let chat_scroll = state.chat_scroll.offset.clamp(0.0, max_chat_scroll);
-        render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll);
+        if let Some((handle_rect, track_rect)) = render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll) {
+            result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
+            result.agent_chat_scrollbar_track_rect = Some(track_rect);
+        }
+        result.agent_chat_viewport_h = content_h;
     } else {
         // Chat tab selected but no data yet — render empty area.
         ctx.set_fill_color("#0d0d12");
@@ -3923,6 +3945,8 @@ fn render_agents_panel(
 // =============================================================================
 
 /// Render a PTY terminal grid into the content area.
+///
+/// Returns `(handle_rect, track_rect)` for the scrollbar drawn (if any).
 fn render_agents_pty(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
@@ -3932,7 +3956,7 @@ fn render_agents_pty(
     w: f64,
     h: f64,
     scroll_offset: f64,
-) {
+) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::AgentSnapshotMode;
 
     // Terminal black background.
@@ -3943,11 +3967,11 @@ fn render_agents_pty(
         if let AgentSnapshotMode::Pty(ref g) = s.mode { Some(g) } else { None }
     }) {
         Some(g) => g,
-        None => return,
+        None => return None,
     };
 
     let char_w = 7.0_f64;
-    let char_h = 14.0_f64;
+    let char_h = 19.0_f64;
     // Text baseline offset from top of cell (ascender ≈ 70% of line height).
     let baseline_offset = char_h * 0.78;
 
@@ -4027,16 +4051,45 @@ fn render_agents_pty(
         }
     }
 
+    // ── Cursor ────────────────────────────────────────────────────────────
+    if grid.cursor_visible {
+        let cur_row = grid.cursor_row as usize;
+        let cur_col = grid.cursor_col as usize;
+        if cur_row < grid.rows as usize && cur_col < grid.cols as usize {
+            let cx = x + cur_col as f64 * char_w;
+            let cy = y + cur_row as f64 * char_h - scroll_offset;
+            if cy + char_h > y && cy < y + h {
+                let cell = &grid.cells[cur_row][cur_col];
+                let fg_hex = rgb_to_hex(cell.fg);
+                ctx.set_fill_color(&fg_hex);
+                ctx.fill_rect(cx, cy, char_w, char_h);
+                if !cell.ch.is_empty() && cell.ch != " " {
+                    let bg_hex = rgb_to_hex(cell.bg);
+                    ctx.set_fill_color(&bg_hex);
+                    ctx.set_font("11px JetBrainsMono");
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Alphabetic);
+                    ctx.fill_text(&cell.ch, cx, cy + baseline_offset);
+                }
+            }
+        }
+    }
+
     // ── Scrollbar (right edge) ────────────────────────────────────────────
-    {
+    let sb_rects = {
         let pty_content_h = grid.rows as f64 * char_h;
         let sb_w = 6.0;
         let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(pty_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
         let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
-        draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
-    }
+        let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
+        if sb_config.needs_scrollbar() {
+            Some((sb_result.handle_rect, sb_result.track_rect))
+        } else {
+            None
+        }
+    };
 
     // ── Buddy ASCII art overlay ──────────────────────────────────────────
     // Drawn last so it floats above the main grid. Anchored to the top-right
@@ -4072,6 +4125,7 @@ fn render_agents_pty(
     }
 
     ctx.restore();
+    sb_rects
 }
 
 // =============================================================================
@@ -4079,6 +4133,8 @@ fn render_agents_pty(
 // =============================================================================
 
 /// Render chat messages as bubbles inside the content area.
+///
+/// Returns `(handle_rect, track_rect)` for the scrollbar drawn (if any).
 fn render_agents_chat(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
@@ -4088,7 +4144,7 @@ fn render_agents_chat(
     w: f64,
     h: f64,
     scroll_offset: f64,
-) {
+) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
     // Dark content area background.
@@ -4099,7 +4155,7 @@ fn render_agents_chat(
         if let AgentSnapshotMode::Chat(ref msgs) = s.mode { Some(msgs) } else { None }
     }) {
         Some(m) => m,
-        None => return,
+        None => return None,
     };
 
     if messages.is_empty() {
@@ -4108,7 +4164,7 @@ fn render_agents_chat(
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("No messages yet", x + w / 2.0, y + h / 2.0);
-        return;
+        return None;
     }
 
     ctx.save();
@@ -4274,16 +4330,22 @@ fn render_agents_chat(
     // cursor_y = y + 8.0 - scroll_offset + accumulated_content_h
     // => total_content_h = cursor_y - y + scroll_offset - 8.0 + 8.0 = cursor_y - y + scroll_offset
     let total_content_h = (cursor_y - y) + scroll_offset;
-    {
+    let sb_rects = {
         let sb_w = 6.0;
         let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(total_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
         let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
-        draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
-    }
+        let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
+        if sb_config.needs_scrollbar() {
+            Some((sb_result.handle_rect, sb_result.track_rect))
+        } else {
+            None
+        }
+    };
 
     ctx.restore();
+    sb_rects
 }
 
 // =============================================================================

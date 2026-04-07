@@ -246,11 +246,20 @@ impl ChartPanelGrid {
         use uzor::panels::PanelNode;
         match node {
             PanelNode::Leaf(leaf) => self.leaf_min_widths.get(&leaf.id).copied().unwrap_or(0.0),
-            PanelNode::Branch(branch) => branch
-                .children
-                .iter()
-                .map(|c| self.min_width_for_node(c))
-                .fold(0.0_f32, f32::max),
+            PanelNode::Branch(branch) => {
+                use uzor::panels::WindowLayout;
+                let child_mins = branch.children.iter().map(|c| self.min_width_for_node(c));
+                match branch.layout {
+                    // Side-by-side layouts: total min width is the sum of children.
+                    WindowLayout::SplitHorizontal
+                    | WindowLayout::ThreeColumns
+                    | WindowLayout::OneLeftTwoRight
+                    | WindowLayout::TwoLeftOneRight
+                    | WindowLayout::Grid2x2 => child_mins.sum(),
+                    // Stacked layouts: min width is the max of children.
+                    _ => child_mins.fold(0.0_f32, f32::max),
+                }
+            }
         }
     }
 
@@ -672,7 +681,7 @@ impl ChartPanelGrid {
             // pos_a shrinks — cascade shrink across pos_a-1, pos_a-2, ...
             // (walking leftward from pos_a inclusive)
             let mut remaining = (-delta_share).abs();
-            let indices: Vec<usize> = (0..=pos_a).rev().collect();
+            let indices: Vec<usize> = (0..pos_a).rev().collect();
             for i in indices {
                 if new_props[i] <= 0.0 { continue; }
                 let available = (new_props[i] - min_shares[i]).max(0.0);

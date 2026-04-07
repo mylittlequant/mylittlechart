@@ -5786,6 +5786,31 @@ impl ChartApp {
                 );
             }
         }
+
+        // Auto-snap chat scroll to bottom when new messages arrive and the user
+        // was already at (or near) the bottom.
+        if let Some(ref sidebar_result) = self.last_sidebar_result {
+            let new_len = self.sidebar_state.agent_snapshot
+                .as_ref()
+                .and_then(|snap| {
+                    if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                        Some(msgs.len())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            let old_len = self.sidebar_state.last_chat_messages_len;
+            if new_len > old_len {
+                let content_h = sidebar_result.agent_chat_content_height;
+                let viewport_h = sidebar_result.agent_chat_viewport_h;
+                let max_offset = (content_h - viewport_h).max(0.0);
+                if self.sidebar_state.chat_scroll.offset >= max_offset - 1.0 {
+                    self.sidebar_state.chat_scroll.offset = max_offset;
+                }
+            }
+            self.sidebar_state.last_chat_messages_len = new_len;
+        }
     }
 
     /// Render ONLY the toolbar vector graphics into `ctx`.

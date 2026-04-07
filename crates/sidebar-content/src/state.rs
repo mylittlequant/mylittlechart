@@ -315,6 +315,12 @@ pub struct SidebarState {
 
     /// Scroll state for the PTY terminal area.
     pub pty_scroll: ScrollState,
+
+    /// Number of chat messages seen at the last render frame.
+    ///
+    /// Used by `apply_render_output` to detect new messages and auto-snap the
+    /// scroll offset to the bottom when the user was already at the bottom.
+    pub last_chat_messages_len: usize,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -551,6 +557,7 @@ impl Default for SidebarState {
             agent_past_sessions_list: Vec::new(),
             chat_scroll: ScrollState::new(),
             pty_scroll: ScrollState::new(),
+            last_chat_messages_len: 0,
         }
     }
 }

@@ -928,6 +928,39 @@ impl ChartApp {
             }
         }
 
+        // Agent chat / PTY scrollbar handle drag + track click
+        if self.sidebar_state.is_right_open() && !self.ui_drag_active {
+            if let Some(ref sidebar_result) = self.last_sidebar_result {
+                use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
+                let chat_info = ScrollableInfo {
+                    handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
+                    track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
+                    content_height: sidebar_result.agent_chat_content_height,
+                    viewport_height: sidebar_result.agent_chat_viewport_h,
+                    viewport_rect: sidebar_result.agent_content_rect,
+                };
+                let pty_info = ScrollableInfo {
+                    handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
+                    track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
+                    content_height: sidebar_result.agent_pty_content_height,
+                    viewport_height: sidebar_result.agent_pty_viewport_h,
+                    viewport_rect: sidebar_result.agent_content_rect,
+                };
+                if try_start_scrollbar_drag(x, y, &mut [
+                    (&chat_info, &mut self.sidebar_state.chat_scroll),
+                    (&pty_info, &mut self.sidebar_state.pty_scroll),
+                ]) {
+                    return false;
+                }
+                if try_handle_track_click(x, y, &mut [
+                    (&chat_info, &mut self.sidebar_state.chat_scroll),
+                    (&pty_info, &mut self.sidebar_state.pty_scroll),
+                ]) {
+                    return false;
+                }
+            }
+        }
+
         // Check if drag starts inside the right sidebar content area — begin
         // drag-to-scroll.  This fires for any sidebar panel (Connectors,
         // Alerts, ObjectTree, Signals, Watchlist rows that didn't match above).
@@ -2944,6 +2977,33 @@ impl ChartApp {
             return;
         }
 
+        // Agent chat / PTY scrollbar drag move
+        {
+            use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
+            if let Some(ref sidebar_result) = self.last_sidebar_result {
+                let chat_info = ScrollableInfo {
+                    handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
+                    track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
+                    content_height: sidebar_result.agent_chat_content_height,
+                    viewport_height: sidebar_result.agent_chat_viewport_h,
+                    viewport_rect: sidebar_result.agent_content_rect,
+                };
+                let pty_info = ScrollableInfo {
+                    handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
+                    track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
+                    content_height: sidebar_result.agent_pty_content_height,
+                    viewport_height: sidebar_result.agent_pty_viewport_h,
+                    viewport_rect: sidebar_result.agent_content_rect,
+                };
+                if try_handle_scrollbar_drag(y, &mut [
+                    (&chat_info, &mut self.sidebar_state.chat_scroll),
+                    (&pty_info, &mut self.sidebar_state.pty_scroll),
+                ]) {
+                    return;
+                }
+            }
+        }
+
         // === Slider drag move — update floating value only, no permanent state write ===
         if self.panel_app.primitive_settings_state.is_slider_dragging() {
             self.panel_app.primitive_settings_state.update_slider_drag_float(x);
@@ -3609,6 +3669,17 @@ impl ChartApp {
         if self.panel_app.user_settings_state.profile_list_scroll.is_dragging {
             self.panel_app.user_settings_state.profile_list_scroll.end_drag();
             return;
+        }
+        // Agent chat / PTY scrollbar drag end
+        {
+            use crate::scroll_dispatch::try_end_scrollbar_drag;
+            let ended = try_end_scrollbar_drag(&mut [
+                &mut self.sidebar_state.chat_scroll,
+                &mut self.sidebar_state.pty_scroll,
+            ]);
+            if ended {
+                return;
+            }
         }
 
         // === Slider drag end — apply final floating value once ===
