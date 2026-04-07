@@ -97,7 +97,7 @@ impl RightSidebarPanel {
 // Agent panel types
 // =============================================================================
 
-/// Display mode for the Agents panel.
+/// Display mode for the Agents panel (UI-only, stays in sidebar-content).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentPanelMode {
     /// Terminal / PTY mode — raw terminal output.
@@ -106,33 +106,8 @@ pub enum AgentPanelMode {
     Chat,
 }
 
-/// Which AI CLI agent to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentCli {
-    Claude,
-    Codex,
-    Gemini,
-}
-
-impl AgentCli {
-    /// Human-readable label for this CLI.
-    pub fn label(&self) -> &'static str {
-        match self {
-            AgentCli::Claude  => "Claude",
-            AgentCli::Codex   => "Codex",
-            AgentCli::Gemini  => "Gemini",
-        }
-    }
-
-    /// Returns the next CLI in cycle order.
-    pub fn cycle(&self) -> Self {
-        match self {
-            AgentCli::Claude  => AgentCli::Codex,
-            AgentCli::Codex   => AgentCli::Gemini,
-            AgentCli::Gemini  => AgentCli::Claude,
-        }
-    }
-}
+/// Which AI CLI agent to use — re-exported from `gate4agent`.
+pub use gate4agent::snapshot::AgentCli;
 
 // =============================================================================
 // State struct
