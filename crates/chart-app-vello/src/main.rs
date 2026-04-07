@@ -8092,7 +8092,11 @@ impl ApplicationHandler for App<'_> {
                             PhysicalKey::Code(KeyCode::KeyV) => {
                                 if let Ok(mut cb) = arboard::Clipboard::new() {
                                     if let Ok(text) = cb.get_text() {
-                                        pw.chart.on_key_press(chart_app::KeyPress::Paste(text));
+                                        if pw.chart.is_agent_pty_focused() {
+                                            pw.chart.paste_to_pty(&text);
+                                        } else {
+                                            pw.chart.on_key_press(chart_app::KeyPress::Paste(text));
+                                        }
                                     }
                                 }
                                 return;

@@ -3997,6 +3997,39 @@ fn render_agents_pty(
         }
     }
 
+    // ── Buddy ASCII art overlay ──────────────────────────────────────────
+    // Drawn last so it floats above the main grid. Anchored to the top-right
+    // of the visible PTY area regardless of original screen position.
+    if let Some(buddy) = grid.buddy.as_ref() {
+        let bw = buddy.width as f64 * char_w;
+        let bh = buddy.rows.len() as f64 * char_h;
+        // Anchor: top-right with a small inset.
+        let bx = (x + w - bw - 4.0).max(x);
+        let by = y + 4.0;
+        // Subtle background panel so the art stays readable over text.
+        ctx.set_fill_color("#000000");
+        ctx.set_global_alpha(0.55);
+        ctx.fill_rect(bx - 2.0, by - 2.0, bw + 4.0, bh + 4.0);
+        ctx.set_global_alpha(1.0);
+        for (rr, row) in buddy.rows.iter().enumerate() {
+            let cy = by + rr as f64 * char_h;
+            for (cc, cell) in row.iter().enumerate() {
+                if cell.ch == " " || cell.ch.is_empty() { continue; }
+                let cx = bx + cc as f64 * char_w;
+                let fg_hex = rgb_to_hex(cell.fg);
+                ctx.set_fill_color(&fg_hex);
+                if cell.bold {
+                    ctx.set_font("bold 11px JetBrainsMono");
+                } else {
+                    ctx.set_font("11px JetBrainsMono");
+                }
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Alphabetic);
+                ctx.fill_text(&cell.ch, cx, cy + baseline_offset);
+            }
+        }
+    }
+
     ctx.restore();
 }
 

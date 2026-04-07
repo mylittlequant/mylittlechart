@@ -131,6 +131,13 @@ impl ChartApp {
         }
     }
 
+    /// Paste the given text into the active PTY (used by Ctrl+V / Ctrl+Shift+V).
+    pub fn paste_to_pty(&mut self, text: &str) {
+        if text.is_empty() { return; }
+        let cli = self.sidebar_state.agent_cli;
+        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, text));
+    }
+
     /// Convert a screen (x, y) point to a PTY cell (row, col) if the point lies
     /// inside the current `agent_terminal_rect`. Uses fixed 7x14 cell metrics
     /// matching `render_agents_pty`. Row/col are clamped to the grid size.
