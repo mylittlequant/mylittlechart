@@ -87,6 +87,11 @@ pub struct ChartPanelGrid {
     leaf_to_chart: HashMap<LeafId, ChartId>,
     /// Whether expand mode is active (all but active leaf hidden).
     expanded: bool,
+    /// Per-leaf minimum pixel width used as a lower bound during separator drag.
+    ///
+    /// Set by the caller before each drag via `set_leaf_min_width`.
+    /// Any leaf not present in the map is treated as having min_width = 0.
+    leaf_min_widths: HashMap<LeafId, f32>,
 }
 
 impl ChartPanelGrid {
@@ -120,6 +125,7 @@ impl ChartPanelGrid {
             windows,
             leaf_to_chart,
             expanded: false,
+            leaf_min_widths: HashMap::new(),
         }
     }
 
@@ -211,6 +217,41 @@ impl ChartPanelGrid {
         self.leaf_to_chart
             .iter()
             .find_map(|(&leaf, &cid)| if cid == chart_id { Some(leaf) } else { None })
+    }
+
+    // =========================================================================
+    // Per-leaf minimum width
+    // =========================================================================
+
+    /// Set a minimum pixel width for the given leaf.
+    ///
+    /// This is consulted by [`apply_separator_drag`] to prevent a leaf from
+    /// shrinking below the price-scale width + padding.  Call this before each
+    /// separator drag (or whenever scale widths change).
+    pub fn set_leaf_min_width(&mut self, leaf_id: LeafId, min_width: f32) {
+        self.leaf_min_widths.insert(leaf_id, min_width);
+    }
+
+    /// Get the minimum pixel width for the given leaf (0.0 if not set).
+    pub fn leaf_min_width(&self, leaf_id: LeafId) -> f32 {
+        self.leaf_min_widths.get(&leaf_id).copied().unwrap_or(0.0)
+    }
+
+    /// Recursively compute the minimum pixel width for a subtree node.
+    ///
+    /// For a leaf node: looks up `leaf_min_widths`.
+    /// For a branch node: returns the maximum of all leaf min-widths in the subtree
+    /// (because the branch as a whole cannot be smaller than its widest required leaf).
+    fn min_width_for_node(&self, node: &uzor::panels::PanelNode<ChartSubPanel>) -> f32 {
+        use uzor::panels::PanelNode;
+        match node {
+            PanelNode::Leaf(leaf) => self.leaf_min_widths.get(&leaf.id).copied().unwrap_or(0.0),
+            PanelNode::Branch(branch) => branch
+                .children
+                .iter()
+                .map(|c| self.min_width_for_node(c))
+                .fold(0.0_f32, f32::max),
+        }
     }
 
     /// Immutable reference to the underlying `DockingManager`.
@@ -505,20 +546,16 @@ impl ChartPanelGrid {
     /// `sep_idx` is an index into `docking.separators()`.  `delta` is the
     /// signed pixel movement along the separator's axis (positive = right/down).
     ///
-    /// The content area width/height must be supplied so that the parent
-    /// branch rect can be computed for correct proportion calculation.
-    /// Apply a separator drag, constraining each touching child to a minimum
-    /// pixel size provided by the caller (typically the price-scale width plus
-    /// a small padding for vertical separators, or a similar guard for
-    /// horizontal). Pass `0.0` to disable the per-child guard for that side.
+    /// Per-leaf minimum widths are read from `self.leaf_min_widths` (set via
+    /// [`set_leaf_min_width`](Self::set_leaf_min_width)). Cascading resizing
+    /// works in pixel space against the actual parent-branch pixel rect so that
+    /// nested branches are correctly constrained.
     pub fn apply_separator_drag(
         &mut self,
         sep_idx: usize,
         delta: f32,
         content_width: f32,
         content_height: f32,
-        min_a_pixels: f32,
-        min_b_pixels: f32,
     ) {
         use uzor::panels::SeparatorLevel;
 
@@ -536,59 +573,75 @@ impl ChartPanelGrid {
             (parent_id, child_a, child_b, sep.orientation)
         };
 
-        // Always use the full content area (root rect) for proportion
-        // calculation.  Proportions are relative to the root, not to
-        // the parent branch.
-        let total_size = match orientation {
-            SeparatorOrientation::Horizontal => content_height,
-            SeparatorOrientation::Vertical => content_width,
+        // Use the parent-branch pixel size for correct proportion math.
+        // `rect_for_branch` walks the layout tree to find the actual rect of
+        // this branch within the content area, so nested branches work correctly.
+        let branch_rect = self.docking.tree()
+            .rect_for_branch(parent_id, content_width, content_height);
+
+        let branch_size = match branch_rect {
+            Some(r) => match orientation {
+                SeparatorOrientation::Horizontal => r.height,
+                SeparatorOrientation::Vertical => r.width,
+            },
+            None => match orientation {
+                SeparatorOrientation::Horizontal => content_height,
+                SeparatorOrientation::Vertical => content_width,
+            },
         };
 
         // Retrieve the current proportions of the parent branch.
-        let branch = match self.docking.tree().find_branch(parent_id) {
-            Some(b) => b,
-            None => return,
+        let (n, raw_props, children_min_px, pos_a, pos_b) = {
+            let branch = match self.docking.tree().find_branch(parent_id) {
+                Some(b) => b,
+                None => return,
+            };
+
+            let n = branch.children.len();
+            if n < 2 {
+                return;
+            }
+
+            let raw_props: Vec<f64> = if branch.proportions.len() == n {
+                branch.proportions.clone()
+            } else {
+                vec![1.0_f64 / n as f64; n]
+            };
+
+            // Per-child minimum in pixels (from leaf_min_widths, propagated through subtrees).
+            // Only meaningful for vertical separators; horizontal separators use 0 guard.
+            let children_min_px: Vec<f32> = if orientation == SeparatorOrientation::Vertical {
+                branch.children.iter()
+                    .map(|c| self.min_width_for_node(c))
+                    .collect()
+            } else {
+                vec![0.0_f32; n]
+            };
+
+            let pos_a = branch.children.iter().position(|c| c.raw_id() == child_a_raw);
+            let pos_b = branch.children.iter().position(|c| c.raw_id() == child_b_raw);
+            let (pos_a, pos_b) = match (pos_a, pos_b) {
+                (Some(a), Some(b)) => (a, b),
+                _ => return,
+            };
+
+            (n, raw_props, children_min_px, pos_a, pos_b)
         };
 
-        // Build ordered (child_id, proportion) list for the non-hidden children.
-        // `proportions` is parallel to `children` (hidden and visible combined),
-        // so we must skip hidden entries to get the correct visual ordering.
-        let n = branch.children.len();
-        if n < 2 {
-            return;
-        }
-
-        // Retrieve the raw proportion slice (one entry per child, including hidden).
-        let raw_props: Vec<f64> = if branch.proportions.len() == n {
-            branch.proportions.clone()
-        } else {
-            vec![1.0_f64 / n as f64; n]
-        };
-
-        // Locate child_a and child_b by their raw IDs.
-        let pos_a = branch.children.iter().position(|c| c.raw_id() == child_a_raw);
-        let pos_b = branch.children.iter().position(|c| c.raw_id() == child_b_raw);
-
-        let (pos_a, pos_b) = match (pos_a, pos_b) {
-            (Some(a), Some(b)) => (a, b),
-            _ => return,
-        };
-
-        // Ensure total_size is usable.
-        if total_size <= 0.0 {
+        if branch_size <= 0.0 {
             return;
         }
 
         // Convert pixel delta to a proportion delta relative to the total share sum.
         let total_share: f64 = raw_props.iter().sum();
-        let delta_share = (delta as f64 / total_size as f64) * total_share;
+        let delta_share = (delta as f64 / branch_size as f64) * total_share;
 
-        // Per-child minimum in share space.  The same min value applies to
-        // every sibling (it is the price-scale width guard, uniform per panel).
-        let min_share = (min_a_pixels.max(min_b_pixels).max(0.0) as f64 / total_size as f64)
-            * total_share;
+        // Per-child minimum in share space (derived from pixel min via branch_size).
+        let min_shares: Vec<f64> = children_min_px.iter()
+            .map(|&px| (px as f64 / branch_size as f64) * total_share)
+            .collect();
 
-        // --- Cascading resize ---
+        // --- Cascading resize in share space ---
         //
         // When dragging in the positive direction (pos_a grows, pos_b shrinks):
         //   - Walk siblings from pos_b rightward; take shrinkage from each.
@@ -597,9 +650,6 @@ impl ChartPanelGrid {
         // When dragging in the negative direction (pos_a shrinks, pos_b grows):
         //   - Walk siblings from pos_a leftward; take shrinkage from each.
         //   - Give all taken shrinkage to pos_b.
-        //
-        // This produces the cascading effect: the immediate neighbour shrinks
-        // first; once it hits min_share, the next sibling starts shrinking, etc.
 
         let mut new_props = raw_props.clone();
 
@@ -607,7 +657,8 @@ impl ChartPanelGrid {
             // pos_a grows — cascade shrink across pos_b, pos_b+1, pos_b+2, ...
             let mut remaining = delta_share;
             for i in pos_b..n {
-                let available = (new_props[i] - min_share).max(0.0);
+                if new_props[i] <= 0.0 { continue; }
+                let available = (new_props[i] - min_shares[i]).max(0.0);
                 let take = remaining.min(available);
                 new_props[i] -= take;
                 remaining -= take;
@@ -623,7 +674,8 @@ impl ChartPanelGrid {
             let mut remaining = (-delta_share).abs();
             let indices: Vec<usize> = (0..=pos_a).rev().collect();
             for i in indices {
-                let available = (new_props[i] - min_share).max(0.0);
+                if new_props[i] <= 0.0 { continue; }
+                let available = (new_props[i] - min_shares[i]).max(0.0);
                 let take = remaining.min(available);
                 new_props[i] -= take;
                 remaining -= take;

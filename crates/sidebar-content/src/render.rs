@@ -8,7 +8,7 @@
 
 use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
 use zengeld_chart::LayoutRect;
-use zengeld_chart::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig}};
+use zengeld_chart::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar}};
 use zengeld_chart::ui::widgets::types::{WidgetState, WidgetTheme};
 use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
 use zengeld_chart::ToolbarTheme;
@@ -3754,7 +3754,7 @@ fn render_agents_panel(
             let pty_content_h = pty_rows * 14.0;
             result.agent_pty_content_height = pty_content_h;
             let max_pty_scroll = (pty_content_h - content_h).max(0.0);
-            let pty_scroll = state.pty_scroll_offset.clamp(0.0, max_pty_scroll);
+            let pty_scroll = state.pty_scroll.offset.clamp(0.0, max_pty_scroll);
             render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h, pty_scroll);
         } else {
             // PTY tab selected but no data yet — render empty terminal area.
@@ -3765,7 +3765,7 @@ fn render_agents_panel(
         let chat_content_h = compute_chat_content_height(ctx, snapshot, inner_w);
         result.agent_chat_content_height = chat_content_h;
         let max_chat_scroll = (chat_content_h - content_h).max(0.0);
-        let chat_scroll = state.chat_scroll_offset.clamp(0.0, max_chat_scroll);
+        let chat_scroll = state.chat_scroll.offset.clamp(0.0, max_chat_scroll);
         render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll);
     } else {
         // Chat tab selected but no data yet — render empty area.
@@ -3996,22 +3996,6 @@ fn render_agents_pty(
         }
     }
 
-    // Cursor: always draw a block at the cursor position.  Claude TUI keeps
-    // DECTCEM off most of the time so gating on cursor_visible hides the
-    // cursor permanently.  We simply render it unconditionally.
-    {
-        let cur_row = grid.cursor_row as usize;
-        let cur_col = grid.cursor_col as usize;
-        let cur_x = x + cur_col as f64 * char_w;
-        let cur_y = y + cur_row as f64 * char_h - scroll_offset;
-        if cur_x < x + w && cur_y >= y && cur_y < y + h {
-            ctx.set_fill_color("#cccccc");
-            ctx.set_global_alpha(0.7);
-            ctx.fill_rect(cur_x, cur_y, char_w, char_h);
-            ctx.set_global_alpha(1.0);
-        }
-    }
-
     // ── Selection overlay ────────────────────────────────────────────────
     if let Some(sel) = selection {
         if !sel.is_empty() {
@@ -4043,10 +4027,15 @@ fn render_agents_pty(
         }
     }
 
-    // ── Scrollbar (thin, right edge) ─────────────────────────────────────
-    let pty_content_h = grid.rows as f64 * char_h;
-    if pty_content_h > h {
-        draw_thin_scrollbar(ctx, x, y, w, h, scroll_offset, pty_content_h);
+    // ── Scrollbar (right edge) ────────────────────────────────────────────
+    {
+        let pty_content_h = grid.rows as f64 * char_h;
+        let sb_w = 6.0;
+        let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
+        let sb_config = ScrollbarConfig::new(pty_content_h, h, scroll_offset);
+        let sb_state = SbState::Active;
+        let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
+        draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
     }
 
     // ── Buddy ASCII art overlay ──────────────────────────────────────────
@@ -4254,11 +4243,44 @@ fn render_agents_chat(
         }
     }
 
+    // ── Live-status spinner line ──────────────────────────────────────────
+    // Drawn after the message loop so it always appears below the last message.
+    if let Some(snap) = snapshot {
+        use crate::agent_types::LiveStatus;
+        if snap.live_status != LiveStatus::Idle {
+            // Braille spinner frames — all 10 Unicode braille "loading" glyphs.
+            const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let frame_char = FRAMES[((now_ms / 80) as usize) % FRAMES.len()];
+            let status_text = match &snap.live_status {
+                LiveStatus::Thinking => format!("{} Thinking...", frame_char),
+                LiveStatus::RunningTool { name, done } => format!("{} {} · {} done", frame_char, name, done),
+                LiveStatus::Idle => String::new(),
+            };
+            if !status_text.is_empty() {
+                ctx.set_font("11px JetBrainsMono");
+                ctx.set_fill_color("#888888");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.fill_text(&status_text, x + 8.0, cursor_y);
+                cursor_y += 22.0;
+            }
+        }
+    }
+
     // cursor_y = y + 8.0 - scroll_offset + accumulated_content_h
     // => total_content_h = cursor_y - y + scroll_offset - 8.0 + 8.0 = cursor_y - y + scroll_offset
     let total_content_h = (cursor_y - y) + scroll_offset;
-    if total_content_h > h {
-        draw_thin_scrollbar(ctx, x, y, w, h, scroll_offset, total_content_h);
+    {
+        let sb_w = 6.0;
+        let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
+        let sb_config = ScrollbarConfig::new(total_content_h, h, scroll_offset);
+        let sb_state = SbState::Active;
+        let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
+        draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
     }
 
     ctx.restore();
@@ -4329,45 +4351,17 @@ fn compute_chat_content_height(
         }
     }
 
-    total_h + 8.0 // bottom padding
+    // Add space for the live-status spinner line when not Idle.
+    let live_status_h = if let Some(snap) = snapshot {
+        use crate::agent_types::LiveStatus;
+        if snap.live_status != LiveStatus::Idle { 22.0 } else { 0.0 }
+    } else {
+        0.0
+    };
+
+    total_h + 8.0 + live_status_h // bottom padding
 }
 
-/// Draw a thin translucent scrollbar on the right edge of a content area.
-///
-/// `scroll_offset` is the current scroll position in pixels (0 = top).
-/// `content_h` is the total content height in pixels (>= viewport_h to be drawn).
-fn draw_thin_scrollbar(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    w: f64,
-    viewport_h: f64,
-    scroll_offset: f64,
-    content_h: f64,
-) {
-    if content_h <= viewport_h {
-        return;
-    }
-    let bar_w = 3.0;
-    let bar_x = x + w - bar_w - 1.0;
-
-    // Thumb height proportional to viewport/content ratio.
-    let thumb_h = (viewport_h / content_h * viewport_h).max(16.0);
-    let track_h = viewport_h - thumb_h;
-    let thumb_y = y + (scroll_offset / (content_h - viewport_h)) * track_h;
-
-    // Track (subtle).
-    ctx.set_fill_color("#ffffff");
-    ctx.set_global_alpha(0.08);
-    ctx.fill_rounded_rect(bar_x, y, bar_w, viewport_h, 2.0);
-
-    // Thumb.
-    ctx.set_fill_color("#ffffff");
-    ctx.set_global_alpha(0.35);
-    ctx.fill_rounded_rect(bar_x, thumb_y, bar_w, thumb_h, 2.0);
-
-    ctx.set_global_alpha(1.0);
-}
 
 /// Convert an RGB triple to a CSS hex color string like `"#rrggbb"`.
 fn rgb_to_hex(rgb: [u8; 3]) -> String {

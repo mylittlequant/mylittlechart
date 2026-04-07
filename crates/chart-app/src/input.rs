@@ -2542,29 +2542,25 @@ impl ChartApp {
                 SeparatorOrientation::Horizontal => (y - sep_drag.start_y) as f32,
                 SeparatorOrientation::Vertical => (x - sep_drag.start_x) as f32,
             };
-            // Per-side guard: never let a chart shrink below its own scale
-            // (price-scale for vertical separators, time-scale for horizontal),
-            // plus 5px of breathing room on each side.
-            let (min_a, min_b) = {
-                use zengeld_chart::SeparatorOrientation;
-                let scale_px = self.panel_app
-                    .panel_grid
-                    .active_window()
-                    .map(|w| match sep_drag.orientation {
-                        SeparatorOrientation::Vertical => w.scale_settings.price_scale_width,
-                        SeparatorOrientation::Horizontal => w.scale_settings.time_scale_height,
+            // Set per-leaf minimum widths so apply_separator_drag can guard each
+            // leaf independently (price-scale width + 10 px breathing room).
+            {
+                let leaf_ids: Vec<_> = self.panel_app.panel_grid
+                    .iter_windows()
+                    .map(|(leaf_id, w)| {
+                        let min_w = w.scale_settings.effective_price_scale_width() as f32 + 10.0;
+                        (leaf_id, min_w)
                     })
-                    .unwrap_or(0.0) as f32;
-                let guard = scale_px + 5.0;
-                (guard, guard)
-            };
+                    .collect();
+                for (leaf_id, min_w) in leaf_ids {
+                    self.panel_app.panel_grid.set_leaf_min_width(leaf_id, min_w);
+                }
+            }
             self.panel_app.panel_grid.apply_separator_drag(
                 sep_drag.separator_idx,
                 delta,
                 self.content_rect.width as f32,
                 self.content_rect.height as f32,
-                min_a,
-                min_b,
             );
             // Update start position for incremental delta.
             self.split_separator_drag = Some(crate::SplitSeparatorDragState {
@@ -5552,17 +5548,11 @@ impl ChartApp {
                                 match self.sidebar_state.agent_mode {
                                     AgentPanelMode::Chat => {
                                         let total_h = sidebar_result.agent_chat_content_height;
-                                        let max_offset = (total_h - viewport_h).max(0.0);
-                                        let new_offset = (self.sidebar_state.chat_scroll_offset - dy * 30.0)
-                                            .clamp(0.0, max_offset);
-                                        self.sidebar_state.chat_scroll_offset = new_offset;
+                                        self.sidebar_state.chat_scroll.handle_wheel(-dy, total_h, viewport_h);
                                     }
                                     AgentPanelMode::Pty => {
                                         let total_h = sidebar_result.agent_pty_content_height;
-                                        let max_offset = (total_h - viewport_h).max(0.0);
-                                        let new_offset = (self.sidebar_state.pty_scroll_offset - dy * 30.0)
-                                            .clamp(0.0, max_offset);
-                                        self.sidebar_state.pty_scroll_offset = new_offset;
+                                        self.sidebar_state.pty_scroll.handle_wheel(-dy, total_h, viewport_h);
                                     }
                                 }
                                 return;
