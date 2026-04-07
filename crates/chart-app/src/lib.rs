@@ -522,6 +522,9 @@ pub struct ChartApp {
     /// blur.
     pub agent_pty_hover_focused: bool,
 
+    /// True while a host-side PTY text-selection drag is in progress.
+    pub agent_pty_drag_active: bool,
+
     /// Set to `true` after `autostart_all` has been called once.
     ///
     /// The autostart fires on the first frame of the event loop so that a
@@ -863,6 +866,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
+            agent_pty_drag_active: false,
             agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
@@ -1142,6 +1146,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
+            agent_pty_drag_active: false,
             agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
@@ -1317,6 +1322,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
+            agent_pty_drag_active: false,
             agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,

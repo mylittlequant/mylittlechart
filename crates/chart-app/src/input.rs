@@ -122,6 +122,83 @@ impl ChartApp {
         self.text_input.is_focused(crate::text_input::FieldId::AgentPty)
     }
 
+    /// Clear any active host-side PTY selection. Called after Ctrl+C copy and
+    /// on CLI/mode switch.
+    pub fn clear_pty_selection(&mut self) {
+        if self.sidebar_state.pty_selection.is_some() {
+            self.sidebar_state.pty_selection = None;
+            self.sidebar_data_dirty = true;
+        }
+    }
+
+    /// Convert a screen (x, y) point to a PTY cell (row, col) if the point lies
+    /// inside the current `agent_terminal_rect`. Uses fixed 7x14 cell metrics
+    /// matching `render_agents_pty`. Row/col are clamped to the grid size.
+    fn pty_cell_at(&self, x: f64, y: f64) -> Option<(u16, u16)> {
+        let (rx, ry, rw, rh) = self.sidebar_state.agent_terminal_rect?;
+        let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
+        if x < rx || x >= rx + rw || y < ry || y >= ry + rh {
+            return None;
+        }
+        let (cols, rows) = self.sidebar_state.agent_terminal_size.unwrap_or((80, 24));
+        let col = ((x - rx) / 7.0).floor() as i32;
+        let row = ((y - ry) / 14.0).floor() as i32;
+        let col = col.clamp(0, cols as i32 - 1) as u16;
+        let row = row.clamp(0, rows as i32 - 1) as u16;
+        Some((row, col))
+    }
+
+    /// Extract the currently selected PTY text from the live snapshot grid.
+    /// Returns an empty string if there is no selection or no grid.
+    pub fn pty_selection_text(&self) -> String {
+        use sidebar_content::agent_types::AgentSnapshotMode;
+        let sel = match self.sidebar_state.pty_selection {
+            Some(s) if !s.is_empty() => s,
+            _ => return String::new(),
+        };
+        let snap = match self.sidebar_state.agent_snapshot.as_ref() {
+            Some(s) => s,
+            None => return String::new(),
+        };
+        let grid = match &snap.mode {
+            AgentSnapshotMode::Pty(g) => g,
+            _ => return String::new(),
+        };
+        let ((lo_row, lo_col), (hi_row, hi_col)) = sel.ordered();
+        let lo_row = lo_row as usize;
+        let hi_row = hi_row as usize;
+        let lo_col = lo_col as usize;
+        let hi_col = hi_col as usize;
+        let total_cols = grid.cols as usize;
+        let mut out = String::new();
+        for row in lo_row..=hi_row {
+            if row >= grid.cells.len() { break; }
+            let row_cells = &grid.cells[row];
+            let (c0, c1) = if lo_row == hi_row {
+                (lo_col, hi_col)
+            } else if row == lo_row {
+                (lo_col, total_cols)
+            } else if row == hi_row {
+                (0, hi_col)
+            } else {
+                (0, total_cols)
+            };
+            let c1 = c1.min(row_cells.len());
+            if c1 <= c0 { continue; }
+            // Append cell chars then trim trailing spaces per row for cleanliness.
+            let mut line = String::new();
+            for cell in &row_cells[c0..c1] {
+                line.push_str(&cell.ch);
+            }
+            let trimmed = line.trim_end();
+            out.push_str(trimmed);
+            if row < hi_row {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
     pub fn ensure_agent_session_for_mode(&mut self) {
         use sidebar_content::state::{AgentPanelMode, AgentCli};
         use gate4agent::{SessionConfig, CliTool};
@@ -178,6 +255,11 @@ impl ChartApp {
                 eprintln!("[gate4agent::pty] click in terminal rect — focusing AgentPty");
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
                 self.agent_pty_hover_focused = true;
+                // A plain click (no drag) clears any previous selection.
+                if self.sidebar_state.pty_selection.is_some() {
+                    self.sidebar_state.pty_selection = None;
+                    self.sidebar_data_dirty = true;
+                }
                 return;
             }
         }
@@ -589,6 +671,22 @@ impl ChartApp {
     pub fn on_drag_start(&mut self, x: f64, y: f64) -> bool {
         // Track whether this drag started on a UI element (for crosshair suppression).
         self.ui_drag_active = self.input_coordinator.borrow_mut().is_over_ui();
+
+        // ── PTY host-side selection drag ────────────────────────────────────
+        // If the drag starts inside the Agent PTY terminal (in PTY mode),
+        // begin a host-side cell selection. This MUST run before TIM drag so
+        // the sidebar scroll-drag fallback doesn't hijack the motion.
+        if self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty {
+            if let Some((row, col)) = self.pty_cell_at(x, y) {
+                self.sidebar_state.pty_selection =
+                    Some(sidebar_content::state::PtySelection::new(row, col));
+                self.agent_pty_drag_active = true;
+                // Also focus PTY so keyboard events still route to it.
+                self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                self.sidebar_data_dirty = true;
+                return true;
+            }
+        }
 
         // Let the TextInputManager claim the drag if (x, y) falls inside a registered
         // text field (e.g. the HexColor field when the L2 color picker is visible).
@@ -2178,6 +2276,26 @@ impl ChartApp {
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+        // ── PTY host-side selection drag extension ────────────────────────
+        if self.agent_pty_drag_active {
+            // Clamp to the PTY rect for graceful out-of-bounds behavior.
+            let (rx, ry, rw, rh) = self
+                .sidebar_state
+                .agent_terminal_rect
+                .map(|(a, b, c, d)| (a as f64, b as f64, c as f64, d as f64))
+                .unwrap_or((0.0, 0.0, 0.0, 0.0));
+            let cx = x.clamp(rx, rx + rw - 1.0);
+            let cy = y.clamp(ry, ry + rh - 1.0);
+            if let Some((row, col)) = self.pty_cell_at(cx, cy) {
+                if let Some(ref mut sel) = self.sidebar_state.pty_selection {
+                    sel.end_row = row;
+                    sel.end_col = col;
+                    self.sidebar_data_dirty = true;
+                }
+            }
+            return;
+        }
+
         // Forward to TextInputManager for text-selection drag (e.g. HexColor field).
         self.text_input.on_drag_move(x);
 
@@ -3013,6 +3131,19 @@ impl ChartApp {
     /// Handle drag end at `(x, y)`.
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
+
+        // ── End host-side PTY selection drag ────────────────────────────────
+        if self.agent_pty_drag_active {
+            self.agent_pty_drag_active = false;
+            // If start==end the selection is empty — clear it so overlay vanishes.
+            if let Some(sel) = self.sidebar_state.pty_selection {
+                if sel.is_empty() {
+                    self.sidebar_state.pty_selection = None;
+                }
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
 
         // Notify TextInputManager that drag selection has ended.
         self.text_input.on_drag_end();
@@ -8179,6 +8310,7 @@ impl ChartApp {
             if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
                 self.text_input.blur();
             }
+            self.sidebar_state.pty_selection = None;
             self.ensure_agent_session_for_mode();
             return;
         }
@@ -8188,6 +8320,7 @@ impl ChartApp {
                 self.text_input.blur();
             }
             self.agent_pty_hover_focused = false;
+            self.sidebar_state.pty_selection = None;
             // Populate chat view with latest history from disk on switch to Chat mode.
             let cli = self.sidebar_state.agent_cli;
             self.agent.load_latest_history(cli);
@@ -8195,6 +8328,7 @@ impl ChartApp {
         }
         if widget_id == "agent:cli_cycle" {
             self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
+            self.sidebar_state.pty_selection = None;
             // Populate chat view with latest history for the newly selected CLI.
             let cli = self.sidebar_state.agent_cli;
             self.agent.load_latest_history(cli);

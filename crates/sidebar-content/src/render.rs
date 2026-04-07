@@ -3718,7 +3718,7 @@ fn render_agents_panel(
 
     if is_pty_mode {
         if has_pty {
-            render_agents_pty(ctx, snapshot, x, y, inner_w, content_h);
+            render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h);
         } else {
             // PTY tab selected but no data yet — render empty terminal area.
             ctx.set_fill_color("#0d0d12");
@@ -3827,6 +3827,7 @@ fn render_agents_panel(
 fn render_agents_pty(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
+    selection: Option<crate::state::PtySelection>,
     x: f64,
     y: f64,
     w: f64,
@@ -3902,6 +3903,37 @@ fn render_agents_pty(
         ctx.set_global_alpha(0.7);
         ctx.fill_rect(cur_x, cur_y, char_w, char_h);
         ctx.set_global_alpha(1.0);
+    }
+
+    // ── Selection overlay ────────────────────────────────────────────────
+    if let Some(sel) = selection {
+        if !sel.is_empty() {
+            let ((lo_row, lo_col), (hi_row, hi_col)) = sel.ordered();
+            let lo_row = lo_row as usize;
+            let hi_row = hi_row as usize;
+            let lo_col = lo_col as usize;
+            let hi_col = hi_col as usize;
+            let total_cols = grid.cols as usize;
+            ctx.set_fill_color("#4a7bc8");
+            ctx.set_global_alpha(0.35);
+            for row in lo_row..=hi_row {
+                let (c0, c1) = if lo_row == hi_row {
+                    (lo_col, hi_col)
+                } else if row == lo_row {
+                    (lo_col, total_cols)
+                } else if row == hi_row {
+                    (0, hi_col)
+                } else {
+                    (0, total_cols)
+                };
+                if c1 <= c0 { continue; }
+                let rx = x + c0 as f64 * char_w;
+                let ry = y + row as f64 * char_h;
+                let rw = (c1 - c0) as f64 * char_w;
+                ctx.fill_rect(rx, ry, rw, char_h);
+            }
+            ctx.set_global_alpha(1.0);
+        }
     }
 
     ctx.restore();

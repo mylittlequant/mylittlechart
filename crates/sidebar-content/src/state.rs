@@ -290,6 +290,40 @@ pub struct SidebarState {
     /// Persisted here so `apply_render_output` can detect changes and call
     /// `AgentSessionManager::resize` only when the grid size actually changes.
     pub agent_terminal_size: Option<(u16, u16)>,
+
+    /// Host-side text selection inside the PTY terminal view.
+    ///
+    /// Coordinates are (row, col) cell positions inside the current grid.
+    /// `start` is the drag anchor (mousedown), `end` follows the cursor.
+    /// Cleared on new PTY output, mode switch, CLI switch, click outside,
+    /// or after Ctrl+C copy. `None` = no active selection.
+    pub pty_selection: Option<PtySelection>,
+}
+
+/// A host-side PTY text selection in cell coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PtySelection {
+    pub start_row: u16,
+    pub start_col: u16,
+    pub end_row: u16,
+    pub end_col: u16,
+}
+
+impl PtySelection {
+    pub fn new(row: u16, col: u16) -> Self {
+        Self { start_row: row, start_col: col, end_row: row, end_col: col }
+    }
+
+    /// Returns (lo, hi) ordered so lo precedes hi in reading order.
+    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
+        let a = (self.start_row, self.start_col);
+        let b = (self.end_row, self.end_col);
+        if a <= b { (a, b) } else { (b, a) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start_row == self.end_row && self.start_col == self.end_col
+    }
 }
 
 // =============================================================================
@@ -495,6 +529,7 @@ impl Default for SidebarState {
             agent_past_session_count: 0,
             agent_terminal_rect: None,
             agent_terminal_size: None,
+            pty_selection: None,
         }
     }
 }

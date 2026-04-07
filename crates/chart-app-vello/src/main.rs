@@ -8066,9 +8066,19 @@ impl ApplicationHandler for App<'_> {
                                 return;
                             }
                             PhysicalKey::Code(KeyCode::KeyC) => {
-                                // PTY-first: send \x03 interrupt to Claude if PTY focused.
+                                // PTY-first: if there's a host-side PTY selection,
+                                // copy it to clipboard and clear. Otherwise send \x03
+                                // to the running CLI.
                                 if pw.chart.is_agent_pty_focused() {
-                                    pw.chart.on_key_press(chart_app::KeyPress::CtrlC);
+                                    let sel_text = pw.chart.pty_selection_text();
+                                    if !sel_text.is_empty() {
+                                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                                            let _ = cb.set_text(sel_text);
+                                        }
+                                        pw.chart.clear_pty_selection();
+                                    } else {
+                                        pw.chart.on_key_press(chart_app::KeyPress::CtrlC);
+                                    }
                                     return;
                                 }
                                 if let Some(text) = pw.chart.on_copy_selection() {
