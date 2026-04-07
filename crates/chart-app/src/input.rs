@@ -5539,6 +5539,39 @@ impl ChartApp {
                         return;
                     }
 
+                    // Agents panel: route wheel to internal chat or PTY scroll offset.
+                    if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
+                        if let Some(ref content_rect) = sidebar_result.agent_content_rect {
+                            if x >= content_rect.x
+                                && x <= content_rect.x + content_rect.width
+                                && y >= content_rect.y
+                                && y <= content_rect.y + content_rect.height
+                            {
+                                use sidebar_content::state::AgentPanelMode;
+                                let viewport_h = content_rect.height;
+                                match self.sidebar_state.agent_mode {
+                                    AgentPanelMode::Chat => {
+                                        let total_h = sidebar_result.agent_chat_content_height;
+                                        let max_offset = (total_h - viewport_h).max(0.0);
+                                        let new_offset = (self.sidebar_state.chat_scroll_offset - dy * 30.0)
+                                            .clamp(0.0, max_offset);
+                                        self.sidebar_state.chat_scroll_offset = new_offset;
+                                    }
+                                    AgentPanelMode::Pty => {
+                                        let total_h = sidebar_result.agent_pty_content_height;
+                                        let max_offset = (total_h - viewport_h).max(0.0);
+                                        let new_offset = (self.sidebar_state.pty_scroll_offset - dy * 30.0)
+                                            .clamp(0.0, max_offset);
+                                        self.sidebar_state.pty_scroll_offset = new_offset;
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        // Swallow wheel events in the Agents panel (no outer sidebar scroll).
+                        return;
+                    }
+
                     // Scroll down (dy > 0) increases offset; scroll up (dy < 0) decreases it.
                     let content_h = sidebar_result.content_height;
                     let viewport_h = sidebar_result.content_rect.height;

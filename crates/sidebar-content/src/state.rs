@@ -306,6 +306,18 @@ pub struct SidebarState {
     pub agent_past_sessions_open: bool,
     /// Snapshot of past sessions (populated when dropdown opens).
     pub agent_past_sessions_list: Vec<crate::agent_types::SessionMeta>,
+
+    /// Internal vertical scroll offset for the chat message area (pixels, >= 0).
+    ///
+    /// Clamped each frame to `[0, max(0, total_content_h - viewport_h)]`.
+    /// Auto-advances to max when new messages arrive and the user was already
+    /// at the bottom.
+    pub chat_scroll_offset: f64,
+
+    /// Internal vertical scroll offset for the PTY terminal area (pixels, >= 0).
+    ///
+    /// Clamped each frame to `[0, max(0, rows * char_h - viewport_h)]`.
+    pub pty_scroll_offset: f64,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -540,6 +552,8 @@ impl Default for SidebarState {
             pty_selection: None,
             agent_past_sessions_open: false,
             agent_past_sessions_list: Vec::new(),
+            chat_scroll_offset: 0.0,
+            pty_scroll_offset: 0.0,
         }
     }
 }

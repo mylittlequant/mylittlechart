@@ -5718,6 +5718,33 @@ impl ChartApp {
             .and_then(|r| r.agent_terminal_rect)
             .map(|r| (r.x as f32, r.y as f32, r.width as f32, r.height as f32));
 
+        // Auto-scroll chat/PTY to bottom when new content arrives and user was at bottom.
+        if let Some(ref sr) = self.last_sidebar_result {
+            if let Some(ref content_rect) = sr.agent_content_rect {
+                let viewport_h = content_rect.height;
+                use sidebar_content::state::AgentPanelMode;
+                match self.sidebar_state.agent_mode {
+                    AgentPanelMode::Chat => {
+                        let total_h = sr.agent_chat_content_height;
+                        let max_offset = (total_h - viewport_h).max(0.0);
+                        // If user was at (or near) bottom, keep them there.
+                        let near_bottom = max_offset - self.sidebar_state.chat_scroll_offset < 60.0;
+                        if near_bottom {
+                            self.sidebar_state.chat_scroll_offset = max_offset;
+                        }
+                    }
+                    AgentPanelMode::Pty => {
+                        let total_h = sr.agent_pty_content_height;
+                        let max_offset = (total_h - viewport_h).max(0.0);
+                        let near_bottom = max_offset - self.sidebar_state.pty_scroll_offset < 60.0;
+                        if near_bottom {
+                            self.sidebar_state.pty_scroll_offset = max_offset;
+                        }
+                    }
+                }
+            }
+        }
+
         // Resize PTY when the terminal content area changes grid dimensions.
         let new_size = self
             .last_sidebar_result

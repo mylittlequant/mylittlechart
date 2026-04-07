@@ -583,17 +583,56 @@ impl ChartPanelGrid {
         let total_share: f64 = raw_props.iter().sum();
         let delta_share = (delta as f64 / total_size as f64) * total_share;
 
-        // Apply the delta: left/top child gains, right/bottom child loses.
-        let mut new_props = raw_props.clone();
-        new_props[pos_a] += delta_share;
-        new_props[pos_b] -= delta_share;
+        // Per-child minimum in share space.  The same min value applies to
+        // every sibling (it is the price-scale width guard, uniform per panel).
+        let min_share = (min_a_pixels.max(min_b_pixels).max(0.0) as f64 / total_size as f64)
+            * total_share;
 
-        // Per-child minimum: caller passes the actual price-scale width
-        // (or analogous guard) for each side. No hardcoded constants here.
-        let min_share_a = (min_a_pixels.max(0.0) as f64 / total_size as f64) * total_share;
-        let min_share_b = (min_b_pixels.max(0.0) as f64 / total_size as f64) * total_share;
-        if new_props[pos_a] < min_share_a || new_props[pos_b] < min_share_b {
-            return;
+        // --- Cascading resize ---
+        //
+        // When dragging in the positive direction (pos_a grows, pos_b shrinks):
+        //   - Walk siblings from pos_b rightward; take shrinkage from each.
+        //   - Give all taken shrinkage to pos_a.
+        //
+        // When dragging in the negative direction (pos_a shrinks, pos_b grows):
+        //   - Walk siblings from pos_a leftward; take shrinkage from each.
+        //   - Give all taken shrinkage to pos_b.
+        //
+        // This produces the cascading effect: the immediate neighbour shrinks
+        // first; once it hits min_share, the next sibling starts shrinking, etc.
+
+        let mut new_props = raw_props.clone();
+
+        if delta_share >= 0.0 {
+            // pos_a grows — cascade shrink across pos_b, pos_b+1, pos_b+2, ...
+            let mut remaining = delta_share;
+            for i in pos_b..n {
+                let available = (new_props[i] - min_share).max(0.0);
+                let take = remaining.min(available);
+                new_props[i] -= take;
+                remaining -= take;
+                if remaining <= 0.0 {
+                    break;
+                }
+            }
+            // pos_a absorbs however much was actually freed.
+            new_props[pos_a] += delta_share - remaining;
+        } else {
+            // pos_a shrinks — cascade shrink across pos_a-1, pos_a-2, ...
+            // (walking leftward from pos_a inclusive)
+            let mut remaining = (-delta_share).abs();
+            let indices: Vec<usize> = (0..=pos_a).rev().collect();
+            for i in indices {
+                let available = (new_props[i] - min_share).max(0.0);
+                let take = remaining.min(available);
+                new_props[i] -= take;
+                remaining -= take;
+                if remaining <= 0.0 {
+                    break;
+                }
+            }
+            // pos_b absorbs however much was actually freed.
+            new_props[pos_b] += (-delta_share) - remaining;
         }
 
         // Commit new proportions.

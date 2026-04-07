@@ -109,6 +109,20 @@ pub struct RightSidebarResult {
     /// Contains `char_count + 1` entries — left edge of each char plus the
     /// right edge of the last character.  `None` when not rendered.
     pub agent_input_char_positions: Option<Vec<f64>>,
+
+    /// Bounding rect of the agent chat / PTY content area (the scrollable region).
+    ///
+    /// Used by `chart-app` to route wheel events to `chat_scroll_offset` or
+    /// `pty_scroll_offset`.  `None` when the Agents panel is not rendered.
+    pub agent_content_rect: Option<WidgetRect>,
+
+    /// Total content height of the agent chat area (pixels).
+    ///
+    /// Combined with `agent_content_rect.height` to compute the scroll max.
+    pub agent_chat_content_height: f64,
+
+    /// Total content height of the agent PTY area (pixels = rows * 14.0).
+    pub agent_pty_content_height: f64,
 }
 
 // =============================================================================
@@ -3728,16 +3742,31 @@ fn render_agents_panel(
         result.agent_terminal_size = Some((pty_cols, pty_rows));
     }
 
+    // Record the agent content rect for scroll hit-testing in chart-app.
+    let content_area_rect = WidgetRect::new(x, y, inner_w, content_h);
+    result.agent_content_rect = Some(content_area_rect);
+
     if is_pty_mode {
         if has_pty {
-            render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h);
+            let pty_rows = snapshot
+                .and_then(|s| if let crate::agent_types::AgentSnapshotMode::Pty(ref g) = s.mode { Some(g.rows) } else { None })
+                .unwrap_or(24) as f64;
+            let pty_content_h = pty_rows * 14.0;
+            result.agent_pty_content_height = pty_content_h;
+            let max_pty_scroll = (pty_content_h - content_h).max(0.0);
+            let pty_scroll = state.pty_scroll_offset.clamp(0.0, max_pty_scroll);
+            render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h, pty_scroll);
         } else {
             // PTY tab selected but no data yet — render empty terminal area.
             ctx.set_fill_color("#0d0d12");
             ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
         }
     } else if has_chat {
-        render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h);
+        let chat_content_h = compute_chat_content_height(ctx, snapshot, inner_w);
+        result.agent_chat_content_height = chat_content_h;
+        let max_chat_scroll = (chat_content_h - content_h).max(0.0);
+        let chat_scroll = state.chat_scroll_offset.clamp(0.0, max_chat_scroll);
+        render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll);
     } else {
         // Chat tab selected but no data yet — render empty area.
         ctx.set_fill_color("#0d0d12");
@@ -3902,6 +3931,7 @@ fn render_agents_pty(
     y: f64,
     w: f64,
     h: f64,
+    scroll_offset: f64,
 ) {
     use crate::agent_types::AgentSnapshotMode;
 
@@ -3925,8 +3955,11 @@ fn render_agents_pty(
     ctx.clip_rect(x, y, w, h);
 
     for (row_idx, row) in grid.cells.iter().enumerate() {
-        let cell_y = y + row_idx as f64 * char_h;
-        // Skip rows that are entirely outside the visible area.
+        let cell_y = y + row_idx as f64 * char_h - scroll_offset;
+        // Skip rows entirely above or below the visible area.
+        if cell_y + char_h <= y {
+            continue;
+        }
         if cell_y >= y + h {
             break;
         }
@@ -3963,15 +3996,15 @@ fn render_agents_pty(
         }
     }
 
-    // Cursor: a small block at the cursor position, but only when vt100
-    // says the cursor is visible (TUIs hide it via DECTCEM while drawing
-    // their own caret).
-    if grid.cursor_visible {
+    // Cursor: always draw a block at the cursor position.  Claude TUI keeps
+    // DECTCEM off most of the time so gating on cursor_visible hides the
+    // cursor permanently.  We simply render it unconditionally.
+    {
         let cur_row = grid.cursor_row as usize;
         let cur_col = grid.cursor_col as usize;
         let cur_x = x + cur_col as f64 * char_w;
-        let cur_y = y + cur_row as f64 * char_h;
-        if cur_x < x + w && cur_y < y + h {
+        let cur_y = y + cur_row as f64 * char_h - scroll_offset;
+        if cur_x < x + w && cur_y >= y && cur_y < y + h {
             ctx.set_fill_color("#cccccc");
             ctx.set_global_alpha(0.7);
             ctx.fill_rect(cur_x, cur_y, char_w, char_h);
@@ -4002,12 +4035,18 @@ fn render_agents_pty(
                 };
                 if c1 <= c0 { continue; }
                 let rx = x + c0 as f64 * char_w;
-                let ry = y + row as f64 * char_h;
+                let ry = y + row as f64 * char_h - scroll_offset;
                 let rw = (c1 - c0) as f64 * char_w;
                 ctx.fill_rect(rx, ry, rw, char_h);
             }
             ctx.set_global_alpha(1.0);
         }
+    }
+
+    // ── Scrollbar (thin, right edge) ─────────────────────────────────────
+    let pty_content_h = grid.rows as f64 * char_h;
+    if pty_content_h > h {
+        draw_thin_scrollbar(ctx, x, y, w, h, scroll_offset, pty_content_h);
     }
 
     // ── Buddy ASCII art overlay ──────────────────────────────────────────
@@ -4059,6 +4098,7 @@ fn render_agents_chat(
     y: f64,
     w: f64,
     h: f64,
+    scroll_offset: f64,
 ) {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -4092,7 +4132,8 @@ fn render_agents_chat(
     let line_h_normal = 17.0;
     let line_h_mono = 14.0;
 
-    let mut cursor_y = y + 8.0;
+    // Start above the viewport by the scroll amount.
+    let mut cursor_y = y + 8.0 - scroll_offset;
 
     for msg in messages {
         match msg.role {
@@ -4213,12 +4254,120 @@ fn render_agents_chat(
         }
     }
 
+    // cursor_y = y + 8.0 - scroll_offset + accumulated_content_h
+    // => total_content_h = cursor_y - y + scroll_offset - 8.0 + 8.0 = cursor_y - y + scroll_offset
+    let total_content_h = (cursor_y - y) + scroll_offset;
+    if total_content_h > h {
+        draw_thin_scrollbar(ctx, x, y, w, h, scroll_offset, total_content_h);
+    }
+
     ctx.restore();
 }
 
 // =============================================================================
 // Agent rendering helpers
 // =============================================================================
+
+/// Compute the total content height of the chat message list without rendering.
+///
+/// Uses the same layout metrics as `render_agents_chat`.  Mutably borrows `ctx`
+/// only to set fonts for measurement — no drawing commands are issued.
+fn compute_chat_content_height(
+    ctx: &mut dyn RenderContext,
+    snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
+    w: f64,
+) -> f64 {
+    use crate::agent_types::{AgentSnapshotMode, ChatRole};
+
+    let messages = match snapshot.and_then(|s| {
+        if let AgentSnapshotMode::Chat(ref msgs) = s.mode { Some(msgs) } else { None }
+    }) {
+        Some(m) => m,
+        None => return 0.0,
+    };
+
+    if messages.is_empty() {
+        return 0.0;
+    }
+
+    let bubble_pad_y = 5.0;
+    let bubble_gap = 6.0;
+    let max_bubble_w = w - 24.0;
+    let line_h_normal = 17.0;
+    let line_h_mono = 14.0;
+
+    let mut total_h = 8.0; // top padding
+
+    for msg in messages {
+        match msg.role {
+            ChatRole::User => {
+                ctx.set_font("13px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
+                let n_lines = lines.len().max(1);
+                let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
+                total_h += bubble_h + bubble_gap;
+            }
+            ChatRole::Assistant => {
+                ctx.set_font("13px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
+                let text_h = lines.len() as f64 * line_h_normal;
+                total_h += text_h + bubble_gap;
+            }
+            ChatRole::Tool => {
+                ctx.set_font("bold 11px JetBrainsMono");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
+                let n_lines = lines.len().max(1);
+                let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
+                total_h += bubble_h + bubble_gap;
+            }
+            ChatRole::Thinking | ChatRole::Error => {
+                ctx.set_font("12px sans-serif");
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
+                let text_h = lines.len() as f64 * line_h_normal;
+                total_h += text_h + bubble_gap;
+            }
+        }
+    }
+
+    total_h + 8.0 // bottom padding
+}
+
+/// Draw a thin translucent scrollbar on the right edge of a content area.
+///
+/// `scroll_offset` is the current scroll position in pixels (0 = top).
+/// `content_h` is the total content height in pixels (>= viewport_h to be drawn).
+fn draw_thin_scrollbar(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    viewport_h: f64,
+    scroll_offset: f64,
+    content_h: f64,
+) {
+    if content_h <= viewport_h {
+        return;
+    }
+    let bar_w = 3.0;
+    let bar_x = x + w - bar_w - 1.0;
+
+    // Thumb height proportional to viewport/content ratio.
+    let thumb_h = (viewport_h / content_h * viewport_h).max(16.0);
+    let track_h = viewport_h - thumb_h;
+    let thumb_y = y + (scroll_offset / (content_h - viewport_h)) * track_h;
+
+    // Track (subtle).
+    ctx.set_fill_color("#ffffff");
+    ctx.set_global_alpha(0.08);
+    ctx.fill_rounded_rect(bar_x, y, bar_w, viewport_h, 2.0);
+
+    // Thumb.
+    ctx.set_fill_color("#ffffff");
+    ctx.set_global_alpha(0.35);
+    ctx.fill_rounded_rect(bar_x, thumb_y, bar_w, thumb_h, 2.0);
+
+    ctx.set_global_alpha(1.0);
+}
 
 /// Convert an RGB triple to a CSS hex color string like `"#rrggbb"`.
 fn rgb_to_hex(rgb: [u8; 3]) -> String {
