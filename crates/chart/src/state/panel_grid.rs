@@ -263,6 +263,26 @@ impl ChartPanelGrid {
         }
     }
 
+    /// Compute the minimum chart width by walking the docking tree root.
+    ///
+    /// Mirrors the logic of `min_width_for_node` but operates on the root
+    /// `Branch` directly (since the tree root is a `Branch`, not a `PanelNode`).
+    /// Returns at least 120.0 as a safety floor.
+    pub fn min_chart_width(&self) -> f32 {
+        use uzor::panels::WindowLayout;
+        let root = self.docking.tree().root();
+        let child_mins = root.children.iter().map(|c| self.min_width_for_node(c));
+        let computed = match root.layout {
+            WindowLayout::SplitHorizontal
+            | WindowLayout::ThreeColumns
+            | WindowLayout::OneLeftTwoRight
+            | WindowLayout::TwoLeftOneRight
+            | WindowLayout::Grid2x2 => child_mins.sum(),
+            _ => child_mins.fold(0.0_f32, f32::max),
+        };
+        computed.max(120.0)
+    }
+
     /// Immutable reference to the underlying `DockingManager`.
     pub fn docking(&self) -> &DockingManager<ChartSubPanel> {
         &self.docking

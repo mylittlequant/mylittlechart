@@ -139,8 +139,9 @@ impl ChartApp {
     }
 
     /// Convert a screen (x, y) point to a PTY cell (row, col) if the point lies
-    /// inside the current `agent_terminal_rect`. Uses fixed 7x14 cell metrics
-    /// matching `render_agents_pty`. Row/col are clamped to the grid size.
+    /// inside the current `agent_terminal_rect`. Uses 7x19 cell metrics
+    /// matching `render_agents_pty`, and accounts for `pty_scroll.offset`.
+    /// Row/col are clamped to the grid size.
     fn pty_cell_at(&self, x: f64, y: f64) -> Option<(u16, u16)> {
         let (rx, ry, rw, rh) = self.sidebar_state.agent_terminal_rect?;
         let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
@@ -148,8 +149,9 @@ impl ChartApp {
             return None;
         }
         let (cols, rows) = self.sidebar_state.agent_terminal_size.unwrap_or((80, 24));
+        let scroll_offset = self.sidebar_state.pty_scroll.offset as f64;
         let col = ((x - rx) / 7.0).floor() as i32;
-        let row = ((y - ry) / 14.0).floor() as i32;
+        let row = ((y - ry + scroll_offset) / 19.0).floor() as i32;
         let col = col.clamp(0, cols as i32 - 1) as u16;
         let row = row.clamp(0, rows as i32 - 1) as u16;
         Some((row, col))
@@ -2357,8 +2359,8 @@ impl ChartApp {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
             // Dynamic clamp: leave at least `min_chart_w` pixels for the chart area
             // (approximately the width of the price scale + a few candles).
-            const MIN_CHART_W: f64 = 120.0;
-            let max_w = (self.right_toolbar_left_x - MIN_CHART_W).max(0.0);
+            let min_chart_w = self.panel_app.panel_grid.min_chart_width() as f64;
+            let max_w = (self.right_toolbar_left_x - min_chart_w).max(0.0);
             let new_width = (self.right_toolbar_left_x - x).min(max_w);
             self.sidebar_state.set_right_width(new_width);
             return;
