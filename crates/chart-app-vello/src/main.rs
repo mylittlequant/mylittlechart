@@ -4059,7 +4059,8 @@ impl ApplicationHandler for App<'_> {
                 // Keep sidebar_state.agent_session_active in sync with the
                 // manager: sessions can exit on their own (PipeSessionEnd,
                 // process death) without going through a UI handler.
-                pw.chart.sidebar_state.agent_session_active = pw.chart.agent.is_active();
+                let active_cli = pw.chart.sidebar_state.agent_cli;
+                pw.chart.sidebar_state.agent_session_active = pw.chart.agent.is_active(active_cli);
                 // Always mark dirty so cursor blink and incoming data render.
                 pw.sidebar_dirty_scene = true;
                 pw.window.request_redraw();

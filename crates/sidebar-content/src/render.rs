@@ -3641,18 +3641,50 @@ fn render_agents_panel(
         y += btn_h + gap;
     }
 
-    // Start/Stop button removed: sessions auto-start on panel open / mode switch / first send.
-    y += gap;
+    // ── Debug session-picker button ───────────────────────────────────────────
+    {
+        let n = state.agent_past_session_count;
+        let label = format!("prev sessions ({})", n);
+        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:load_prev_session"));
+
+        if is_hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+        } else {
+            ctx.set_fill_color(&theme.background);
+        }
+        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
+
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x, y);
+        ctx.line_to(x + inner_w, y);
+        ctx.line_to(x + inner_w, y + btn_h);
+        ctx.line_to(x, y + btn_h);
+        ctx.close_path();
+        ctx.stroke();
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if n > 0 { "#4a9eff" } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&label, x + inner_w / 2.0, y + btn_h / 2.0);
+
+        input_coordinator.register("agent:load_prev_session", btn_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:load_prev_session".to_string(), btn_rect));
+
+        y += btn_h + gap;
+    }
 
     // ── Dynamic content area ──────────────────────────────────────────────────
     // Determine if chat mode is active — input row is shown only for Chat.
     let is_chat_mode = state.agent_mode == AgentPanelMode::Chat;
     let input_h = row_h;
     let input_gap = gap;
-    // controls above the content: mode row + cli row (no start button)
-    let controls_h = btn_h + gap + btn_h + gap + gap + pad;
+    // controls: mode row + cli row + picker row (no start button)
+    let controls_h = btn_h + gap + btn_h + gap + btn_h + gap + pad;
     // viewport available = rect.height - header_height (40) - controls_h
-    // We approximate: use rect.height - 40.0 (header) - controls_h as the total available.
     let viewport_h = rect.height - 40.0 - controls_h;
     let content_h = if is_chat_mode {
         (viewport_h - input_h - input_gap).max(60.0)
@@ -3670,7 +3702,6 @@ fn render_agents_panel(
         snapshot.map(|s| &s.mode),
         Some(AgentSnapshotMode::Chat(_))
     );
-    let show_idle = !has_pty && !has_chat;
 
     // Render based on the user-selected tab, not the snapshot mode.
     let is_pty_mode = state.agent_mode == AgentPanelMode::Pty;
@@ -3689,30 +3720,16 @@ fn render_agents_panel(
         if has_pty {
             render_agents_pty(ctx, snapshot, x, y, inner_w, content_h);
         } else {
-            // PTY tab selected but no PTY session — show idle.
+            // PTY tab selected but no data yet — render empty terminal area.
             ctx.set_fill_color("#0d0d12");
             ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
-            if show_idle {
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color("#8b8b9e");
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Click Start to begin", x + inner_w / 2.0, y + content_h / 2.0);
-            }
         }
     } else if has_chat {
         render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h);
     } else {
-        // Chat tab selected but no chat session — show idle.
+        // Chat tab selected but no data yet — render empty area.
         ctx.set_fill_color("#0d0d12");
         ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
-        if show_idle {
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color("#8b8b9e");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Click Start to begin", x + inner_w / 2.0, y + content_h / 2.0);
-        }
     }
 
     y += content_h + gap;
@@ -3864,9 +3881,9 @@ fn render_agents_pty(
             let fg_hex = rgb_to_hex(cell.fg);
             ctx.set_fill_color(&fg_hex);
             if cell.bold {
-                ctx.set_font("bold 11px monospace");
+                ctx.set_font("bold 11px JetBrainsMono");
             } else {
-                ctx.set_font("11px monospace");
+                ctx.set_font("11px JetBrainsMono");
             }
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Alphabetic);
@@ -3995,7 +4012,7 @@ fn render_agents_chat(
                 // Tool output — monospace, dark translucent bg.
                 let tool_label = msg.tool_name.as_deref().unwrap_or("tool");
                 let header = format!("[{}]", tool_label);
-                ctx.set_font("bold 11px monospace");
+                ctx.set_font("bold 11px JetBrainsMono");
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len().max(1);
                 let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
@@ -4009,7 +4026,7 @@ fn render_agents_chat(
                 ctx.fill_text(&header, x + 4.0 + bubble_pad_x, cursor_y + bubble_pad_y);
 
                 ctx.set_fill_color("#a0a0b0");
-                ctx.set_font("11px monospace");
+                ctx.set_font("11px JetBrainsMono");
                 for (li, line) in lines.iter().enumerate() {
                     ctx.fill_text(
                         line,

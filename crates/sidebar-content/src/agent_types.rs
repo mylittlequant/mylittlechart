@@ -3,6 +3,8 @@
 //! These types are owned by `sidebar-content` because the rendering crate needs
 //! them to render the Agents panel, and `chart-app` depends on `sidebar-content`.
 
+use serde::{Deserialize, Serialize};
+
 /// A single terminal cell with character and colors.
 #[derive(Clone, Debug)]
 pub struct TermCell {
@@ -46,7 +48,7 @@ impl TermGrid {
 }
 
 /// Chat message role.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ChatRole {
     User,
     Assistant,
@@ -56,7 +58,7 @@ pub enum ChatRole {
 }
 
 /// A single chat message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,

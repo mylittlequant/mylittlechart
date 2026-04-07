@@ -522,6 +522,12 @@ pub struct ChartApp {
     /// blur.
     pub agent_pty_hover_focused: bool,
 
+    /// Set to `true` after `autostart_all` has been called once.
+    ///
+    /// The autostart fires on the first frame of the event loop so that a
+    /// Tokio runtime is guaranteed to be available via `bridge.runtime()`.
+    pub agent_autostarted: bool,
+
     // ── Internal CPU profiling timers (updated each tick, read by sidebar) ────
     /// Total time spent in the last tick() call, in microseconds.
     pub last_tick_us: u64,
@@ -857,6 +863,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::new(),
             agent_pty_hover_focused: false,
+            agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1135,6 +1142,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::new(),
             agent_pty_hover_focused: false,
+            agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1309,6 +1317,7 @@ impl ChartApp {
             text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::new(),
             agent_pty_hover_focused: false,
+            agent_autostarted: false,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1946,6 +1955,12 @@ impl ChartApp {
     pub fn tick(&mut self, current_time_ms: u64, bar_svc: &mut bar_service::BarService) {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
+
+        // Autostart all CLI sessions on the very first tick (runtime is ready here).
+        if !self.agent_autostarted {
+            self.agent_autostarted = true;
+            self.bridge.runtime().block_on(self.agent.autostart_all());
+        }
 
         // Reset per-tick accumulators for profiling.
         self.last_auto_scale_us = 0;
@@ -4132,7 +4147,9 @@ impl ChartApp {
 
         // Snapshot agent state for the sidebar renderer (agents panel).
         // Done here in prepare_frame (&mut self) because render_to_scene takes &self.
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot());
+        let active_cli = self.sidebar_state.agent_cli;
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot(active_cli));
+        self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
     }
 
     /// Convenience wrapper: calls `prepare_frame`, `render_to_scene`, then
@@ -5856,7 +5873,9 @@ impl ChartApp {
         let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
 
         // Provide current agent state to sidebar for the Agents panel.
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot());
+        let active_cli = self.sidebar_state.agent_cli;
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot(active_cli));
+        self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
 
         let sidebar_result = sidebar_content::render::render_right_sidebar(
             ctx,
@@ -5937,7 +5956,8 @@ impl ChartApp {
 
         if inside != self.agent_pty_hover_focused {
             self.agent_pty_hover_focused = inside;
-            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty && self.agent.is_active() {
+            let active_cli = self.sidebar_state.agent_cli;
+            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty && self.agent.is_active(active_cli) {
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
             } else if !inside && self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
                 self.text_input.blur();

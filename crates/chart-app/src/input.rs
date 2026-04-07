@@ -94,28 +94,31 @@ impl ChartApp {
     // Click
     // -------------------------------------------------------------------------
 
-    /// Ensure an agent session is running for the currently selected mode.
-    /// Used for auto-start: opens PTY immediately, defers Chat until first send.
+    /// Ensure an agent session is running for the currently selected mode and CLI.
+    ///
+    /// With multi-CLI support sessions autostart at app launch, so this is
+    /// mostly a no-op unless a session died and needs restarting.
     pub fn ensure_agent_session_for_mode(&mut self) {
         use sidebar_content::state::{AgentPanelMode, AgentCli};
         use gate4agent::{SessionConfig, CliTool};
-        if self.agent.is_active() {
+        let cli = self.sidebar_state.agent_cli;
+        if self.agent.is_active(cli) {
             return;
         }
         if self.sidebar_state.agent_mode != AgentPanelMode::Pty {
             // Chat sessions are started lazily on first send (need a prompt).
             return;
         }
-        let tool = match self.sidebar_state.agent_cli {
+        let tool = match cli {
             AgentCli::Claude => CliTool::ClaudeCode,
             AgentCli::Codex  => CliTool::Codex,
             AgentCli::Gemini => CliTool::Gemini,
         };
         let config = SessionConfig { tool, ..SessionConfig::default() };
-        match self.bridge.runtime().block_on(self.agent.start_pty(config)) {
+        match self.bridge.runtime().block_on(self.agent.start_pty(cli, config)) {
             Ok(()) => {
                 self.sidebar_state.agent_session_active = true;
-                eprintln!("[ChartApp] Agent PTY auto-started ({:?})", self.sidebar_state.agent_cli);
+                eprintln!("[ChartApp] Agent PTY auto-started ({:?})", cli);
             }
             Err(e) => eprintln!("[ChartApp] Failed to auto-start agent PTY: {}", e),
         }
@@ -5603,9 +5606,10 @@ impl ChartApp {
                 }
                 crate::text_input::FieldAction::None => {}
                 crate::text_input::FieldAction::RawInput(bytes) => {
-                    if self.agent.is_active() {
+                    let cli = self.sidebar_state.agent_cli;
+                    if self.agent.is_active(cli) {
                         let text = String::from_utf8_lossy(&bytes).to_string();
-                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(&text));
+                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
                     }
                 }
             }
@@ -5615,10 +5619,11 @@ impl ChartApp {
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             if ch == '\r' || ch == '\n' {
                 // Enter sends the message via the agent:send path.
-                if self.agent.is_active() {
+                let cli = self.sidebar_state.agent_cli;
+                if self.agent.is_active(cli) {
                     let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
                     if !text.is_empty() {
-                        let _ = self.bridge.runtime().block_on(self.agent.send_chat(&text));
+                        let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
                         self.sidebar_state.agent_input_buffer.clear();
                         self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
                     }
@@ -6824,9 +6829,10 @@ impl ChartApp {
                 }
                 crate::text_input::FieldAction::None => {}
                 crate::text_input::FieldAction::RawInput(bytes) => {
-                    if self.agent.is_active() {
+                    let cli = self.sidebar_state.agent_cli;
+                    if self.agent.is_active(cli) {
                         let text = String::from_utf8_lossy(&bytes).to_string();
-                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(&text));
+                        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
                     }
                 }
             }
@@ -8102,35 +8108,30 @@ impl ChartApp {
 
         // === Agent panel control clicks ===
         if widget_id == "agent:mode_pty" {
-            let was_chat = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Chat;
             self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Pty;
             if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
                 self.text_input.blur();
-            }
-            // Auto-switch session: stop chat session, start PTY session.
-            if was_chat && self.agent.is_active() {
-                self.bridge.runtime().block_on(self.agent.stop());
-                self.sidebar_state.agent_session_active = false;
             }
             self.ensure_agent_session_for_mode();
             return;
         }
         if widget_id == "agent:mode_chat" {
-            let was_pty = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty;
             self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Chat;
             if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
                 self.text_input.blur();
             }
             self.agent_pty_hover_focused = false;
-            // Auto-switch session: stop PTY session, start Chat session lazily on first send.
-            if was_pty && self.agent.is_active() {
-                self.bridge.runtime().block_on(self.agent.stop());
-                self.sidebar_state.agent_session_active = false;
-            }
             return;
         }
         if widget_id == "agent:cli_cycle" {
             self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
+            return;
+        }
+        if widget_id == "agent:load_prev_session" {
+            let cli = self.sidebar_state.agent_cli;
+            if self.agent.load_next_past_session(cli) {
+                self.sidebar_data_dirty = true;
+            }
             return;
         }
         if widget_id == "agent:input" {
@@ -8145,58 +8146,47 @@ impl ChartApp {
             return;
         }
         if widget_id == "agent:toggle_session" {
-            if self.agent.is_active() {
-                // Stop the active session.
-                self.bridge.runtime().block_on(self.agent.stop());
-                self.sidebar_state.agent_session_active = false;
-                eprintln!("[ChartApp] Agent session stopped");
-            } else {
-                // Start a new session based on the selected mode and CLI.
-                use sidebar_content::state::{AgentPanelMode, AgentCli};
-                use gate4agent::{SessionConfig, CliTool};
-                let tool = match self.sidebar_state.agent_cli {
-                    AgentCli::Claude => CliTool::ClaudeCode,
-                    AgentCli::Codex  => CliTool::Codex,
-                    AgentCli::Gemini => CliTool::Gemini,
-                };
-                let config = SessionConfig {
-                    tool,
-                    ..SessionConfig::default()
-                };
-                eprintln!("[ChartApp] Starting agent session: mode={:?} cli={:?}", self.sidebar_state.agent_mode, self.sidebar_state.agent_cli);
-                match self.sidebar_state.agent_mode {
-                    AgentPanelMode::Pty => {
-                        match self.bridge.runtime().block_on(self.agent.start_pty(config)) {
-                            Ok(()) => {
-                                self.sidebar_state.agent_session_active = true;
-                                eprintln!("[ChartApp] Agent PTY session started ({:?})", self.sidebar_state.agent_cli);
-                            }
-                            Err(e) => {
-                                eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
-                            }
+            // Start a new session based on the selected mode and CLI.
+            use sidebar_content::state::{AgentPanelMode, AgentCli};
+            use gate4agent::{SessionConfig, CliTool};
+            let cli = self.sidebar_state.agent_cli;
+            let tool = match cli {
+                AgentCli::Claude => CliTool::ClaudeCode,
+                AgentCli::Codex  => CliTool::Codex,
+                AgentCli::Gemini => CliTool::Gemini,
+            };
+            let config = SessionConfig { tool, ..SessionConfig::default() };
+            eprintln!("[ChartApp] Starting agent session: mode={:?} cli={:?}", self.sidebar_state.agent_mode, cli);
+            match self.sidebar_state.agent_mode {
+                AgentPanelMode::Pty => {
+                    match self.bridge.runtime().block_on(self.agent.start_pty(cli, config)) {
+                        Ok(()) => {
+                            self.sidebar_state.agent_session_active = true;
+                            eprintln!("[ChartApp] Agent PTY session started ({:?})", cli);
+                        }
+                        Err(e) => {
+                            eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
                         }
                     }
-                    AgentPanelMode::Chat => {
-                        // Read the initial prompt from the focused AgentChat text field,
-                        // falling back to the legacy agent_input_buffer.
-                        let prompt = {
-                            let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-                            if !from_field.is_empty() {
-                                from_field
-                            } else {
-                                self.sidebar_state.agent_input_buffer.clone()
-                            }
-                        };
-                        match self.bridge.runtime().block_on(self.agent.start_pipe(config, &prompt)) {
-                            Ok(()) => {
-                                self.sidebar_state.agent_session_active = true;
-                                self.sidebar_state.agent_input_buffer.clear();
-                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                                eprintln!("[ChartApp] Agent Chat session started ({:?})", self.sidebar_state.agent_cli);
-                            }
-                            Err(e) => {
-                                eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
-                            }
+                }
+                AgentPanelMode::Chat => {
+                    let prompt = {
+                        let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                        if !from_field.is_empty() {
+                            from_field
+                        } else {
+                            self.sidebar_state.agent_input_buffer.clone()
+                        }
+                    };
+                    match self.bridge.runtime().block_on(self.agent.start_pipe(cli, config, &prompt)) {
+                        Ok(()) => {
+                            self.sidebar_state.agent_session_active = true;
+                            self.sidebar_state.agent_input_buffer.clear();
+                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                            eprintln!("[ChartApp] Agent Chat session started ({:?})", cli);
+                        }
+                        Err(e) => {
+                            eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
                         }
                     }
                 }
@@ -8204,8 +8194,6 @@ impl ChartApp {
             return;
         }
         if widget_id == "agent:send" {
-            // Read from the focused AgentChat text field, falling back to the
-            // legacy agent_input_buffer.
             let text = {
                 let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
                 if !from_field.is_empty() {
@@ -8215,27 +8203,27 @@ impl ChartApp {
                 }
             };
             if !text.is_empty() {
-                // Auto-start chat session lazily on first send.
-                if !self.agent.is_active() {
+                let cli = self.sidebar_state.agent_cli;
+                if !self.agent.is_active(cli) {
                     use sidebar_content::state::AgentCli;
                     use gate4agent::{SessionConfig, CliTool};
-                    let tool = match self.sidebar_state.agent_cli {
+                    let tool = match cli {
                         AgentCli::Claude => CliTool::ClaudeCode,
                         AgentCli::Codex  => CliTool::Codex,
                         AgentCli::Gemini => CliTool::Gemini,
                     };
                     let config = SessionConfig { tool, ..SessionConfig::default() };
-                    match self.bridge.runtime().block_on(self.agent.start_pipe(config, &text)) {
+                    match self.bridge.runtime().block_on(self.agent.start_pipe(cli, config, &text)) {
                         Ok(()) => {
                             self.sidebar_state.agent_session_active = true;
                             self.sidebar_state.agent_input_buffer.clear();
                             self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                            eprintln!("[ChartApp] Agent Chat session started ({:?})", self.sidebar_state.agent_cli);
+                            eprintln!("[ChartApp] Agent Chat session started ({:?})", cli);
                         }
                         Err(e) => eprintln!("[ChartApp] Failed to start agent Chat: {}", e),
                     }
                 } else {
-                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(&text));
+                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
                     self.sidebar_state.agent_input_buffer.clear();
                     self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
                 }
@@ -17405,10 +17393,6 @@ impl ChartApp {
                     if opening {
                         // Auto-start PTY session on panel open (default mode is Pty).
                         self.ensure_agent_session_for_mode();
-                    } else if self.agent.is_active() {
-                        // Auto-stop session when panel closes to avoid orphaned processes.
-                        self.bridge.runtime().block_on(self.agent.stop());
-                        self.sidebar_state.agent_session_active = false;
                     }
                 }
                 self.sidebar_data_dirty = true;

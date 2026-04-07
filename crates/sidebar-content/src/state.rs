@@ -296,6 +296,12 @@ pub struct SidebarState {
     /// `None` when no session has produced a snapshot yet.
     pub agent_snapshot: Option<crate::agent_types::AgentRenderSnapshot>,
 
+    /// Number of past sessions available on disk for the currently selected CLI.
+    ///
+    /// Updated by `chart-app` before each render so the picker button can show
+    /// an accurate count without taking a borrow on the manager.
+    pub agent_past_session_count: usize,
+
     /// Bounding rect of the agent terminal content area, in sidebar-local
     /// coordinates (origin at sidebar top-left).
     ///
@@ -511,6 +517,7 @@ impl Default for SidebarState {
             agent_input_cursor_visible: false,
             agent_input_focused: false,
             agent_snapshot: None,
+            agent_past_session_count: 0,
             agent_terminal_rect: None,
             agent_terminal_size: None,
         }
