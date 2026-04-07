@@ -263,24 +263,25 @@ impl ChartPanelGrid {
         }
     }
 
-    /// Compute the minimum chart width by walking the docking tree root.
+    /// Compute the minimum chart width that must remain visible when the sidebar
+    /// separator is dragged.
     ///
-    /// Mirrors the logic of `min_width_for_node` but operates on the root
-    /// `Branch` directly (since the tree root is a `Branch`, not a `PanelNode`).
-    /// Returns at least 120.0 as a safety floor.
-    pub fn min_chart_width(&self) -> f32 {
-        use uzor::panels::WindowLayout;
-        let root = self.docking.tree().root();
-        let child_mins = root.children.iter().map(|c| self.min_width_for_node(c));
-        let computed = match root.layout {
-            WindowLayout::SplitHorizontal
-            | WindowLayout::ThreeColumns
-            | WindowLayout::OneLeftTwoRight
-            | WindowLayout::TwoLeftOneRight
-            | WindowLayout::Grid2x2 => child_mins.sum(),
-            _ => child_mins.fold(0.0_f32, f32::max),
-        };
-        computed.max(120.0)
+    /// Each leaf column has its own price scale strip along its right edge.
+    /// We sum `price_scale_width + 10` (5 px padding each side) across all
+    /// leaves, then add a 60 px drawing-area floor per leaf so that at least a
+    /// handful of candles can be rendered.  A hard floor of 120 px is enforced
+    /// regardless.
+    pub fn min_sidebar_chart_width(&self) -> f32 {
+        let mut total: f32 = 0.0;
+        let mut leaf_count: usize = 0;
+        for (_leaf_id, window) in self.iter_windows() {
+            let scale_w = (window.scale_settings.price_scale_width as f32).max(40.0);
+            total += scale_w + 10.0;
+            leaf_count += 1;
+        }
+        // Add minimum bar-drawing area per leaf (at least 60 px of candles).
+        total += 60.0 * leaf_count as f32;
+        total.max(120.0)
     }
 
     /// Immutable reference to the underlying `DockingManager`.

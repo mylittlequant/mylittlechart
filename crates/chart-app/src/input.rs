@@ -2359,7 +2359,7 @@ impl ChartApp {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
             // Dynamic clamp: leave at least `min_chart_w` pixels for the chart area
             // (approximately the width of the price scale + a few candles).
-            let min_chart_w = self.panel_app.panel_grid.min_chart_width() as f64;
+            let min_chart_w = self.panel_app.panel_grid.min_sidebar_chart_width() as f64;
             let max_w = (self.right_toolbar_left_x - min_chart_w).max(0.0);
             let new_width = (self.right_toolbar_left_x - x).min(max_w);
             self.sidebar_state.set_right_width(new_width);
