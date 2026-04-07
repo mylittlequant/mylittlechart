@@ -3,3 +3,4 @@
 pub use gate4agent::snapshot::{
     AgentCli, AgentRenderSnapshot, AgentSnapshotMode, ChatMessage, ChatRole, TermCell, TermGrid,
 };
+pub use gate4agent::history::SessionMeta;

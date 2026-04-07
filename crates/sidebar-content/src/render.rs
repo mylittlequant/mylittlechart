@@ -3552,6 +3552,7 @@ fn render_agents_panel(
     let mut y = content_y + pad;
     let x = rect.x + pad;
     let inner_w = content_width - pad * 2.0;
+    let mut prev_sessions_btn_rect: Option<WidgetRect> = None;
 
     // ── Mode selector row (Terminal | Chat) ───────────────────────────────────
     {
@@ -3673,6 +3674,8 @@ fn render_agents_panel(
 
         input_coordinator.register("agent:load_prev_session", btn_rect, uzor::input::Sense::CLICK);
         result.item_rects.push(("agent:load_prev_session".to_string(), btn_rect));
+
+        prev_sessions_btn_rect = Some(btn_rect);
 
         y += btn_h + gap;
     }
@@ -3814,6 +3817,64 @@ fn render_agents_panel(
     } else {
         // PTY mode — no input row, just bottom padding.
         y += pad;
+    }
+
+    // ── Past-sessions dropdown overlay (drawn last, on top of content) ────────
+    if state.agent_past_sessions_open {
+        if let Some(btn_rect) = prev_sessions_btn_rect {
+            let row_h = 22.0;
+            let max_rows: usize = 10;
+            let total = state.agent_past_sessions_list.len().min(max_rows);
+            let dd_w = btn_rect.width;
+            let dd_h = (total.max(1) as f64) * row_h + 4.0;
+            let dd_x = btn_rect.x;
+            let dd_y = btn_rect.y + btn_rect.height + 2.0;
+
+            // Background
+            ctx.set_fill_color(&theme.background);
+            ctx.fill_rounded_rect(dd_x, dd_y, dd_w, dd_h, 4.0);
+            ctx.set_stroke_color("#4a9eff");
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(dd_x, dd_y);
+            ctx.line_to(dd_x + dd_w, dd_y);
+            ctx.line_to(dd_x + dd_w, dd_y + dd_h);
+            ctx.line_to(dd_x, dd_y + dd_h);
+            ctx.close_path();
+            ctx.stroke();
+
+            if state.agent_past_sessions_list.is_empty() {
+                ctx.set_font("11px sans-serif");
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("(no sessions)", dd_x + dd_w / 2.0, dd_y + row_h / 2.0 + 2.0);
+            } else {
+                for (i, meta) in state.agent_past_sessions_list.iter().take(max_rows).enumerate() {
+                    let row_y = dd_y + 2.0 + (i as f64) * row_h;
+                    let row_rect = WidgetRect::new(dd_x + 2.0, row_y, dd_w - 4.0, row_h);
+                    let wid = format!("agent:past_session:{}", i);
+                    let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(wid.as_str()));
+                    if is_hovered {
+                        ctx.set_fill_color(&theme.item_bg_hover);
+                        ctx.fill_rounded_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height, 3.0);
+                    }
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_fill_color(&theme.item_text);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    // Show short id + preview (truncated to fit width)
+                    let short_id: String = meta.id.chars().take(8).collect();
+                    let preview = if meta.preview.is_empty() { "(empty)".to_string() } else { meta.preview.clone() };
+                    let label = format!("{}  {}", short_id, preview);
+                    let max_chars = ((dd_w - 12.0) / 6.0) as usize;
+                    let truncated: String = label.chars().take(max_chars.max(8)).collect();
+                    ctx.fill_text(&truncated, row_rect.x + 6.0, row_rect.y + row_h / 2.0);
+                    input_coordinator.register(wid.as_str(), row_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((wid, row_rect));
+                }
+            }
+        }
     }
 
     y - content_y

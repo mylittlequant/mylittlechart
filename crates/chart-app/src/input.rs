@@ -256,9 +256,14 @@ impl ChartApp {
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
                 self.agent_pty_hover_focused = true;
                 // A plain click (no drag) clears any previous selection.
-                if self.sidebar_state.pty_selection.is_some() {
-                    self.sidebar_state.pty_selection = None;
-                    self.sidebar_data_dirty = true;
+                // But keep non-empty selections that were just produced by a
+                // drag — drag_end fires before click, and selection is already
+                // finalized by then.
+                if let Some(sel) = self.sidebar_state.pty_selection {
+                    if sel.is_empty() {
+                        self.sidebar_state.pty_selection = None;
+                        self.sidebar_data_dirty = true;
+                    }
                 }
                 return;
             }
@@ -678,13 +683,17 @@ impl ChartApp {
         // the sidebar scroll-drag fallback doesn't hijack the motion.
         if self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty {
             if let Some((row, col)) = self.pty_cell_at(x, y) {
+                eprintln!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
                 self.sidebar_state.pty_selection =
                     Some(sidebar_content::state::PtySelection::new(row, col));
                 self.agent_pty_drag_active = true;
                 // Also focus PTY so keyboard events still route to it.
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
                 self.sidebar_data_dirty = true;
-                return true;
+                // Return false — NOT dismissed. We want subsequent drag_move
+                // events and the eventual drag_end. Returning true tells the
+                // platform runner to synthesise drag_end immediately.
+                return false;
             }
         }
 
@@ -8311,6 +8320,11 @@ impl ChartApp {
                 self.text_input.blur();
             }
             self.sidebar_state.pty_selection = None;
+            // Auto-focus the PTY so named keys (arrows/Enter/Tab/Esc)
+            // immediately route to the terminal without requiring a second
+            // click on the grid area.
+            self.text_input.focus(crate::text_input::FieldId::AgentPty);
+            self.agent_pty_hover_focused = true;
             self.ensure_agent_session_for_mode();
             return;
         }
@@ -8336,8 +8350,27 @@ impl ChartApp {
         }
         if widget_id == "agent:load_prev_session" {
             let cli = self.sidebar_state.agent_cli;
-            if self.agent.load_next_past_session(cli) {
-                self.sidebar_data_dirty = true;
+            // Toggle dropdown open/closed; populate list when opening.
+            if self.sidebar_state.agent_past_sessions_open {
+                self.sidebar_state.agent_past_sessions_open = false;
+                self.sidebar_state.agent_past_sessions_list.clear();
+            } else {
+                self.sidebar_state.agent_past_sessions_list = self.agent.list_past_sessions(cli);
+                self.sidebar_state.agent_past_sessions_open = true;
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        if let Some(idx_str) = widget_id.strip_prefix("agent:past_session:") {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                let cli = self.sidebar_state.agent_cli;
+                if let Some(meta) = self.sidebar_state.agent_past_sessions_list.get(idx).cloned() {
+                    if self.agent.load_history(cli, &meta.id) {
+                        self.sidebar_data_dirty = true;
+                    }
+                    self.sidebar_state.agent_past_sessions_open = false;
+                    self.sidebar_state.agent_past_sessions_list.clear();
+                }
             }
             return;
         }

@@ -298,6 +298,11 @@ pub struct SidebarState {
     /// Cleared on new PTY output, mode switch, CLI switch, click outside,
     /// or after Ctrl+C copy. `None` = no active selection.
     pub pty_selection: Option<PtySelection>,
+
+    /// Whether the past-sessions dropdown is expanded.
+    pub agent_past_sessions_open: bool,
+    /// Snapshot of past sessions (populated when dropdown opens).
+    pub agent_past_sessions_list: Vec<crate::agent_types::SessionMeta>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -530,6 +535,8 @@ impl Default for SidebarState {
             agent_terminal_rect: None,
             agent_terminal_size: None,
             pty_selection: None,
+            agent_past_sessions_open: false,
+            agent_past_sessions_list: Vec::new(),
         }
     }
 }
