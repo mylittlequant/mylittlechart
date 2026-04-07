@@ -7798,7 +7798,9 @@ impl ChartApp {
             }
         };
 
-        let min_h = 30.0_f64;
+        // Minimum pane height — large enough to keep the price scale labels
+        // legible and prevent panes from collapsing into / overlapping each other.
+        let min_h = 80.0_f64;
 
         let window = match self.panel_app.panel_grid.active_window_mut() {
             Some(w) => w,
