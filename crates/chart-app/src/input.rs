@@ -8172,7 +8172,9 @@ impl ChartApp {
                 AgentCli::Codex  => CliTool::Codex,
                 AgentCli::Gemini => CliTool::Gemini,
             };
-            let config = SessionConfig { tool, ..SessionConfig::default() };
+            let workdir = self.agent.cli_workdir(cli);
+            let _ = std::fs::create_dir_all(&workdir);
+            let config = SessionConfig { tool, working_dir: workdir, ..SessionConfig::default() };
             eprintln!("[ChartApp] Starting agent session: mode={:?} cli={:?}", self.sidebar_state.agent_mode, cli);
             match self.sidebar_state.agent_mode {
                 AgentPanelMode::Pty => {

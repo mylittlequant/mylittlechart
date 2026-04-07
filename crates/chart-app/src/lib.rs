@@ -4155,7 +4155,8 @@ impl ChartApp {
         // Snapshot agent state for the sidebar renderer (agents panel).
         // Done here in prepare_frame (&mut self) because render_to_scene takes &self.
         let active_cli = self.sidebar_state.agent_cli;
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot(active_cli));
+        let want_pty = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty;
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot_mode(active_cli, want_pty));
         self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
     }
 
@@ -5881,7 +5882,8 @@ impl ChartApp {
 
         // Provide current agent state to sidebar for the Agents panel.
         let active_cli = self.sidebar_state.agent_cli;
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot(active_cli));
+        let want_pty = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty;
+        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot_mode(active_cli, want_pty));
         self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
 
         let sidebar_result = sidebar_content::render::render_right_sidebar(
