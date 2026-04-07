@@ -681,7 +681,7 @@ impl ChartPanelGrid {
             // pos_a shrinks — cascade shrink across pos_a-1, pos_a-2, ...
             // (walking leftward from pos_a inclusive)
             let mut remaining = (-delta_share).abs();
-            let indices: Vec<usize> = (0..pos_a).rev().collect();
+            let indices: Vec<usize> = (0..=pos_a).rev().collect();
             for i in indices {
                 if new_props[i] <= 0.0 { continue; }
                 let available = (new_props[i] - min_shares[i]).max(0.0);

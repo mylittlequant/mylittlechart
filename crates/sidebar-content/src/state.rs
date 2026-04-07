@@ -319,8 +319,12 @@ pub struct SidebarState {
     /// Number of chat messages seen at the last render frame.
     ///
     /// Used by `apply_render_output` to detect new messages and auto-snap the
-    /// scroll offset to the bottom when the user was already at the bottom.
+    /// scroll offset to the bottom.
     pub last_chat_messages_len: usize,
+
+    /// Dirty flag: when true, the next frame will snap the chat scroll to the
+    /// bottom using up-to-date content_h from the just-completed render.
+    pub needs_chat_snap: bool,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -558,6 +562,7 @@ impl Default for SidebarState {
             chat_scroll: ScrollState::new(),
             pty_scroll: ScrollState::new(),
             last_chat_messages_len: 0,
+            needs_chat_snap: false,
         }
     }
 }

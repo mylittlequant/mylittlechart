@@ -3784,7 +3784,7 @@ fn render_agents_panel(
         result.agent_chat_content_height = chat_content_h;
         let max_chat_scroll = (chat_content_h - content_h).max(0.0);
         let chat_scroll = state.chat_scroll.offset.clamp(0.0, max_chat_scroll);
-        if let Some((handle_rect, track_rect)) = render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll) {
+        if let Some((handle_rect, track_rect)) = render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll, chat_content_h) {
             result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
             result.agent_chat_scrollbar_track_rect = Some(track_rect);
         }
@@ -4060,12 +4060,10 @@ fn render_agents_pty(
             let cy = y + cur_row as f64 * char_h - scroll_offset;
             if cy + char_h > y && cy < y + h {
                 let cell = &grid.cells[cur_row][cur_col];
-                let fg_hex = rgb_to_hex(cell.fg);
-                ctx.set_fill_color(&fg_hex);
+                ctx.set_fill_color("#ffffff");
                 ctx.fill_rect(cx, cy, char_w, char_h);
                 if !cell.ch.is_empty() && cell.ch != " " {
-                    let bg_hex = rgb_to_hex(cell.bg);
-                    ctx.set_fill_color(&bg_hex);
+                    ctx.set_fill_color(&rgb_to_hex(cell.bg));
                     ctx.set_font("11px JetBrainsMono");
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Alphabetic);
@@ -4144,6 +4142,7 @@ fn render_agents_chat(
     w: f64,
     h: f64,
     scroll_offset: f64,
+    total_content_h: f64,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -4322,14 +4321,12 @@ fn render_agents_chat(
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.fill_text(&status_text, x + 8.0, cursor_y);
-                cursor_y += 22.0;
             }
         }
     }
 
-    // cursor_y = y + 8.0 - scroll_offset + accumulated_content_h
-    // => total_content_h = cursor_y - y + scroll_offset - 8.0 + 8.0 = cursor_y - y + scroll_offset
-    let total_content_h = (cursor_y - y) + scroll_offset;
+    // total_content_h is passed in as a parameter (pre-computed via compute_chat_content_height)
+    // so the scrollbar handle size stays stable even when the loop breaks early due to scroll.
     let sb_rects = {
         let sb_w = 6.0;
         let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);

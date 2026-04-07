@@ -5787,30 +5787,37 @@ impl ChartApp {
             }
         }
 
-        // Auto-snap chat scroll to bottom when new messages arrive and the user
-        // was already at (or near) the bottom.
+        // Auto-snap chat scroll to bottom when new messages arrive.
+        // Two-phase dirty-flag approach:
+        //   Phase A: if the flag is set, snap now using current frame's content_h (fresh).
+        //   Phase B: detect new messages, set flag so next frame executes Phase A.
         if let Some(ref sidebar_result) = self.last_sidebar_result {
-            let new_len = self.sidebar_state.agent_snapshot
-                .as_ref()
-                .and_then(|snap| {
-                    if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
-                        Some(msgs.len())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0);
-            let old_len = self.sidebar_state.last_chat_messages_len;
-            if new_len > old_len {
+            // Phase A: consume snap flag using the just-rendered content dimensions.
+            if self.sidebar_state.needs_chat_snap {
                 let content_h = sidebar_result.agent_chat_content_height;
                 let viewport_h = sidebar_result.agent_chat_viewport_h;
                 let max_offset = (content_h - viewport_h).max(0.0);
-                if self.sidebar_state.chat_scroll.offset >= max_offset - 1.0 {
-                    self.sidebar_state.chat_scroll.offset = max_offset;
-                }
+                self.sidebar_state.chat_scroll.offset = max_offset;
+                self.sidebar_state.needs_chat_snap = false;
             }
-            self.sidebar_state.last_chat_messages_len = new_len;
         }
+
+        // Phase B: detect new messages (or initial load) and arm the flag.
+        let new_len = self.sidebar_state.agent_snapshot
+            .as_ref()
+            .and_then(|snap| {
+                if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                    Some(msgs.len())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        let old_len = self.sidebar_state.last_chat_messages_len;
+        if new_len > old_len || old_len == 0 && new_len > 0 {
+            self.sidebar_state.needs_chat_snap = true;
+        }
+        self.sidebar_state.last_chat_messages_len = new_len;
     }
 
     /// Render ONLY the toolbar vector graphics into `ctx`.
