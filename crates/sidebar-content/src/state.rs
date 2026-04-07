@@ -46,9 +46,12 @@ pub const RIGHT_SIDEBAR_WIDTH: f64 = 340.0;
 
 /// Minimum allowed right sidebar width (px).
 pub const MIN_SIDEBAR_WIDTH: f64 = 200.0;
+/// Hard upper bound — the real cap is enforced dynamically by the caller
+/// based on the available window width minus the minimum chart width.
+/// We just keep this absurdly large so it never bites in practice.
 
 /// Maximum allowed right sidebar width (px).
-pub const MAX_SIDEBAR_WIDTH: f64 = 600.0;
+pub const MAX_SIDEBAR_WIDTH: f64 = 4000.0;
 
 // =============================================================================
 // Panel enum

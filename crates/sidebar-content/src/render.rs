@@ -159,7 +159,10 @@ pub fn render_right_sidebar(
     input_coordinator: &mut InputCoordinator,
 ) -> RightSidebarResult {
     let header_height = 40.0;
-    let scrollbar_width = 8.0;
+    // Agents panel manages its own scroll inside chat/PTY content area —
+    // no sidebar-level scrollbar needed and the panel takes the full width.
+    let is_agents_panel = sidebar_state.right_panel == RightSidebarPanel::Agents;
+    let scrollbar_width: f64 = if is_agents_panel { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
 
     // Content area (below header, minus scrollbar column).
@@ -497,6 +500,12 @@ pub fn render_right_sidebar(
     // -------------------------------------------------------------------------
     // End scroll container — draws scrollbar if needed.
     // -------------------------------------------------------------------------
+    // Agents panel: clamp content_height to viewport so the sidebar-level
+    // scrollbar never appears. Internal chat/PTY scrolling is handled inside
+    // the panel itself.
+    if is_agents_panel {
+        content_height = viewport_rect.height;
+    }
     let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, content_height, &widget_theme);
 

@@ -2322,7 +2322,11 @@ impl ChartApp {
         // If the sidebar separator drag is active, resize the sidebar.
         if self.sidebar_separator_drag_active {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
-            let new_width = self.right_toolbar_left_x - x;
+            // Dynamic clamp: leave at least `min_chart_w` pixels for the chart area
+            // (approximately the width of the price scale + a few candles).
+            const MIN_CHART_W: f64 = 120.0;
+            let max_w = (self.right_toolbar_left_x - MIN_CHART_W).max(0.0);
+            let new_width = (self.right_toolbar_left_x - x).min(max_w);
             self.sidebar_state.set_right_width(new_width);
             return;
         }
