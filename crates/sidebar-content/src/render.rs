@@ -3963,13 +3963,21 @@ fn render_agents_pty(
         }
     }
 
-    // NOTE: we intentionally do NOT draw our own cursor block here.
-    // TUIs like Claude Code already render their own caret/inverse-cell
-    // inside the grid, and vt100's `cursor_position()` does not always
-    // correspond to the visible input caret (it follows the last escape
-    // move, which the app may park at the right edge after redraws).
-    // Drawing our own block on top causes a ghost cursor on the right.
-    let _ = (grid.cursor_row, grid.cursor_col);
+    // Cursor: a small block at the cursor position, but only when vt100
+    // says the cursor is visible (TUIs hide it via DECTCEM while drawing
+    // their own caret).
+    if grid.cursor_visible {
+        let cur_row = grid.cursor_row as usize;
+        let cur_col = grid.cursor_col as usize;
+        let cur_x = x + cur_col as f64 * char_w;
+        let cur_y = y + cur_row as f64 * char_h;
+        if cur_x < x + w && cur_y < y + h {
+            ctx.set_fill_color("#cccccc");
+            ctx.set_global_alpha(0.7);
+            ctx.fill_rect(cur_x, cur_y, char_w, char_h);
+            ctx.set_global_alpha(1.0);
+        }
+    }
 
     // ── Selection overlay ────────────────────────────────────────────────
     if let Some(sel) = selection {

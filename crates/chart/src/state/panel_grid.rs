@@ -507,7 +507,19 @@ impl ChartPanelGrid {
     ///
     /// The content area width/height must be supplied so that the parent
     /// branch rect can be computed for correct proportion calculation.
-    pub fn apply_separator_drag(&mut self, sep_idx: usize, delta: f32, content_width: f32, content_height: f32) {
+    /// Apply a separator drag, constraining each touching child to a minimum
+    /// pixel size provided by the caller (typically the price-scale width plus
+    /// a small padding for vertical separators, or a similar guard for
+    /// horizontal). Pass `0.0` to disable the per-child guard for that side.
+    pub fn apply_separator_drag(
+        &mut self,
+        sep_idx: usize,
+        delta: f32,
+        content_width: f32,
+        content_height: f32,
+        min_a_pixels: f32,
+        min_b_pixels: f32,
+    ) {
         use uzor::panels::SeparatorLevel;
 
         // Snapshot separator info to avoid borrow conflicts.
@@ -576,9 +588,11 @@ impl ChartPanelGrid {
         new_props[pos_a] += delta_share;
         new_props[pos_b] -= delta_share;
 
-        // Clamp to a minimum of 5% each (prevent collapsing panels).
-        let min_share = 0.05 * total_share;
-        if new_props[pos_a] < min_share || new_props[pos_b] < min_share {
+        // Per-child minimum: caller passes the actual price-scale width
+        // (or analogous guard) for each side. No hardcoded constants here.
+        let min_share_a = (min_a_pixels.max(0.0) as f64 / total_size as f64) * total_share;
+        let min_share_b = (min_b_pixels.max(0.0) as f64 / total_size as f64) * total_share;
+        if new_props[pos_a] < min_share_a || new_props[pos_b] < min_share_b {
             return;
         }
 

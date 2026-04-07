@@ -2542,11 +2542,29 @@ impl ChartApp {
                 SeparatorOrientation::Horizontal => (y - sep_drag.start_y) as f32,
                 SeparatorOrientation::Vertical => (x - sep_drag.start_x) as f32,
             };
+            // Per-side guard: never let a chart shrink below its own scale
+            // (price-scale for vertical separators, time-scale for horizontal),
+            // plus 5px of breathing room on each side.
+            let (min_a, min_b) = {
+                use zengeld_chart::SeparatorOrientation;
+                let scale_px = self.panel_app
+                    .panel_grid
+                    .active_window()
+                    .map(|w| match sep_drag.orientation {
+                        SeparatorOrientation::Vertical => w.scale_settings.price_scale_width,
+                        SeparatorOrientation::Horizontal => w.scale_settings.time_scale_height,
+                    })
+                    .unwrap_or(0.0) as f32;
+                let guard = scale_px + 5.0;
+                (guard, guard)
+            };
             self.panel_app.panel_grid.apply_separator_drag(
                 sep_drag.separator_idx,
                 delta,
                 self.content_rect.width as f32,
                 self.content_rect.height as f32,
+                min_a,
+                min_b,
             );
             // Update start position for incremental delta.
             self.split_separator_drag = Some(crate::SplitSeparatorDragState {
