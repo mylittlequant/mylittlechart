@@ -29,6 +29,24 @@ pub enum KeyPress {
     ArrowLeft,
     /// Move cursor one character to the right
     ArrowRight,
+    /// Move cursor / scroll up (used by PTY to send \x1b[A)
+    ArrowUp,
+    /// Move cursor / scroll down (used by PTY to send \x1b[B)
+    ArrowDown,
+    /// Enter / Return key
+    Enter,
+    /// Escape key (\x1b) — PTY-only for now
+    Escape,
+    /// Tab key (\x09)
+    Tab,
+    /// Backspace key (\x7f for PTY, handled differently for text fields)
+    Backspace,
+    /// Ctrl+C interrupt — sends \x03 to PTY, copies text for text fields
+    CtrlC,
+    /// Page Up (\x1b[5~)
+    PageUp,
+    /// Page Down (\x1b[6~)
+    PageDown,
     /// Move cursor to start of text
     Home,
     /// Move cursor to end of text
@@ -98,6 +116,12 @@ impl ChartApp {
     ///
     /// With multi-CLI support sessions autostart at app launch, so this is
     /// mostly a no-op unless a session died and needs restarting.
+    /// True when the Agent PTY field currently owns keyboard focus — used by the
+    /// platform runner to short-circuit named-key and char routing straight to the PTY.
+    pub fn is_agent_pty_focused(&self) -> bool {
+        self.text_input.is_focused(crate::text_input::FieldId::AgentPty)
+    }
+
     pub fn ensure_agent_session_for_mode(&mut self) {
         use sidebar_content::state::{AgentPanelMode, AgentCli};
         use gate4agent::{SessionConfig, CliTool};
@@ -142,6 +166,20 @@ impl ChartApp {
             eprintln!("[ChartApp] click dispatched to: {}", id);
             self.dispatch_panel_click(&id, x, y);
             return;
+        }
+
+        // 1b. Click on PTY terminal area → focus AgentPty (no widget owns the
+        //     terminal grid itself).
+        if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
+            let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
+            if x >= rx && x < rx + rw && y >= ry && y < ry + rh
+                && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty
+            {
+                eprintln!("[gate4agent::pty] click in terminal rect — focusing AgentPty");
+                self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                self.agent_pty_hover_focused = true;
+                return;
+            }
         }
 
         // 2. Click outside any registered widget — check for modal backdrop.
@@ -5627,13 +5665,18 @@ impl ChartApp {
         // Agent chat input — route printable characters and Enter to TextInputManager.
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             if ch == '\r' || ch == '\n' {
-                // Enter lazy-spawns a session if needed and sends the message.
                 let cli = self.sidebar_state.agent_cli;
                 let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                eprintln!("[gate4agent::chat] Enter via on_char text_len={} cli={:?}", text.len(), cli);
                 if !text.is_empty() {
-                    let _ = self.bridge.runtime().block_on(self.agent.send_chat(cli, &text));
-                    self.sidebar_state.agent_input_buffer.clear();
-                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                    match self.bridge.runtime().block_on(self.agent.send_chat(cli, &text)) {
+                        Ok(()) => {
+                            self.sidebar_state.agent_input_buffer.clear();
+                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                            eprintln!("[gate4agent::chat] Enter via on_char OK");
+                        }
+                        Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
+                    }
                 }
             } else {
                 let _action = self.text_input.on_char(ch);
@@ -6753,6 +6796,16 @@ impl ChartApp {
                 }
                 // ── Undo/Redo — not consumed by text fields ───────────────────
                 KeyPress::Undo | KeyPress::Redo => false,
+                // ── PTY-only named keys — not meaningful in text fields ───────
+                KeyPress::ArrowUp
+                | KeyPress::ArrowDown
+                | KeyPress::Enter
+                | KeyPress::Escape
+                | KeyPress::Tab
+                | KeyPress::Backspace
+                | KeyPress::CtrlC
+                | KeyPress::PageUp
+                | KeyPress::PageDown => false,
             }
         }
 
@@ -6843,7 +6896,7 @@ impl ChartApp {
         }
 
         // ── Agent PTY key routing ──────────────────────────────────────────────
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
+        if self.is_agent_pty_focused() {
             let action = self.text_input.on_key(key);
             if let crate::text_input::FieldAction::RawInput(bytes) = action {
                 let cli = self.sidebar_state.agent_cli;
@@ -8216,25 +8269,26 @@ impl ChartApp {
             return;
         }
         if widget_id == "agent:send" {
-            let text = {
-                let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-                if !from_field.is_empty() {
-                    from_field
-                } else {
-                    self.sidebar_state.agent_input_buffer.clone()
-                }
-            };
+            let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+            let from_buffer = self.sidebar_state.agent_input_buffer.clone();
+            let text = if !from_field.is_empty() { from_field.clone() } else { from_buffer.clone() };
+            eprintln!(
+                "[gate4agent::chat] send button click field_len={} buffer_len={} chosen_len={}",
+                from_field.len(), from_buffer.len(), text.len()
+            );
             if !text.is_empty() {
                 let cli = self.sidebar_state.agent_cli;
-                // send_chat lazy-spawns on the first call — no need to check is_active.
                 match self.bridge.runtime().block_on(self.agent.send_chat(cli, &text)) {
                     Ok(()) => {
                         self.sidebar_state.agent_session_active = true;
                         self.sidebar_state.agent_input_buffer.clear();
                         self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                        eprintln!("[gate4agent::chat] send button OK");
                     }
-                    Err(e) => eprintln!("[ChartApp] Failed to send agent chat: {}", e),
+                    Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
                 }
+            } else {
+                eprintln!("[gate4agent::chat] send button: text empty, nothing to send");
             }
             return;
         }

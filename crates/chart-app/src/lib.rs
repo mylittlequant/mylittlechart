@@ -5974,11 +5974,14 @@ impl ChartApp {
         if inside != self.agent_pty_hover_focused {
             self.agent_pty_hover_focused = inside;
             let active_cli = self.sidebar_state.agent_cli;
-            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty && self.agent.is_active(active_cli) {
+            // Lazy spawn — focus PTY field whenever hovering, regardless of
+            // session_active (first keystroke will lazy-spawn the PTY).
+            let _ = active_cli;
+            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty {
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
-            } else if !inside && self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
-                self.text_input.blur();
             }
+            // Do NOT blur on cursor-leave — blur only on click outside. Otherwise
+            // any tiny mouse movement during typing steals PTY focus mid-keystroke.
             return true;
         }
         false

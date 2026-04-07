@@ -8066,6 +8066,11 @@ impl ApplicationHandler for App<'_> {
                                 return;
                             }
                             PhysicalKey::Code(KeyCode::KeyC) => {
+                                // PTY-first: send \x03 interrupt to Claude if PTY focused.
+                                if pw.chart.is_agent_pty_focused() {
+                                    pw.chart.on_key_press(chart_app::KeyPress::CtrlC);
+                                    return;
+                                }
                                 if let Some(text) = pw.chart.on_copy_selection() {
                                     if let Ok(mut cb) = arboard::Clipboard::new() {
                                         let _ = cb.set_text(text);
@@ -8102,6 +8107,33 @@ impl ApplicationHandler for App<'_> {
                             }
                             _ => {}
                         }
+                    }
+
+                    // ── PTY-first key routing ─────────────────────────────
+                    // If the Agent PTY owns focus, translate named keys directly
+                    // to KeyPress variants so TIM emits raw PTY bytes.
+                    if pw.chart.is_agent_pty_focused() {
+                        let pty_key = match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => Some(chart_app::KeyPress::Escape),
+                            Key::Named(NamedKey::Enter) => Some(chart_app::KeyPress::Enter),
+                            Key::Named(NamedKey::Tab) => Some(chart_app::KeyPress::Tab),
+                            Key::Named(NamedKey::Backspace) => Some(chart_app::KeyPress::Backspace),
+                            Key::Named(NamedKey::Delete) => Some(chart_app::KeyPress::Delete),
+                            Key::Named(NamedKey::ArrowLeft) => Some(chart_app::KeyPress::ArrowLeft),
+                            Key::Named(NamedKey::ArrowRight) => Some(chart_app::KeyPress::ArrowRight),
+                            Key::Named(NamedKey::ArrowUp) => Some(chart_app::KeyPress::ArrowUp),
+                            Key::Named(NamedKey::ArrowDown) => Some(chart_app::KeyPress::ArrowDown),
+                            Key::Named(NamedKey::Home) => Some(chart_app::KeyPress::Home),
+                            Key::Named(NamedKey::End) => Some(chart_app::KeyPress::End),
+                            Key::Named(NamedKey::PageUp) => Some(chart_app::KeyPress::PageUp),
+                            Key::Named(NamedKey::PageDown) => Some(chart_app::KeyPress::PageDown),
+                            _ => None,
+                        };
+                        if let Some(k) = pty_key {
+                            pw.chart.on_key_press(k);
+                            return;
+                        }
+                        // Space + printable chars still go via on_char_input below.
                     }
 
                     let mut handled = true;

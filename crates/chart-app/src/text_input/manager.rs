@@ -547,6 +547,16 @@ impl TextInputManager {
             }
             // ── Undo/Redo — not consumed by text fields ──────────────────────
             KeyPress::Undo | KeyPress::Redo => false,
+            // ── PTY-only named keys — ignored by Text fields ────────────────
+            KeyPress::ArrowUp
+            | KeyPress::ArrowDown
+            | KeyPress::Enter
+            | KeyPress::Escape
+            | KeyPress::Tab
+            | KeyPress::Backspace
+            | KeyPress::CtrlC
+            | KeyPress::PageUp
+            | KeyPress::PageDown => false,
         }
     }
 
@@ -646,9 +656,20 @@ fn key_to_pty_bytes(key: &KeyPress) -> Option<Vec<u8>> {
     match key {
         KeyPress::ArrowLeft => Some(b"\x1b[D".to_vec()),
         KeyPress::ArrowRight => Some(b"\x1b[C".to_vec()),
+        KeyPress::ArrowUp => Some(b"\x1b[A".to_vec()),
+        KeyPress::ArrowDown => Some(b"\x1b[B".to_vec()),
         KeyPress::Home => Some(b"\x1b[H".to_vec()),
         KeyPress::End => Some(b"\x1b[F".to_vec()),
         KeyPress::Delete => Some(b"\x1b[3~".to_vec()),
+        KeyPress::PageUp => Some(b"\x1b[5~".to_vec()),
+        KeyPress::PageDown => Some(b"\x1b[6~".to_vec()),
+        KeyPress::Enter => Some(b"\r".to_vec()),
+        KeyPress::Escape => Some(b"\x1b".to_vec()),
+        KeyPress::Tab => Some(b"\t".to_vec()),
+        KeyPress::Backspace => Some(b"\x7f".to_vec()),
+        KeyPress::CtrlC => Some(b"\x03".to_vec()),
+        KeyPress::ShiftLeft => Some(b"\x1b[1;2D".to_vec()),
+        KeyPress::ShiftRight => Some(b"\x1b[1;2C".to_vec()),
         _ => None,
     }
 }
