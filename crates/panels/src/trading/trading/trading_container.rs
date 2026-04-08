@@ -8,8 +8,6 @@ use crate::trading::order_flow::footprint::FootprintState;
 use crate::trading::order_flow::volume_profile::VolumeProfileState;
 use crate::trading::order_flow::big_trades::BigTradesState;
 use crate::trading::order_flow::l2_tape::L2TapeState;
-use crate::trading::market_data::time_sales::TimeSalesState;
-use crate::trading::market_data::tick_tape_chart::TickTapeChartState;
 
 /// Trading Container panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,10 +36,8 @@ pub enum SubPanelSlot {
     None,
     Footprint,
     VolumeProfile,
-    TimeSales,
     BigTrades,
     L2Tape,
-    TickTapeChart,
 }
 
 /// Trading Container state (heavy data)
@@ -81,10 +77,8 @@ pub struct TradingContainerState {
     /// Optional sub-panel states
     pub footprint: Option<FootprintState>,
     pub volume_profile: Option<VolumeProfileState>,
-    pub time_sales: Option<TimeSalesState>,
     pub big_trades: Option<BigTradesState>,
     pub l2_tape: Option<L2TapeState>,
-    pub tick_tape: Option<TickTapeChartState>,
 }
 
 impl TradingContainerState {
@@ -108,10 +102,8 @@ impl TradingContainerState {
             dom,
             footprint: None,
             volume_profile: None,
-            time_sales: None,
             big_trades: None,
             l2_tape: None,
-            tick_tape: None,
         }
     }
 
