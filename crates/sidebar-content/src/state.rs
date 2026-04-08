@@ -8,8 +8,7 @@ use std::time::Instant;
 use zengeld_chart::ui::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
 use crate::watchlist::WatchlistManager;
-use crate::agents_dock::AgentLeafDescriptor;
-use crate::sidebar_panel::SidebarPanel;
+use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};
 
 // =============================================================================
 // MetricsSnapshot
@@ -56,62 +55,10 @@ pub const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 pub const MAX_SIDEBAR_WIDTH: f64 = 4000.0;
 
 // =============================================================================
-// SidebarDockingManager — Clone/Debug wrapper
-// =============================================================================
-
-/// Newtype wrapper around `DockingManager<SidebarPanel>` that provides manual
-/// `Clone` and `Debug` impls so it can be a field of `#[derive]`-d `SidebarState`.
-///
-/// `Clone` creates a fresh empty manager — structural cloning of the panel tree
-/// is not needed for the snapshot/undo use cases that drive `SidebarState::clone()`.
-pub struct SidebarDockingManager(pub uzor::panels::DockingManager<SidebarPanel>);
-
-impl SidebarDockingManager {
-    /// Create an empty manager with a single Watchlist leaf (the default layout).
-    pub fn default_layout() -> Self {
-        Self(uzor::panels::DockingManager::with_panel(SidebarPanel::Watchlist))
-    }
-
-    /// Borrow the inner manager immutably.
-    pub fn inner(&self) -> &uzor::panels::DockingManager<SidebarPanel> {
-        &self.0
-    }
-
-    /// Borrow the inner manager mutably.
-    pub fn inner_mut(&mut self) -> &mut uzor::panels::DockingManager<SidebarPanel> {
-        &mut self.0
-    }
-}
-
-impl Default for SidebarDockingManager {
-    fn default() -> Self {
-        Self::default_layout()
-    }
-}
-
-impl Clone for SidebarDockingManager {
-    /// Returns a **fresh default** manager. Structural cloning of the panel
-    /// tree is intentionally omitted.
-    fn clone(&self) -> Self {
-        Self::default_layout()
-    }
-}
-
-impl std::fmt::Debug for SidebarDockingManager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SidebarDockingManager").finish_non_exhaustive()
-    }
-}
-
-// =============================================================================
 // Panel enum
 // =============================================================================
 
 /// Which right sidebar panel is currently open (if any).
-///
-/// This enum is kept for backward compatibility with external callers that
-/// inspect `right_panel` to decide whether the sidebar is open and which
-/// tab is active.  New code should prefer querying `sidebar_workspace` directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RightSidebarPanel {
     #[default]
@@ -339,27 +286,22 @@ pub struct SidebarState {
     /// Per-leaf render snapshots (set each frame by chart-app before render).
     pub agent_leaf_snapshots: HashMap<uzor::panels::LeafId, crate::agent_types::AgentRenderSnapshot>,
 
-    // ── Sidebar workspace docking (Phase 1) ──────────────────────────────────
+    // ── Split-grid docking for the Agents tab ────────────────────────────────
 
-    /// Top-level docking workspace for the entire right sidebar.
+    /// Docking manager for the per-sidebar agent grid.
     ///
-    /// All 7 current tabs (Watchlist, Alerts, ObjectTree, Signals, Connectors,
-    /// Performance, Agents) are first-class `SidebarPanel` leaves inside this
-    /// manager.  The old `RightSidebarPanel::current_tab` + nested
-    /// `AgentDockingManager` have been replaced by this single workspace.
+    /// Starts empty (no leaves). Step 2 will wire add/remove actions.
+    /// The existing 19 single-session `agent_*` fields above are kept until
+    /// the render.rs migration is complete in Step 2.
     ///
-    /// Default layout: one leaf containing `SidebarPanel::Watchlist`.
-    pub sidebar_workspace: SidebarDockingManager,
+    /// Wrapped in [`AgentDockingManager`] to satisfy `SidebarState`'s
+    /// `Clone` + `Debug` derive requirements.
+    pub agent_docking: AgentDockingManager,
 
-    /// Which top-level sidebar leaf currently has keyboard / input focus.
-    ///
-    /// Replaces the old `focused_agent_leaf`.  When the focused leaf holds an
-    /// `Agents(id)` panel, agent input routing still works — just keyed to
-    /// this field instead.
-    pub focused_sidebar_leaf: Option<uzor::panels::LeafId>,
+    /// Which docking leaf currently has keyboard/input focus.
+    pub focused_agent_leaf: Option<uzor::panels::LeafId>,
 
-    /// Full descriptor for each live agent pane, keyed by the top-level
-    /// sidebar workspace `LeafId`.
+    /// Full descriptor for each live agent pane, keyed by `LeafId`.
     ///
     /// Consulted when routing input, reading snapshots, or persisting layout.
     pub agent_leaves: HashMap<uzor::panels::LeafId, AgentLeafDescriptor>,
@@ -593,8 +535,8 @@ impl Default for SidebarState {
             agent_pty_scrolls: HashMap::new(),
             agent_pty_selections: HashMap::new(),
             agent_leaf_snapshots: HashMap::new(),
-            sidebar_workspace: SidebarDockingManager::default_layout(),
-            focused_sidebar_leaf: None,
+            agent_docking: AgentDockingManager::new(),
+            focused_agent_leaf: None,
             agent_leaves: HashMap::new(),
         }
     }
@@ -670,139 +612,6 @@ impl SidebarState {
     /// Returns `Some((false, width))` if it was open, `None` if already closed.
     pub fn close_right(&mut self) -> Option<(bool, f64)> {
         self.set_right_panel(RightSidebarPanel::None)
-    }
-
-    // =========================================================================
-    // Compatibility accessors — Phase 1 migration
-    // =========================================================================
-
-    /// Returns the currently focused sidebar leaf id.
-    ///
-    /// Backward-compatible alias for `focused_sidebar_leaf` — used by all the
-    /// existing call-sites in `chart-app/src/input.rs` and `lib.rs` that
-    /// previously read `focused_agent_leaf`.  Agents-specific code should call
-    /// this and then check whether the leaf's active panel is `Agents(_)`.
-    #[inline(always)]
-    pub fn focused_agent_leaf(&self) -> Option<uzor::panels::LeafId> {
-        self.focused_sidebar_leaf
-    }
-
-    /// Set the focused leaf (backward-compatible setter used by input.rs).
-    #[inline(always)]
-    pub fn set_focused_agent_leaf(&mut self, id: Option<uzor::panels::LeafId>) {
-        self.focused_sidebar_leaf = id;
-    }
-
-    // =========================================================================
-    // Phase 1 sidebar workspace helpers
-    // =========================================================================
-
-    /// Show a pinned panel (Category A/B) in the sidebar workspace.
-    ///
-    /// Behaviour:
-    /// - If the panel already exists in a leaf, focus that leaf (activate its tab).
-    /// - If the panel is absent, spawn a new leaf containing it.
-    ///
-    /// Returns `true` when the sidebar open/closed state changes so the caller
-    /// can trigger viewport compensation.  For Agents, callers should check
-    /// `sidebar_workspace.tree()` for existing Agents leaves rather than
-    /// calling this helper (since Agents is multi-instance).
-    pub fn show_or_focus_panel(&mut self, panel: SidebarPanel) -> bool {
-        let was_open = self.is_right_open();
-
-        // Sync the legacy right_panel field so existing callers still work.
-        let legacy = match &panel {
-            SidebarPanel::Watchlist   => RightSidebarPanel::Watchlist,
-            SidebarPanel::Alerts      => RightSidebarPanel::Alerts,
-            SidebarPanel::ObjectTree  => RightSidebarPanel::ObjectTree,
-            SidebarPanel::Signals     => RightSidebarPanel::Signals,
-            SidebarPanel::Connectors  => RightSidebarPanel::Connectors,
-            SidebarPanel::Performance => RightSidebarPanel::Performance,
-            SidebarPanel::Agents(_)   => RightSidebarPanel::Agents,
-            _                         => RightSidebarPanel::Watchlist, // migratable panels default
-        };
-
-        // Check if panel already exists in any leaf.
-        let existing_leaf = self.find_panel_leaf(&panel);
-
-        if let Some(leaf_id) = existing_leaf {
-            // Already present — focus its leaf.
-            self.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
-            self.focused_sidebar_leaf = Some(leaf_id);
-        } else {
-            // Not present — spawn as a new leaf.
-            let leaf_id = self.sidebar_workspace.inner_mut()
-                .tree_mut()
-                .add_leaf(panel);
-            self.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
-            self.focused_sidebar_leaf = Some(leaf_id);
-        }
-
-        // Keep legacy field in sync.
-        self.right_panel = legacy;
-
-        let now_open = true; // workspace always has at least one leaf after this
-        !was_open && now_open
-    }
-
-    /// Toggle a pinned panel (Category A).
-    ///
-    /// - If panel is the currently focused active panel AND it's the only leaf:
-    ///   close the sidebar (hide it by setting `right_panel = None`).
-    /// - Otherwise: show or focus it.
-    pub fn toggle_panel(&mut self, panel: SidebarPanel) -> Option<(bool, f64)> {
-        // Check whether this panel is already the sole focused leaf.
-        let active_is_this_panel = self.sidebar_workspace
-            .inner()
-            .active_leaf()
-            .and_then(|lid| self.sidebar_workspace.inner().tree().leaf(lid))
-            .and_then(|leaf| leaf.active_panel())
-            .map(|p| p.variant_eq(&panel))
-            .unwrap_or(false);
-
-        let leaf_count = self.sidebar_workspace.inner().tree().visible_leaf_count();
-
-        if active_is_this_panel && self.right_panel != RightSidebarPanel::None {
-            if leaf_count <= 1 {
-                // Only panel visible — close the sidebar.
-                return self.set_right_panel(RightSidebarPanel::None);
-            }
-        }
-
-        let opened = self.show_or_focus_panel(panel);
-        if opened {
-            Some((true, self.right_sidebar_width))
-        } else {
-            None
-        }
-    }
-
-    /// Find the first leaf that contains a panel matching `panel` (by variant).
-    fn find_panel_leaf(&self, panel: &SidebarPanel) -> Option<uzor::panels::LeafId> {
-        let tree = self.sidebar_workspace.inner().tree();
-        self.find_panel_leaf_in_branch(tree.root(), panel)
-    }
-
-    fn find_panel_leaf_in_branch(
-        &self,
-        branch: &uzor::panels::Branch<SidebarPanel>,
-        panel: &SidebarPanel,
-    ) -> Option<uzor::panels::LeafId> {
-        for child in &branch.children {
-            match child {
-                uzor::panels::PanelNode::Leaf(leaf) => {
-                    if leaf.panels.iter().any(|p| p.variant_eq(panel)) {
-                        return Some(leaf.id);
-                    }
-                }
-                uzor::panels::PanelNode::Branch(b) => {
-                    if let Some(id) = self.find_panel_leaf_in_branch(b, panel) {
-                        return Some(id);
-                    }
-                }
-            }
-        }
-        None
     }
 
     // =========================================================================

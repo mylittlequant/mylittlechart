@@ -5,15 +5,13 @@
 
 pub mod agent_types;
 pub mod agents_dock;
-pub mod sidebar_panel;
 pub mod types;
 pub mod state;
 pub mod render;
 pub mod watchlist;
 
 pub use render::{render_right_sidebar, RightSidebarResult};
-pub use sidebar_panel::SidebarPanel;
-pub use state::{SidebarState, SidebarDockingManager, RightSidebarPanel, RIGHT_SIDEBAR_WIDTH, MetricsSnapshot};
+pub use state::{SidebarState, RightSidebarPanel, RIGHT_SIDEBAR_WIDTH, MetricsSnapshot};
 pub use types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorGroup, ConnectorStatusItem};
 pub use agent_types::{AgentCli, AgentRenderSnapshot, AgentSnapshotMode, TermGrid, TermCell, ChatMessage, ChatRole};
-pub use agents_dock::{AgentPaneLeaf, AgentLeafDescriptor};
+pub use agents_dock::{AgentPaneLeaf, AgentLeafDescriptor, AgentDockingManager};

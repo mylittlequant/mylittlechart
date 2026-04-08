@@ -3222,8 +3222,8 @@ impl ChartApp {
                 .as_millis() as u64;
             let cursor_vis = self.text_input.cursor_visible(now_ms);
             self.sidebar_state.agent_input_cursor_visible = cursor_vis;
-            self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_sidebar_leaf;
-            if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
+            self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_agent_leaf;
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 self.sidebar_state.agent_input_buffers.insert(leaf_id, text);
                 self.sidebar_state.agent_input_cursors.insert(leaf_id, cursor);
                 self.sidebar_state.agent_input_selections.insert(
@@ -5562,19 +5562,6 @@ impl ChartApp {
             let sidebar_rect = LayoutRect::new(sidebar_x, sidebar_y, sidebar_w, sidebar_h);
             let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
 
-            // Phase 1: run sidebar_workspace layout so panel_rects() is up-to-date
-            // before render is called.  The render function reads these rects to
-            // dispatch each panel to the correct sub-function.
-            {
-                let workspace_rect = uzor::panels::PanelRect::new(
-                    sidebar_x as f32,
-                    sidebar_y as f32,
-                    sidebar_w as f32,
-                    sidebar_h as f32,
-                );
-                self.sidebar_state.sidebar_workspace.inner_mut().layout(workspace_rect);
-            }
-
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
@@ -5744,7 +5731,7 @@ impl ChartApp {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
                 // Resize the focused PTY leaf's instance.
-                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                     if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
@@ -5812,7 +5799,7 @@ impl ChartApp {
         }
 
         // Auto-snap chat scroll to bottom when new messages arrive for the focused chat leaf.
-        if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
+        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
             let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
                 .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                 .unwrap_or(false);
@@ -5949,17 +5936,6 @@ impl ChartApp {
         let sidebar_rect = LayoutRect::new(sidebar_x, sidebar_y, sidebar_w, sidebar_h);
         let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
 
-        // Phase 1: run sidebar_workspace layout before render.
-        {
-            let workspace_rect = uzor::panels::PanelRect::new(
-                sidebar_x as f32,
-                sidebar_y as f32,
-                sidebar_w as f32,
-                sidebar_h as f32,
-            );
-            self.sidebar_state.sidebar_workspace.inner_mut().layout(workspace_rect);
-        }
-
         // Provide current agent state to sidebar for the Agents panel.
         // Snapshot each registered leaf instance.
         {
@@ -5991,7 +5967,7 @@ impl ChartApp {
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
-                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                     if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
@@ -6059,7 +6035,7 @@ impl ChartApp {
         if inside != self.agent_pty_hover_focused {
             self.agent_pty_hover_focused = inside;
             // Focus PTY field on hover if focused leaf is in PTY mode.
-            let is_pty_leaf = self.sidebar_state.focused_sidebar_leaf
+            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
                 .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
                 .unwrap_or(false);
@@ -7410,12 +7386,9 @@ impl ChartApp {
             inline_bar_x: Some(inline.x),
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
+            // Step 1 scaffold — save/restore wired in Step 2.
             agents_tab_layout: None,
             agents_tab_leaves: Vec::new(),
-            sidebar_workspace_layout: uzor::panels::LayoutSnapshot::from_tree(
-                self.sidebar_state.sidebar_workspace.inner().tree(),
-                "sidebar",
-            ).to_json().ok(),
         }
     }
 

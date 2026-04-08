@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current schema version.  Increment when the serialized format changes in a
 /// backward-incompatible way so that migration code can detect old files.
-///
-/// v4: Added `sidebar_workspace_layout` — serialized sidebar docking tree (Phase 1).
-pub const PROFILE_VERSION: u32 = 4;
+pub const PROFILE_VERSION: u32 = 3;
 
 // =============================================================================
 // WindowState
@@ -77,32 +75,24 @@ pub struct WindowState {
     #[serde(default)]
     pub inline_bar_dock: Option<String>,
 
-    // ── Agents tab docking grid (Step 1 scaffold — superseded by Phase 1) ─────
+    // ── Agents tab docking grid (Step 1 scaffold) ─────────────────────────────
 
     /// Serialized `uzor::panels::LayoutSnapshot` JSON for the agents docking
-    /// grid in this window.  Kept for backward-compat read of v3 profiles.
-    /// New saves use `sidebar_workspace_layout` instead.
-    #[serde(default, skip_serializing)]
+    /// grid in this window.  `None` means no layout has been saved yet
+    /// (the grid will start empty).
+    ///
+    /// Written by Step 2 save logic; read back on profile restore.
+    #[serde(default)]
     pub agents_tab_layout: Option<String>,
 
     /// Per-pane descriptors for every agent leaf in the saved docking grid.
-    /// Kept for backward-compat read of v3 profiles.
+    ///
+    /// The `leaf_id` inside each entry corresponds to the numeric leaf IDs
+    /// embedded in `agents_tab_layout`.  On profile restore, Step 2 will
+    /// re-create `AgentInstance`s from these descriptors and insert them
+    /// into the `DockingManager`.
     #[serde(default)]
     pub agents_tab_leaves: Vec<PersistedAgentLeaf>,
-
-    // ── Phase 1 sidebar workspace ─────────────────────────────────────────────
-
-    /// Serialized `uzor::panels::LayoutSnapshot` JSON for the top-level
-    /// sidebar docking workspace (Phase 1).
-    ///
-    /// `None` means no layout has been saved yet; the sidebar starts with the
-    /// default layout (one leaf containing the Watchlist panel).
-    ///
-    /// The JSON encodes the tree structure only (node types, proportions).
-    /// Panel content is reconstructed by a factory function keyed on
-    /// `type_id` strings from `sidebar_panel::SidebarPanel::type_id()`.
-    #[serde(default)]
-    pub sidebar_workspace_layout: Option<String>,
 }
 
 // =============================================================================
