@@ -5,6 +5,7 @@ members = [
     "crates/chart-app-vello",
     "crates/indicators",
     "crates/sidebar-content",
+    "crates/panels",
     "crates/alerts",
     "crates/alert-delivery",
     "crates/live-data",
