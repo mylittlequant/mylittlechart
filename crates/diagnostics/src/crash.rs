@@ -4,6 +4,15 @@ use std::path::Path;
 
 /// Install a panic hook that writes crash files and logs via tracing.
 pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &str) {
+    // Force full backtraces with resolved symbols.  Must be set BEFORE any
+    // panic fires so Backtrace::force_capture() picks it up.  `line-tables-only`
+    // debug info is already on in release profile — this just tells the runtime
+    // to resolve symbols to names rather than emitting `<unknown>` frames.
+    // SAFETY: set_var is unsafe in edition 2024; here we're on 2021 where it
+    // is still safe, and we call it once at startup before threads spawn.
+    std::env::set_var("RUST_BACKTRACE", "full");
+    std::env::set_var("RUST_LIB_BACKTRACE", "full");
+
     let log_dir = log_dir.to_owned();
     let version = app_version.to_string();
 
@@ -26,19 +35,27 @@ pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &s
             "unknown panic payload".to_string()
         };
 
+        // Thread context — which thread panicked?
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>").to_string();
+        let thread_id = format!("{:?}", thread.id());
+
         // Log via tracing (best effort)
         tracing::error!(
             panic.location = %location,
             panic.message = %msg,
+            panic.thread = %thread_name,
             "PANIC"
         );
 
-        // Get recent log lines
-        let recent_logs = log_buffer.last_n(50);
+        // Get recent log lines — 200 is enough to catch the event sequence
+        // that led to the panic (resize, drag, input routing, etc.).
+        let recent_logs = log_buffer.last_n(200);
         let recent_logs_text = recent_logs.join("\n");
 
-        // Sanitize paths (strip Windows usernames)
-        let bt_text = sanitize_paths(&format!("{bt}"));
+        // Sanitize only the location string (keep backtrace raw so function
+        // names survive — symbols are what we need for diagnosis).
+        let bt_text = format!("{bt}");
         let location_sanitized = sanitize_paths(&location);
 
         // Build crash report
@@ -48,17 +65,20 @@ pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &s
              timestamp: {}\n\
              version: {}\n\
              pid: {}\n\
+             thread: {} ({})\n\
              location: {}\n\
              message: {}\n\
              \n\
              === BACKTRACE ===\n\
              {}\n\
              \n\
-             === RECENT LOGS (last 50) ===\n\
+             === RECENT LOGS (last 200) ===\n\
              {}\n",
             timestamp.to_rfc3339(),
             version,
             std::process::id(),
+            thread_name,
+            thread_id,
             location_sanitized,
             msg,
             bt_text,
