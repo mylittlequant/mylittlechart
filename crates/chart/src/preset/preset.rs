@@ -75,16 +75,58 @@ pub struct ChartPreset {
 pub struct PersistedFreeLeaf {
     /// Leaf id from `LayoutSnapshot` (maps into the per-slot layout tree).
     pub leaf_id: u64,
-    /// Which kind of `FreeItem` this leaf carries.
+    /// Stable panel id — unique across restarts, used to key state in the store.
+    #[serde(default)]
+    pub panel_id: u64,
+    /// Which kind of `FreeItem` this leaf carries, including the minimal state
+    /// snapshot needed to recreate the panel on restore.
     pub kind: PersistedFreeItemKind,
 }
 
 /// Mirror of `sidebar_content::FreeItem` kept in the chart crate so the preset
 /// schema has no dependency on `sidebar-content`.
+///
+/// Each variant stores the minimal fields needed to recreate the matching
+/// panel state via the panel's `new()` constructor. Additional state (live
+/// order book, scrolled position, etc.) is ephemeral and not persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PersistedFreeItemKind {
-    /// A placeholder free item (Phase 2b stub — no real content yet).
-    Placeholder,
+    Dom {
+        symbol: String,
+        tick_size: f64,
+        levels_displayed: usize,
+        center_price: f64,
+    },
+    Footprint {
+        symbol: String,
+        tick_size: f64,
+    },
+    VolumeProfile {
+        symbol: String,
+        tick_size: f64,
+    },
+    LiquidityHeatmap {
+        symbol: String,
+        tick_size: f64,
+        snapshot_interval_ms: u64,
+    },
+    BigTrades {
+        symbol: String,
+    },
+    L2Tape {
+        symbol: String,
+    },
+    OrderEntry {
+        symbol: String,
+    },
+    PositionManager,
+    TradeLog,
+    RiskCalculator,
+    TradingContainer {
+        symbol: String,
+        tick_size: f64,
+        market_price: f64,
+    },
 }
 
 impl ChartPreset {

@@ -18756,16 +18756,121 @@ impl ChartApp {
                     self.alert_manager.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
 
-                    // Step 8b: Restore per-slot FreeItem docking layouts (Phase 2b-new).
-                    // Empty layouts → fresh empty managers. `slot_leaves` is
-                    // ignored until real FreeItem variants land (Phase 4-new).
+                    // Step 8b: Restore per-slot FreeItem docking layouts.
+                    // Pre-populate the store with panel state so the closure
+                    // can construct the matching `FreeItem` variants.
+                    {
+                        // Determine max panel_id across ALL slots to update next_id.
+                        let max_panel_id: u64 = preset.slot_leaves.iter()
+                            .flat_map(|v| v.iter().map(|l| l.panel_id))
+                            .max()
+                            .unwrap_or(0);
+                        self.panels_store.set_min_next_id(max_panel_id);
+                    }
+
                     for i in 0..4 {
+                        // Pre-insert state into the store keyed by the saved panel_id.
+                        for pl in &preset.slot_leaves[i] {
+                            let pid = sidebar_content::free_slot::PanelId(pl.panel_id);
+                            use zengeld_chart::preset::preset::PersistedFreeItemKind;
+                            match &pl.kind {
+                                PersistedFreeItemKind::Dom { symbol, tick_size, levels_displayed, center_price } => {
+                                    if !self.panels_store.dom.contains_key(&pid) {
+                                        let mut s = zengeld_panels::trading::order_flow::dom::DomState::new(symbol.clone(), *tick_size);
+                                        s.levels_displayed = *levels_displayed;
+                                        s.center_price = *center_price;
+                                        self.panels_store.dom.insert(pid, s);
+                                    }
+                                }
+                                PersistedFreeItemKind::Footprint { symbol, tick_size } => {
+                                    if !self.panels_store.footprint.contains_key(&pid) {
+                                        self.panels_store.footprint.insert(pid, zengeld_panels::trading::order_flow::footprint::FootprintState::new(symbol.clone(), *tick_size));
+                                    }
+                                }
+                                PersistedFreeItemKind::VolumeProfile { symbol, tick_size } => {
+                                    if !self.panels_store.volume_profile.contains_key(&pid) {
+                                        self.panels_store.volume_profile.insert(pid, zengeld_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol.clone(), *tick_size));
+                                    }
+                                }
+                                PersistedFreeItemKind::LiquidityHeatmap { symbol, tick_size, snapshot_interval_ms } => {
+                                    if !self.panels_store.liquidity_heatmap.contains_key(&pid) {
+                                        self.panels_store.liquidity_heatmap.insert(pid, zengeld_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol.clone(), *tick_size, *snapshot_interval_ms));
+                                    }
+                                }
+                                PersistedFreeItemKind::BigTrades { symbol } => {
+                                    if !self.panels_store.big_trades.contains_key(&pid) {
+                                        let mut s = zengeld_panels::trading::order_flow::big_trades::BigTradesState::new();
+                                        s.symbol = symbol.clone();
+                                        self.panels_store.big_trades.insert(pid, s);
+                                    }
+                                }
+                                PersistedFreeItemKind::L2Tape { symbol } => {
+                                    if !self.panels_store.l2_tape.contains_key(&pid) {
+                                        let mut s = zengeld_panels::trading::order_flow::l2_tape::L2TapeState::new();
+                                        s.symbol = symbol.clone();
+                                        self.panels_store.l2_tape.insert(pid, s);
+                                    }
+                                }
+                                PersistedFreeItemKind::OrderEntry { symbol } => {
+                                    if !self.panels_store.order_entry.contains_key(&pid) {
+                                        self.panels_store.order_entry.insert(pid, zengeld_panels::trading::trading::order_entry::OrderEntryState::new(symbol.clone()));
+                                    }
+                                }
+                                PersistedFreeItemKind::PositionManager => {
+                                    if !self.panels_store.position_manager.contains_key(&pid) {
+                                        self.panels_store.position_manager.insert(pid, zengeld_panels::trading::trading::position_manager::PositionManagerState::new());
+                                    }
+                                }
+                                PersistedFreeItemKind::TradeLog => {
+                                    if !self.panels_store.trade_log.contains_key(&pid) {
+                                        self.panels_store.trade_log.insert(pid, zengeld_panels::trading::trading::trade_log::TradeLogState::new());
+                                    }
+                                }
+                                PersistedFreeItemKind::RiskCalculator => {
+                                    if !self.panels_store.risk_calculator.contains_key(&pid) {
+                                        self.panels_store.risk_calculator.insert(pid, zengeld_panels::trading::trading::risk_calculator::RiskCalculatorState::new());
+                                    }
+                                }
+                                PersistedFreeItemKind::TradingContainer { symbol, tick_size, market_price } => {
+                                    if !self.panels_store.trading_container.contains_key(&pid) {
+                                        self.panels_store.trading_container.insert(pid, zengeld_panels::trading::trading::trading_container::TradingContainerState::new(symbol.clone(), *tick_size, *market_price));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Build a leaf_id → PersistedFreeLeaf map for O(1) lookup
+                        // inside the restore closure.  type_id() now returns only the
+                        // variant kind (e.g. "free_dom") — panel identity comes from
+                        // the leaf_id passed by restore_tree_with_id.
+                        let leaves_by_id: std::collections::HashMap<u64, &zengeld_chart::preset::preset::PersistedFreeLeaf> =
+                            preset.slot_leaves[i].iter().map(|l| (l.leaf_id, l)).collect();
+
                         let mgr = match preset.slot_layouts[i].as_deref() {
                             Some(json) => {
                                 match uzor::panels::serialize::LayoutSnapshot::from_json(json) {
                                     Ok(snap) => {
-                                        match snap.restore_tree::<sidebar_content::FreeItem, _>(|_type_id| {
-                                            Some(sidebar_content::FreeItem::Placeholder)
+                                        match snap.restore_tree_with_id::<sidebar_content::FreeItem, _>(|leaf_id, _type_id| {
+                                            // Look up the persisted leaf descriptor by leaf_id.
+                                            // The panel_id and kind are stored there; type_id is
+                                            // not used (it only carries the variant kind, no id).
+                                            let pl = leaves_by_id.get(&leaf_id)?;
+                                            let pid = sidebar_content::free_slot::PanelId(pl.panel_id);
+                                            use sidebar_content::free_slot::FreeItem;
+                                            let item = match &pl.kind {
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::Dom { .. }               => FreeItem::Dom(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::Footprint { .. }         => FreeItem::Footprint(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::VolumeProfile { .. }     => FreeItem::VolumeProfile(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::LiquidityHeatmap { .. }  => FreeItem::LiquidityHeatmap(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::BigTrades { .. }         => FreeItem::BigTrades(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::L2Tape { .. }            => FreeItem::L2Tape(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::OrderEntry { .. }        => FreeItem::OrderEntry(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::PositionManager          => FreeItem::PositionManager(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::TradeLog                 => FreeItem::TradeLog(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::RiskCalculator           => FreeItem::RiskCalculator(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => FreeItem::TradingContainer(pid),
+                                            };
+                                            Some(item)
                                         }) {
                                             Ok(tree) => {
                                                 sidebar_content::SlotDockingManager(
@@ -19521,15 +19626,94 @@ impl ChartApp {
             .map(|(lid, color)| (lid.0, *color))
             .collect();
 
-        // Snapshot per-slot FreeItem docking layouts (Phase 2b-new).
-        // Each entry is a LayoutSnapshot JSON string, or None if the slot is
-        // empty. `slot_leaves` is left empty until real FreeItem variants land.
+        // Snapshot per-slot FreeItem docking layouts.
+        // Each entry is a LayoutSnapshot JSON string, or None if the slot is empty.
+        // `slot_leaves` carries the per-leaf kind + panel_id for state restoration.
         for i in 0..4 {
             let tree = self.sidebar_state.slot_dockings[i].inner().tree();
             preset.slot_layouts[i] = uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "slot")
                 .to_json()
                 .ok();
-            preset.slot_leaves[i].clear();
+
+            // Collect persisted leaf descriptors.
+            let leaves_desc: Vec<zengeld_chart::preset::preset::PersistedFreeLeaf> = tree
+                .leaves()
+                .into_iter()
+                .filter_map(|leaf| {
+                    let item = leaf.panels.get(leaf.active_tab)?;
+                    let panel_id = item.panel_id().0;
+                    use sidebar_content::free_slot::FreeItem;
+                    use zengeld_chart::preset::preset::PersistedFreeItemKind;
+                    let kind = match item {
+                        FreeItem::Dom(id) => {
+                            let state = self.panels_store.dom.get(id)?;
+                            PersistedFreeItemKind::Dom {
+                                symbol: state.symbol.clone(),
+                                tick_size: state.tick_size,
+                                levels_displayed: state.levels_displayed,
+                                center_price: state.center_price,
+                            }
+                        }
+                        FreeItem::Footprint(id) => {
+                            let state = self.panels_store.footprint.get(id)?;
+                            PersistedFreeItemKind::Footprint {
+                                symbol: state.symbol.clone(),
+                                tick_size: state.tick_size,
+                            }
+                        }
+                        FreeItem::VolumeProfile(id) => {
+                            let state = self.panels_store.volume_profile.get(id)?;
+                            PersistedFreeItemKind::VolumeProfile {
+                                symbol: state.symbol.clone(),
+                                tick_size: state.tick_size,
+                            }
+                        }
+                        FreeItem::LiquidityHeatmap(id) => {
+                            let state = self.panels_store.liquidity_heatmap.get(id)?;
+                            PersistedFreeItemKind::LiquidityHeatmap {
+                                symbol: state.symbol.clone(),
+                                tick_size: state.tick_size,
+                                snapshot_interval_ms: state.snapshot_interval_ms,
+                            }
+                        }
+                        FreeItem::BigTrades(id) => {
+                            let state = self.panels_store.big_trades.get(id)?;
+                            PersistedFreeItemKind::BigTrades {
+                                symbol: state.symbol.clone(),
+                            }
+                        }
+                        FreeItem::L2Tape(id) => {
+                            let state = self.panels_store.l2_tape.get(id)?;
+                            PersistedFreeItemKind::L2Tape {
+                                symbol: state.symbol.clone(),
+                            }
+                        }
+                        FreeItem::OrderEntry(id) => {
+                            let state = self.panels_store.order_entry.get(id)?;
+                            PersistedFreeItemKind::OrderEntry {
+                                symbol: state.symbol.clone(),
+                            }
+                        }
+                        FreeItem::PositionManager(_) => PersistedFreeItemKind::PositionManager,
+                        FreeItem::TradeLog(_) => PersistedFreeItemKind::TradeLog,
+                        FreeItem::RiskCalculator(_) => PersistedFreeItemKind::RiskCalculator,
+                        FreeItem::TradingContainer(id) => {
+                            let state = self.panels_store.trading_container.get(id)?;
+                            PersistedFreeItemKind::TradingContainer {
+                                symbol: state.symbol.clone(),
+                                tick_size: state.tick_size,
+                                market_price: state.market_price,
+                            }
+                        }
+                    };
+                    Some(zengeld_chart::preset::preset::PersistedFreeLeaf {
+                        leaf_id: leaf.id.0,
+                        panel_id,
+                        kind,
+                    })
+                })
+                .collect();
+            preset.slot_leaves[i] = leaves_desc;
         }
 
         self.panel_app.presets.insert(id.to_string(), preset);

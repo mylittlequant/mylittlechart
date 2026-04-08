@@ -16,10 +16,14 @@
 
 pub mod agent;
 pub mod input;
+pub mod panels_render;
+pub mod panels_store;
 pub mod preset_cache;
 pub mod scroll_dispatch;
 pub mod text_input;
 pub mod workspace;
+
+pub use panels_store::TradingPanelsStore;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
@@ -543,6 +547,13 @@ pub struct ChartApp {
     pub last_auto_scale_us: u64,
     /// Accumulated time in calc_moving_averages() calls during the last tick.
     pub last_moving_avg_us: u64,
+
+    /// Heavy state for all trading panels docked into the free-slot sidebars.
+    ///
+    /// Keyed by `PanelId`. The matching `FreeItem` leaves in each slot's
+    /// `DockingManager<FreeItem>` carry only the `PanelId`, keeping
+    /// `sidebar-content` free of `zengeld-panels`.
+    pub panels_store: panels_store::TradingPanelsStore,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -874,6 +885,7 @@ impl ChartApp {
             last_event_process_us: 0,
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
+            panels_store: panels_store::TradingPanelsStore::new(),
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1154,6 +1166,7 @@ impl ChartApp {
             last_event_process_us: 0,
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
+            panels_store: panels_store::TradingPanelsStore::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1330,6 +1343,7 @@ impl ChartApp {
             last_event_process_us: 0,
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
+            panels_store: panels_store::TradingPanelsStore::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -5647,12 +5661,16 @@ impl ChartApp {
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
+            let panels_store = &self.panels_store;
             let sidebar_result = sidebar_content::render::render_right_sidebar(
                 ctx,
                 &sidebar_rect,
                 &mut self.sidebar_state,
                 &sidebar_toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
+                &mut |item, rect, ctx| {
+                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
+                },
             );
 
             Some(sidebar_result)
@@ -6031,12 +6049,16 @@ impl ChartApp {
             }
         }
 
+        let panels_store = &self.panels_store;
         let sidebar_result = sidebar_content::render::render_right_sidebar(
             ctx,
             &sidebar_rect,
             &mut self.sidebar_state,
             &sidebar_toolbar_theme,
             &mut self.input_coordinator.borrow_mut(),
+            &mut |item, rect, ctx| {
+                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
+            },
         );
 
         // Persist agent terminal rect for hover-focus.

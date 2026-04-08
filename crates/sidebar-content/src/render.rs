@@ -185,6 +185,7 @@ pub fn render_right_sidebar(
     sidebar_state: &mut SidebarState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
+    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -539,6 +540,7 @@ pub fn render_right_sidebar(
                 slot_idx,
                 sidebar_state,
                 toolbar_theme,
+                free_item_renderer,
             );
         }
 
@@ -3289,6 +3291,7 @@ fn render_slot_panel(
     slot_idx: usize,
     state: &mut SidebarState,
     theme: &ToolbarTheme,
+    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3306,11 +3309,25 @@ fn render_slot_panel(
         height: inner_h as f32,
     });
 
-    let leaves: Vec<(uzor::panels::LeafId, UzorPanelRect)> = mgr
-        .panel_rects()
-        .iter()
-        .map(|(id, r)| (*id, *r))
-        .collect();
+    // Collect (leaf_id, active_item, rect) so we can render after the mgr borrow.
+    // `DockingTree::leaves()` gives each `Leaf<FreeItem>`; the active panel
+    // for this leaf is `leaf.panels[leaf.active_tab]`.
+    let leaves: Vec<(uzor::panels::LeafId, crate::free_slot::FreeItem, UzorPanelRect)> = {
+        let rects = mgr.panel_rects().clone();
+        let tree_leaves: Vec<(uzor::panels::LeafId, crate::free_slot::FreeItem)> = mgr
+            .tree()
+            .leaves()
+            .into_iter()
+            .filter_map(|leaf| {
+                let active_panel = leaf.panels.get(leaf.active_tab).cloned()?;
+                Some((leaf.id, active_panel))
+            })
+            .collect();
+        tree_leaves
+            .into_iter()
+            .filter_map(|(id, item)| rects.get(&id).map(|r| (id, item, *r)))
+            .collect()
+    };
 
     if leaves.is_empty() {
         ctx.set_font("12px sans-serif");
@@ -3325,22 +3342,16 @@ fn render_slot_panel(
         return inner_h;
     }
 
-    for (_leaf_id, r) in leaves {
+    for (_leaf_id, item, r) in leaves {
+        // Draw border/background frame for the leaf.
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
         ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&theme.item_text_muted);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            "Placeholder",
-            (r.x + r.width / 2.0) as f64,
-            (r.y + r.height / 2.0) as f64,
-        );
+        // Delegate actual panel content to the caller-supplied renderer.
+        free_item_renderer(&item, (r.x, r.y, r.width, r.height), ctx);
     }
 
     inner_h
