@@ -8,6 +8,7 @@ use std::time::Instant;
 use zengeld_chart::ui::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
 use crate::watchlist::WatchlistManager;
+use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};
 
 // =============================================================================
 // MetricsSnapshot
@@ -325,6 +326,26 @@ pub struct SidebarState {
     /// Dirty flag: when true, the next frame will snap the chat scroll to the
     /// bottom using up-to-date content_h from the just-completed render.
     pub needs_chat_snap: bool,
+
+    // ── Split-grid docking for the Agents tab (Step 1 scaffold) ──────────────
+
+    /// Docking manager for the per-sidebar agent grid.
+    ///
+    /// Starts empty (no leaves). Step 2 will wire add/remove actions.
+    /// The existing 19 single-session `agent_*` fields above are kept until
+    /// the render.rs migration is complete in Step 2.
+    ///
+    /// Wrapped in [`AgentDockingManager`] to satisfy `SidebarState`'s
+    /// `Clone` + `Debug` derive requirements.
+    pub agent_docking: AgentDockingManager,
+
+    /// Which docking leaf currently has keyboard/input focus.
+    pub focused_agent_leaf: Option<uzor::panels::LeafId>,
+
+    /// Full descriptor for each live agent pane, keyed by `LeafId`.
+    ///
+    /// Consulted when routing input, reading snapshots, or persisting layout.
+    pub agent_leaves: HashMap<uzor::panels::LeafId, AgentLeafDescriptor>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -563,6 +584,9 @@ impl Default for SidebarState {
             pty_scroll: ScrollState::new(),
             last_chat_messages_len: 0,
             needs_chat_snap: false,
+            agent_docking: AgentDockingManager::new(),
+            focused_agent_leaf: None,
+            agent_leaves: HashMap::new(),
         }
     }
 }

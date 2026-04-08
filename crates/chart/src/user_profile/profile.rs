@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current schema version.  Increment when the serialized format changes in a
 /// backward-incompatible way so that migration code can detect old files.
-pub const PROFILE_VERSION: u32 = 2;
+pub const PROFILE_VERSION: u32 = 3;
 
 // =============================================================================
 // WindowState
@@ -74,6 +74,73 @@ pub struct WindowState {
     /// ("Bottom", "Top", "Free").
     #[serde(default)]
     pub inline_bar_dock: Option<String>,
+
+    // ── Agents tab docking grid (Step 1 scaffold) ─────────────────────────────
+
+    /// Serialized `uzor::panels::LayoutSnapshot` JSON for the agents docking
+    /// grid in this window.  `None` means no layout has been saved yet
+    /// (the grid will start empty).
+    ///
+    /// Written by Step 2 save logic; read back on profile restore.
+    #[serde(default)]
+    pub agents_tab_layout: Option<String>,
+
+    /// Per-pane descriptors for every agent leaf in the saved docking grid.
+    ///
+    /// The `leaf_id` inside each entry corresponds to the numeric leaf IDs
+    /// embedded in `agents_tab_layout`.  On profile restore, Step 2 will
+    /// re-create `AgentInstance`s from these descriptors and insert them
+    /// into the `DockingManager`.
+    #[serde(default)]
+    pub agents_tab_leaves: Vec<PersistedAgentLeaf>,
+}
+
+// =============================================================================
+// PersistedAgentLeaf
+// =============================================================================
+
+/// Mirror enums for `gate4agent::AgentCli` / `InstanceMode` that are
+/// serializable without depending on gate4agent in the `chart` crate.
+///
+/// Thin wrappers — profile.rs does not import gate4agent directly.
+/// Conversion (`From`/`Into`) is implemented in `chart-app/src/lib.rs`
+/// (Step 2) where gate4agent is already a dependency.
+
+/// Local serializable mirror of `gate4agent::AgentCli`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedAgentCli {
+    Claude,
+    Codex,
+    Gemini,
+}
+
+/// Local serializable mirror of `gate4agent::InstanceMode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedInstanceMode {
+    Pty,
+    Chat,
+}
+
+/// Persisted representation of a single agent docking pane.
+///
+/// Stored inside [`WindowState::agents_tab_leaves`].  On application startup
+/// the `chart-app` layer (Step 2) reads these and re-creates live
+/// `AgentInstance`s in the `MultiCliManager`, then rebuilds the
+/// `DockingManager<AgentPaneLeaf>` from `agents_tab_layout`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PersistedAgentLeaf {
+    /// Numeric leaf ID matching the layout snapshot (from `uzor::panels::LeafId`).
+    pub leaf_id: u64,
+    /// Which AI CLI runs in this pane.
+    pub cli: PersistedAgentCli,
+    /// Transport mode.
+    pub mode: PersistedInstanceMode,
+    /// Working directory for the agent process.
+    pub workdir: std::path::PathBuf,
+    /// Chat session identifier — only meaningful for `PersistedInstanceMode::Chat`.
+    pub chat_session_id: Option<String>,
 }
 
 // =============================================================================

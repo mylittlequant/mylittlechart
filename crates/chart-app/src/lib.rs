@@ -7359,6 +7359,9 @@ impl ChartApp {
             inline_bar_x: Some(inline.x),
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
+            // Step 1 scaffold — save/restore wired in Step 2.
+            agents_tab_layout: None,
+            agents_tab_leaves: Vec::new(),
         }
     }
 
