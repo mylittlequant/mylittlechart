@@ -462,8 +462,18 @@ impl ExtendedFrameLayout {
         maximized_instance_id: Option<u64>,
         above_main_flags: &[bool],
     ) -> Self {
-        let price_scale_width = scale_settings.effective_price_scale_width();
-        let time_scale_height = scale_settings.effective_time_scale_height();
+        // Clamp scale dimensions to the chart_panel bounds so nothing can
+        // overflow into neighbouring leaves when the leaf is squeezed below
+        // the configured scale size (sidebar separator drag, narrow splits).
+        // Mirrors the guard in ChartAreaLayout::compute / compute_with_settings.
+        let price_scale_width = scale_settings
+            .effective_price_scale_width()
+            .min(chart_panel.width)
+            .max(0.0);
+        let time_scale_height = scale_settings
+            .effective_time_scale_height()
+            .min(chart_panel.height)
+            .max(0.0);
         let chart_width = (chart_panel.width - price_scale_width).max(0.0);
         let sub_pane_count = sub_pane_instance_ids.len();
 
