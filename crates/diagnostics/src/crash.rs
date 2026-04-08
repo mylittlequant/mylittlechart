@@ -40,12 +40,15 @@ pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &s
         let thread_name = thread.name().unwrap_or("<unnamed>").to_string();
         let thread_id = format!("{:?}", thread.id());
 
-        // Log via tracing (best effort)
+        // Log via tracing: ONE short line only. The full report goes into the
+        // crash file — we do not want to flood the live log/stdout with a
+        // multi-KB backtrace + 200 lines of ring buffer every time a
+        // background task panics.
         tracing::error!(
-            panic.location = %location,
-            panic.message = %msg,
-            panic.thread = %thread_name,
-            "PANIC"
+            "PANIC in {} at {}: {} (see crash-*.txt)",
+            thread_name,
+            location,
+            msg
         );
 
         // Get recent log lines — 200 is enough to catch the event sequence
@@ -73,7 +76,8 @@ pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &s
              {}\n\
              \n\
              === RECENT LOGS (last 200) ===\n\
-             {}\n",
+             {}\n\
+             === END CRASH REPORT ===\n",
             timestamp.to_rfc3339(),
             version,
             std::process::id(),
@@ -85,12 +89,17 @@ pub fn install_panic_hook(log_dir: &Path, log_buffer: LogBuffer, app_version: &s
             recent_logs_text,
         );
 
-        // Write crash file
+        // Write crash file — this is the ONLY place the full report lives.
         let crash_file = log_dir.join(format!("crash-{}.txt", timestamp.format("%Y%m%d-%H%M%S")));
         let _ = std::fs::write(&crash_file, &crash_report);
 
-        // Also print to stderr
-        eprintln!("{crash_report}");
+        // Short stderr notice — one line, mirrors the tracing log so a dev
+        // watching the terminal sees the panic happened without drowning in
+        // the full backtrace.
+        eprintln!(
+            "PANIC in {thread_name} at {location_sanitized}: {msg} (crash file: {})",
+            crash_file.display()
+        );
     }));
 }
 
