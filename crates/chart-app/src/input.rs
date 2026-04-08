@@ -122,26 +122,30 @@ impl ChartApp {
         self.text_input.is_focused(crate::text_input::FieldId::AgentPty)
     }
 
-    /// Clear any active host-side PTY selection. Called after Ctrl+C copy and
-    /// on CLI/mode switch.
+    /// Clear any active host-side PTY selection for the focused leaf.
     pub fn clear_pty_selection(&mut self) {
-        if self.sidebar_state.pty_selection.is_some() {
-            self.sidebar_state.pty_selection = None;
-            self.sidebar_data_dirty = true;
+        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if self.sidebar_state.agent_pty_selections.remove(&leaf_id).is_some() {
+                self.sidebar_data_dirty = true;
+            }
         }
     }
 
-    /// Paste the given text into the active PTY (used by Ctrl+V / Ctrl+Shift+V).
+    /// Paste the given text into the focused PTY leaf's PTY session.
     pub fn paste_to_pty(&mut self, text: &str) {
         if text.is_empty() { return; }
-        let cli = self.sidebar_state.agent_cli;
-        let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, text));
+        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                if desc.mode == gate4agent::InstanceMode::Pty {
+                    let id = desc.instance_id;
+                    let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, text));
+                }
+            }
+        }
     }
 
     /// Convert a screen (x, y) point to a PTY cell (row, col) if the point lies
-    /// inside the current `agent_terminal_rect`. Uses 7x19 cell metrics
-    /// matching `render_agents_pty`, and accounts for `pty_scroll.offset`.
-    /// Row/col are clamped to the grid size.
+    /// inside the focused leaf's agent_terminal_rect. Uses 7x19 cell metrics.
     fn pty_cell_at(&self, x: f64, y: f64) -> Option<(u16, u16)> {
         let (rx, ry, rw, rh) = self.sidebar_state.agent_terminal_rect?;
         let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
@@ -149,7 +153,8 @@ impl ChartApp {
             return None;
         }
         let (cols, rows) = self.sidebar_state.agent_terminal_size.unwrap_or((80, 24));
-        let scroll_offset = self.sidebar_state.pty_scroll.offset as f64;
+        let leaf_id = self.sidebar_state.focused_agent_leaf?;
+        let scroll_offset = self.sidebar_state.agent_pty_scrolls.get(&leaf_id).map(|s| s.offset).unwrap_or(0.0);
         let col = ((x - rx) / 7.0).floor() as i32;
         let row = ((y - ry + scroll_offset) / 19.0).floor() as i32;
         let col = col.clamp(0, cols as i32 - 1) as u16;
@@ -157,15 +162,19 @@ impl ChartApp {
         Some((row, col))
     }
 
-    /// Extract the currently selected PTY text from the live snapshot grid.
+    /// Extract the currently selected PTY text from the focused leaf's snapshot.
     /// Returns an empty string if there is no selection or no grid.
     pub fn pty_selection_text(&self) -> String {
         use sidebar_content::agent_types::AgentSnapshotMode;
-        let sel = match self.sidebar_state.pty_selection {
-            Some(s) if !s.is_empty() => s,
+        let leaf_id = match self.sidebar_state.focused_agent_leaf {
+            Some(id) => id,
+            None => return String::new(),
+        };
+        let sel = match self.sidebar_state.agent_pty_selections.get(&leaf_id) {
+            Some(s) if !s.is_empty() => *s,
             _ => return String::new(),
         };
-        let snap = match self.sidebar_state.agent_snapshot.as_ref() {
+        let snap = match self.sidebar_state.agent_leaf_snapshots.get(&leaf_id) {
             Some(s) => s,
             None => return String::new(),
         };
@@ -208,34 +217,6 @@ impl ChartApp {
         out
     }
 
-    pub fn ensure_agent_session_for_mode(&mut self) {
-        use sidebar_content::state::{AgentPanelMode, AgentCli};
-        use gate4agent::{SessionConfig, CliTool};
-        let cli = self.sidebar_state.agent_cli;
-        if self.agent.is_active(cli) {
-            return;
-        }
-        if self.sidebar_state.agent_mode != AgentPanelMode::Pty {
-            // Chat sessions are started lazily on first send (need a prompt).
-            return;
-        }
-        let tool = match cli {
-            AgentCli::Claude => CliTool::ClaudeCode,
-            AgentCli::Codex  => CliTool::Codex,
-            AgentCli::Gemini => CliTool::Gemini,
-        };
-        let workdir = self.agent.cli_workdir(cli);
-        let _ = std::fs::create_dir_all(&workdir);
-        eprintln!("[gate4agent] ensure_pty cli={:?} cwd={}", cli, workdir.display());
-        let config = SessionConfig { tool, working_dir: workdir, ..SessionConfig::default() };
-        match self.bridge.runtime().block_on(self.agent.start_pty(cli, config)) {
-            Ok(()) => {
-                self.sidebar_state.agent_session_active = true;
-                eprintln!("[gate4agent] PTY auto-started ({:?})", cli);
-            }
-            Err(e) => eprintln!("[gate4agent] Failed to auto-start PTY: {}", e),
-        }
-    }
 
     /// Handle a left-click at screen coordinates `(x, y)`.
     ///
@@ -258,9 +239,11 @@ impl ChartApp {
         //     terminal grid itself).
         if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
             let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
-            if x >= rx && x < rx + rw && y >= ry && y < ry + rh
-                && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty
-            {
+            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
+                .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
+                .map(|d| d.mode == gate4agent::InstanceMode::Pty)
+                .unwrap_or(false);
+            if x >= rx && x < rx + rw && y >= ry && y < ry + rh && is_pty_leaf {
                 eprintln!("[gate4agent::pty] click in terminal rect — focusing AgentPty");
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
                 self.agent_pty_hover_focused = true;
@@ -268,9 +251,12 @@ impl ChartApp {
                 // But keep non-empty selections that were just produced by a
                 // drag — drag_end fires before click, and selection is already
                 // finalized by then.
-                if let Some(sel) = self.sidebar_state.pty_selection {
-                    if sel.is_empty() {
-                        self.sidebar_state.pty_selection = None;
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
+                        .map(|s| s.is_empty())
+                        .unwrap_or(true);
+                    if is_empty {
+                        self.sidebar_state.agent_pty_selections.remove(&leaf_id);
                         self.sidebar_data_dirty = true;
                     }
                 }
@@ -690,19 +676,29 @@ impl ChartApp {
         // If the drag starts inside the Agent PTY terminal (in PTY mode),
         // begin a host-side cell selection. This MUST run before TIM drag so
         // the sidebar scroll-drag fallback doesn't hijack the motion.
-        if self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty {
-            if let Some((row, col)) = self.pty_cell_at(x, y) {
-                eprintln!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
-                self.sidebar_state.pty_selection =
-                    Some(sidebar_content::state::PtySelection::new(row, col));
-                self.agent_pty_drag_active = true;
-                // Also focus PTY so keyboard events still route to it.
-                self.text_input.focus(crate::text_input::FieldId::AgentPty);
-                self.sidebar_data_dirty = true;
-                // Return false — NOT dismissed. We want subsequent drag_move
-                // events and the eventual drag_end. Returning true tells the
-                // platform runner to synthesise drag_end immediately.
-                return false;
+        {
+            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
+                .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
+                .map(|d| d.mode == gate4agent::InstanceMode::Pty)
+                .unwrap_or(false);
+            if is_pty_leaf {
+                if let Some((row, col)) = self.pty_cell_at(x, y) {
+                    eprintln!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
+                    if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                        self.sidebar_state.agent_pty_selections.insert(
+                            leaf_id,
+                            sidebar_content::state::PtySelection::new(row, col),
+                        );
+                    }
+                    self.agent_pty_drag_active = true;
+                    // Also focus PTY so keyboard events still route to it.
+                    self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                    self.sidebar_data_dirty = true;
+                    // Return false — NOT dismissed. We want subsequent drag_move
+                    // events and the eventual drag_end. Returning true tells the
+                    // platform runner to synthesise drag_end immediately.
+                    return false;
+                }
             }
         }
 
@@ -930,35 +926,54 @@ impl ChartApp {
             }
         }
 
-        // Agent chat / PTY scrollbar handle drag + track click
+        // Agent chat / PTY scrollbar handle drag + track click — routed to focused leaf's scroll.
         if self.sidebar_state.is_right_open() && !self.ui_drag_active {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
                 use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
-                let chat_info = ScrollableInfo {
-                    handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
-                    track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
-                    content_height: sidebar_result.agent_chat_content_height,
-                    viewport_height: sidebar_result.agent_chat_viewport_h,
-                    viewport_rect: sidebar_result.agent_content_rect,
-                };
-                let pty_info = ScrollableInfo {
-                    handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
-                    track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
-                    content_height: sidebar_result.agent_pty_content_height,
-                    viewport_height: sidebar_result.agent_pty_viewport_h,
-                    viewport_rect: sidebar_result.agent_content_rect,
-                };
-                if try_start_scrollbar_drag(x, y, &mut [
-                    (&chat_info, &mut self.sidebar_state.chat_scroll),
-                    (&pty_info, &mut self.sidebar_state.pty_scroll),
-                ]) {
-                    return false;
-                }
-                if try_handle_track_click(x, y, &mut [
-                    (&chat_info, &mut self.sidebar_state.chat_scroll),
-                    (&pty_info, &mut self.sidebar_state.pty_scroll),
-                ]) {
-                    return false;
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
+                        .map(|d| d.mode);
+                    match leaf_mode {
+                        Some(gate4agent::InstanceMode::Chat) => {
+                            let chat_info = ScrollableInfo {
+                                handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
+                                track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
+                                content_height: sidebar_result.agent_chat_content_height,
+                                viewport_height: sidebar_result.agent_chat_viewport_h,
+                                viewport_rect: sidebar_result.agent_content_rect,
+                            };
+                            let scroll = self.sidebar_state.agent_chat_scrolls
+                                .entry(leaf_id).or_default();
+                            if try_start_scrollbar_drag(x, y, &mut [(&chat_info, scroll)]) {
+                                return false;
+                            }
+                            let scroll = self.sidebar_state.agent_chat_scrolls
+                                .entry(leaf_id).or_default();
+                            if try_handle_track_click(x, y, &mut [(&chat_info, scroll)]) {
+                                return false;
+                            }
+                        }
+                        Some(gate4agent::InstanceMode::Pty) => {
+                            let pty_info = ScrollableInfo {
+                                handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
+                                track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
+                                content_height: sidebar_result.agent_pty_content_height,
+                                viewport_height: sidebar_result.agent_pty_viewport_h,
+                                viewport_rect: sidebar_result.agent_content_rect,
+                            };
+                            let scroll = self.sidebar_state.agent_pty_scrolls
+                                .entry(leaf_id).or_default();
+                            if try_start_scrollbar_drag(x, y, &mut [(&pty_info, scroll)]) {
+                                return false;
+                            }
+                            let scroll = self.sidebar_state.agent_pty_scrolls
+                                .entry(leaf_id).or_default();
+                            if try_handle_track_click(x, y, &mut [(&pty_info, scroll)]) {
+                                return false;
+                            }
+                        }
+                        None => {}
+                    }
                 }
             }
         }
@@ -2338,10 +2353,12 @@ impl ChartApp {
             let cx = x.clamp(rx, rx + rw - 1.0);
             let cy = y.clamp(ry, ry + rh - 1.0);
             if let Some((row, col)) = self.pty_cell_at(cx, cy) {
-                if let Some(ref mut sel) = self.sidebar_state.pty_selection {
-                    sel.end_row = row;
-                    sel.end_col = col;
-                    self.sidebar_data_dirty = true;
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(sel) = self.sidebar_state.agent_pty_selections.get_mut(&leaf_id) {
+                        sel.end_row = row;
+                        sel.end_col = col;
+                        self.sidebar_data_dirty = true;
+                    }
                 }
             }
             return;
@@ -2979,29 +2996,41 @@ impl ChartApp {
             return;
         }
 
-        // Agent chat / PTY scrollbar drag move
+        // Agent chat / PTY scrollbar drag move — routed to focused leaf's scroll.
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
             if let Some(ref sidebar_result) = self.last_sidebar_result {
-                let chat_info = ScrollableInfo {
-                    handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
-                    track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
-                    content_height: sidebar_result.agent_chat_content_height,
-                    viewport_height: sidebar_result.agent_chat_viewport_h,
-                    viewport_rect: sidebar_result.agent_content_rect,
-                };
-                let pty_info = ScrollableInfo {
-                    handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
-                    track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
-                    content_height: sidebar_result.agent_pty_content_height,
-                    viewport_height: sidebar_result.agent_pty_viewport_h,
-                    viewport_rect: sidebar_result.agent_content_rect,
-                };
-                if try_handle_scrollbar_drag(y, &mut [
-                    (&chat_info, &mut self.sidebar_state.chat_scroll),
-                    (&pty_info, &mut self.sidebar_state.pty_scroll),
-                ]) {
-                    return;
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode);
+                    match leaf_mode {
+                        Some(gate4agent::InstanceMode::Chat) => {
+                            let chat_info = ScrollableInfo {
+                                handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
+                                track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
+                                content_height: sidebar_result.agent_chat_content_height,
+                                viewport_height: sidebar_result.agent_chat_viewport_h,
+                                viewport_rect: sidebar_result.agent_content_rect,
+                            };
+                            let scroll = self.sidebar_state.agent_chat_scrolls.entry(leaf_id).or_default();
+                            if try_handle_scrollbar_drag(y, &mut [(&chat_info, scroll)]) {
+                                return;
+                            }
+                        }
+                        Some(gate4agent::InstanceMode::Pty) => {
+                            let pty_info = ScrollableInfo {
+                                handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
+                                track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
+                                content_height: sidebar_result.agent_pty_content_height,
+                                viewport_height: sidebar_result.agent_pty_viewport_h,
+                                viewport_rect: sidebar_result.agent_content_rect,
+                            };
+                            let scroll = self.sidebar_state.agent_pty_scrolls.entry(leaf_id).or_default();
+                            if try_handle_scrollbar_drag(y, &mut [(&pty_info, scroll)]) {
+                                return;
+                            }
+                        }
+                        None => {}
+                    }
                 }
             }
         }
@@ -3232,9 +3261,12 @@ impl ChartApp {
         if self.agent_pty_drag_active {
             self.agent_pty_drag_active = false;
             // If start==end the selection is empty — clear it so overlay vanishes.
-            if let Some(sel) = self.sidebar_state.pty_selection {
-                if sel.is_empty() {
-                    self.sidebar_state.pty_selection = None;
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true);
+                if is_empty {
+                    self.sidebar_state.agent_pty_selections.remove(&leaf_id);
                 }
             }
             self.sidebar_data_dirty = true;
@@ -3672,15 +3704,19 @@ impl ChartApp {
             self.panel_app.user_settings_state.profile_list_scroll.end_drag();
             return;
         }
-        // Agent chat / PTY scrollbar drag end
+        // Agent chat / PTY scrollbar drag end — routed to focused leaf's scroll.
         {
             use crate::scroll_dispatch::try_end_scrollbar_drag;
-            let ended = try_end_scrollbar_drag(&mut [
-                &mut self.sidebar_state.chat_scroll,
-                &mut self.sidebar_state.pty_scroll,
-            ]);
-            if ended {
-                return;
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let chat_ended = self.sidebar_state.agent_chat_scrolls.get_mut(&leaf_id)
+                    .map(|s| try_end_scrollbar_drag(&mut [s]))
+                    .unwrap_or(false);
+                let pty_ended = !chat_ended && self.sidebar_state.agent_pty_scrolls.get_mut(&leaf_id)
+                    .map(|s| try_end_scrollbar_drag(&mut [s]))
+                    .unwrap_or(false);
+                if chat_ended || pty_ended {
+                    return;
+                }
             }
         }
 
@@ -5608,7 +5644,7 @@ impl ChartApp {
                         return;
                     }
 
-                    // Agents panel: route wheel to internal chat or PTY scroll offset.
+                    // Agents panel: route wheel to focused leaf's chat or PTY scroll offset.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
                         if let Some(ref content_rect) = sidebar_result.agent_content_rect {
                             if x >= content_rect.x
@@ -5616,16 +5652,24 @@ impl ChartApp {
                                 && y >= content_rect.y
                                 && y <= content_rect.y + content_rect.height
                             {
-                                use sidebar_content::state::AgentPanelMode;
-                                let viewport_h = content_rect.height;
-                                match self.sidebar_state.agent_mode {
-                                    AgentPanelMode::Chat => {
-                                        let total_h = sidebar_result.agent_chat_content_height;
-                                        self.sidebar_state.chat_scroll.handle_wheel(-dy, total_h, viewport_h);
-                                    }
-                                    AgentPanelMode::Pty => {
-                                        let total_h = sidebar_result.agent_pty_content_height;
-                                        self.sidebar_state.pty_scroll.handle_wheel(-dy, total_h, viewport_h);
+                                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
+                                        .map(|d| d.mode);
+                                    let viewport_h = content_rect.height;
+                                    match leaf_mode {
+                                        Some(gate4agent::InstanceMode::Chat) => {
+                                            let total_h = sidebar_result.agent_chat_content_height;
+                                            self.sidebar_state.agent_chat_scrolls
+                                                .entry(leaf_id).or_default()
+                                                .handle_wheel(-dy, total_h, viewport_h);
+                                        }
+                                        Some(gate4agent::InstanceMode::Pty) => {
+                                            let total_h = sidebar_result.agent_pty_content_height;
+                                            self.sidebar_state.agent_pty_scrolls
+                                                .entry(leaf_id).or_default()
+                                                .handle_wheel(-dy, total_h, viewport_h);
+                                        }
+                                        None => {}
                                     }
                                 }
                                 return;
@@ -5917,35 +5961,51 @@ impl ChartApp {
             }
             return;
         }
-        // Agent PTY input — route raw characters directly to the PTY.
+        // Agent PTY input — route raw characters directly to the focused leaf's PTY.
         if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
             let action = self.text_input.on_char(ch);
             if let crate::text_input::FieldAction::RawInput(bytes) = action {
-                let cli = self.sidebar_state.agent_cli;
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                        if desc.mode == gate4agent::InstanceMode::Pty {
+                            let text = String::from_utf8_lossy(&bytes).to_string();
+                            let id = desc.instance_id;
+                            let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                        }
+                    }
+                }
             }
             return;
         }
-        // Agent chat input — route printable characters and Enter to TextInputManager.
+        // Agent chat input — route printable characters and Enter to the focused leaf's chat.
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             if ch == '\r' || ch == '\n' {
-                let cli = self.sidebar_state.agent_cli;
-                let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-                eprintln!("[gate4agent::chat] Enter via on_char text_len={} cli={:?}", text.len(), cli);
-                if !text.is_empty() {
-                    match self.bridge.runtime().block_on(self.agent.send_chat(cli, &text)) {
-                        Ok(()) => {
-                            self.sidebar_state.agent_input_buffer.clear();
-                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                            eprintln!("[gate4agent::chat] Enter via on_char OK");
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
+                    if let Some(desc) = desc {
+                        let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                        eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
+                        if !text.is_empty() {
+                            let id = desc.instance_id;
+                            match self.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
+                                Ok(()) => {
+                                    let buf = self.sidebar_state.agent_input_buffers
+                                        .entry(leaf_id).or_default();
+                                    buf.clear();
+                                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                                    eprintln!("[gate4agent::chat] Enter via on_char OK");
+                                }
+                                Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
+                            }
                         }
-                        Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
                     }
                 }
             } else {
                 let _action = self.text_input.on_char(ch);
-                self.sidebar_state.agent_input_buffer = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                    self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
+                }
             }
             return;
         }
@@ -7160,21 +7220,30 @@ impl ChartApp {
             return;
         }
 
-        // ── Agent PTY key routing ──────────────────────────────────────────────
+        // ── Agent PTY key routing — sends to focused leaf's PTY instance ─────────
         if self.is_agent_pty_focused() {
             let action = self.text_input.on_key(key);
             if let crate::text_input::FieldAction::RawInput(bytes) = action {
-                let cli = self.sidebar_state.agent_cli;
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let _ = self.bridge.runtime().block_on(self.agent.write_pty(cli, &text));
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                        if desc.mode == gate4agent::InstanceMode::Pty {
+                            let text = String::from_utf8_lossy(&bytes).to_string();
+                            let id = desc.instance_id;
+                            let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                        }
+                    }
+                }
             }
             return;
         }
 
-        // ── Agent chat key routing ─────────────────────────────────────────────
+        // ── Agent chat key routing — syncs focused leaf's input buffer ────────
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             let _action = self.text_input.on_key(key);
-            self.sidebar_state.agent_input_buffer = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
+            }
             return;
         }
 
@@ -8441,160 +8510,314 @@ impl ChartApp {
         }
 
         // === Agent panel control clicks ===
-        if widget_id == "agent:mode_pty" {
-            self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Pty;
-            if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
-                self.text_input.blur();
-            }
-            self.sidebar_state.pty_selection = None;
-            // Auto-focus the PTY so named keys (arrows/Enter/Tab/Esc)
-            // immediately route to the terminal without requiring a second
-            // click on the grid area.
-            self.text_input.focus(crate::text_input::FieldId::AgentPty);
-            self.agent_pty_hover_focused = true;
-            self.ensure_agent_session_for_mode();
-            return;
-        }
-        if widget_id == "agent:mode_chat" {
-            self.sidebar_state.agent_mode = sidebar_content::state::AgentPanelMode::Chat;
-            if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
-                self.text_input.blur();
-            }
-            self.agent_pty_hover_focused = false;
-            self.sidebar_state.pty_selection = None;
-            // Populate chat view with latest history from disk on switch to Chat mode.
-            let cli = self.sidebar_state.agent_cli;
-            self.agent.load_latest_history(cli);
-            return;
-        }
-        if widget_id == "agent:cli_cycle" {
-            self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
-            self.sidebar_state.pty_selection = None;
-            let cli = self.sidebar_state.agent_cli;
-            use sidebar_content::state::AgentPanelMode;
-            match self.sidebar_state.agent_mode {
-                AgentPanelMode::Pty => {
-                    // Terminals are fresh per session — do NOT load past history.
-                    // Spawn the newly-selected CLI's terminal if it isn't running yet.
-                    self.ensure_agent_session_for_mode();
+
+        // --- [+ Term] button — add a new PTY leaf ---
+        if widget_id == "agent:new_pty" {
+            use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
+            let cli = self.sidebar_state.agent_default_cli;
+            let workdir = self.agent.cli_workdir(cli);
+            let _ = std::fs::create_dir_all(&workdir);
+            match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
+                Ok(instance_id) => {
+                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Pty };
+                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                    let desc = AgentLeafDescriptor {
+                        instance_id, cli, mode: gate4agent::InstanceMode::Pty,
+                        workdir, chat_session_id: None,
+                    };
+                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    eprintln!("[ChartApp] agent:new_pty — leaf {:?} cli={:?}", leaf_id, cli);
                 }
-                AgentPanelMode::Chat => {
-                    // Populate chat view with latest history for the newly selected CLI.
-                    self.agent.load_latest_history(cli);
-                }
-            }
-            return;
-        }
-        if widget_id == "agent:load_prev_session" {
-            let cli = self.sidebar_state.agent_cli;
-            // Toggle dropdown open/closed; populate list when opening.
-            if self.sidebar_state.agent_past_sessions_open {
-                self.sidebar_state.agent_past_sessions_open = false;
-                self.sidebar_state.agent_past_sessions_list.clear();
-            } else {
-                self.sidebar_state.agent_past_sessions_list = self.agent.list_past_sessions(cli);
-                self.sidebar_state.agent_past_sessions_open = true;
+                Err(e) => eprintln!("[ChartApp] agent:new_pty create_instance error: {}", e),
             }
             self.sidebar_data_dirty = true;
             return;
         }
-        if let Some(idx_str) = widget_id.strip_prefix("agent:past_session:") {
-            if let Ok(idx) = idx_str.parse::<usize>() {
-                let cli = self.sidebar_state.agent_cli;
-                if let Some(meta) = self.sidebar_state.agent_past_sessions_list.get(idx).cloned() {
-                    if self.agent.load_history(cli, &meta.id) {
-                        self.sidebar_data_dirty = true;
-                    }
-                    self.sidebar_state.agent_past_sessions_open = false;
-                    self.sidebar_state.agent_past_sessions_list.clear();
-                }
-            }
-            return;
-        }
-        if widget_id == "agent:input" {
-            // Begin edit if not already focused, then reposition cursor from click.
-            if !self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
-                self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
-                self.text_input.focus(crate::text_input::FieldId::AgentChat);
-            }
-            // Reposition cursor to the click position inside the field.
-            self.text_input.on_drag_start(x, y);
-            eprintln!("[ChartApp] Agent chat input focused");
-            return;
-        }
-        if widget_id == "agent:toggle_session" {
-            // Start a new session based on the selected mode and CLI.
-            use sidebar_content::state::{AgentPanelMode, AgentCli};
-            use gate4agent::{SessionConfig, CliTool};
-            let cli = self.sidebar_state.agent_cli;
-            let tool = match cli {
-                AgentCli::Claude => CliTool::ClaudeCode,
-                AgentCli::Codex  => CliTool::Codex,
-                AgentCli::Gemini => CliTool::Gemini,
-            };
+
+        // --- [+ Chat] button — add a new Chat leaf ---
+        if widget_id == "agent:new_chat" {
+            use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
+            let cli = self.sidebar_state.agent_default_cli;
             let workdir = self.agent.cli_workdir(cli);
             let _ = std::fs::create_dir_all(&workdir);
-            let config = SessionConfig { tool, working_dir: workdir, ..SessionConfig::default() };
-            eprintln!("[ChartApp] Starting agent session: mode={:?} cli={:?}", self.sidebar_state.agent_mode, cli);
-            match self.sidebar_state.agent_mode {
-                AgentPanelMode::Pty => {
-                    match self.bridge.runtime().block_on(self.agent.start_pty(cli, config)) {
-                        Ok(()) => {
-                            self.sidebar_state.agent_session_active = true;
-                            eprintln!("[ChartApp] Agent PTY session started ({:?})", cli);
-                        }
-                        Err(e) => {
-                            eprintln!("[ChartApp] Failed to start agent PTY: {}", e);
-                        }
-                    }
-                }
-                AgentPanelMode::Chat => {
-                    let prompt = {
-                        let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-                        if !from_field.is_empty() {
-                            from_field
-                        } else {
-                            self.sidebar_state.agent_input_buffer.clone()
-                        }
+            match self.agent.create_instance(cli, gate4agent::InstanceMode::Chat, workdir.clone()) {
+                Ok(instance_id) => {
+                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Chat };
+                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                    let desc = AgentLeafDescriptor {
+                        instance_id, cli, mode: gate4agent::InstanceMode::Chat,
+                        workdir, chat_session_id: None,
                     };
-                    match self.bridge.runtime().block_on(self.agent.start_pipe(cli, config, &prompt)) {
-                        Ok(()) => {
-                            self.sidebar_state.agent_session_active = true;
-                            self.sidebar_state.agent_input_buffer.clear();
-                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                            eprintln!("[ChartApp] Agent Chat session started ({:?})", cli);
+                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    // Pre-load latest chat history for the new chat leaf.
+                    self.agent.load_latest_history_instance(instance_id);
+                    eprintln!("[ChartApp] agent:new_chat — leaf {:?} cli={:?}", leaf_id, cli);
+                }
+                Err(e) => eprintln!("[ChartApp] agent:new_chat create_instance error: {}", e),
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- [Split H] / [Split V] buttons ---
+        if widget_id == "agent:split_h" || widget_id == "agent:split_v" {
+            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+                use uzor::panels::SplitKind;
+                use sidebar_content::agents_dock::AgentLeafDescriptor;
+                let kind = if widget_id == "agent:split_h" { SplitKind::Horizontal } else { SplitKind::Vertical };
+                let rw = self.sidebar_state.right_sidebar_width as f32;
+                let rh = self.height as f32;
+                // split_leaf creates 2 new leaf nodes replacing the old one.
+                // new_ids[0] inherits the original leaf's position; new_ids[1] is the sibling.
+                let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
+                    .split_leaf(focus, kind, rw, rh);
+                if new_ids.len() >= 2 {
+                    let original_id = new_ids[0];
+                    let sibling_id  = new_ids[1];
+                    // Move the original leaf descriptor to the new id.
+                    if let Some(desc) = self.sidebar_state.agent_leaves.remove(&focus) {
+                        self.sidebar_state.agent_leaves.insert(original_id, desc);
+                    }
+                    // Create a new instance for the sibling.
+                    let cli = self.sidebar_state.agent_default_cli;
+                    let workdir = self.agent.cli_workdir(cli);
+                    let _ = std::fs::create_dir_all(&workdir);
+                    match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
+                        Ok(instance_id) => {
+                            let desc = AgentLeafDescriptor {
+                                instance_id, cli, mode: gate4agent::InstanceMode::Pty,
+                                workdir, chat_session_id: None,
+                            };
+                            self.sidebar_state.agent_leaves.insert(sibling_id, desc);
+                            self.sidebar_state.focused_agent_leaf = Some(sibling_id);
+                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(sibling_id);
+                            eprintln!("[ChartApp] {} — original={:?} sibling={:?}", widget_id, original_id, sibling_id);
                         }
-                        Err(e) => {
-                            eprintln!("[ChartApp] Failed to start agent Chat: {}", e);
-                        }
+                        Err(e) => eprintln!("[ChartApp] {} create_instance error: {}", widget_id, e),
+                    }
+                    // Also transfer per-leaf state maps for the original.
+                    if let Some(v) = self.sidebar_state.agent_pty_selections.remove(&focus) {
+                        self.sidebar_state.agent_pty_selections.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_pty_scrolls.remove(&focus) {
+                        self.sidebar_state.agent_pty_scrolls.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_chat_scrolls.remove(&focus) {
+                        self.sidebar_state.agent_chat_scrolls.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_input_buffers.remove(&focus) {
+                        self.sidebar_state.agent_input_buffers.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_leaf_snapshots.remove(&focus) {
+                        self.sidebar_state.agent_leaf_snapshots.insert(original_id, v);
                     }
                 }
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- [×] close focused pane button ---
+        if widget_id == "agent:close_pane" {
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
+                    let id = desc.instance_id;
+                    let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
+                }
+                self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
+                self.sidebar_state.agent_pty_selections.remove(&leaf_id);
+                self.sidebar_state.agent_pty_scrolls.remove(&leaf_id);
+                self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
+                self.sidebar_state.agent_input_buffers.remove(&leaf_id);
+                self.sidebar_state.agent_input_cursors.remove(&leaf_id);
+                self.sidebar_state.agent_input_selections.remove(&leaf_id);
+                self.sidebar_state.agent_leaf_snapshots.remove(&leaf_id);
+                // Focus the next available leaf.
+                let next = self.sidebar_state.agent_docking.inner().panel_rects().keys().next().copied();
+                self.sidebar_state.focused_agent_leaf = next;
+                if let Some(next_id) = next {
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                }
+                self.sidebar_data_dirty = true;
             }
             return;
         }
-        if widget_id == "agent:send" {
-            let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-            let from_buffer = self.sidebar_state.agent_input_buffer.clone();
-            let text = if !from_field.is_empty() { from_field.clone() } else { from_buffer.clone() };
-            eprintln!(
-                "[gate4agent::chat] send button click field_len={} buffer_len={} chosen_len={}",
-                from_field.len(), from_buffer.len(), text.len()
-            );
-            if !text.is_empty() {
-                let cli = self.sidebar_state.agent_cli;
-                match self.bridge.runtime().block_on(self.agent.send_chat(cli, &text)) {
-                    Ok(()) => {
-                        self.sidebar_state.agent_session_active = true;
-                        self.sidebar_state.agent_input_buffer.clear();
-                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
-                        eprintln!("[gate4agent::chat] send button OK");
-                    }
-                    Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
-                }
-            } else {
-                eprintln!("[gate4agent::chat] send button: text empty, nothing to send");
-            }
+
+        // --- [CLI ▾] cycle default CLI for new panes ---
+        if widget_id == "agent:cli_cycle" {
+            use gate4agent::AgentCli;
+            self.sidebar_state.agent_default_cli = match self.sidebar_state.agent_default_cli {
+                AgentCli::Claude => AgentCli::Codex,
+                AgentCli::Codex  => AgentCli::Gemini,
+                AgentCli::Gemini => AgentCli::Claude,
+            };
+            self.sidebar_data_dirty = true;
             return;
+        }
+
+        // --- Per-leaf: agent:leaf:{id}:focus ---
+        if let Some(rest) = widget_id.strip_prefix("agent:leaf:") {
+            if let Some(id_str) = rest.strip_suffix(":focus") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:focus_content (click inside pane content) ---
+            if let Some(id_str) = rest.strip_suffix(":focus_content") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    // Also focus PTY field if this is a PTY leaf.
+                    let is_pty = self.sidebar_state.agent_leaves.get(&leaf_id)
+                        .map(|d| d.mode == gate4agent::InstanceMode::Pty)
+                        .unwrap_or(false);
+                    if is_pty {
+                        self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                        self.agent_pty_hover_focused = true;
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:close ---
+            if let Some(id_str) = rest.strip_suffix(":close") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
+                        let id = desc.instance_id;
+                        let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
+                    }
+                    self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
+                    self.sidebar_state.agent_pty_selections.remove(&leaf_id);
+                    self.sidebar_state.agent_pty_scrolls.remove(&leaf_id);
+                    self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
+                    self.sidebar_state.agent_input_buffers.remove(&leaf_id);
+                    self.sidebar_state.agent_input_cursors.remove(&leaf_id);
+                    self.sidebar_state.agent_input_selections.remove(&leaf_id);
+                    self.sidebar_state.agent_leaf_snapshots.remove(&leaf_id);
+                    if self.sidebar_state.focused_agent_leaf == Some(leaf_id) {
+                        let next = self.sidebar_state.agent_docking.inner().panel_rects().keys().next().copied();
+                        self.sidebar_state.focused_agent_leaf = next;
+                        if let Some(next_id) = next {
+                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                        }
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:start (spawn on demand) ---
+            if let Some(id_str) = rest.strip_suffix(":start") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
+                    if let Some(desc) = desc {
+                        let id = desc.instance_id;
+                        match desc.mode {
+                            gate4agent::InstanceMode::Pty => {
+                                use gate4agent::{SessionConfig, CliTool};
+                                let tool = match desc.cli {
+                                    gate4agent::AgentCli::Claude => CliTool::ClaudeCode,
+                                    gate4agent::AgentCli::Codex  => CliTool::Codex,
+                                    gate4agent::AgentCli::Gemini => CliTool::Gemini,
+                                };
+                                let config = SessionConfig {
+                                    tool,
+                                    working_dir: desc.workdir.clone(),
+                                    ..SessionConfig::default()
+                                };
+                                match self.bridge.runtime().block_on(self.agent.start_pty_instance(id, config)) {
+                                    Ok(()) => {
+                                        eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
+                                        self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                                        self.agent_pty_hover_focused = true;
+                                    }
+                                    Err(e) => eprintln!("[ChartApp] start PTY error: {}", e),
+                                }
+                            }
+                            gate4agent::InstanceMode::Chat => {
+                                // Chat starts lazily on first send — focus input field.
+                                self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
+                                self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                                self.agent.load_latest_history_instance(id);
+                            }
+                        }
+                        self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                        self.sidebar_data_dirty = true;
+                    }
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:input (chat input focus) ---
+            if let Some(id_str) = rest.strip_suffix(":input") {
+                if let Ok(_raw) = id_str.parse::<u64>() {
+                    if !self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+                        self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
+                        self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                    }
+                    self.text_input.on_drag_start(x, y);
+                    eprintln!("[ChartApp] agent leaf chat input focused");
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:send ---
+            if let Some(id_str) = rest.strip_suffix(":send") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
+                    if let Some(desc) = desc {
+                        let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                        let from_buffer = self.sidebar_state.agent_input_buffers
+                            .get(&leaf_id).cloned().unwrap_or_default();
+                        let text = if !from_field.is_empty() { from_field } else { from_buffer };
+                        eprintln!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
+                        if !text.is_empty() {
+                            let id = desc.instance_id;
+                            match self.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
+                                Ok(()) => {
+                                    self.sidebar_state.agent_input_buffers.remove(&leaf_id);
+                                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                                    eprintln!("[gate4agent::chat] send button OK");
+                                }
+                                Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:past:{i} (load past session) ---
+            if let Some((id_part, idx_str)) = rest.split_once(":past:") {
+                if let (Ok(raw), Ok(idx)) = (id_part.parse::<u64>(), idx_str.parse::<usize>()) {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
+                    if let Some(desc) = desc {
+                        let id = desc.instance_id;
+                        let sessions = self.agent.list_past_sessions(desc.cli);
+                        if let Some(meta) = sessions.get(idx).cloned() {
+                            if self.agent.load_history_instance(id, &meta.id) {
+                                self.sidebar_data_dirty = true;
+                            }
+                        }
+                    }
+                }
+                return;
+            }
         }
 
         // === Alert panel clicks ===
@@ -17756,10 +17979,8 @@ impl ChartApp {
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
-                    if opening {
-                        // Auto-start PTY session on panel open (default mode is Pty).
-                        self.ensure_agent_session_for_mode();
-                    }
+                    // Spawn-on-demand: PTY only starts when user explicitly clicks [Start].
+                    let _ = opening;
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();

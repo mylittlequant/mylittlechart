@@ -3558,17 +3558,21 @@ fn render_performance_panel(
 }
 
 // =============================================================================
-// Agents panel
+// Agents panel — split-grid layout
 // =============================================================================
 
-/// Renders the AI agents panel.
+/// Renders the AI agents panel with a split-grid docking layout.
 ///
-/// Renders:
-/// - Mode selector (Terminal / Chat)
-/// - CLI cycle button (Claude / Codex / Gemini)
-/// - Start/Stop session toggle
-/// - Content area: PTY grid, chat bubbles, or idle state
-/// - Input + Send row at bottom (Chat mode only)
+/// Layout:
+/// ```
+/// ┌─────────────────────────────────────────────────┐
+/// │ [+ Term] [+ Chat] [Split H] [Split V] [×] [CLI ▾]  ← control row (28px)
+/// ├─────────────────────────────────────────────────┤
+/// │                                                 │
+/// │  docking grid — one pane per leaf               │
+/// │                                                 │
+/// └─────────────────────────────────────────────────┘
+/// ```
 fn render_agents_panel(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
@@ -3579,375 +3583,462 @@ fn render_agents_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
-    use crate::state::AgentPanelMode;
-    use crate::agent_types::AgentSnapshotMode;
-
-    let pad = 12.0;
-    let row_h = 28.0;
-    let btn_h = 26.0;
-    let gap = 6.0;
-    let mut y = content_y + pad;
+    let pad = 8.0;
+    let ctrl_h = 28.0;
+    let btn_h = 22.0;
+    let gap = 4.0;
     let x = rect.x + pad;
     let inner_w = content_width - pad * 2.0;
-    let mut prev_sessions_btn_rect: Option<WidgetRect> = None;
+    let mut y = content_y + pad;
 
-    // ── Mode selector row (Terminal | Chat) ───────────────────────────────────
+    // ── Control row ───────────────────────────────────────────────────────────
     {
-        let btn_w = (inner_w - gap) / 2.0;
+        let focused = state.focused_agent_leaf;
+        let has_focused = focused.is_some();
 
-        let modes: [(&str, &str, AgentPanelMode); 2] = [
-            ("agent:mode_pty",  "Terminal", AgentPanelMode::Pty),
-            ("agent:mode_chat", "Chat",     AgentPanelMode::Chat),
-        ];
+        // Determine if focused leaf is Chat mode (for Chat-specific restrictions).
+        let focused_is_chat = focused
+            .and_then(|lid| state.agent_leaves.get(&lid))
+            .map(|desc| desc.mode == gate4agent::InstanceMode::Chat)
+            .unwrap_or(false);
 
-        for (i, (wid, label, mode)) in modes.iter().enumerate() {
-            let btn_x = x + i as f64 * (btn_w + gap);
-            let btn_rect = WidgetRect::new(btn_x, y, btn_w, btn_h);
-            let is_active = state.agent_mode == *mode;
-            let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(*wid));
-
-            // Background
-            if is_active {
-                ctx.set_fill_color("#4a9eff");
-            } else if is_hovered {
-                ctx.set_fill_color(&theme.item_bg_hover);
-            } else {
-                ctx.set_fill_color(&theme.background);
-            }
-            ctx.fill_rounded_rect(btn_x, y, btn_w, btn_h, 4.0);
-
-            // Border
-            ctx.set_stroke_color(if is_active { "#4a9eff" } else { &theme.separator });
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(btn_x, y);
-            ctx.line_to(btn_x + btn_w, y);
-            ctx.line_to(btn_x + btn_w, y + btn_h);
-            ctx.line_to(btn_x, y + btn_h);
-            ctx.close_path();
-            ctx.stroke();
-
-            // Label
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(if is_active { "#ffffff" } else { &theme.item_text });
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(*label, btn_x + btn_w / 2.0, y + btn_h / 2.0);
-
-            input_coordinator.register(*wid, btn_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((wid.to_string(), btn_rect));
-        }
-
-        y += btn_h + gap;
-    }
-
-    // ── CLI cycle button ──────────────────────────────────────────────────────
-    {
-        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:cli_cycle"));
-
-        if is_hovered {
-            ctx.set_fill_color(&theme.item_bg_hover);
-        } else {
-            ctx.set_fill_color(&theme.background);
-        }
-        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
-
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, y);
-        ctx.line_to(x + inner_w, y);
-        ctx.line_to(x + inner_w, y + btn_h);
-        ctx.line_to(x, y + btn_h);
-        ctx.close_path();
-        ctx.stroke();
-
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&theme.item_text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("CLI:", x + 8.0, y + btn_h / 2.0);
-
-        ctx.set_fill_color("#4a9eff");
-        ctx.set_text_align(TextAlign::Right);
-        ctx.fill_text(state.agent_cli.label(), x + inner_w - 8.0, y + btn_h / 2.0);
-
-        input_coordinator.register("agent:cli_cycle", btn_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:cli_cycle".to_string(), btn_rect));
-
-        y += btn_h + gap;
-    }
-
-    // ── Session-history button (Chat mode only) ───────────────────────────────
-    if state.agent_mode == AgentPanelMode::Chat {
-        let n = state.agent_past_session_count;
-        let label = format!("prev sessions ({})", n);
-        let btn_rect = WidgetRect::new(x, y, inner_w, btn_h);
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:load_prev_session"));
-
-        if is_hovered {
-            ctx.set_fill_color(&theme.item_bg_hover);
-        } else {
-            ctx.set_fill_color(&theme.background);
-        }
-        ctx.fill_rounded_rect(x, y, inner_w, btn_h, 4.0);
-
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, y);
-        ctx.line_to(x + inner_w, y);
-        ctx.line_to(x + inner_w, y + btn_h);
-        ctx.line_to(x, y + btn_h);
-        ctx.close_path();
-        ctx.stroke();
-
+        // [+ Term] button
+        let term_btn_w = 56.0;
+        let term_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, term_btn_w, btn_h);
+        let term_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:new_pty"));
+        ctx.set_fill_color(if term_hov { "#2563eb" } else { "#1d4ed8" });
+        ctx.fill_rounded_rect(term_rect.x, term_rect.y, term_rect.width, term_rect.height, 3.0);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if n > 0 { "#4a9eff" } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&label, x + inner_w / 2.0, y + btn_h / 2.0);
-
-        input_coordinator.register("agent:load_prev_session", btn_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:load_prev_session".to_string(), btn_rect));
-
-        prev_sessions_btn_rect = Some(btn_rect);
-
-        y += btn_h + gap;
-    }
-
-    // ── Dynamic content area ──────────────────────────────────────────────────
-    // Determine if chat mode is active — input row is shown only for Chat.
-    let is_chat_mode = state.agent_mode == AgentPanelMode::Chat;
-    let input_h = row_h;
-    let input_gap = gap;
-    // controls: mode row + cli row + picker row (no start button)
-    let controls_h = btn_h + gap + btn_h + gap + btn_h + gap + pad;
-    // viewport available = rect.height - header_height (40) - controls_h
-    let viewport_h = rect.height - 40.0 - controls_h;
-    let content_h = if is_chat_mode {
-        (viewport_h - input_h - input_gap).max(60.0)
-    } else {
-        viewport_h.max(60.0)
-    };
-
-    // Determine what to render inside the content area.
-    let snapshot = state.agent_snapshot.as_ref();
-    let has_pty = matches!(
-        snapshot.map(|s| &s.mode),
-        Some(AgentSnapshotMode::Pty(_))
-    );
-    let has_chat = matches!(
-        snapshot.map(|s| &s.mode),
-        Some(AgentSnapshotMode::Chat(_))
-    );
-
-    // Render based on the user-selected tab, not the snapshot mode.
-    let is_pty_mode = state.agent_mode == AgentPanelMode::Pty;
-
-    // Only expose terminal rect/size when PTY tab is active — chat mode must
-    // not trigger hover-focus on the terminal.
-    if is_pty_mode {
-        let terminal_rect = WidgetRect::new(x, y, inner_w, content_h);
-        result.agent_terminal_rect = Some(terminal_rect);
-        let pty_cols = ((inner_w / 7.0) as u16).max(1);
-        let pty_rows = ((content_h / 19.0) as u16).max(1);
-        result.agent_terminal_size = Some((pty_cols, pty_rows));
-    }
-
-    // Record the agent content rect for scroll hit-testing in chart-app.
-    let content_area_rect = WidgetRect::new(x, y, inner_w, content_h);
-    result.agent_content_rect = Some(content_area_rect);
-
-    if is_pty_mode {
-        if has_pty {
-            let pty_rows = snapshot
-                .and_then(|s| if let crate::agent_types::AgentSnapshotMode::Pty(ref g) = s.mode { Some(g.rows) } else { None })
-                .unwrap_or(24) as f64;
-            let pty_content_h = pty_rows * 19.0;
-            result.agent_pty_content_height = pty_content_h;
-            let max_pty_scroll = (pty_content_h - content_h).max(0.0);
-            let pty_scroll = state.pty_scroll.offset.clamp(0.0, max_pty_scroll);
-            if let Some((handle_rect, track_rect)) = render_agents_pty(ctx, snapshot, state.pty_selection, x, y, inner_w, content_h, pty_scroll) {
-                result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
-                result.agent_pty_scrollbar_track_rect = Some(track_rect);
-            }
-            result.agent_pty_viewport_h = content_h;
-        } else {
-            // PTY tab selected but no data yet — render empty terminal area.
-            ctx.set_fill_color("#0d0d12");
-            ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
-        }
-    } else if has_chat {
-        let chat_content_h = compute_chat_content_height(ctx, snapshot, inner_w);
-        result.agent_chat_content_height = chat_content_h;
-        let max_chat_scroll = (chat_content_h - content_h).max(0.0);
-        let chat_scroll = state.chat_scroll.offset.clamp(0.0, max_chat_scroll);
-        if let Some((handle_rect, track_rect)) = render_agents_chat(ctx, snapshot, theme, x, y, inner_w, content_h, chat_scroll, chat_content_h) {
-            result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
-            result.agent_chat_scrollbar_track_rect = Some(track_rect);
-        }
-        result.agent_chat_viewport_h = content_h;
-    } else {
-        // Chat tab selected but no data yet — render empty area.
-        ctx.set_fill_color("#0d0d12");
-        ctx.fill_rounded_rect(x, y, inner_w, content_h, 4.0);
-    }
-
-    y += content_h + gap;
-
-    // ── Input row + Send button (Chat mode only) ──────────────────────────────
-    if is_chat_mode {
-        let send_w = 52.0;
-        let input_w = inner_w - send_w - gap;
-
-        // Input field — use draw_input for proper cursor/selection/scrolling.
-        let input_rect = WidgetRect::new(x, y, input_w, row_h);
-
-        let input_config = InputConfig {
-            value: state.agent_input_buffer.clone(),
-            placeholder: "Message\u{2026}".to_string(),
-            disabled: false,
-            focused: state.agent_input_focused,
-            cursor: state.agent_input_cursor,
-            selection_start: state.agent_input_selection_start,
-            selection_end: state.agent_input_selection_end,
-            font_size: 12.0,
-            padding: 8.0,
-            radius: 4.0,
-            ..InputConfig::default()
-        };
-
-        let input_widget_theme = WidgetTheme {
-            bg_normal: theme.background.clone(),
-            bg_hover: theme.background.clone(),
-            bg_pressed: theme.background.clone(),
-            bg_disabled: theme.background.clone(),
-            text_normal: theme.item_text.clone(),
-            text_hover: theme.item_text.clone(),
-            text_disabled: theme.item_text_muted.clone(),
-            border_normal: theme.separator.clone(),
-            border_hover: theme.separator.clone(),
-            border_focused: "#3b82f6".to_string(),
-            accent: "#264f78".to_string(),
-            accent_hover: "#264f78".to_string(),
-            success: "#26a69a".to_string(),
-            warning: "#ff9800".to_string(),
-            danger: "#ef5350".to_string(),
-        };
-
-        let input_draw_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &input_widget_theme);
-
-        // Draw blinking cursor when field is focused and cursor is visible.
-        if state.agent_input_focused && state.agent_input_cursor_visible {
-            draw_input_cursor(
-                ctx,
-                input_draw_result.cursor_x,
-                input_draw_result.cursor_y,
-                input_draw_result.cursor_height,
-                "#d1d4dc",
-            );
-        }
-
-        // Store rect and char positions for TIM update_field.
-        result.agent_input_rect = Some(input_rect);
-        result.agent_input_char_positions = Some(input_draw_result.char_x_positions);
-
-        input_coordinator.register("agent:input", input_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:input".to_string(), input_rect));
-
-        // Send button
-        let send_x = x + input_w + gap;
-        let send_rect = WidgetRect::new(send_x, y, send_w, row_h);
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:send"));
-        ctx.set_fill_color(if is_hovered { "#2563eb" } else { "#3b82f6" });
-        ctx.fill_rounded_rect(send_x, y, send_w, row_h, 4.0);
-
-        ctx.set_font("12px sans-serif");
         ctx.set_fill_color("#ffffff");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Send", send_x + send_w / 2.0, y + row_h / 2.0);
+        ctx.fill_text("+ Term", term_rect.x + term_btn_w / 2.0, term_rect.y + btn_h / 2.0);
+        input_coordinator.register("agent:new_pty", term_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:new_pty".to_string(), term_rect));
 
-        input_coordinator.register("agent:send", send_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:send".to_string(), send_rect));
+        // [+ Chat] button — only meaningful for Claude, grey out for others
+        let chat_btn_x = x + term_btn_w + gap;
+        let chat_btn_w = 56.0;
+        let chat_rect = WidgetRect::new(chat_btn_x, y + (ctrl_h - btn_h) / 2.0, chat_btn_w, btn_h);
+        let chat_enabled = state.agent_default_cli == gate4agent::snapshot::AgentCli::Claude;
+        let chat_hov = chat_enabled && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:new_chat"));
+        ctx.set_fill_color(if !chat_enabled {
+            "#2a2a35"
+        } else if chat_hov {
+            "#0f766e"
+        } else {
+            "#0d9488"
+        });
+        ctx.fill_rounded_rect(chat_rect.x, chat_rect.y, chat_rect.width, chat_rect.height, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if chat_enabled { "#ffffff" } else { "#666677" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("+ Chat", chat_rect.x + chat_btn_w / 2.0, chat_rect.y + btn_h / 2.0);
+        if chat_enabled {
+            input_coordinator.register("agent:new_chat", chat_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:new_chat".to_string(), chat_rect));
 
-        y += row_h + pad;
-    } else {
-        // PTY mode — no input row, just bottom padding.
-        y += pad;
+        // [Split H] button
+        let sh_x = chat_btn_x + chat_btn_w + gap;
+        let sh_w = 50.0;
+        let sh_rect = WidgetRect::new(sh_x, y + (ctrl_h - btn_h) / 2.0, sh_w, btn_h);
+        let sh_en = has_focused;
+        let sh_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split_h"));
+        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if sh_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(sh_rect.x, sh_rect.y, sh_rect.width, sh_rect.height, 3.0);
+        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path(); ctx.move_to(sh_rect.x, sh_rect.y); ctx.line_to(sh_rect.x + sh_w, sh_rect.y);
+        ctx.line_to(sh_rect.x + sh_w, sh_rect.y + btn_h); ctx.line_to(sh_rect.x, sh_rect.y + btn_h);
+        ctx.close_path(); ctx.stroke();
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if sh_en { &theme.item_text } else { "#555566" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Split H", sh_rect.x + sh_w / 2.0, sh_rect.y + btn_h / 2.0);
+        if sh_en {
+            input_coordinator.register("agent:split_h", sh_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:split_h".to_string(), sh_rect));
+
+        // [Split V] button
+        let sv_x = sh_x + sh_w + gap;
+        let sv_w = 50.0;
+        let sv_rect = WidgetRect::new(sv_x, y + (ctrl_h - btn_h) / 2.0, sv_w, btn_h);
+        let sv_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split_v"));
+        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if sv_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(sv_rect.x, sv_rect.y, sv_rect.width, sv_rect.height, 3.0);
+        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path(); ctx.move_to(sv_rect.x, sv_rect.y); ctx.line_to(sv_rect.x + sv_w, sv_rect.y);
+        ctx.line_to(sv_rect.x + sv_w, sv_rect.y + btn_h); ctx.line_to(sv_rect.x, sv_rect.y + btn_h);
+        ctx.close_path(); ctx.stroke();
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if sh_en { &theme.item_text } else { "#555566" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Split V", sv_rect.x + sv_w / 2.0, sv_rect.y + btn_h / 2.0);
+        if sh_en {
+            input_coordinator.register("agent:split_v", sv_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:split_v".to_string(), sv_rect));
+
+        // [×] close pane
+        let close_x = sv_x + sv_w + gap;
+        let close_w = 22.0;
+        let close_rect = WidgetRect::new(close_x, y + (ctrl_h - btn_h) / 2.0, close_w, btn_h);
+        let cl_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if cl_hov { "#7f1d1d" } else { &theme.background });
+        ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
+        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path(); ctx.move_to(close_rect.x, close_rect.y); ctx.line_to(close_rect.x + close_w, close_rect.y);
+        ctx.line_to(close_rect.x + close_w, close_rect.y + btn_h); ctx.line_to(close_rect.x, close_rect.y + btn_h);
+        ctx.close_path(); ctx.stroke();
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if sh_en { "#ef4444" } else { "#555566" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("×", close_rect.x + close_w / 2.0, close_rect.y + btn_h / 2.0);
+        if sh_en {
+            input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:close_pane".to_string(), close_rect));
+
+        // [CLI ▾] cycle button — right-aligned
+        let cli_w = (inner_w - (close_x - x + close_w + gap)).max(50.0);
+        let cli_x = x + inner_w - cli_w;
+        let cli_rect = WidgetRect::new(cli_x, y + (ctrl_h - btn_h) / 2.0, cli_w, btn_h);
+        let cli_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:cli_cycle"));
+        ctx.set_fill_color(if cli_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(cli_rect.x, cli_rect.y, cli_rect.width, cli_rect.height, 3.0);
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path(); ctx.move_to(cli_rect.x, cli_rect.y); ctx.line_to(cli_rect.x + cli_w, cli_rect.y);
+        ctx.line_to(cli_rect.x + cli_w, cli_rect.y + btn_h); ctx.line_to(cli_rect.x, cli_rect.y + btn_h);
+        ctx.close_path(); ctx.stroke();
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color("#4a9eff");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let cli_label = format!("{} ▾", state.agent_default_cli.label());
+        ctx.fill_text(&cli_label, cli_rect.x + cli_w / 2.0, cli_rect.y + btn_h / 2.0);
+        input_coordinator.register("agent:cli_cycle", cli_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("agent:cli_cycle".to_string(), cli_rect));
+
+        // Suppress unused warning
+        let _ = focused_is_chat;
+
+        y += ctrl_h + gap;
     }
 
-    // ── Past-sessions dropdown overlay (drawn last, on top of content) ────────
-    if state.agent_past_sessions_open {
-        if let Some(btn_rect) = prev_sessions_btn_rect {
-            let row_h = 22.0;
-            let max_rows: usize = 10;
-            let total = state.agent_past_sessions_list.len().min(max_rows);
-            let dd_w = btn_rect.width;
-            let dd_h = (total.max(1) as f64) * row_h + 4.0;
-            let dd_x = btn_rect.x;
-            let dd_y = btn_rect.y + btn_rect.height + 2.0;
+    // ── Grid area ─────────────────────────────────────────────────────────────
+    let grid_h = (rect.height - 40.0 - (y - content_y)).max(60.0);
+    let grid_rect = uzor::panels::PanelRect::new(x as f32, y as f32, inner_w as f32, grid_h as f32);
 
-            // Background
-            ctx.set_fill_color(&theme.background);
-            ctx.fill_rounded_rect(dd_x, dd_y, dd_w, dd_h, 4.0);
-            ctx.set_stroke_color("#4a9eff");
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(dd_x, dd_y);
-            ctx.line_to(dd_x + dd_w, dd_y);
-            ctx.line_to(dd_x + dd_w, dd_y + dd_h);
-            ctx.line_to(dd_x, dd_y + dd_h);
-            ctx.close_path();
-            ctx.stroke();
+    if state.agent_leaves.is_empty() {
+        // Empty state placeholder.
+        ctx.set_fill_color("#0d0d12");
+        ctx.fill_rounded_rect(x, y, inner_w, grid_h, 4.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color("#555566");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Click + Term or + Chat to begin", x + inner_w / 2.0, y + grid_h / 2.0);
+    } else {
+        // Run layout on the docking manager (mutable borrow trick: layout needs &mut but state is &).
+        // We shadow the docking manager via a cloned layout snapshot of the rects.
+        // Because render.rs only has &SidebarState, we compute rects from the already-laid-out
+        // panel_rects stored in the manager after the last layout call.
+        let docking = state.agent_docking.inner();
+        let panel_rects = docking.panel_rects();
 
-            if state.agent_past_sessions_list.is_empty() {
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(&theme.item_text_muted);
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("(no sessions)", dd_x + dd_w / 2.0, dd_y + row_h / 2.0 + 2.0);
-            } else {
-                for (i, meta) in state.agent_past_sessions_list.iter().take(max_rows).enumerate() {
-                    let row_y = dd_y + 2.0 + (i as f64) * row_h;
-                    let row_rect = WidgetRect::new(dd_x + 2.0, row_y, dd_w - 4.0, row_h);
-                    let wid = format!("agent:past_session:{}", i);
-                    let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(wid.as_str()));
-                    if is_hovered {
-                        ctx.set_fill_color(&theme.item_bg_hover);
-                        ctx.fill_rounded_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height, 3.0);
-                    }
-                    ctx.set_font("11px sans-serif");
-                    ctx.set_fill_color(&theme.item_text);
-                    ctx.set_text_align(TextAlign::Left);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    // Show short id + preview (truncated to fit width)
-                    let short_id: String = meta.id.chars().take(8).collect();
-                    let preview = if meta.preview.is_empty() { "(empty)".to_string() } else { meta.preview.clone() };
-                    let label = format!("{}  {}", short_id, preview);
-                    let max_chars = ((dd_w - 12.0) / 6.0) as usize;
-                    let truncated: String = label.chars().take(max_chars.max(8)).collect();
-                    ctx.fill_text(&truncated, row_rect.x + 6.0, row_rect.y + row_h / 2.0);
-                    input_coordinator.register(wid.as_str(), row_rect, uzor::input::Sense::CLICK);
-                    result.item_rects.push((wid, row_rect));
+        for (&leaf_id, &prect) in panel_rects {
+            let desc = match state.agent_leaves.get(&leaf_id) {
+                Some(d) => d,
+                None => continue,
+            };
+            let is_focused = state.focused_agent_leaf == Some(leaf_id);
+
+            // Focus ring.
+            if is_focused {
+                ctx.set_stroke_color("#4a9eff");
+                ctx.set_stroke_width(1.5);
+                ctx.begin_path();
+                ctx.move_to(prect.x as f64 - 1.0, prect.y as f64 - 1.0);
+                ctx.line_to(prect.x as f64 + prect.width as f64 + 1.0, prect.y as f64 - 1.0);
+                ctx.line_to(prect.x as f64 + prect.width as f64 + 1.0, prect.y as f64 + prect.height as f64 + 1.0);
+                ctx.line_to(prect.x as f64 - 1.0, prect.y as f64 + prect.height as f64 + 1.0);
+                ctx.close_path();
+                ctx.stroke();
+            }
+
+            render_agents_pane(
+                ctx,
+                leaf_id,
+                prect,
+                desc,
+                state,
+                theme,
+                result,
+                input_coordinator,
+                is_focused,
+                grid_rect,
+            );
+        }
+
+        // Draw separator drag handles.
+        for sep in docking.separators() {
+            use uzor::panels::SeparatorOrientation;
+            let thickness = 4.0_f64;
+            match sep.orientation {
+                SeparatorOrientation::Vertical => {
+                    // position = x, start = y, length = height
+                    let sep_x = sep.position as f64 - thickness / 2.0;
+                    let sep_y = sep.start as f64;
+                    let sep_h = sep.length as f64;
+                    ctx.set_fill_color("#2a2a38");
+                    ctx.fill_rect(sep_x, sep_y, thickness, sep_h);
+                }
+                SeparatorOrientation::Horizontal => {
+                    // position = y, start = x, length = width
+                    let sep_y = sep.position as f64 - thickness / 2.0;
+                    let sep_x = sep.start as f64;
+                    let sep_w = sep.length as f64;
+                    ctx.set_fill_color("#2a2a38");
+                    ctx.fill_rect(sep_x, sep_y, sep_w, thickness);
                 }
             }
         }
     }
 
+    y += grid_h + pad;
     y - content_y
 }
 
+// ── Separator struct fields are positional depending on orientation.
+// Vertical:   position=x, offset=y, length=height
+// Horizontal: position=y, offset=x, length=width
+// This matches how the uzor separator module defines them.
+
+/// Render a single agent pane within the docking grid.
+fn render_agents_pane(
+    ctx: &mut dyn RenderContext,
+    leaf_id: uzor::panels::LeafId,
+    prect: uzor::panels::PanelRect,
+    desc: &crate::agents_dock::AgentLeafDescriptor,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+    is_focused: bool,
+    grid_rect: uzor::panels::PanelRect,
+) {
+    let header_h = 18.0_f64;
+    let px = prect.x as f64;
+    let py = prect.y as f64;
+    let pw = prect.width as f64;
+    let ph = prect.height as f64;
+
+    // Pane background.
+    ctx.set_fill_color("#0d0d12");
+    ctx.fill_rounded_rect(px, py, pw, ph, 2.0);
+
+    // ── Pane header ───────────────────────────────────────────────────────────
+    {
+        let hdr_bg = if is_focused { "#1a1a2e" } else { "#13131c" };
+        ctx.set_fill_color(hdr_bg);
+        ctx.fill_rect(px, py, pw, header_h);
+
+        // CLI icon + short workdir label.
+        let workdir_str = desc.workdir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "agent".to_string());
+        let mode_icon = match desc.mode {
+            gate4agent::InstanceMode::Pty  => ">_",
+            gate4agent::InstanceMode::Chat => "◎",
+        };
+        let label = format!("{} {} · {}", mode_icon, desc.cli.label(), workdir_str);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if is_focused { "#9090b0" } else { "#555566" });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&label, px + 4.0, py + header_h / 2.0);
+
+        // [×] close button.
+        let close_w = 14.0;
+        let close_x = px + pw - close_w - 2.0;
+        let close_y = py + (header_h - close_w) / 2.0;
+        let close_rect = WidgetRect::new(close_x, close_y, close_w, close_w);
+        let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
+        let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
+        if cl_hov {
+            ctx.set_fill_color("#7f1d1d");
+            ctx.fill_rounded_rect(close_x, close_y, close_w, close_w, 2.0);
+        }
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if cl_hov { "#ffffff" } else { "#555566" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("×", close_x + close_w / 2.0, close_y + close_w / 2.0);
+        input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((close_wid, close_rect));
+
+        // Focus-on-click for the header area (excluding close button).
+        let focus_rect = WidgetRect::new(px, py, pw - close_w - 4.0, header_h);
+        let focus_wid = format!("agent:leaf:{}:focus", leaf_id.0);
+        input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((focus_wid, focus_rect));
+    }
+
+    // ── Content area (below header) ───────────────────────────────────────────
+    let content_y2 = py + header_h;
+    let content_h2 = (ph - header_h).max(1.0);
+
+    match desc.mode {
+        gate4agent::InstanceMode::Pty => {
+            render_agents_pty_leaf(
+                ctx, leaf_id, px, content_y2, pw, content_h2,
+                desc, state, theme, result, input_coordinator, is_focused, grid_rect,
+            );
+        }
+        gate4agent::InstanceMode::Chat => {
+            render_agents_chat_leaf(
+                ctx, leaf_id, px, content_y2, pw, content_h2,
+                desc, state, theme, result, input_coordinator, is_focused,
+            );
+        }
+    }
+}
+
 // =============================================================================
-// PTY terminal grid renderer
+// PTY terminal grid renderer (per-leaf)
 // =============================================================================
 
-/// Render a PTY terminal grid into the content area.
+/// Render a PTY agent pane for a single leaf.
+#[allow(clippy::too_many_arguments)]
+fn render_agents_pty_leaf(
+    ctx: &mut dyn RenderContext,
+    leaf_id: uzor::panels::LeafId,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    desc: &crate::agents_dock::AgentLeafDescriptor,
+    state: &SidebarState,
+    _theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+    is_focused: bool,
+    _grid_rect: uzor::panels::PanelRect,
+) {
+    // Snapshot for this specific instance.
+    // The snapshot is stored in agent_snapshots map keyed by leaf_id.
+    // We receive it via result — but for rendering we need the snapshot directly.
+    // chart-app sets snapshots per-leaf before render; we access via a per-leaf field
+    // stored in agent_snapshots on SidebarState. Since state.rs only has a map now,
+    // we look it up via leaf_id.
+    let snapshot = state.agent_leaf_snapshots.get(&leaf_id);
+    let selection = state.agent_pty_selections.get(&leaf_id).copied();
+    let pty_scroll_offset = state.agent_pty_scrolls.get(&leaf_id).map(|s| s.offset).unwrap_or(0.0);
+
+    // If focused, expose this leaf's PTY for hover-focus and resize.
+    if is_focused {
+        let terminal_rect = WidgetRect::new(x, y, w, h);
+        result.agent_terminal_rect = Some(terminal_rect);
+        let pty_cols = ((w / 7.0) as u16).max(1);
+        let pty_rows = ((h / 19.0) as u16).max(1);
+        result.agent_terminal_size = Some((pty_cols, pty_rows));
+        result.agent_content_rect = Some(terminal_rect);
+    }
+
+    // Click-to-focus: the entire content area focuses this leaf.
+    let focus_wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
+    let focus_rect = WidgetRect::new(x, y, w, h);
+    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((focus_wid, focus_rect));
+
+    match snapshot {
+        Some(snap) => {
+            use crate::agent_types::AgentSnapshotMode;
+            if let AgentSnapshotMode::Pty(_) = &snap.mode {
+                let pty_rows_count = if let AgentSnapshotMode::Pty(ref g) = snap.mode { g.rows as f64 } else { 24.0 };
+                let pty_content_h = pty_rows_count * 19.0;
+                let max_pty_scroll = (pty_content_h - h).max(0.0);
+                let scroll_clamped = pty_scroll_offset.clamp(0.0, max_pty_scroll);
+
+                if is_focused {
+                    result.agent_pty_content_height = pty_content_h;
+                    result.agent_pty_viewport_h = h;
+                }
+
+                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped) {
+                    if is_focused {
+                        result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
+                        result.agent_pty_scrollbar_track_rect = Some(track_rect);
+                    }
+                }
+            } else {
+                // Snapshot exists but it's not PTY (Idle or Chat) — show idle state.
+                render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result);
+            }
+        }
+        None => {
+            render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result);
+        }
+    }
+
+    // Store leaf_id in result for lib.rs to use for per-leaf resize routing.
+    // We use agent_terminal_rect as the key — for now, only the focused leaf is tracked.
+    let _ = desc;
+    let _ = is_focused;
+}
+
+/// Draw the "Click Start" idle state for a PTY leaf.
+fn render_pty_idle(
+    ctx: &mut dyn RenderContext,
+    leaf_id: uzor::panels::LeafId,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    input_coordinator: &mut InputCoordinator,
+    result: &mut RightSidebarResult,
+) {
+    ctx.set_fill_color("#0a0a10");
+    ctx.fill_rounded_rect(x, y, w, h, 2.0);
+
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("#555566");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("▶  Click Start", x + w / 2.0, y + h / 2.0 - 10.0);
+
+    let btn_w = 70.0;
+    let btn_h = 22.0;
+    let btn_x = x + w / 2.0 - btn_w / 2.0;
+    let btn_y = y + h / 2.0 + 4.0;
+    let start_rect = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
+    let start_wid = format!("agent:leaf:{}:start", leaf_id.0);
+    let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
+    ctx.set_fill_color(if hov { "#2563eb" } else { "#1d4ed8" });
+    ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("#ffffff");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Start", btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+    input_coordinator.register(start_wid.as_str(), start_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((start_wid, start_rect));
+}
+
+/// Core PTY grid rendering (shared between legacy and leaf paths).
 ///
 /// Returns `(handle_rect, track_rect)` for the scrollbar drawn (if any).
-fn render_agents_pty(
+fn render_agents_pty_grid(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
     selection: Option<crate::state::PtySelection>,
@@ -4127,13 +4218,141 @@ fn render_agents_pty(
 }
 
 // =============================================================================
+// Chat renderer (per-leaf)
+// =============================================================================
+
+/// Render a Chat agent pane for a single leaf.
+#[allow(clippy::too_many_arguments)]
+fn render_agents_chat_leaf(
+    ctx: &mut dyn RenderContext,
+    leaf_id: uzor::panels::LeafId,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    desc: &crate::agents_dock::AgentLeafDescriptor,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+    is_focused: bool,
+) {
+    let row_h = 28.0;
+    let send_gap = 4.0;
+    let input_area_h = row_h + send_gap;
+    let chat_h = (h - input_area_h).max(20.0);
+    let chat_y = y;
+
+    let snapshot = state.agent_leaf_snapshots.get(&leaf_id);
+    let chat_scroll_offset = state.agent_chat_scrolls.get(&leaf_id).map(|s| s.offset).unwrap_or(0.0);
+
+    // Content height + scrollbar.
+    let chat_content_h = compute_chat_content_height(ctx, snapshot, w);
+
+    if is_focused {
+        result.agent_chat_content_height = chat_content_h;
+        result.agent_chat_viewport_h = chat_h;
+        result.agent_content_rect = Some(WidgetRect::new(x, chat_y, w, chat_h));
+    }
+
+    let max_scroll = (chat_content_h - chat_h).max(0.0);
+    let scroll_clamped = chat_scroll_offset.clamp(0.0, max_scroll);
+
+    if let Some((handle_rect, track_rect)) = render_agents_chat_bubbles(ctx, snapshot, theme, x, chat_y, w, chat_h, scroll_clamped, chat_content_h) {
+        if is_focused {
+            result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
+            result.agent_chat_scrollbar_track_rect = Some(track_rect);
+        }
+    }
+
+    // Click-to-focus: chat area registers focus.
+    let focus_wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
+    let focus_rect = WidgetRect::new(x, y, w, h);
+    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((focus_wid, focus_rect));
+
+    // ── Input row ─────────────────────────────────────────────────────────────
+    let input_y = y + chat_h + send_gap;
+    let send_w = 48.0;
+    let input_w = (w - send_w - send_gap).max(20.0);
+
+    let input_buffer = state.agent_input_buffers.get(&leaf_id).cloned().unwrap_or_default();
+    let input_cursor = state.agent_input_cursors.get(&leaf_id).copied().unwrap_or(0);
+    let (sel_start, sel_end) = state.agent_input_selections.get(&leaf_id).copied().unwrap_or((None, None));
+    let is_input_focused = is_focused && state.agent_input_focused_leaf == Some(leaf_id);
+
+    let input_rect = WidgetRect::new(x, input_y, input_w, row_h);
+    let input_config = InputConfig {
+        value: input_buffer,
+        placeholder: "Message\u{2026}".to_string(),
+        disabled: false,
+        focused: is_input_focused,
+        cursor: input_cursor,
+        selection_start: sel_start,
+        selection_end: sel_end,
+        font_size: 12.0,
+        padding: 8.0,
+        radius: 4.0,
+        ..InputConfig::default()
+    };
+    let input_widget_theme = WidgetTheme {
+        bg_normal: theme.background.clone(),
+        bg_hover: theme.background.clone(),
+        bg_pressed: theme.background.clone(),
+        bg_disabled: theme.background.clone(),
+        text_normal: theme.item_text.clone(),
+        text_hover: theme.item_text.clone(),
+        text_disabled: theme.item_text_muted.clone(),
+        border_normal: theme.separator.clone(),
+        border_hover: theme.separator.clone(),
+        border_focused: "#3b82f6".to_string(),
+        accent: "#264f78".to_string(),
+        accent_hover: "#264f78".to_string(),
+        success: "#26a69a".to_string(),
+        warning: "#ff9800".to_string(),
+        danger: "#ef5350".to_string(),
+    };
+    let input_draw_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &input_widget_theme);
+    if is_input_focused && state.agent_input_cursor_visible {
+        draw_input_cursor(ctx, input_draw_result.cursor_x, input_draw_result.cursor_y, input_draw_result.cursor_height, "#d1d4dc");
+    }
+
+    let input_wid = format!("agent:leaf:{}:input", leaf_id.0);
+    input_coordinator.register(input_wid.as_str(), input_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((input_wid.clone(), input_rect));
+
+    // For the focused leaf, expose input rect to TIM.
+    if is_focused {
+        result.agent_input_rect = Some(input_rect);
+        result.agent_input_char_positions = Some(input_draw_result.char_x_positions);
+    }
+
+    // Send button.
+    let send_x = x + input_w + send_gap;
+    let send_rect = WidgetRect::new(send_x, input_y, send_w, row_h);
+    let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
+    let send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
+    ctx.set_fill_color(if send_hov { "#2563eb" } else { "#3b82f6" });
+    ctx.fill_rounded_rect(send_x, input_y, send_w, row_h, 4.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color("#ffffff");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Send", send_x + send_w / 2.0, input_y + row_h / 2.0);
+    input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((send_wid, send_rect));
+
+    let _ = desc;
+}
+
+// =============================================================================
 // Chat bubble renderer
 // =============================================================================
 
 /// Render chat messages as bubbles inside the content area.
 ///
 /// Returns `(handle_rect, track_rect)` for the scrollbar drawn (if any).
-fn render_agents_chat(
+fn render_agents_chat_bubbles(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
     theme: &ToolbarTheme,

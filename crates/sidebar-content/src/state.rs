@@ -101,15 +101,6 @@ impl RightSidebarPanel {
 // Agent panel types
 // =============================================================================
 
-/// Display mode for the Agents panel (UI-only, stays in sidebar-content).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentPanelMode {
-    /// Terminal / PTY mode — raw terminal output.
-    Pty,
-    /// Chat / pipe mode — structured message exchange.
-    Chat,
-}
-
 /// Which AI CLI agent to use — re-exported from `gate4agent`.
 pub use gate4agent::snapshot::AgentCli;
 
@@ -251,83 +242,51 @@ pub struct SidebarState {
     pub performance_data: PerformanceData,
 
     // ── Agents panel state ────────────────────────────────────────────────────
-    /// Whether the agent panel shows a terminal (Pty) or chat (Chat) view.
-    pub agent_mode: AgentPanelMode,
-    /// Which AI CLI is selected for the agent session.
-    pub agent_cli: AgentCli,
-    /// Whether an agent session is currently active.
-    pub agent_session_active: bool,
-    /// Text typed in the agent input box (not yet sent).
-    pub agent_input_buffer: String,
-    /// Cursor position in the agent input field (mirrored from TIM).
-    pub agent_input_cursor: usize,
-    /// Selection start in agent input (mirrored from TIM).
-    pub agent_input_selection_start: Option<usize>,
-    /// Selection end in agent input (mirrored from TIM).
-    pub agent_input_selection_end: Option<usize>,
-    /// Whether the blinking cursor is currently visible.
-    pub agent_input_cursor_visible: bool,
-    /// Whether the agent input field is focused.
-    pub agent_input_focused: bool,
-    /// Latest render snapshot from the agent session manager.
-    ///
-    /// Set each frame by `chart-app` before calling `render_right_sidebar`.
-    /// `None` when no session has produced a snapshot yet.
-    pub agent_snapshot: Option<crate::agent_types::AgentRenderSnapshot>,
 
-    /// Number of past sessions available on disk for the currently selected CLI.
-    ///
-    /// Updated by `chart-app` before each render so the picker button can show
-    /// an accurate count without taking a borrow on the manager.
-    pub agent_past_session_count: usize,
+    /// Default CLI used when creating a new terminal pane (cycles via the CLI button).
+    pub agent_default_cli: AgentCli,
 
-    /// Bounding rect of the agent terminal content area, in sidebar-local
-    /// coordinates (origin at sidebar top-left).
+    /// Bounding rect of the agent terminal content area for the focused leaf,
+    /// in sidebar-local coordinates.  `None` when the Agents panel is not open
+    /// or no pane is focused.
     ///
-    /// Updated by `chart-app` after each `render_right_sidebar` call using
-    /// `RightSidebarResult::agent_terminal_rect`.  `None` when the Agents
-    /// panel is not open.
+    /// Used by `chart-app`'s `CursorMoved` handler to auto-focus the PTY terminal on hover.
     pub agent_terminal_rect: Option<(f32, f32, f32, f32)>,
 
-    /// Last known PTY terminal size (cols, rows) computed from pixel dimensions.
+    /// Last known PTY terminal size (cols, rows) for the focused leaf.
     ///
     /// Persisted here so `apply_render_output` can detect changes and call
-    /// `AgentSessionManager::resize` only when the grid size actually changes.
+    /// `resize_instance` only when the grid size actually changes.
     pub agent_terminal_size: Option<(u16, u16)>,
 
-    /// Host-side text selection inside the PTY terminal view.
-    ///
-    /// Coordinates are (row, col) cell positions inside the current grid.
-    /// `start` is the drag anchor (mousedown), `end` follows the cursor.
-    /// Cleared on new PTY output, mode switch, CLI switch, click outside,
-    /// or after Ctrl+C copy. `None` = no active selection.
-    pub pty_selection: Option<PtySelection>,
+    /// Per-leaf input buffer (text typed but not yet sent), keyed by LeafId.
+    pub agent_input_buffers: HashMap<uzor::panels::LeafId, String>,
 
-    /// Whether the past-sessions dropdown is expanded.
-    pub agent_past_sessions_open: bool,
-    /// Snapshot of past sessions (populated when dropdown opens).
-    pub agent_past_sessions_list: Vec<crate::agent_types::SessionMeta>,
+    /// Per-leaf input cursor position (mirrored from TIM), keyed by LeafId.
+    pub agent_input_cursors: HashMap<uzor::panels::LeafId, usize>,
 
-    /// Scroll state for the chat message area.
-    ///
-    /// Use `chat_scroll.offset` to read the current offset.  Call
-    /// `chat_scroll.handle_wheel` / `handle_drag` / etc. to modify it.
-    pub chat_scroll: ScrollState,
+    /// Per-leaf selection range, keyed by LeafId.
+    pub agent_input_selections: HashMap<uzor::panels::LeafId, (Option<usize>, Option<usize>)>,
 
-    /// Scroll state for the PTY terminal area.
-    pub pty_scroll: ScrollState,
+    /// Whether the blinking cursor is currently visible (shared across all fields).
+    pub agent_input_cursor_visible: bool,
 
-    /// Number of chat messages seen at the last render frame.
-    ///
-    /// Used by `apply_render_output` to detect new messages and auto-snap the
-    /// scroll offset to the bottom.
-    pub last_chat_messages_len: usize,
+    /// Which leaf's input field is focused (None = no leaf focused).
+    pub agent_input_focused_leaf: Option<uzor::panels::LeafId>,
 
-    /// Dirty flag: when true, the next frame will snap the chat scroll to the
-    /// bottom using up-to-date content_h from the just-completed render.
-    pub needs_chat_snap: bool,
+    /// Per-leaf scroll state for chat messages.
+    pub agent_chat_scrolls: HashMap<uzor::panels::LeafId, ScrollState>,
 
-    // ── Split-grid docking for the Agents tab (Step 1 scaffold) ──────────────
+    /// Per-leaf scroll state for PTY terminal.
+    pub agent_pty_scrolls: HashMap<uzor::panels::LeafId, ScrollState>,
+
+    /// Per-leaf host-side PTY text selection.
+    pub agent_pty_selections: HashMap<uzor::panels::LeafId, PtySelection>,
+
+    /// Per-leaf render snapshots (set each frame by chart-app before render).
+    pub agent_leaf_snapshots: HashMap<uzor::panels::LeafId, crate::agent_types::AgentRenderSnapshot>,
+
+    // ── Split-grid docking for the Agents tab ────────────────────────────────
 
     /// Docking manager for the per-sidebar agent grid.
     ///
@@ -564,26 +523,18 @@ impl Default for SidebarState {
             metrics_history: HashMap::new(),
             metrics_last_sample: None,
             performance_data: PerformanceData::default(),
-            agent_mode: AgentPanelMode::Pty,
-            agent_cli: AgentCli::Claude,
-            agent_session_active: false,
-            agent_input_buffer: String::new(),
-            agent_input_cursor: 0,
-            agent_input_selection_start: None,
-            agent_input_selection_end: None,
-            agent_input_cursor_visible: false,
-            agent_input_focused: false,
-            agent_snapshot: None,
-            agent_past_session_count: 0,
+            agent_default_cli: AgentCli::Claude,
             agent_terminal_rect: None,
             agent_terminal_size: None,
-            pty_selection: None,
-            agent_past_sessions_open: false,
-            agent_past_sessions_list: Vec::new(),
-            chat_scroll: ScrollState::new(),
-            pty_scroll: ScrollState::new(),
-            last_chat_messages_len: 0,
-            needs_chat_snap: false,
+            agent_input_buffers: HashMap::new(),
+            agent_input_cursors: HashMap::new(),
+            agent_input_selections: HashMap::new(),
+            agent_input_cursor_visible: false,
+            agent_input_focused_leaf: None,
+            agent_chat_scrolls: HashMap::new(),
+            agent_pty_scrolls: HashMap::new(),
+            agent_pty_selections: HashMap::new(),
+            agent_leaf_snapshots: HashMap::new(),
             agent_docking: AgentDockingManager::new(),
             focused_agent_leaf: None,
             agent_leaves: HashMap::new(),

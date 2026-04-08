@@ -1962,21 +1962,18 @@ impl ChartApp {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
-        // Load latest CLI history on the very first tick (runtime is ready here).
-        // Sessions lazy-spawn on first user input. Only the currently-selected
-        // CLI's history is loaded on startup; the other CLIs load on demand
-        // when the user cycles to them (see agent:cli_cycle handler).
+        // Load latest history for any restored chat leaves on the very first tick.
+        // PTY sessions spawn-on-demand only (user must click [Start]).
         if !self.agent_autostarted {
             self.agent_autostarted = true;
-            let cli = self.sidebar_state.agent_cli;
-            self.agent.load_latest_history(cli);
-            // If sidebar was restored with the Agents panel + PTY mode, spawn the
-            // PTY now so the user sees a live terminal on reload (otherwise PTY
-            // only spawns on first click, leaving an empty box).
-            if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents
-                && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty
-            {
-                self.ensure_agent_session_for_mode();
+            // Load chat history for any chat leaves that were restored from profile.
+            let chat_instance_ids: Vec<gate4agent::InstanceId> = self.sidebar_state.agent_leaves
+                .values()
+                .filter(|d| d.mode == gate4agent::InstanceMode::Chat)
+                .map(|d| d.instance_id)
+                .collect();
+            for id in chat_instance_ids {
+                self.agent.load_latest_history_instance(id);
             }
         }
 
@@ -3223,14 +3220,17 @@ impl ChartApp {
                 .unwrap_or_default()
                 .as_millis() as u64;
             let cursor_vis = self.text_input.cursor_visible(now_ms);
-            self.sidebar_state.agent_input_buffer = text;
-            self.sidebar_state.agent_input_cursor = cursor;
-            self.sidebar_state.agent_input_selection_start = sel.map(|(s, _)| s);
-            self.sidebar_state.agent_input_selection_end = sel.map(|(_, e)| e);
             self.sidebar_state.agent_input_cursor_visible = cursor_vis;
-            self.sidebar_state.agent_input_focused = true;
+            self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_agent_leaf;
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                self.sidebar_state.agent_input_buffers.insert(leaf_id, text);
+                self.sidebar_state.agent_input_cursors.insert(leaf_id, cursor);
+                self.sidebar_state.agent_input_selections.insert(
+                    leaf_id, (sel.map(|(s, _)| s), sel.map(|(_, e)| e))
+                );
+            }
         } else {
-            self.sidebar_state.agent_input_focused = false;
+            self.sidebar_state.agent_input_focused_leaf = None;
         }
 
         let sidebar_w = self.sidebar_state.right_width();
@@ -4165,10 +4165,17 @@ impl ChartApp {
 
         // Snapshot agent state for the sidebar renderer (agents panel).
         // Done here in prepare_frame (&mut self) because render_to_scene takes &self.
-        let active_cli = self.sidebar_state.agent_cli;
-        let want_pty = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty;
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot_mode(active_cli, want_pty));
-        self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
+        // Iterate all registered agent leaves and snapshot each instance.
+        {
+            let leaf_ids: Vec<uzor::panels::LeafId> = self.sidebar_state.agent_leaves.keys().copied().collect();
+            for leaf_id in leaf_ids {
+                if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                    if let Some(snap) = self.agent.snapshot_instance(desc.instance_id) {
+                        self.sidebar_state.agent_leaf_snapshots.insert(leaf_id, snap);
+                    }
+                }
+            }
+        }
     }
 
     /// Convenience wrapper: calls `prepare_frame`, `render_to_scene`, then
@@ -5715,7 +5722,7 @@ impl ChartApp {
             .and_then(|r| r.agent_terminal_rect)
             .map(|r| (r.x as f32, r.y as f32, r.width as f32, r.height as f32));
 
-        // Resize PTY when the terminal content area changes grid dimensions.
+        // Resize focused PTY leaf when the terminal content area changes grid dimensions.
         let new_size = self
             .last_sidebar_result
             .as_ref()
@@ -5723,7 +5730,14 @@ impl ChartApp {
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
-                self.bridge.runtime().block_on(self.agent.resize(cols, rows));
+                // Resize the focused PTY leaf's instance.
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                        if desc.mode == gate4agent::InstanceMode::Pty {
+                            self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        }
+                    }
+                }
             }
         }
 
@@ -5784,37 +5798,36 @@ impl ChartApp {
             }
         }
 
-        // Auto-snap chat scroll to bottom when new messages arrive.
-        // Two-phase dirty-flag approach:
-        //   Phase A: if the flag is set, snap now using current frame's content_h (fresh).
-        //   Phase B: detect new messages, set flag so next frame executes Phase A.
-        if let Some(ref sidebar_result) = self.last_sidebar_result {
-            // Phase A: consume snap flag using the just-rendered content dimensions.
-            if self.sidebar_state.needs_chat_snap {
-                let content_h = sidebar_result.agent_chat_content_height;
-                let viewport_h = sidebar_result.agent_chat_viewport_h;
-                let max_offset = (content_h - viewport_h).max(0.0);
-                self.sidebar_state.chat_scroll.offset = max_offset;
-                self.sidebar_state.needs_chat_snap = false;
+        // Auto-snap chat scroll to bottom when new messages arrive for the focused chat leaf.
+        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
+                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                .unwrap_or(false);
+            if is_chat {
+                // Get new message count from the leaf's snapshot.
+                let new_len = self.sidebar_state.agent_leaf_snapshots.get(&leaf_id)
+                    .and_then(|snap| {
+                        if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                            Some(msgs.len())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                // Snap to bottom when new messages arrive, using current frame dimensions.
+                if let Some(ref sidebar_result) = self.last_sidebar_result {
+                    let content_h = sidebar_result.agent_chat_content_height;
+                    let viewport_h = sidebar_result.agent_chat_viewport_h;
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(leaf_id).or_default();
+                    // Only snap if messages grew (new content arrived).
+                    let was_at_bottom = scroll.offset >= (content_h - viewport_h - 1.0).max(0.0);
+                    if was_at_bottom && new_len > 0 {
+                        let max_offset = (content_h - viewport_h).max(0.0);
+                        scroll.offset = max_offset;
+                    }
+                }
             }
         }
-
-        // Phase B: detect new messages (or initial load) and arm the flag.
-        let new_len = self.sidebar_state.agent_snapshot
-            .as_ref()
-            .and_then(|snap| {
-                if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
-                    Some(msgs.len())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-        let old_len = self.sidebar_state.last_chat_messages_len;
-        if new_len > old_len || old_len == 0 && new_len > 0 {
-            self.sidebar_state.needs_chat_snap = true;
-        }
-        self.sidebar_state.last_chat_messages_len = new_len;
     }
 
     /// Render ONLY the toolbar vector graphics into `ctx`.
@@ -5924,10 +5937,17 @@ impl ChartApp {
         let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
 
         // Provide current agent state to sidebar for the Agents panel.
-        let active_cli = self.sidebar_state.agent_cli;
-        let want_pty = self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty;
-        self.sidebar_state.agent_snapshot = Some(self.agent.snapshot_mode(active_cli, want_pty));
-        self.sidebar_state.agent_past_session_count = self.agent.past_session_count(active_cli);
+        // Snapshot each registered leaf instance.
+        {
+            let leaf_ids: Vec<uzor::panels::LeafId> = self.sidebar_state.agent_leaves.keys().copied().collect();
+            for leaf_id in leaf_ids {
+                if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                    if let Some(snap) = self.agent.snapshot_instance(desc.instance_id) {
+                        self.sidebar_state.agent_leaf_snapshots.insert(leaf_id, snap);
+                    }
+                }
+            }
+        }
 
         let sidebar_result = sidebar_content::render::render_right_sidebar(
             ctx,
@@ -5942,12 +5962,18 @@ impl ChartApp {
             .agent_terminal_rect
             .map(|r| (r.x as f32, r.y as f32, r.width as f32, r.height as f32));
 
-        // Resize PTY when the terminal content area changes grid dimensions.
+        // Resize focused PTY leaf when the terminal content area changes grid dimensions.
         let new_size = sidebar_result.agent_terminal_size;
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
             if let Some((cols, rows)) = new_size {
-                self.bridge.runtime().block_on(self.agent.resize(cols, rows));
+                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                        if desc.mode == gate4agent::InstanceMode::Pty {
+                            self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                        }
+                    }
+                }
             }
         }
 
@@ -6008,11 +6034,12 @@ impl ChartApp {
 
         if inside != self.agent_pty_hover_focused {
             self.agent_pty_hover_focused = inside;
-            let active_cli = self.sidebar_state.agent_cli;
-            // Lazy spawn — focus PTY field whenever hovering, regardless of
-            // session_active (first keystroke will lazy-spawn the PTY).
-            let _ = active_cli;
-            if inside && self.sidebar_state.agent_mode == sidebar_content::state::AgentPanelMode::Pty {
+            // Focus PTY field on hover if focused leaf is in PTY mode.
+            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
+                .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
+                .map(|d| d.mode == gate4agent::InstanceMode::Pty)
+                .unwrap_or(false);
+            if inside && is_pty_leaf {
                 self.text_input.focus(crate::text_input::FieldId::AgentPty);
             }
             // Do NOT blur on cursor-leave — blur only on click outside. Otherwise
