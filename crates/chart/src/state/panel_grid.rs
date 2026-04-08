@@ -392,7 +392,185 @@ impl ChartPanelGrid {
     ///
     /// Must be called every frame before calling [`panel_rects`].
     pub fn layout(&mut self, area: PanelRect) {
+        // Normalize split proportions so that no single leaf ever shrinks
+        // below LEAF_MIN_WIDTH / LEAF_MIN_HEIGHT, regardless of which
+        // separator (chart internal OR sidebar) caused the compression.
+        self.normalize_proportions_for_size(area.width, area.height);
         self.docking.layout(area);
+    }
+
+    /// Water-fill normalization: for every branch in the docking tree,
+    /// rewrite `proportions` so that each child receives at least its
+    /// subtree's minimum pixel size (sum of LEAF_MIN_W/H for contained
+    /// leaves, as computed by `min_width_for_node` / `min_height_for_node`).
+    /// Remaining space is distributed by the branch's existing proportions.
+    ///
+    /// This is the single source of truth that makes the sidebar separator
+    /// respect per-leaf mins: when the sidebar compresses total chart
+    /// width, this pass re-flows internal splits so no leaf disappears.
+    fn normalize_proportions_for_size(&mut self, total_w: f32, total_h: f32) {
+        use uzor::panels::{PanelNode, WindowLayout};
+
+        struct Pending {
+            id: uzor::panels::BranchId,
+            props: Vec<f64>,
+        }
+
+        fn is_horizontal(layout: WindowLayout) -> bool {
+            matches!(
+                layout,
+                WindowLayout::SplitHorizontal
+                    | WindowLayout::ThreeColumns
+                    | WindowLayout::OneLeftTwoRight
+                    | WindowLayout::TwoLeftOneRight
+            )
+        }
+        fn is_vertical(layout: WindowLayout) -> bool {
+            matches!(layout, WindowLayout::SplitVertical | WindowLayout::ThreeRows)
+        }
+
+        // Snapshot min sizes per child so we can water-fill.
+        fn min_w(node: &PanelNode<ChartSubPanel>) -> f32 {
+            match node {
+                PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_WIDTH,
+                PanelNode::Branch(b) => {
+                    let it = b.children.iter().map(min_w);
+                    if is_horizontal(b.layout) || matches!(b.layout, WindowLayout::Grid2x2) {
+                        it.sum()
+                    } else {
+                        it.fold(0.0_f32, f32::max)
+                    }
+                }
+            }
+        }
+        fn min_h(node: &PanelNode<ChartSubPanel>) -> f32 {
+            match node {
+                PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_HEIGHT,
+                PanelNode::Branch(b) => {
+                    let it = b.children.iter().map(min_h);
+                    if is_vertical(b.layout) || matches!(b.layout, WindowLayout::Grid2x2) {
+                        it.sum()
+                    } else {
+                        it.fold(0.0_f32, f32::max)
+                    }
+                }
+            }
+        }
+
+        // Water-fill along a single axis: given available length and
+        // per-child (current_prop, min_px), return new normalized props
+        // summing to 1.0. Each child receives at least min_px/available
+        // (clamped). Remaining share is distributed by current_prop weights.
+        fn water_fill(available: f32, weights: &[f64], mins: &[f32]) -> Vec<f64> {
+            let n = weights.len();
+            if n == 0 || available <= 0.0 {
+                return vec![1.0 / n.max(1) as f64; n];
+            }
+            let total_min: f32 = mins.iter().sum();
+            // Degenerate: mins don't fit — give each its min share,
+            // outer caller is expected to clamp total area separately.
+            if total_min >= available {
+                let sum_min = total_min.max(f32::EPSILON) as f64;
+                return mins.iter().map(|&m| m as f64 / sum_min).collect();
+            }
+            let remainder = (available - total_min) as f64;
+            let w_sum: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
+            let mut out: Vec<f64> = weights
+                .iter()
+                .zip(mins.iter())
+                .map(|(w, m)| {
+                    let share = remainder * (w / w_sum);
+                    (*m as f64 + share) / available as f64
+                })
+                .collect();
+            // Renormalize to exactly 1.0 to absorb f32 drift.
+            let s: f64 = out.iter().sum();
+            if s > f64::EPSILON {
+                for v in &mut out {
+                    *v /= s;
+                }
+            }
+            out
+        }
+
+        // Recursive immutable walker — collects pending updates and child
+        // rects using the freshly-computed proportions (so descendants see
+        // the correct parent size).
+        fn walk(
+            node: &PanelNode<ChartSubPanel>,
+            rect_w: f32,
+            rect_h: f32,
+            pending: &mut Vec<Pending>,
+        ) {
+            let branch = match node {
+                PanelNode::Branch(b) => b,
+                _ => return,
+            };
+            let n = branch.children.len();
+            if n < 2 {
+                // Still recurse into single-child branches.
+                for c in &branch.children {
+                    walk(c, rect_w, rect_h, pending);
+                }
+                return;
+            }
+
+            let horizontal = is_horizontal(branch.layout);
+            let vertical = is_vertical(branch.layout);
+
+            if horizontal || vertical {
+                let available = if horizontal { rect_w } else { rect_h };
+                let mins: Vec<f32> = if horizontal {
+                    branch.children.iter().map(min_w).collect()
+                } else {
+                    branch.children.iter().map(min_h).collect()
+                };
+                // Use existing proportions as weights, or equal weights.
+                let weights: Vec<f64> = if branch.proportions.len() == n {
+                    branch.proportions.clone()
+                } else {
+                    vec![1.0; n]
+                };
+                let new_props = water_fill(available, &weights, &mins);
+                pending.push(Pending {
+                    id: branch.id,
+                    props: new_props.clone(),
+                });
+
+                // Recurse with the new per-child sizes.
+                for (i, child) in branch.children.iter().enumerate() {
+                    let frac = new_props[i] as f32;
+                    let (cw, ch) = if horizontal {
+                        (rect_w * frac, rect_h)
+                    } else {
+                        (rect_w, rect_h * frac)
+                    };
+                    walk(child, cw, ch, pending);
+                }
+            } else {
+                // Non-proportional layouts (Grid2x2, presets) — just recurse
+                // with the whole parent rect. Leaf min enforcement on those
+                // is best-effort via the total-width clamp at the sidebar.
+                for c in &branch.children {
+                    walk(c, rect_w, rect_h, pending);
+                }
+            }
+        }
+
+        let mut pending = Vec::new();
+        let root_clone = self.docking.tree().root().clone();
+        walk(
+            &PanelNode::Branch(root_clone),
+            total_w,
+            total_h,
+            &mut pending,
+        );
+
+        // Apply updates via public API.
+        let tree = self.docking.tree_mut();
+        for upd in pending {
+            tree.set_branch_proportions(upd.id, upd.props);
+        }
     }
 
     /// Get computed panel rects from the last [`layout`] call.
