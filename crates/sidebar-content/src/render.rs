@@ -530,9 +530,16 @@ pub fn render_right_sidebar(
         | RightSidebarPanel::Slot2
         | RightSidebarPanel::Slot3
         | RightSidebarPanel::Slot4 => {
-            // Phase 2a-new: empty slot placeholder. Phase 2b-new will host a
-            // per-preset DockingManager<FreeItem> here.
-            content_height = 40.0;
+            let slot_idx = panel.slot_index().unwrap_or(0) as usize;
+            content_height = render_slot_panel(
+                ctx,
+                rect,
+                content_y,
+                content_width,
+                slot_idx,
+                sidebar_state,
+                toolbar_theme,
+            );
         }
 
         RightSidebarPanel::None => {}
@@ -3267,6 +3274,78 @@ fn format_price_smart(price: f64) -> String {
 // =============================================================================
 
 /// Renders the performance monitoring panel content.
+/// Phase 3-new: render a free-slot sidebar body.
+///
+/// Lays out the slot's `DockingManager<FreeItem>` inside the content rect and
+/// paints each leaf with a placeholder background + title. If the slot is
+/// empty, draws a "Drag panels here" hint instead. Cross-container drag
+/// between Main + Slot1..Slot4 and real leaf rendering land in Phase 4-new
+/// together with the first real `FreeItem` variants.
+fn render_slot_panel(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    content_y: f64,
+    content_width: f64,
+    slot_idx: usize,
+    state: &mut SidebarState,
+    theme: &ToolbarTheme,
+) -> f64 {
+    use uzor::panels::PanelRect as UzorPanelRect;
+
+    let pad = 8.0;
+    let inner_x = rect.x + pad;
+    let inner_y = content_y + pad;
+    let inner_w = (content_width - pad * 2.0).max(0.0);
+    let inner_h = (rect.height - (inner_y - rect.y) - pad).max(0.0);
+
+    let mgr = state.slot_dockings[slot_idx].inner_mut();
+    mgr.layout(UzorPanelRect {
+        x: inner_x as f32,
+        y: inner_y as f32,
+        width: inner_w as f32,
+        height: inner_h as f32,
+    });
+
+    let leaves: Vec<(uzor::panels::LeafId, UzorPanelRect)> = mgr
+        .panel_rects()
+        .iter()
+        .map(|(id, r)| (*id, *r))
+        .collect();
+
+    if leaves.is_empty() {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            "Drag panels here",
+            inner_x + inner_w / 2.0,
+            inner_y + inner_h / 2.0,
+        );
+        return inner_h;
+    }
+
+    for (_leaf_id, r) in leaves {
+        ctx.set_fill_color(&theme.background);
+        ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            "Placeholder",
+            (r.x + r.width / 2.0) as f64,
+            (r.y + r.height / 2.0) as f64,
+        );
+    }
+
+    inner_h
+}
+
 fn render_performance_panel(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
