@@ -223,6 +223,10 @@ pub fn render_right_sidebar(
         RightSidebarPanel::Connectors  => ("Connectors",   Icon::CircuitBoard),
         RightSidebarPanel::Performance => ("Performance",  Icon::Signal),
         RightSidebarPanel::Agents      => ("Agents",       Icon::Bot),
+        RightSidebarPanel::Slot1       => ("Slot 1",       Icon::Bot),
+        RightSidebarPanel::Slot2       => ("Slot 2",       Icon::Bot),
+        RightSidebarPanel::Slot3       => ("Slot 3",       Icon::Bot),
+        RightSidebarPanel::Slot4       => ("Slot 4",       Icon::Bot),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -520,6 +524,15 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
             );
+        }
+
+        RightSidebarPanel::Slot1
+        | RightSidebarPanel::Slot2
+        | RightSidebarPanel::Slot3
+        | RightSidebarPanel::Slot4 => {
+            // Phase 2a-new: empty slot placeholder. Phase 2b-new will host a
+            // per-preset DockingManager<FreeItem> here.
+            content_height = 40.0;
         }
 
         RightSidebarPanel::None => {}

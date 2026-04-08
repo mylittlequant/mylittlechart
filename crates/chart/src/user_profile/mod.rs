@@ -20,7 +20,7 @@ pub mod profile;
 pub mod storage;
 
 pub use device_settings::DeviceSettings;
-pub use profile::{UserProfile, VaultSecrets, WindowState, StoredLocalAgentKey, StoredApiKey, ProfileMeta, ProfileIndex};
+pub use profile::{UserProfile, VaultSecrets, WindowState, StoredLocalAgentKey, StoredApiKey, ProfileMeta, ProfileIndex, PersistedAgentLeaf, PersistedAgentCli, PersistedInstanceMode};
 pub use storage::{
     ProfileError,
     app_data_dir,

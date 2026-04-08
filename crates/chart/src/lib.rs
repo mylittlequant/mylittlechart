@@ -482,6 +482,9 @@ pub use user_profile::{
     set_profile_cloud_enabled,
     set_profile_sync_level,
     delete_profile,
+    PersistedAgentLeaf,
+    PersistedAgentCli,
+    PersistedInstanceMode,
 };
 
 // Unified user state manager

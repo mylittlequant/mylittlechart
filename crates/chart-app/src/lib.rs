@@ -1649,6 +1649,88 @@ impl ChartApp {
         );
         self.panel_app.alert_settings_state.notification_settings = profile.notification_settings.clone();
         self.panel_app.alert_settings_state.tg_bot_token_input = profile.notification_settings.telegram.bot_token.clone();
+
+        // Agents docking container restore — per-window profile state.
+        // Layout topology (tree shape + splits) is rebuilt from LayoutSnapshot.
+        // Per-leaf descriptors are inserted into `agent_leaves`; no sessions
+        // are spawned — PTY leaves show "Click Start" skeleton, Chat leaves
+        // lazily resume via `--resume <chat_session_id>` on first interaction.
+        if let Some(ws) = window_state {
+            if let Some(layout_json) = &ws.agents_tab_layout {
+                match uzor::panels::serialize::LayoutSnapshot::from_json(layout_json) {
+                    Ok(snap) => {
+                        // Build a lookup of persisted leaves by their numeric id
+                        // so restore_tree can reconstruct the right AgentPaneLeaf
+                        // payload for each leaf in the snapshot.
+                        let by_id: std::collections::HashMap<u64, &zengeld_chart::PersistedAgentLeaf> =
+                            ws.agents_tab_leaves.iter().map(|p| (p.leaf_id, p)).collect();
+
+                        // Dummy descriptor used if the snapshot references a leaf
+                        // id that has no matching PersistedAgentLeaf (defensive
+                        // fallback — should never happen for well-formed profiles).
+                        let fallback_cli = gate4agent::AgentCli::Claude;
+                        let fallback_mode = gate4agent::InstanceMode::Pty;
+
+                        // Rebuild the docking tree. `restore_tree` invokes the
+                        // closure once per leaf — we return a zero-instance
+                        // `AgentPaneLeaf` keyed by cli/mode so rendering works;
+                        // the real InstanceId is stored in `agent_leaves`.
+                        let restore_result = snap.restore_tree(|_type_id| {
+                            Some(sidebar_content::AgentPaneLeaf {
+                                instance_id: gate4agent::InstanceId::new(),
+                                cli: fallback_cli,
+                                mode: fallback_mode,
+                            })
+                        });
+
+                        match restore_result {
+                            Ok(tree) => {
+                                // Replace the docking manager with the restored tree.
+                                *self.sidebar_state.agent_docking.inner_mut() =
+                                    uzor::panels::DockingManager::from_tree(tree);
+
+                                // Rebuild the agent_leaves map from persisted descriptors.
+                                // Each leaf gets a fresh InstanceId — no live session
+                                // yet. User action (or chat auto-resume) will populate
+                                // it via `MultiCliManager::create_instance` later.
+                                self.sidebar_state.agent_leaves.clear();
+                                for persisted in &ws.agents_tab_leaves {
+                                    let cli = match persisted.cli {
+                                        zengeld_chart::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
+                                        zengeld_chart::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
+                                        zengeld_chart::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
+                                    };
+                                    let mode = match persisted.mode {
+                                        zengeld_chart::PersistedInstanceMode::Pty => gate4agent::InstanceMode::Pty,
+                                        zengeld_chart::PersistedInstanceMode::Chat => gate4agent::InstanceMode::Chat,
+                                    };
+                                    let leaf_id = uzor::panels::LeafId(persisted.leaf_id);
+                                    let desc = sidebar_content::agents_dock::AgentLeafDescriptor {
+                                        instance_id: gate4agent::InstanceId::new(),
+                                        cli,
+                                        mode,
+                                        workdir: persisted.workdir.clone(),
+                                        chat_session_id: persisted.chat_session_id.clone(),
+                                    };
+                                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                                }
+                                let _ = by_id; // documented for readability; restore_tree ignores it today
+                                eprintln!(
+                                    "[ChartApp] agents docking restored: {} leaves",
+                                    self.sidebar_state.agent_leaves.len()
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("[ChartApp] agents restore_tree failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[ChartApp] agents layout deserialize failed: {}", e);
+                    }
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -7240,6 +7322,10 @@ impl ChartApp {
             RightSidebarPanel::Connectors => Some("connectors".to_string()),
             RightSidebarPanel::Performance => Some("performance".to_string()),
             RightSidebarPanel::Agents => Some("agents".to_string()),
+            RightSidebarPanel::Slot1 => Some("slot1".to_string()),
+            RightSidebarPanel::Slot2 => Some("slot2".to_string()),
+            RightSidebarPanel::Slot3 => Some("slot3".to_string()),
+            RightSidebarPanel::Slot4 => Some("slot4".to_string()),
         }
     }
 
@@ -7254,6 +7340,10 @@ impl ChartApp {
             "connectors" => RightSidebarPanel::Connectors,
             "performance" => RightSidebarPanel::Performance,
             "agents" => RightSidebarPanel::Agents,
+            "slot1" => RightSidebarPanel::Slot1,
+            "slot2" => RightSidebarPanel::Slot2,
+            "slot3" => RightSidebarPanel::Slot3,
+            "slot4" => RightSidebarPanel::Slot4,
             _ => RightSidebarPanel::None,
         }
     }
@@ -7386,9 +7476,31 @@ impl ChartApp {
             inline_bar_x: Some(inline.x),
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
-            // Step 1 scaffold — save/restore wired in Step 2.
-            agents_tab_layout: None,
-            agents_tab_leaves: Vec::new(),
+            agents_tab_layout: {
+                let tree = self.sidebar_state.agent_docking.inner().tree();
+                uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "agents")
+                    .to_json()
+                    .ok()
+            },
+            agents_tab_leaves: self
+                .sidebar_state
+                .agent_leaves
+                .iter()
+                .map(|(leaf_id, desc)| zengeld_chart::PersistedAgentLeaf {
+                    leaf_id: leaf_id.0,
+                    cli: match desc.cli {
+                        gate4agent::AgentCli::Claude => zengeld_chart::PersistedAgentCli::Claude,
+                        gate4agent::AgentCli::Codex => zengeld_chart::PersistedAgentCli::Codex,
+                        gate4agent::AgentCli::Gemini => zengeld_chart::PersistedAgentCli::Gemini,
+                    },
+                    mode: match desc.mode {
+                        gate4agent::InstanceMode::Pty => zengeld_chart::PersistedInstanceMode::Pty,
+                        gate4agent::InstanceMode::Chat => zengeld_chart::PersistedInstanceMode::Chat,
+                    },
+                    workdir: desc.workdir.clone(),
+                    chat_session_id: desc.chat_session_id.clone(),
+                })
+                .collect(),
         }
     }
 

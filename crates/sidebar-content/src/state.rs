@@ -74,6 +74,14 @@ pub enum RightSidebarPanel {
     Performance,
     /// AI agent control panel — terminal / chat modes.
     Agents,
+    /// Free-container slot 1 — chart-preset-scoped docking hyperspace.
+    Slot1,
+    /// Free-container slot 2 — chart-preset-scoped docking hyperspace.
+    Slot2,
+    /// Free-container slot 3 — chart-preset-scoped docking hyperspace.
+    Slot3,
+    /// Free-container slot 4 — chart-preset-scoped docking hyperspace.
+    Slot4,
 }
 
 impl RightSidebarPanel {
@@ -93,6 +101,32 @@ impl RightSidebarPanel {
             RightSidebarPanel::Connectors => "connectors",
             RightSidebarPanel::Performance => "performance",
             RightSidebarPanel::Agents     => "agents",
+            RightSidebarPanel::Slot1      => "slot1",
+            RightSidebarPanel::Slot2      => "slot2",
+            RightSidebarPanel::Slot3      => "slot3",
+            RightSidebarPanel::Slot4      => "slot4",
+        }
+    }
+
+    /// If this panel is a free slot, returns its index (0..=3).
+    pub fn slot_index(self) -> Option<u8> {
+        match self {
+            RightSidebarPanel::Slot1 => Some(0),
+            RightSidebarPanel::Slot2 => Some(1),
+            RightSidebarPanel::Slot3 => Some(2),
+            RightSidebarPanel::Slot4 => Some(3),
+            _ => None,
+        }
+    }
+
+    /// Construct a slot panel from its index (0..=3). Panics on out of range.
+    pub fn from_slot_index(idx: u8) -> Self {
+        match idx {
+            0 => RightSidebarPanel::Slot1,
+            1 => RightSidebarPanel::Slot2,
+            2 => RightSidebarPanel::Slot3,
+            3 => RightSidebarPanel::Slot4,
+            _ => panic!("slot index out of range: {}", idx),
         }
     }
 }
@@ -305,6 +339,12 @@ pub struct SidebarState {
     ///
     /// Consulted when routing input, reading snapshots, or persisting layout.
     pub agent_leaves: HashMap<uzor::panels::LeafId, AgentLeafDescriptor>,
+
+    /// Per-slot docking managers (Slot1..Slot4). Each hosts its own
+    /// `DockingManager<FreeItem>` for trading panels and free mini-charts.
+    /// Content is per-chart-preset; these are rebuilt from the active preset's
+    /// `slot_layouts` on preset switch.
+    pub slot_dockings: [crate::free_slot::SlotDockingManager; 4],
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -538,6 +578,12 @@ impl Default for SidebarState {
             agent_docking: AgentDockingManager::new(),
             focused_agent_leaf: None,
             agent_leaves: HashMap::new(),
+            slot_dockings: [
+                crate::free_slot::SlotDockingManager::new(),
+                crate::free_slot::SlotDockingManager::new(),
+                crate::free_slot::SlotDockingManager::new(),
+                crate::free_slot::SlotDockingManager::new(),
+            ],
         }
     }
 }

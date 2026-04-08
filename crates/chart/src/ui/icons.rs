@@ -1200,6 +1200,12 @@ pub const ICON_KEY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="
 
 pub const ICON_BOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>"##;
 
+// Slot rail buttons — 4 aviation icons from uzor::render::icons::aviation
+pub const ICON_SLOT1: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path d="m 32,1 2,1 2,3 0,18 4,1 0,-4 3,0 0,5 17,6 0,3 -15,-2 -9,0 0,12 -2,6 7,3 0,2 -8,-1 -1,2 -1,-2 -8,1 0,-2 7,-3 -2,-6 0,-12 -9,0 -15,2 0,-3 17,-6 0,-5 3,0 0,4 4,-1 0,-18 2,-3 2,-1z"/></svg>"#;
+pub const ICON_SLOT2: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path d="m 32,1 2,1 1,2 0,20 4,4 0,-4 3,0 0,4 -1,2 17,12 0,2 -16,-5 -7,0 0,13 -1,5 7,5 0,2 -8,-2 -1,2 -1,-2 -8,2 0,-2 7,-5 -1,-5 0,-13 -7,0 -16,5 0,-2 17,-12 -1,-2 0,-4 3,0 0,4 4,-4 0,-20 1,-2 2,-1z"/></svg>"#;
+pub const ICON_SLOT3: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>"#;
+pub const ICON_SLOT4: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l1 2h6"/><path d="M12 9a2 2 0 0 0 -2 2v3c0 1.1 .9 2 2 2h7a2 2 0 0 0 2 -2c0 -3.31 -3.13 -5 -7 -5h-2"/><path d="M13 9l0 -3"/><path d="M5 6l15 0"/><path d="M15 9.1v3.9h5.5"/><path d="M15 19l0 -3"/><path d="M19 19l-8 0"/></svg>"#;
+
 pub const ICON_MENU: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 6h16"/>
   <path d="M4 12h16"/>
@@ -1962,6 +1968,10 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "globe" => Some(ICON_GLOBE),
         "key" => Some(ICON_KEY),
         "bot" => Some(ICON_BOT),
+        "slot1" => Some(ICON_SLOT1),
+        "slot2" => Some(ICON_SLOT2),
+        "slot3" => Some(ICON_SLOT3),
+        "slot4" => Some(ICON_SLOT4),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),

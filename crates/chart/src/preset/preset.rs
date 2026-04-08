@@ -57,6 +57,34 @@ pub struct ChartPreset {
     /// Persisted so tags survive preset switching.
     #[serde(default)]
     pub leaf_color_tags: std::collections::HashMap<u64, [f32; 4]>,
+    /// Per-slot `DockingManager<FreeItem>` layout snapshots (4 slots).
+    ///
+    /// Each entry is a serialized `uzor::panels::serialize::LayoutSnapshot`
+    /// JSON string, or `None` if the slot is empty. Slots host trading panels
+    /// and detached mini-charts (see `sidebar_content::FreeItem`).
+    #[serde(default)]
+    pub slot_layouts: [Option<String>; 4],
+    /// Per-slot leaf descriptors (parallel to `slot_layouts`). Each vec lists
+    /// the `FreeItem` payloads for leaves in the corresponding slot.
+    #[serde(default)]
+    pub slot_leaves: [Vec<PersistedFreeLeaf>; 4],
+}
+
+/// Serializable descriptor for a single `FreeItem` leaf inside a slot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedFreeLeaf {
+    /// Leaf id from `LayoutSnapshot` (maps into the per-slot layout tree).
+    pub leaf_id: u64,
+    /// Which kind of `FreeItem` this leaf carries.
+    pub kind: PersistedFreeItemKind,
+}
+
+/// Mirror of `sidebar_content::FreeItem` kept in the chart crate so the preset
+/// schema has no dependency on `sidebar-content`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PersistedFreeItemKind {
+    /// A placeholder free item (Phase 2b stub — no real content yet).
+    Placeholder,
 }
 
 impl ChartPreset {
@@ -83,6 +111,8 @@ impl ChartPreset {
             indicators: Vec::new(),
             alerts: Vec::new(),
             leaf_color_tags: std::collections::HashMap::new(),
+            slot_layouts: [None, None, None, None],
+            slot_leaves: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         }
     }
 

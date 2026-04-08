@@ -23,6 +23,10 @@ pub enum ChartOutEvent {
     ToggleConnectors,
     TogglePerformance,
     ToggleAgents,
+    /// Toggle a free slot sidebar (0..=3). Slots host a chart-preset-scoped
+    /// `DockingManager<FreeItem>` for trading panels, detached mini-charts, etc.
+    /// The profile only tracks open/closed per slot; content lives in the preset.
+    ToggleSlot(u8),
     ToggleIndicators,
     ToggleTradingPanel,
     TogglePositions,

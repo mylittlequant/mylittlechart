@@ -51,6 +51,14 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip(t_toolbar(TK::Performance)),
             ToolbarItemDef::icon_button("agents", ToolbarIconId::new("Bot"))
                 .with_tooltip(t_toolbar(TK::Agents)),
+            ToolbarItemDef::icon_button("slot1", ToolbarIconId::new("slot1"))
+                .with_tooltip("Slot 1"),
+            ToolbarItemDef::icon_button("slot2", ToolbarIconId::new("slot2"))
+                .with_tooltip("Slot 2"),
+            ToolbarItemDef::icon_button("slot3", ToolbarIconId::new("slot3"))
+                .with_tooltip("Slot 3"),
+            ToolbarItemDef::icon_button("slot4", ToolbarIconId::new("slot4"))
+                .with_tooltip("Slot 4"),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }

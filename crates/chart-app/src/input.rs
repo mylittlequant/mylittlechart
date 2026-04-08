@@ -18008,6 +18008,12 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
+            ChartOutEvent::ToggleSlot(idx) => {
+                let panel = sidebar_content::state::RightSidebarPanel::from_slot_index(idx);
+                let _ = self.sidebar_state.toggle_right_panel(panel);
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
+            }
             // Split layout events — wire to ChartPanelGrid split system.
             // After each split all new leaves receive a shared sync color tag so
             // that symbol / timeframe changes propagate across the split group.
@@ -18750,6 +18756,39 @@ impl ChartApp {
                     self.alert_manager.restore(preset.alerts.clone());
                     eprintln!("[ChartApp] restored {} alerts", self.alert_manager.len());
 
+                    // Step 8b: Restore per-slot FreeItem docking layouts (Phase 2b-new).
+                    // Empty layouts → fresh empty managers. `slot_leaves` is
+                    // ignored until real FreeItem variants land (Phase 4-new).
+                    for i in 0..4 {
+                        let mgr = match preset.slot_layouts[i].as_deref() {
+                            Some(json) => {
+                                match uzor::panels::serialize::LayoutSnapshot::from_json(json) {
+                                    Ok(snap) => {
+                                        match snap.restore_tree::<sidebar_content::FreeItem, _>(|_type_id| {
+                                            Some(sidebar_content::FreeItem::Placeholder)
+                                        }) {
+                                            Ok(tree) => {
+                                                sidebar_content::SlotDockingManager(
+                                                    uzor::panels::DockingManager::from_tree(tree),
+                                                )
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[ChartApp] slot{} restore_tree failed: {} — empty fallback", i + 1, e);
+                                                sidebar_content::SlotDockingManager::new()
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[ChartApp] slot{} from_json failed: {} — empty fallback", i + 1, e);
+                                        sidebar_content::SlotDockingManager::new()
+                                    }
+                                }
+                            }
+                            None => sidebar_content::SlotDockingManager::new(),
+                        };
+                        self.sidebar_state.slot_dockings[i] = mgr;
+                    }
+
                     self.sidebar_data_dirty = true;
 
                     // ----------------------------------------------------------------
@@ -19481,6 +19520,17 @@ impl ChartApp {
             .iter()
             .map(|(lid, color)| (lid.0, *color))
             .collect();
+
+        // Snapshot per-slot FreeItem docking layouts (Phase 2b-new).
+        // Each entry is a LayoutSnapshot JSON string, or None if the slot is
+        // empty. `slot_leaves` is left empty until real FreeItem variants land.
+        for i in 0..4 {
+            let tree = self.sidebar_state.slot_dockings[i].inner().tree();
+            preset.slot_layouts[i] = uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "slot")
+                .to_json()
+                .ok();
+            preset.slot_leaves[i].clear();
+        }
 
         self.panel_app.presets.insert(id.to_string(), preset);
     }

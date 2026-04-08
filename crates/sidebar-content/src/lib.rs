@@ -5,6 +5,7 @@
 
 pub mod agent_types;
 pub mod agents_dock;
+pub mod free_slot;
 pub mod types;
 pub mod state;
 pub mod render;
@@ -15,3 +16,4 @@ pub use state::{SidebarState, RightSidebarPanel, RIGHT_SIDEBAR_WIDTH, MetricsSna
 pub use types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorGroup, ConnectorStatusItem};
 pub use agent_types::{AgentCli, AgentRenderSnapshot, AgentSnapshotMode, TermGrid, TermCell, ChatMessage, ChatRole};
 pub use agents_dock::{AgentPaneLeaf, AgentLeafDescriptor, AgentDockingManager};
+pub use free_slot::{FreeItem, SlotDockingManager};
