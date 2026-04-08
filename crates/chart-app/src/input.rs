@@ -4014,6 +4014,18 @@ impl ChartApp {
             } else if let Some(rest) = id_str.strip_prefix("modal_search:item:") {
                 // Search overlay result items
                 self.modal_state.hovered_item_id = Some(rest.to_string());
+            } else if let Some(rest) = id_str.strip_prefix("agent:leaf:") {
+                // Hover-to-focus for agent sidebar leaves.
+                if let Some(id_str2) = rest.strip_suffix(":focus") {
+                    if let Ok(raw) = id_str2.parse::<u64>() {
+                        let leaf_id = uzor::panels::LeafId(raw);
+                        if self.sidebar_state.focused_agent_leaf != Some(leaf_id) {
+                            self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                            self.sidebar_data_dirty = true;
+                        }
+                    }
+                }
             }
         } else {
             // No widget hovered — clear search overlay hover

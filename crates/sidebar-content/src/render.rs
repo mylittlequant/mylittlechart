@@ -3760,18 +3760,8 @@ fn render_agents_panel(
             };
             let is_focused = state.focused_agent_leaf == Some(leaf_id);
 
-            // Focus ring.
-            if is_focused {
-                ctx.set_stroke_color("#4a9eff");
-                ctx.set_stroke_width(1.5);
-                ctx.begin_path();
-                ctx.move_to(prect.x as f64 - 1.0, prect.y as f64 - 1.0);
-                ctx.line_to(prect.x as f64 + prect.width as f64 + 1.0, prect.y as f64 - 1.0);
-                ctx.line_to(prect.x as f64 + prect.width as f64 + 1.0, prect.y as f64 + prect.height as f64 + 1.0);
-                ctx.line_to(prect.x as f64 - 1.0, prect.y as f64 + prect.height as f64 + 1.0);
-                ctx.close_path();
-                ctx.stroke();
-            }
+            // No full-leaf rectangle — focus is shown by a subtle accent
+            // stripe at the top of the pane header (drawn inside render_agents_pane).
 
             render_agents_pane(
                 ctx,
@@ -3844,11 +3834,27 @@ fn render_agents_pane(
     ctx.set_fill_color("#0d0d12");
     ctx.fill_rounded_rect(px, py, pw, ph, 2.0);
 
+    // Whole-pane hover/focus absorber (registered FIRST so later widgets
+    // like buttons and the terminal body take priority on clicks). Used to
+    // drive hover-to-focus via InputCoordinator::hovered_widget().
+    {
+        let pane_rect = WidgetRect::new(px, py, pw, ph);
+        let pane_wid = format!("agent:leaf:{}:focus", leaf_id.0);
+        input_coordinator.register(pane_wid.as_str(), pane_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((pane_wid, pane_rect));
+    }
+
     // ── Pane header ───────────────────────────────────────────────────────────
     {
         let hdr_bg = if is_focused { "#1a1a2e" } else { "#13131c" };
         ctx.set_fill_color(hdr_bg);
         ctx.fill_rect(px, py, pw, header_h);
+
+        // Subtle accent stripe at the very top of the header when focused.
+        if is_focused {
+            ctx.set_fill_color("#4a9eff");
+            ctx.fill_rect(px, py, pw, 2.0);
+        }
 
         // CLI icon + short workdir label.
         let workdir_str = desc.workdir
@@ -3885,11 +3891,7 @@ fn render_agents_pane(
         input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_wid, close_rect));
 
-        // Focus-on-click for the header area (excluding close button).
-        let focus_rect = WidgetRect::new(px, py, pw - close_w - 4.0, header_h);
-        let focus_wid = format!("agent:leaf:{}:focus", leaf_id.0);
-        input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((focus_wid, focus_rect));
+        // (Header focus widget removed — pane-wide focus absorber handles it.)
     }
 
     // ── Content area (below header) ───────────────────────────────────────────
