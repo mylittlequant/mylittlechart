@@ -272,15 +272,53 @@ impl ChartPanelGrid {
     /// handful of candles can be rendered.  A hard floor of 120 px is enforced
     /// regardless.
     pub fn min_sidebar_chart_width(&self) -> f32 {
-        let mut total: f32 = 0.0;
-        let mut leaf_count: usize = 0;
-        for (_leaf_id, window) in self.iter_windows() {
-            let scale_w = (window.scale_settings.price_scale_width as f32).max(40.0);
-            total += scale_w + 10.0;
-            leaf_count += 1;
+        use uzor::panels::{PanelNode, WindowLayout};
+        // Walk the docking tree: side-by-side layouts sum children's min widths
+        // (each column needs its own price scale), stacked layouts take the max
+        // (children share a single price scale column).
+        fn walk<P>(
+            node: &PanelNode<ChartSubPanel>,
+            windows: &HashMap<ChartId, ChartWindow>,
+            leaf_to_chart: &HashMap<LeafId, ChartId>,
+            _p: std::marker::PhantomData<P>,
+        ) -> f32 {
+            match node {
+                PanelNode::Leaf(leaf) => {
+                    let chart_id = match leaf_to_chart.get(&leaf.id) {
+                        Some(id) => *id,
+                        None => return 120.0,
+                    };
+                    let window = match windows.get(&chart_id) {
+                        Some(w) => w,
+                        None => return 120.0,
+                    };
+                    let scale_w = (window.scale_settings.price_scale_width as f32).max(40.0);
+                    // price_scale + 5+5 padding + 60 px bar area
+                    scale_w + 10.0 + 60.0
+                }
+                PanelNode::Branch(branch) => {
+                    let children = branch
+                        .children
+                        .iter()
+                        .map(|c| walk::<P>(c, windows, leaf_to_chart, std::marker::PhantomData));
+                    match branch.layout {
+                        WindowLayout::SplitHorizontal
+                        | WindowLayout::ThreeColumns
+                        | WindowLayout::OneLeftTwoRight
+                        | WindowLayout::TwoLeftOneRight
+                        | WindowLayout::Grid2x2 => children.sum::<f32>(),
+                        _ => children.fold(0.0_f32, f32::max),
+                    }
+                }
+            }
         }
-        // Add minimum bar-drawing area per leaf (at least 60 px of candles).
-        total += 60.0 * leaf_count as f32;
+        let root = self.docking.tree().root().clone();
+        let total = walk::<ChartSubPanel>(
+            &PanelNode::Branch(root),
+            &self.windows,
+            &self.leaf_to_chart,
+            std::marker::PhantomData,
+        );
         total.max(120.0)
     }
 
