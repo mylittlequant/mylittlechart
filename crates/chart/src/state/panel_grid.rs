@@ -457,40 +457,110 @@ impl ChartPanelGrid {
             }
         }
 
-        // Water-fill along a single axis: given available length and
-        // per-child (current_prop, min_px), return new normalized props
-        // summing to 1.0. Each child receives at least min_px/available
-        // (clamped). Remaining share is distributed by current_prop weights.
-        fn water_fill(available: f32, weights: &[f64], mins: &[f32]) -> Vec<f64> {
+        // Fixed-point water-fill: returns `Some(new_props)` ONLY when the
+        // current proportions violate per-child minima. When the existing
+        // proportions already satisfy `prop[i] * available >= mins[i]` for
+        // every child, returns `None` — caller leaves the branch untouched.
+        //
+        // This idempotency is critical: `apply_separator_drag` also mutates
+        // proportions, and if `layout()` unconditionally rewrote them every
+        // frame, drag would fight normalize, producing a jitter/rubber-band
+        // feeling ("separator snaps back to where it was").
+        //
+        // Violating children are frozen at their min share; the remaining
+        // available space is redistributed between the free children
+        // proportionally to their current weights. This repeats until the
+        // set of violators stabilises (classic water-filling).
+        fn water_fill(
+            available: f32,
+            weights: &[f64],
+            mins: &[f32],
+        ) -> Option<Vec<f64>> {
             let n = weights.len();
             if n == 0 || available <= 0.0 {
-                return vec![1.0 / n.max(1) as f64; n];
+                return None;
             }
-            let total_min: f32 = mins.iter().sum();
-            // Degenerate: mins don't fit — give each its min share,
-            // outer caller is expected to clamp total area separately.
-            if total_min >= available {
-                let sum_min = total_min.max(f32::EPSILON) as f64;
-                return mins.iter().map(|&m| m as f64 / sum_min).collect();
-            }
-            let remainder = (available - total_min) as f64;
+
+            // First, normalize weights so they sum to 1.0 (caller may pass
+            // raw branch proportions that already sum to 1 or arbitrary).
             let w_sum: f64 = weights.iter().sum::<f64>().max(f64::EPSILON);
-            let mut out: Vec<f64> = weights
+            let norm: Vec<f64> = weights.iter().map(|w| w / w_sum).collect();
+
+            // Quick-exit: are all children already above their min?
+            let avail_f = available as f64;
+            let all_ok = norm
                 .iter()
                 .zip(mins.iter())
-                .map(|(w, m)| {
-                    let share = remainder * (w / w_sum);
-                    (*m as f64 + share) / available as f64
-                })
-                .collect();
-            // Renormalize to exactly 1.0 to absorb f32 drift.
+                .all(|(p, m)| p * avail_f + 1e-6 >= *m as f64);
+            if all_ok {
+                return None;
+            }
+
+            // Degenerate: mins don't even fit — give each its min share.
+            let total_min: f32 = mins.iter().sum();
+            if total_min >= available {
+                let sum_min = total_min.max(f32::EPSILON) as f64;
+                return Some(mins.iter().map(|&m| m as f64 / sum_min).collect());
+            }
+
+            // Fixed-point water-fill: repeatedly freeze violators at their
+            // min and redistribute the remainder among free children.
+            let mut frozen = vec![false; n];
+            let mut out = norm.clone();
+
+            loop {
+                // Sum of min shares of currently frozen children.
+                let frozen_min: f64 = (0..n)
+                    .filter(|&i| frozen[i])
+                    .map(|i| mins[i] as f64 / avail_f)
+                    .sum();
+
+                let free_indices: Vec<usize> =
+                    (0..n).filter(|&i| !frozen[i]).collect();
+                if free_indices.is_empty() {
+                    break;
+                }
+
+                // Pool of share space available to free children.
+                let free_pool = (1.0 - frozen_min).max(0.0);
+
+                // Free-children weight total (from original normalized weights).
+                let free_w_sum: f64 =
+                    free_indices.iter().map(|&i| norm[i]).sum::<f64>().max(f64::EPSILON);
+
+                // Tentative allocation.
+                let mut newly_frozen = false;
+                for &i in &free_indices {
+                    let share = free_pool * norm[i] / free_w_sum;
+                    let min_share = mins[i] as f64 / avail_f;
+                    if share + 1e-9 < min_share {
+                        frozen[i] = true;
+                        out[i] = min_share;
+                        newly_frozen = true;
+                    } else {
+                        out[i] = share;
+                    }
+                }
+                // Frozen children are already fixed at their min share.
+                for i in 0..n {
+                    if frozen[i] && (!newly_frozen || out[i] == 0.0) {
+                        out[i] = mins[i] as f64 / avail_f;
+                    }
+                }
+
+                if !newly_frozen {
+                    break;
+                }
+            }
+
+            // Final renormalize to absorb f64 drift.
             let s: f64 = out.iter().sum();
             if s > f64::EPSILON {
                 for v in &mut out {
                     *v /= s;
                 }
             }
-            out
+            Some(out)
         }
 
         // Recursive immutable walker — collects pending updates and child
@@ -531,15 +601,30 @@ impl ChartPanelGrid {
                 } else {
                     vec![1.0; n]
                 };
-                let new_props = water_fill(available, &weights, &mins);
-                pending.push(Pending {
-                    id: branch.id,
-                    props: new_props.clone(),
-                });
+                // Idempotent: returns None when current proportions are
+                // already valid, so we leave the branch alone and don't
+                // fight `apply_separator_drag`.
+                let effective_props: Vec<f64> =
+                    match water_fill(available, &weights, &mins) {
+                        Some(new_props) => {
+                            pending.push(Pending {
+                                id: branch.id,
+                                props: new_props.clone(),
+                            });
+                            new_props
+                        }
+                        None => {
+                            // Existing proportions are valid; use them
+                            // (normalized) for recursing into children.
+                            let s: f64 =
+                                weights.iter().sum::<f64>().max(f64::EPSILON);
+                            weights.iter().map(|w| w / s).collect()
+                        }
+                    };
 
-                // Recurse with the new per-child sizes.
+                // Recurse with the resulting per-child sizes.
                 for (i, child) in branch.children.iter().enumerate() {
-                    let frac = new_props[i] as f32;
+                    let frac = effective_props[i] as f32;
                     let (cw, ch) = if horizontal {
                         (rect_w * frac, rect_h)
                     } else {
