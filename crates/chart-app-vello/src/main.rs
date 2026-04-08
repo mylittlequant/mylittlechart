@@ -2448,6 +2448,10 @@ impl App<'_> {
         let mut attrs = Window::default_attributes()
             .with_title("mylittlechart")
             .with_inner_size(winit::dpi::LogicalSize::new(1200u32, 800u32))
+            // Prevent squishing the chart area below a degenerate size.
+            // 400 px gives room for at least one chart leaf + right toolbar + margins.
+            // 300 px ensures enough vertical space for scales and subpanes.
+            .with_min_inner_size(winit::dpi::LogicalSize::new(400.0_f64, 300.0_f64))
             .with_decorations(false)
             // Hidden until the first GPU frame completes to eliminate the
             // white-flash that appears before any pixels are drawn.
@@ -7457,6 +7461,34 @@ impl ApplicationHandler for App<'_> {
                     let chrome_px = (chrome::CHROME_HEIGHT * pw.window.scale_factor()) as u32;
                     pw.chart
                         .resize(size.width, size.height.saturating_sub(chrome_px));
+
+                    // Preventive sidebar guard: on resize, ensure the sidebar
+                    // doesn't push the chart area below its minimum.
+                    if pw.chart.sidebar_state.is_right_open() {
+                        use zengeld_chart::RIGHT_TOOLBAR_WIDTH;
+                        use sidebar_content::state::{MIN_SIDEBAR_WIDTH, RightSidebarPanel};
+                        let window_w = pw.chart.width as f64;
+                        let right_toolbar_left_x = window_w - RIGHT_TOOLBAR_WIDTH;
+                        let min_chart_w = pw.chart.panel_app.panel_grid
+                            .min_sidebar_chart_width() as f64;
+                        if right_toolbar_left_x < MIN_SIDEBAR_WIDTH + min_chart_w {
+                            // Window too narrow for sidebar + chart — close sidebar.
+                            pw.chart.sidebar_state
+                                .set_right_panel(RightSidebarPanel::None);
+                        } else {
+                            // Clamp sidebar width so chart area stays >= min_chart_w.
+                            let max_sidebar = right_toolbar_left_x - min_chart_w;
+                            let cur = pw.chart.sidebar_state.right_sidebar_width;
+                            if cur > max_sidebar {
+                                if max_sidebar < MIN_SIDEBAR_WIDTH {
+                                    pw.chart.sidebar_state
+                                        .set_right_panel(RightSidebarPanel::None);
+                                } else {
+                                    pw.chart.sidebar_state.set_right_width(max_sidebar);
+                                }
+                            }
+                        }
+                    }
 
                     // Sync the maximize icon when the window is snapped or
                     // maximized by the OS (e.g. via Win+Arrow keys).

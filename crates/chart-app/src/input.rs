@@ -2374,11 +2374,22 @@ impl ChartApp {
         // If the sidebar separator drag is active, resize the sidebar.
         if self.sidebar_separator_drag_active {
             // Sidebar width = distance from mouse X to the left edge of the right toolbar.
-            // Dynamic clamp: leave at least `min_chart_w` pixels for the chart area
-            // (approximately the width of the price scale + a few candles).
+            // Preventive gate: if there is not enough horizontal room for the minimum
+            // sidebar AND the minimum chart area simultaneously, auto-close the sidebar
+            // rather than allowing a degenerate layout that leads to negative rects.
             let min_chart_w = self.panel_app.panel_grid.min_sidebar_chart_width() as f64;
-            let max_w = (self.right_toolbar_left_x - min_chart_w).max(0.0);
-            let new_width = (self.right_toolbar_left_x - x).min(max_w);
+            let chart_if_min_sidebar =
+                self.right_toolbar_left_x - sidebar_content::state::MIN_SIDEBAR_WIDTH;
+            if chart_if_min_sidebar < min_chart_w {
+                // Not enough room — close the sidebar entirely.
+                self.sidebar_state
+                    .set_right_panel(sidebar_content::state::RightSidebarPanel::None);
+                return;
+            }
+            // Enforce [MIN_SIDEBAR_WIDTH, right_toolbar_left_x - min_chart_w] clamp.
+            let max_w = self.right_toolbar_left_x - min_chart_w;
+            let new_width = (self.right_toolbar_left_x - x)
+                .clamp(sidebar_content::state::MIN_SIDEBAR_WIDTH, max_w);
             self.sidebar_state.set_right_width(new_width);
             return;
         }

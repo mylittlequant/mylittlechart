@@ -182,7 +182,7 @@ fn truncate_to_width(ctx: &dyn RenderContext, text: &str, max_width: f64) -> Str
 pub fn render_right_sidebar(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
-    sidebar_state: &SidebarState,
+    sidebar_state: &mut SidebarState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
 ) -> RightSidebarResult {
@@ -3578,7 +3578,7 @@ fn render_agents_panel(
     rect: &LayoutRect,
     content_y: f64,
     content_width: f64,
-    state: &SidebarState,
+    state: &mut SidebarState,
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
@@ -3748,10 +3748,8 @@ fn render_agents_panel(
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Click + Term or + Chat to begin", x + inner_w / 2.0, y + grid_h / 2.0);
     } else {
-        // Run layout on the docking manager (mutable borrow trick: layout needs &mut but state is &).
-        // We shadow the docking manager via a cloned layout snapshot of the rects.
-        // Because render.rs only has &SidebarState, we compute rects from the already-laid-out
-        // panel_rects stored in the manager after the last layout call.
+        // Run layout every frame so panel_rects() always reflects the current grid_rect.
+        state.agent_docking.inner_mut().layout(grid_rect);
         let docking = state.agent_docking.inner();
         let panel_rects = docking.panel_rects();
 

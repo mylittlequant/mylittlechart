@@ -4188,8 +4188,7 @@ impl ChartApp {
         self.apply_render_output(output);
     }
 
-    /// Pure-rendering pass — takes `&self` so callers can hold other references
-    /// while rendering.
+    /// Pure-rendering pass.
     ///
     /// Emits all vector graphics into `ctx`, registers widget hit-zones with the
     /// `input_coordinator` (via interior mutability), and returns a [`RenderOutput`]
@@ -4201,7 +4200,7 @@ impl ChartApp {
     /// When `skip_toolbar_draw` is `true`, the toolbar vector graphics are NOT
     /// re-emitted into `ctx`.  Instead, hit zones are re-registered from the
     /// cached `self.last_toolbar_result` so input routing remains correct.
-    pub fn render_to_scene(&self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
+    pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
         let _rt0 = std::time::Instant::now();
         let w = self.width as f64;
         let h = self.height as f64;
@@ -5568,7 +5567,7 @@ impl ChartApp {
             let sidebar_result = sidebar_content::render::render_right_sidebar(
                 ctx,
                 &sidebar_rect,
-                &self.sidebar_state,
+                &mut self.sidebar_state,
                 &sidebar_toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
             );
@@ -5952,7 +5951,7 @@ impl ChartApp {
         let sidebar_result = sidebar_content::render::render_right_sidebar(
             ctx,
             &sidebar_rect,
-            &self.sidebar_state,
+            &mut self.sidebar_state,
             &sidebar_toolbar_theme,
             &mut self.input_coordinator.borrow_mut(),
         );

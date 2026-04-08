@@ -97,12 +97,14 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         }
 
         // Calculate body coordinates
+        // Defensive: guard against clamp(0.0, negative) when rect is degenerate.
+        let clamp_h = rect.height.max(0.0);
         let top_raw = viewport.price_to_y(bar.open.max(bar.close), price_scale.price_min, price_scale.price_max);
         let bot_raw = viewport.price_to_y(bar.open.min(bar.close), price_scale.price_min, price_scale.price_max);
         let (top, bot) = if disable_clip {
             (top_raw, bot_raw)
         } else {
-            (top_raw.clamp(0.0, rect.height), bot_raw.clamp(0.0, rect.height))
+            (top_raw.clamp(0.0, clamp_h), bot_raw.clamp(0.0, clamp_h))
         };
         let h = (bot - top).max(1.0);
 
@@ -276,10 +278,13 @@ pub fn draw_hollow_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState
         ctx.stroke();
 
         // Body coordinates - clamp to chart bounds
+        // Defensive: rect.height can be negative when the window is squished to a
+        // degenerate size; guard against a clamp(0.0, negative) panic.
+        let clamp_h = rect.height.max(0.0);
         let top_raw = viewport.price_to_y(bar.open.max(bar.close), price_scale.price_min, price_scale.price_max);
         let bot_raw = viewport.price_to_y(bar.open.min(bar.close), price_scale.price_min, price_scale.price_max);
-        let top = top_raw.clamp(0.0, rect.height);
-        let bot = bot_raw.clamp(0.0, rect.height);
+        let top = top_raw.clamp(0.0, clamp_h);
+        let bot = bot_raw.clamp(0.0, clamp_h);
         let h = (bot - top).max(1.0);
 
         let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, top, bar_w, h, dpr);
@@ -391,10 +396,12 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         ctx.stroke();
 
         // Body - clamp to chart bounds
+        // Defensive: guard against clamp(0.0, negative) when rect is degenerate.
+        let clamp_h = rect.height.max(0.0);
         let top_raw = viewport.price_to_y(ha_open.max(ha_close), price_scale.price_min, price_scale.price_max);
         let bot_raw = viewport.price_to_y(ha_open.min(ha_close), price_scale.price_min, price_scale.price_max);
-        let top = top_raw.clamp(0.0, rect.height);
-        let bot = bot_raw.clamp(0.0, rect.height);
+        let top = top_raw.clamp(0.0, clamp_h);
+        let bot = bot_raw.clamp(0.0, clamp_h);
         let h = (bot - top).max(1.0);
 
         let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, top, bar_w, h, dpr);
