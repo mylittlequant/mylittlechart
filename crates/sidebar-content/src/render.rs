@@ -3593,7 +3593,7 @@ fn render_agents_panel(
 
     // ── Control row ───────────────────────────────────────────────────────────
     {
-        let focused = state.focused_agent_leaf;
+        let focused = state.focused_sidebar_leaf;
         let has_focused = focused.is_some();
 
         // Determine if focused leaf is Chat mode (for Chat-specific restrictions).
@@ -3749,8 +3749,15 @@ fn render_agents_panel(
         ctx.fill_text("Click + Term or + Chat to begin", x + inner_w / 2.0, y + grid_h / 2.0);
     } else {
         // Run layout every frame so panel_rects() always reflects the current grid_rect.
-        state.agent_docking.inner_mut().layout(grid_rect);
-        let docking = state.agent_docking.inner();
+        // NOTE: Phase 1 — the agents sub-grid is now part of sidebar_workspace.
+        // For backward compatibility during migration, we still lay out the
+        // agents panel by finding Agents leaves in the sidebar_workspace.
+        // This code path renders the inner PTY/chat panes within the agents
+        // section of the sidebar.  A full workspace-level layout is done in
+        // chart-app/src/lib.rs each frame before render is called.
+        //
+        // Use sidebar_workspace for panel rects (agents filtered by agent_leaves below).
+        let docking = state.sidebar_workspace.inner();
         let panel_rects = docking.panel_rects();
 
         for (&leaf_id, &prect) in panel_rects {
@@ -3758,7 +3765,7 @@ fn render_agents_panel(
                 Some(d) => d,
                 None => continue,
             };
-            let is_focused = state.focused_agent_leaf == Some(leaf_id);
+            let is_focused = state.focused_sidebar_leaf == Some(leaf_id);
 
             // No full-leaf rectangle — focus is shown by a subtle accent
             // stripe at the top of the pane header (drawn inside render_agents_pane).

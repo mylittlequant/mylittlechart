@@ -124,7 +124,7 @@ impl ChartApp {
 
     /// Clear any active host-side PTY selection for the focused leaf.
     pub fn clear_pty_selection(&mut self) {
-        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+        if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
             if self.sidebar_state.agent_pty_selections.remove(&leaf_id).is_some() {
                 self.sidebar_data_dirty = true;
             }
@@ -134,7 +134,7 @@ impl ChartApp {
     /// Paste the given text into the focused PTY leaf's PTY session.
     pub fn paste_to_pty(&mut self, text: &str) {
         if text.is_empty() { return; }
-        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+        if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
             if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                 if desc.mode == gate4agent::InstanceMode::Pty {
                     let id = desc.instance_id;
@@ -153,7 +153,7 @@ impl ChartApp {
             return None;
         }
         let (cols, rows) = self.sidebar_state.agent_terminal_size.unwrap_or((80, 24));
-        let leaf_id = self.sidebar_state.focused_agent_leaf?;
+        let leaf_id = self.sidebar_state.focused_sidebar_leaf?;
         let scroll_offset = self.sidebar_state.agent_pty_scrolls.get(&leaf_id).map(|s| s.offset).unwrap_or(0.0);
         let col = ((x - rx) / 7.0).floor() as i32;
         let row = ((y - ry + scroll_offset) / 19.0).floor() as i32;
@@ -166,7 +166,7 @@ impl ChartApp {
     /// Returns an empty string if there is no selection or no grid.
     pub fn pty_selection_text(&self) -> String {
         use sidebar_content::agent_types::AgentSnapshotMode;
-        let leaf_id = match self.sidebar_state.focused_agent_leaf {
+        let leaf_id = match self.sidebar_state.focused_sidebar_leaf {
             Some(id) => id,
             None => return String::new(),
         };
@@ -239,7 +239,7 @@ impl ChartApp {
         //     terminal grid itself).
         if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
             let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
-            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
+            let is_pty_leaf = self.sidebar_state.focused_sidebar_leaf
                 .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
                 .unwrap_or(false);
@@ -251,7 +251,7 @@ impl ChartApp {
                 // But keep non-empty selections that were just produced by a
                 // drag — drag_end fires before click, and selection is already
                 // finalized by then.
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
                         .map(|s| s.is_empty())
                         .unwrap_or(true);
@@ -677,14 +677,14 @@ impl ChartApp {
         // begin a host-side cell selection. This MUST run before TIM drag so
         // the sidebar scroll-drag fallback doesn't hijack the motion.
         {
-            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
+            let is_pty_leaf = self.sidebar_state.focused_sidebar_leaf
                 .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
                 .unwrap_or(false);
             if is_pty_leaf {
                 if let Some((row, col)) = self.pty_cell_at(x, y) {
                     eprintln!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
-                    if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                    if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                         self.sidebar_state.agent_pty_selections.insert(
                             leaf_id,
                             sidebar_content::state::PtySelection::new(row, col),
@@ -930,7 +930,7 @@ impl ChartApp {
         if self.sidebar_state.is_right_open() && !self.ui_drag_active {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
                 use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
                         .map(|d| d.mode);
                     match leaf_mode {
@@ -2353,7 +2353,7 @@ impl ChartApp {
             let cx = x.clamp(rx, rx + rw - 1.0);
             let cy = y.clamp(ry, ry + rh - 1.0);
             if let Some((row, col)) = self.pty_cell_at(cx, cy) {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     if let Some(sel) = self.sidebar_state.agent_pty_selections.get_mut(&leaf_id) {
                         sel.end_row = row;
                         sel.end_col = col;
@@ -3011,7 +3011,7 @@ impl ChartApp {
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
             if let Some(ref sidebar_result) = self.last_sidebar_result {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode);
                     match leaf_mode {
                         Some(gate4agent::InstanceMode::Chat) => {
@@ -3272,7 +3272,7 @@ impl ChartApp {
         if self.agent_pty_drag_active {
             self.agent_pty_drag_active = false;
             // If start==end the selection is empty — clear it so overlay vanishes.
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                 let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
                     .map(|s| s.is_empty())
                     .unwrap_or(true);
@@ -3718,7 +3718,7 @@ impl ChartApp {
         // Agent chat / PTY scrollbar drag end — routed to focused leaf's scroll.
         {
             use crate::scroll_dispatch::try_end_scrollbar_drag;
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                 let chat_ended = self.sidebar_state.agent_chat_scrolls.get_mut(&leaf_id)
                     .map(|s| try_end_scrollbar_drag(&mut [s]))
                     .unwrap_or(false);
@@ -4019,9 +4019,9 @@ impl ChartApp {
                 if let Some(id_str2) = rest.strip_suffix(":focus") {
                     if let Ok(raw) = id_str2.parse::<u64>() {
                         let leaf_id = uzor::panels::LeafId(raw);
-                        if self.sidebar_state.focused_agent_leaf != Some(leaf_id) {
-                            self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                        if self.sidebar_state.focused_sidebar_leaf != Some(leaf_id) {
+                            self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
+                            self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
                             self.sidebar_data_dirty = true;
                         }
                     }
@@ -5675,7 +5675,7 @@ impl ChartApp {
                                 && y >= content_rect.y
                                 && y <= content_rect.y + content_rect.height
                             {
-                                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                                     let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
                                         .map(|d| d.mode);
                                     let viewport_h = content_rect.height;
@@ -5988,7 +5988,7 @@ impl ChartApp {
         if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
             let action = self.text_input.on_char(ch);
             if let crate::text_input::FieldAction::RawInput(bytes) = action {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             let text = String::from_utf8_lossy(&bytes).to_string();
@@ -6003,7 +6003,7 @@ impl ChartApp {
         // Agent chat input — route printable characters and Enter to the focused leaf's chat.
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             if ch == '\r' || ch == '\n' {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
                         let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
@@ -6025,7 +6025,7 @@ impl ChartApp {
                 }
             } else {
                 let _action = self.text_input.on_char(ch);
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
                     self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
                 }
@@ -7247,7 +7247,7 @@ impl ChartApp {
         if self.is_agent_pty_focused() {
             let action = self.text_input.on_key(key);
             if let crate::text_input::FieldAction::RawInput(bytes) = action {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                     if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                         if desc.mode == gate4agent::InstanceMode::Pty {
                             let text = String::from_utf8_lossy(&bytes).to_string();
@@ -7263,7 +7263,7 @@ impl ChartApp {
         // ── Agent chat key routing — syncs focused leaf's input buffer ────────
         if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
             let _action = self.text_input.on_key(key);
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                 let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
                 self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
             }
@@ -8536,21 +8536,21 @@ impl ChartApp {
 
         // --- [+ Term] button — add a new PTY leaf ---
         if widget_id == "agent:new_pty" {
-            use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
+            use sidebar_content::agents_dock::AgentLeafDescriptor;
             let cli = self.sidebar_state.agent_default_cli;
             let workdir = self.agent.cli_workdir(cli);
             let _ = std::fs::create_dir_all(&workdir);
             match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
                 Ok(instance_id) => {
-                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Pty };
-                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                    let panel = sidebar_content::SidebarPanel::Agents(instance_id);
+                    let leaf_id = self.sidebar_state.sidebar_workspace.inner_mut().tree_mut().add_leaf(panel);
                     let desc = AgentLeafDescriptor {
                         instance_id, cli, mode: gate4agent::InstanceMode::Pty,
                         workdir, chat_session_id: None,
                     };
                     self.sidebar_state.agent_leaves.insert(leaf_id, desc);
-                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
                     eprintln!("[ChartApp] agent:new_pty — leaf {:?} cli={:?}", leaf_id, cli);
                 }
                 Err(e) => eprintln!("[ChartApp] agent:new_pty create_instance error: {}", e),
@@ -8561,21 +8561,21 @@ impl ChartApp {
 
         // --- [+ Chat] button — add a new Chat leaf ---
         if widget_id == "agent:new_chat" {
-            use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
+            use sidebar_content::agents_dock::AgentLeafDescriptor;
             let cli = self.sidebar_state.agent_default_cli;
             let workdir = self.agent.cli_workdir(cli);
             let _ = std::fs::create_dir_all(&workdir);
             match self.agent.create_instance(cli, gate4agent::InstanceMode::Chat, workdir.clone()) {
                 Ok(instance_id) => {
-                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Chat };
-                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                    let panel = sidebar_content::SidebarPanel::Agents(instance_id);
+                    let leaf_id = self.sidebar_state.sidebar_workspace.inner_mut().tree_mut().add_leaf(panel);
                     let desc = AgentLeafDescriptor {
                         instance_id, cli, mode: gate4agent::InstanceMode::Chat,
                         workdir, chat_session_id: None,
                     };
                     self.sidebar_state.agent_leaves.insert(leaf_id, desc);
-                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
                     // Pre-load latest chat history for the new chat leaf.
                     self.agent.load_latest_history_instance(instance_id);
                     eprintln!("[ChartApp] agent:new_chat — leaf {:?} cli={:?}", leaf_id, cli);
@@ -8588,7 +8588,7 @@ impl ChartApp {
 
         // --- [Split H] / [Split V] buttons ---
         if widget_id == "agent:split_h" || widget_id == "agent:split_v" {
-            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+            if let Some(focus) = self.sidebar_state.focused_sidebar_leaf {
                 use uzor::panels::SplitKind;
                 use sidebar_content::agents_dock::AgentLeafDescriptor;
                 let kind = if widget_id == "agent:split_h" { SplitKind::Horizontal } else { SplitKind::Vertical };
@@ -8596,7 +8596,7 @@ impl ChartApp {
                 let rh = self.height as f32;
                 // split_leaf creates 2 new leaf nodes replacing the old one.
                 // new_ids[0] inherits the original leaf's position; new_ids[1] is the sibling.
-                let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
+                let new_ids = self.sidebar_state.sidebar_workspace.inner_mut().tree_mut()
                     .split_leaf(focus, kind, rw, rh);
                 if new_ids.len() >= 2 {
                     let original_id = new_ids[0];
@@ -8616,8 +8616,14 @@ impl ChartApp {
                                 workdir, chat_session_id: None,
                             };
                             self.sidebar_state.agent_leaves.insert(sibling_id, desc);
-                            self.sidebar_state.focused_agent_leaf = Some(sibling_id);
-                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(sibling_id);
+                            // Update the sibling leaf's panel content to reflect the new instance_id.
+                            if let Some(leaf) = self.sidebar_state.sidebar_workspace.inner_mut().tree_mut().leaf_mut(sibling_id) {
+                                if let Some(panel) = leaf.panels.first_mut() {
+                                    *panel = sidebar_content::SidebarPanel::Agents(instance_id);
+                                }
+                            }
+                            self.sidebar_state.focused_sidebar_leaf = Some(sibling_id);
+                            self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(sibling_id);
                             eprintln!("[ChartApp] {} — original={:?} sibling={:?}", widget_id, original_id, sibling_id);
                         }
                         Err(e) => eprintln!("[ChartApp] {} create_instance error: {}", widget_id, e),
@@ -8646,12 +8652,12 @@ impl ChartApp {
 
         // --- [×] close focused pane button ---
         if widget_id == "agent:close_pane" {
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+            if let Some(leaf_id) = self.sidebar_state.focused_sidebar_leaf {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                     let id = desc.instance_id;
                     let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
                 }
-                self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
+                self.sidebar_state.sidebar_workspace.inner_mut().tree_mut().remove_leaf(leaf_id);
                 self.sidebar_state.agent_pty_selections.remove(&leaf_id);
                 self.sidebar_state.agent_pty_scrolls.remove(&leaf_id);
                 self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
@@ -8659,11 +8665,14 @@ impl ChartApp {
                 self.sidebar_state.agent_input_cursors.remove(&leaf_id);
                 self.sidebar_state.agent_input_selections.remove(&leaf_id);
                 self.sidebar_state.agent_leaf_snapshots.remove(&leaf_id);
-                // Focus the next available leaf.
-                let next = self.sidebar_state.agent_docking.inner().panel_rects().keys().next().copied();
-                self.sidebar_state.focused_agent_leaf = next;
+                // Focus the next available agents leaf (skip non-Agents leaves).
+                let next = self.sidebar_state.sidebar_workspace.inner()
+                    .panel_rects().keys()
+                    .find(|&&lid| self.sidebar_state.agent_leaves.contains_key(&lid))
+                    .copied();
+                self.sidebar_state.focused_sidebar_leaf = next;
                 if let Some(next_id) = next {
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(next_id);
                 }
                 self.sidebar_data_dirty = true;
             }
@@ -8687,8 +8696,8 @@ impl ChartApp {
             if let Some(id_str) = rest.strip_suffix(":focus") {
                 if let Ok(raw) = id_str.parse::<u64>() {
                     let leaf_id = uzor::panels::LeafId(raw);
-                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
                     self.sidebar_data_dirty = true;
                 }
                 return;
@@ -8698,8 +8707,8 @@ impl ChartApp {
             if let Some(id_str) = rest.strip_suffix(":focus_content") {
                 if let Ok(raw) = id_str.parse::<u64>() {
                     let leaf_id = uzor::panels::LeafId(raw);
-                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(leaf_id);
                     // Also focus PTY field if this is a PTY leaf.
                     let is_pty = self.sidebar_state.agent_leaves.get(&leaf_id)
                         .map(|d| d.mode == gate4agent::InstanceMode::Pty)
@@ -8721,7 +8730,7 @@ impl ChartApp {
                         let id = desc.instance_id;
                         let _ = self.bridge.runtime().block_on(self.agent.stop_instance(id));
                     }
-                    self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
+                    self.sidebar_state.sidebar_workspace.inner_mut().tree_mut().remove_leaf(leaf_id);
                     self.sidebar_state.agent_pty_selections.remove(&leaf_id);
                     self.sidebar_state.agent_pty_scrolls.remove(&leaf_id);
                     self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
@@ -8729,11 +8738,14 @@ impl ChartApp {
                     self.sidebar_state.agent_input_cursors.remove(&leaf_id);
                     self.sidebar_state.agent_input_selections.remove(&leaf_id);
                     self.sidebar_state.agent_leaf_snapshots.remove(&leaf_id);
-                    if self.sidebar_state.focused_agent_leaf == Some(leaf_id) {
-                        let next = self.sidebar_state.agent_docking.inner().panel_rects().keys().next().copied();
-                        self.sidebar_state.focused_agent_leaf = next;
+                    if self.sidebar_state.focused_sidebar_leaf == Some(leaf_id) {
+                        let next = self.sidebar_state.sidebar_workspace.inner()
+                            .panel_rects().keys()
+                            .find(|&&lid| self.sidebar_state.agent_leaves.contains_key(&lid))
+                            .copied();
+                        self.sidebar_state.focused_sidebar_leaf = next;
                         if let Some(next_id) = next {
-                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                            self.sidebar_state.sidebar_workspace.inner_mut().set_active_leaf(next_id);
                         }
                     }
                     self.sidebar_data_dirty = true;
@@ -8777,7 +8789,7 @@ impl ChartApp {
                                 self.agent.load_latest_history_instance(id);
                             }
                         }
-                        self.sidebar_state.focused_agent_leaf = Some(leaf_id);
+                        self.sidebar_state.focused_sidebar_leaf = Some(leaf_id);
                         self.sidebar_data_dirty = true;
                     }
                 }
@@ -17931,15 +17943,11 @@ impl ChartApp {
                 eprintln!("[ChartApp] Not available in standalone mode: {:?}", event);
             }
 
-            // Right sidebar panels — handled via SidebarState.
-            // toggle_right_panel returns Option<(bool, f64)>:
-            //   Some((true,  w)) → sidebar opened  → compensate viewport rightward
-            //   Some((false, w)) → sidebar closed  → compensate viewport leftward
-            //   None             → panel switched  → no viewport change needed
+            // Right sidebar panels — handled via SidebarState (Phase 1 workspace).
+            // toggle_panel uses sidebar_workspace to show/focus/hide panels.
+            // Returns Some((true, w)) → opened, Some((false, w)) → closed, None → switched.
             ChartOutEvent::ToggleWatchlist => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Watchlist,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::Watchlist);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Watchlist panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17947,9 +17955,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleAlerts => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Alerts,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::Alerts);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Alerts panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17957,9 +17963,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleObjectTree => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::ObjectTree,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::ObjectTree);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Object Tree panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17967,9 +17971,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleSignals => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Signals,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::Signals);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Signals panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17977,9 +17979,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleConnectors => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Connectors,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::Connectors);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Connectors panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17987,9 +17987,7 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::TogglePerformance => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Performance,
-                );
+                let result = self.sidebar_state.toggle_panel(sidebar_content::SidebarPanel::Performance);
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Performance panel: {}", if opening { "opened" } else { "closed" });
                 }
@@ -17997,14 +17995,14 @@ impl ChartApp {
                 self.persist_profile();
             }
             ChartOutEvent::ToggleAgents => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    sidebar_content::state::RightSidebarPanel::Agents,
-                );
-                if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
-                    // Spawn-on-demand: PTY only starts when user explicitly clicks [Start].
-                    let _ = opening;
+                // Agents: show_or_focus the first existing Agents leaf, or open sidebar.
+                // Rail button UX: if sidebar is closed, open it to show Agents area.
+                // If already open: no-op (the Agents section is always accessible).
+                let was_open = self.sidebar_state.is_right_open();
+                if !was_open {
+                    self.sidebar_state.right_panel = sidebar_content::state::RightSidebarPanel::Agents;
                 }
+                eprintln!("[ChartApp] Agents panel: toggled (sidebar open={})", self.sidebar_state.is_right_open());
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
