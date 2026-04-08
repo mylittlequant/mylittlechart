@@ -1963,16 +1963,13 @@ impl ChartApp {
         let tick_start = std::time::Instant::now();
 
         // Load latest CLI history on the very first tick (runtime is ready here).
-        // Sessions are no longer autostarted — they lazy-spawn on first user input.
+        // Sessions lazy-spawn on first user input. Only the currently-selected
+        // CLI's history is loaded on startup; the other CLIs load on demand
+        // when the user cycles to them (see agent:cli_cycle handler).
         if !self.agent_autostarted {
             self.agent_autostarted = true;
-            for cli in [
-                gate4agent::AgentCli::Claude,
-                gate4agent::AgentCli::Codex,
-                gate4agent::AgentCli::Gemini,
-            ] {
-                self.agent.load_latest_history(cli);
-            }
+            let cli = self.sidebar_state.agent_cli;
+            self.agent.load_latest_history(cli);
             // If sidebar was restored with the Agents panel + PTY mode, spawn the
             // PTY now so the user sees a live terminal on reload (otherwise PTY
             // only spawns on first click, leaving an empty box).
