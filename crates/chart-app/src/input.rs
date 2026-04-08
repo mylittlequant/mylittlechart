@@ -2577,18 +2577,18 @@ impl ChartApp {
                 SeparatorOrientation::Horizontal => (y - sep_drag.start_y) as f32,
                 SeparatorOrientation::Vertical => (x - sep_drag.start_x) as f32,
             };
-            // Set per-leaf minimum widths so apply_separator_drag can guard each
-            // leaf independently (price-scale width + 10 px breathing room).
+            // Hard-coded per-leaf minimum width: no leaf can ever shrink below
+            // LEAF_MIN_WIDTH regardless of which separator is being dragged.
             {
                 let leaf_ids: Vec<_> = self.panel_app.panel_grid
                     .iter_windows()
-                    .map(|(leaf_id, w)| {
-                        let min_w = w.scale_settings.effective_price_scale_width() as f32 + 10.0;
-                        (leaf_id, min_w)
-                    })
+                    .map(|(leaf_id, _w)| leaf_id)
                     .collect();
-                for (leaf_id, min_w) in leaf_ids {
-                    self.panel_app.panel_grid.set_leaf_min_width(leaf_id, min_w);
+                for leaf_id in leaf_ids {
+                    self.panel_app.panel_grid.set_leaf_min_width(
+                        leaf_id,
+                        zengeld_chart::state::panel_grid::ChartPanelGrid::LEAF_MIN_WIDTH,
+                    );
                 }
             }
             self.panel_app.panel_grid.apply_separator_drag(

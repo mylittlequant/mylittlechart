@@ -245,7 +245,7 @@ impl ChartPanelGrid {
     fn min_width_for_node(&self, node: &uzor::panels::PanelNode<ChartSubPanel>) -> f32 {
         use uzor::panels::PanelNode;
         match node {
-            PanelNode::Leaf(leaf) => self.leaf_min_widths.get(&leaf.id).copied().unwrap_or(0.0),
+            PanelNode::Leaf(_) => Self::LEAF_MIN_WIDTH,
             PanelNode::Branch(branch) => {
                 use uzor::panels::WindowLayout;
                 let child_mins = branch.children.iter().map(|c| self.min_width_for_node(c));
@@ -263,44 +263,54 @@ impl ChartPanelGrid {
         }
     }
 
+    /// Recursively compute the minimum pixel HEIGHT for a subtree node.
+    /// Mirror of `min_width_for_node` but with axes swapped:
+    /// - stacked layouts (horizontal separators) sum children
+    /// - side-by-side layouts take the max
+    fn min_height_for_node(&self, node: &uzor::panels::PanelNode<ChartSubPanel>) -> f32 {
+        use uzor::panels::PanelNode;
+        match node {
+            PanelNode::Leaf(_) => Self::LEAF_MIN_HEIGHT,
+            PanelNode::Branch(branch) => {
+                use uzor::panels::WindowLayout;
+                let child_mins = branch.children.iter().map(|c| self.min_height_for_node(c));
+                match branch.layout {
+                    // Side-by-side layouts share a horizontal strip — max height.
+                    WindowLayout::SplitHorizontal
+                    | WindowLayout::ThreeColumns
+                    | WindowLayout::OneLeftTwoRight
+                    | WindowLayout::TwoLeftOneRight => child_mins.fold(0.0_f32, f32::max),
+                    // Grid2x2 stacks rows — treat as sum.
+                    WindowLayout::Grid2x2 => child_mins.sum(),
+                    // Stacked layouts (SplitVertical / ThreeRows etc.) sum.
+                    _ => child_mins.sum(),
+                }
+            }
+        }
+    }
+
+    /// Absolute hard-coded minimum width of any single chart leaf (pixels).
+    /// A leaf can NEVER be squished below this — neither by its own separator
+    /// nor by the sidebar separator.
+    pub const LEAF_MIN_WIDTH: f32 = 80.0;
+
+    /// Absolute hard-coded minimum height of any single chart leaf (pixels).
+    pub const LEAF_MIN_HEIGHT: f32 = 60.0;
+
     /// Compute the minimum chart width that must remain visible when the sidebar
     /// separator is dragged.
     ///
-    /// Each leaf column has its own price scale strip along its right edge.
-    /// We sum `price_scale_width + 10` (5 px padding each side) across all
-    /// leaves, then add a 60 px drawing-area floor per leaf so that at least a
-    /// handful of candles can be rendered.  A hard floor of 120 px is enforced
-    /// regardless.
+    /// Walks the docking tree: horizontal layouts (side-by-side columns) sum
+    /// children; stacked layouts take the max.  Each leaf contributes exactly
+    /// `LEAF_MIN_WIDTH`.  No per-leaf scale math, no padding — simple and
+    /// predictable.
     pub fn min_sidebar_chart_width(&self) -> f32 {
         use uzor::panels::{PanelNode, WindowLayout};
-        // Walk the docking tree: side-by-side layouts sum children's min widths
-        // (each column needs its own price scale), stacked layouts take the max
-        // (children share a single price scale column).
-        fn walk<P>(
-            node: &PanelNode<ChartSubPanel>,
-            windows: &HashMap<ChartId, ChartWindow>,
-            leaf_to_chart: &HashMap<LeafId, ChartId>,
-            _p: std::marker::PhantomData<P>,
-        ) -> f32 {
+        fn walk(node: &PanelNode<ChartSubPanel>) -> f32 {
             match node {
-                PanelNode::Leaf(leaf) => {
-                    let chart_id = match leaf_to_chart.get(&leaf.id) {
-                        Some(id) => *id,
-                        None => return 120.0,
-                    };
-                    let window = match windows.get(&chart_id) {
-                        Some(w) => w,
-                        None => return 120.0,
-                    };
-                    let scale_w = (window.scale_settings.price_scale_width as f32).max(40.0);
-                    // price_scale + 5+5 padding + 60 px bar area
-                    scale_w + 10.0 + 60.0
-                }
+                PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_WIDTH,
                 PanelNode::Branch(branch) => {
-                    let children = branch
-                        .children
-                        .iter()
-                        .map(|c| walk::<P>(c, windows, leaf_to_chart, std::marker::PhantomData));
+                    let children = branch.children.iter().map(walk);
                     match branch.layout {
                         WindowLayout::SplitHorizontal
                         | WindowLayout::ThreeColumns
@@ -313,13 +323,7 @@ impl ChartPanelGrid {
             }
         }
         let root = self.docking.tree().root().clone();
-        let total = walk::<ChartSubPanel>(
-            &PanelNode::Branch(root),
-            &self.windows,
-            &self.leaf_to_chart,
-            std::marker::PhantomData,
-        );
-        total.max(120.0)
+        walk(&PanelNode::Branch(root))
     }
 
     /// Immutable reference to the underlying `DockingManager`.
@@ -676,14 +680,16 @@ impl ChartPanelGrid {
                 vec![1.0_f64 / n as f64; n]
             };
 
-            // Per-child minimum in pixels (from leaf_min_widths, propagated through subtrees).
-            // Only meaningful for vertical separators; horizontal separators use 0 guard.
+            // Per-child minimum in pixels — vertical separator = width guard,
+            // horizontal separator = height guard.
             let children_min_px: Vec<f32> = if orientation == SeparatorOrientation::Vertical {
                 branch.children.iter()
                     .map(|c| self.min_width_for_node(c))
                     .collect()
             } else {
-                vec![0.0_f32; n]
+                branch.children.iter()
+                    .map(|c| self.min_height_for_node(c))
+                    .collect()
             };
 
             let pos_a = branch.children.iter().position(|c| c.raw_id() == child_a_raw);
