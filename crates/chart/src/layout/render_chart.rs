@@ -2581,11 +2581,18 @@ pub fn render_chart_window(
     // 1. Render chart area (background, grid, series, crosshair)
     render_chart(ctx, layout, state, config);
 
+    // Build a per-leaf ScaleConfig with widths/heights clamped to the layout
+    // rects so nothing can overflow into neighbouring leaves when the leaf is
+    // squeezed below the configured scale size (sidebar separator drag).
+    let mut leaf_scale_cfg = config.scale_config.clone();
+    leaf_scale_cfg.price_scale_width = layout.price_scale.width;
+    leaf_scale_cfg.time_scale_height = layout.time_scale.height;
+
     // 2. Price scale
     draw_price_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.price_scale.x,
         layout.price_scale.y,
@@ -2595,7 +2602,7 @@ pub fn render_chart_window(
     draw_time_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.time_scale.x,
         layout.time_scale.y,
@@ -2692,10 +2699,14 @@ pub fn render_scales(
     state: &ChartRenderState,
     config: &ChartRenderConfig,
 ) {
+    let mut leaf_scale_cfg = config.scale_config.clone();
+    leaf_scale_cfg.price_scale_width = layout.price_scale.width;
+    leaf_scale_cfg.time_scale_height = layout.time_scale.height;
+
     draw_price_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.price_scale.x,
         layout.price_scale.y,
@@ -2704,7 +2715,7 @@ pub fn render_scales(
     draw_time_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.time_scale.x,
         layout.time_scale.y,
@@ -2772,11 +2783,15 @@ pub fn render_chart_area(
     // Render chart
     render_chart(ctx, layout, state, config);
 
+    let mut leaf_scale_cfg = config.scale_config.clone();
+    leaf_scale_cfg.price_scale_width = layout.price_scale.width;
+    leaf_scale_cfg.time_scale_height = layout.time_scale.height;
+
     // Render scales
     draw_price_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.price_scale.x,
         layout.price_scale.y,
@@ -2785,7 +2800,7 @@ pub fn render_chart_area(
     draw_time_scale(
         ctx,
         state,
-        &config.scale_config,
+        &leaf_scale_cfg,
         &config.scale_theme,
         layout.time_scale.x,
         layout.time_scale.y,
@@ -3098,11 +3113,15 @@ pub fn render_full_chart_panel(
     // covered by sub-pane backgrounds.
 
     // 8. Price scale (skip when hidden).
+    let mut leaf_scale_cfg = data.config.scale_config.clone();
+    leaf_scale_cfg.price_scale_width = main_chart.price_scale.width;
+    leaf_scale_cfg.time_scale_height = main_chart.time_scale.height;
+
     if data.scale_settings.price_scale_position.is_visible() {
         draw_price_scale(
             ctx,
             &corrected_state,
-            &data.config.scale_config,
+            &leaf_scale_cfg,
             &data.config.scale_theme,
             main_chart.price_scale.x,
             main_chart.price_scale.y,
@@ -3227,7 +3246,7 @@ pub fn render_full_chart_panel(
         draw_time_scale(
             ctx,
             &corrected_state,
-            &data.config.scale_config,
+            &leaf_scale_cfg,
             &data.config.scale_theme,
             main_chart.time_scale.x,
             main_chart.time_scale.y,

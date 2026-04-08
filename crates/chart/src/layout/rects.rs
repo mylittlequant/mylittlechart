@@ -174,9 +174,16 @@ impl ChartAreaLayout {
         price_scale_width: f64,
         time_scale_height: f64,
     ) -> Self {
+        // Clamp scale dimensions so they never exceed the leaf's available space.
+        // When the leaf is squeezed narrower than price_scale_width (e.g. sidebar
+        // separator drag), we must not let the price scale overflow into the
+        // neighbouring leaf — clip it to whatever room we have.
+        let ps_w = price_scale_width.min(available.width).max(0.0);
+        let ts_h = time_scale_height.min(available.height).max(0.0);
+
         // Chart = available minus price_scale on right and time_scale at bottom
-        let chart_width = (available.width - price_scale_width).max(0.0);
-        let chart_height = (available.height - time_scale_height).max(0.0);
+        let chart_width = (available.width - ps_w).max(0.0);
+        let chart_height = (available.height - ts_h).max(0.0);
 
         let chart = LayoutRect::new(
             available.x,
@@ -189,7 +196,7 @@ impl ChartAreaLayout {
         let price_scale = LayoutRect::new(
             available.x + chart_width,
             available.y,
-            price_scale_width,
+            ps_w,
             chart_height,
         );
 
@@ -198,15 +205,15 @@ impl ChartAreaLayout {
             available.x,
             available.y + chart_height,
             chart_width,
-            time_scale_height,
+            ts_h,
         );
 
         // Scale corner = intersection at bottom-right
         let scale_corner = LayoutRect::new(
             available.x + chart_width,
             available.y + chart_height,
-            price_scale_width,
-            time_scale_height,
+            ps_w,
+            ts_h,
         );
 
         Self {
@@ -219,8 +226,16 @@ impl ChartAreaLayout {
 
     /// Compute layout with scale settings (handles positioning)
     pub fn compute_with_settings(available: LayoutRect, settings: &ScaleSettings) -> Self {
-        let price_width = settings.effective_price_scale_width();
-        let time_height = settings.effective_time_scale_height();
+        // Clamp to available space so nothing overflows when the leaf is squeezed
+        // narrower than the configured scale widths.
+        let price_width = settings
+            .effective_price_scale_width()
+            .min(available.width)
+            .max(0.0);
+        let time_height = settings
+            .effective_time_scale_height()
+            .min(available.height)
+            .max(0.0);
 
         // Calculate chart position and dimensions based on scale positions
         let (chart_x, chart_width, price_scale_x) = match settings.price_scale_position {
