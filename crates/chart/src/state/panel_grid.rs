@@ -245,7 +245,16 @@ impl ChartPanelGrid {
     fn min_width_for_node(&self, node: &uzor::panels::PanelNode<ChartSubPanel>) -> f32 {
         use uzor::panels::PanelNode;
         match node {
-            PanelNode::Leaf(_) => Self::LEAF_MIN_WIDTH,
+            PanelNode::Leaf(l) => {
+                const CHART_AREA_MIN: f64 = 10.0;
+                let scale_w = self
+                    .leaf_to_chart
+                    .get(&l.id)
+                    .and_then(|cid| self.windows.get(cid))
+                    .map(|w| w.scale_settings.effective_price_scale_width())
+                    .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+                ((scale_w + CHART_AREA_MIN) as f32).max(Self::LEAF_MIN_WIDTH)
+            }
             PanelNode::Branch(branch) => {
                 use uzor::panels::WindowLayout;
                 let child_mins = branch.children.iter().map(|c| self.min_width_for_node(c));
@@ -306,11 +315,29 @@ impl ChartPanelGrid {
     /// predictable.
     pub fn min_sidebar_chart_width(&self) -> f32 {
         use uzor::panels::{PanelNode, WindowLayout};
-        fn walk(node: &PanelNode<ChartSubPanel>) -> f32 {
+        // Build per-leaf min width (mirrors normalize_proportions_for_size).
+        let mut leaf_min_w: HashMap<LeafId, f32> = HashMap::new();
+        const CHART_AREA_MIN: f64 = 10.0;
+        for (&leaf_id, &chart_id) in &self.leaf_to_chart {
+            let scale_w = self
+                .windows
+                .get(&chart_id)
+                .map(|w| w.scale_settings.effective_price_scale_width())
+                .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+            let leaf_w = (scale_w + CHART_AREA_MIN) as f32;
+            leaf_min_w.insert(leaf_id, leaf_w.max(Self::LEAF_MIN_WIDTH));
+        }
+        fn walk(
+            node: &PanelNode<ChartSubPanel>,
+            leaf_min_w: &HashMap<LeafId, f32>,
+        ) -> f32 {
             match node {
-                PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_WIDTH,
+                PanelNode::Leaf(l) => leaf_min_w
+                    .get(&l.id)
+                    .copied()
+                    .unwrap_or(ChartPanelGrid::LEAF_MIN_WIDTH),
                 PanelNode::Branch(branch) => {
-                    let children = branch.children.iter().map(walk);
+                    let children = branch.children.iter().map(|c| walk(c, leaf_min_w));
                     match branch.layout {
                         WindowLayout::SplitHorizontal
                         | WindowLayout::ThreeColumns
@@ -323,7 +350,7 @@ impl ChartPanelGrid {
             }
         }
         let root = self.docking.tree().root().clone();
-        walk(&PanelNode::Branch(root))
+        walk(&PanelNode::Branch(root), &leaf_min_w)
     }
 
     /// Immutable reference to the underlying `DockingManager`.
@@ -429,12 +456,35 @@ impl ChartPanelGrid {
             matches!(layout, WindowLayout::SplitVertical | WindowLayout::ThreeRows)
         }
 
+        // Build per-leaf min width: each leaf must be at least wide enough
+        // to hold its own price scale plus a small chart area. Without this,
+        // a leaf whose price scale was resized to 90px gets clamped to the
+        // hardcoded LEAF_MIN_WIDTH=80 and the last-price label (which is
+        // `price_scale_width - 2`) overflows into the chart area.
+        let mut leaf_min_w: HashMap<LeafId, f32> = HashMap::new();
+        const CHART_AREA_MIN: f64 = 10.0;
+        for (&leaf_id, &chart_id) in &self.leaf_to_chart {
+            let scale_w = self
+                .windows
+                .get(&chart_id)
+                .map(|w| w.scale_settings.effective_price_scale_width())
+                .unwrap_or(crate::scale_settings::DEFAULT_PRICE_SCALE_WIDTH);
+            let leaf_w = (scale_w + CHART_AREA_MIN) as f32;
+            leaf_min_w.insert(leaf_id, leaf_w.max(Self::LEAF_MIN_WIDTH));
+        }
+
         // Snapshot min sizes per child so we can water-fill.
-        fn min_w(node: &PanelNode<ChartSubPanel>) -> f32 {
+        fn min_w(
+            node: &PanelNode<ChartSubPanel>,
+            leaf_min_w: &HashMap<LeafId, f32>,
+        ) -> f32 {
             match node {
-                PanelNode::Leaf(_) => ChartPanelGrid::LEAF_MIN_WIDTH,
+                PanelNode::Leaf(l) => leaf_min_w
+                    .get(&l.id)
+                    .copied()
+                    .unwrap_or(ChartPanelGrid::LEAF_MIN_WIDTH),
                 PanelNode::Branch(b) => {
-                    let it = b.children.iter().map(min_w);
+                    let it = b.children.iter().map(|c| min_w(c, leaf_min_w));
                     if is_horizontal(b.layout) || matches!(b.layout, WindowLayout::Grid2x2) {
                         it.sum()
                     } else {
@@ -571,6 +621,7 @@ impl ChartPanelGrid {
             rect_w: f32,
             rect_h: f32,
             pending: &mut Vec<Pending>,
+            leaf_min_w: &HashMap<LeafId, f32>,
         ) {
             let branch = match node {
                 PanelNode::Branch(b) => b,
@@ -580,7 +631,7 @@ impl ChartPanelGrid {
             if n < 2 {
                 // Still recurse into single-child branches.
                 for c in &branch.children {
-                    walk(c, rect_w, rect_h, pending);
+                    walk(c, rect_w, rect_h, pending, leaf_min_w);
                 }
                 return;
             }
@@ -591,7 +642,7 @@ impl ChartPanelGrid {
             if horizontal || vertical {
                 let available = if horizontal { rect_w } else { rect_h };
                 let mins: Vec<f32> = if horizontal {
-                    branch.children.iter().map(min_w).collect()
+                    branch.children.iter().map(|c| min_w(c, leaf_min_w)).collect()
                 } else {
                     branch.children.iter().map(min_h).collect()
                 };
@@ -630,14 +681,14 @@ impl ChartPanelGrid {
                     } else {
                         (rect_w, rect_h * frac)
                     };
-                    walk(child, cw, ch, pending);
+                    walk(child, cw, ch, pending, leaf_min_w);
                 }
             } else {
                 // Non-proportional layouts (Grid2x2, presets) — just recurse
                 // with the whole parent rect. Leaf min enforcement on those
                 // is best-effort via the total-width clamp at the sidebar.
                 for c in &branch.children {
-                    walk(c, rect_w, rect_h, pending);
+                    walk(c, rect_w, rect_h, pending, leaf_min_w);
                 }
             }
         }
@@ -649,6 +700,7 @@ impl ChartPanelGrid {
             total_w,
             total_h,
             &mut pending,
+            &leaf_min_w,
         );
 
         // Apply updates via public API.

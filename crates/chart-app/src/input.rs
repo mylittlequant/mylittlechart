@@ -8470,9 +8470,19 @@ impl ChartApp {
         if widget_id == "agent:cli_cycle" {
             self.sidebar_state.agent_cli = self.sidebar_state.agent_cli.cycle();
             self.sidebar_state.pty_selection = None;
-            // Populate chat view with latest history for the newly selected CLI.
             let cli = self.sidebar_state.agent_cli;
-            self.agent.load_latest_history(cli);
+            use sidebar_content::state::AgentPanelMode;
+            match self.sidebar_state.agent_mode {
+                AgentPanelMode::Pty => {
+                    // Terminals are fresh per session — do NOT load past history.
+                    // Spawn the newly-selected CLI's terminal if it isn't running yet.
+                    self.ensure_agent_session_for_mode();
+                }
+                AgentPanelMode::Chat => {
+                    // Populate chat view with latest history for the newly selected CLI.
+                    self.agent.load_latest_history(cli);
+                }
+            }
             return;
         }
         if widget_id == "agent:load_prev_session" {
