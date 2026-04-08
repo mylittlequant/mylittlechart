@@ -19,6 +19,7 @@ pub mod input;
 pub mod preset_cache;
 pub mod scroll_dispatch;
 pub mod text_input;
+pub mod workspace;
 
 pub use input::KeyPress;
 pub use digdigdig3::ExchangeId;
