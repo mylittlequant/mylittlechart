@@ -49,3 +49,5 @@ opt-level = 2
 
 # Local development overrides — use local source instead of crates.io.
 # CI strips this section before building (see .github/workflows/release.yml).
+[patch.crates-io]
+gate4agent = { path = "../gate4agent" }
