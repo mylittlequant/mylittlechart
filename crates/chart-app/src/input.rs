@@ -9321,12 +9321,19 @@ impl ChartApp {
                             let src_leaf = uzor::panels::LeafId(raw);
                             // Only act when the split target is the focused leaf.
                             if self.sidebar_state.focused_free_leaf == Some((idx, src_leaf)) {
-                                // Spawn a new Dom panel as the split result.
-                                let symbol = self.panel_app.panel_grid.active_window()
-                                    .map(|w| w.symbol.clone())
-                                    .unwrap_or_else(|| "BTCUSDT".to_string());
-                                let new_pid = self.panels_store.create_dom(symbol, 0.01);
-                                let new_item = sidebar_content::free_slot::FreeItem::Dom(new_pid);
+                                // Clone the same panel type with fresh PanelId + copied config.
+                                let source_item = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(src_leaf)
+                                    .and_then(|l| l.active_panel().cloned());
+                                let new_item = source_item
+                                    .as_ref()
+                                    .and_then(|item| self.panels_store.clone_item(item));
+                                let new_item = match new_item {
+                                    Some(item) => item,
+                                    None => return, // source leaf missing or state gone
+                                };
                                 let new_id = self.sidebar_state.slot_dockings[idx]
                                     .inner_mut()
                                     .tree_mut()

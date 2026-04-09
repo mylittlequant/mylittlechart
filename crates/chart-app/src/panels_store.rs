@@ -173,6 +173,83 @@ impl TradingPanelsStore {
     }
 
     // -------------------------------------------------------------------------
+    // clone_item — duplicate a FreeItem with fresh PanelId + copied config
+    // -------------------------------------------------------------------------
+
+    /// Create a new `FreeItem` of the same variant as `source`, with a fresh
+    /// `PanelId` and state cloned from the source's config (symbol, tick_size,
+    /// etc.). Returns `None` if the source's state is missing from the store.
+    pub fn clone_item(&mut self, source: &FreeItem) -> Option<FreeItem> {
+        match source {
+            FreeItem::Dom(id) => {
+                let s = self.dom.get(id)?;
+                let pid = self.alloc_id();
+                self.dom.insert(pid, DomState::new(s.symbol.clone(), s.tick_size));
+                Some(FreeItem::Dom(pid))
+            }
+            FreeItem::Footprint(id) => {
+                let s = self.footprint.get(id)?;
+                let pid = self.alloc_id();
+                self.footprint.insert(pid, FootprintState::new(s.symbol.clone(), s.tick_size));
+                Some(FreeItem::Footprint(pid))
+            }
+            FreeItem::VolumeProfile(id) => {
+                let s = self.volume_profile.get(id)?;
+                let pid = self.alloc_id();
+                self.volume_profile.insert(pid, VolumeProfileState::new(s.symbol.clone(), s.tick_size));
+                Some(FreeItem::VolumeProfile(pid))
+            }
+            FreeItem::LiquidityHeatmap(id) => {
+                let s = self.liquidity_heatmap.get(id)?;
+                let pid = self.alloc_id();
+                self.liquidity_heatmap.insert(pid, LiquidityHeatmapState::new(
+                    s.symbol.clone(), s.tick_size, s.snapshot_interval_ms,
+                ));
+                Some(FreeItem::LiquidityHeatmap(pid))
+            }
+            FreeItem::BigTrades(_) => {
+                let pid = self.alloc_id();
+                self.big_trades.insert(pid, BigTradesState::new());
+                Some(FreeItem::BigTrades(pid))
+            }
+            FreeItem::L2Tape(_) => {
+                let pid = self.alloc_id();
+                self.l2_tape.insert(pid, L2TapeState::new());
+                Some(FreeItem::L2Tape(pid))
+            }
+            FreeItem::OrderEntry(id) => {
+                let s = self.order_entry.get(id)?;
+                let pid = self.alloc_id();
+                self.order_entry.insert(pid, OrderEntryState::new(s.symbol.clone()));
+                Some(FreeItem::OrderEntry(pid))
+            }
+            FreeItem::PositionManager(_) => {
+                let pid = self.alloc_id();
+                self.position_manager.insert(pid, PositionManagerState::new());
+                Some(FreeItem::PositionManager(pid))
+            }
+            FreeItem::TradeLog(_) => {
+                let pid = self.alloc_id();
+                self.trade_log.insert(pid, TradeLogState::new());
+                Some(FreeItem::TradeLog(pid))
+            }
+            FreeItem::RiskCalculator(_) => {
+                let pid = self.alloc_id();
+                self.risk_calculator.insert(pid, RiskCalculatorState::new());
+                Some(FreeItem::RiskCalculator(pid))
+            }
+            FreeItem::TradingContainer(id) => {
+                let s = self.trading_container.get(id)?;
+                let pid = self.alloc_id();
+                self.trading_container.insert(pid, TradingContainerState::new(
+                    s.symbol.clone(), s.tick_size, s.market_price,
+                ));
+                Some(FreeItem::TradingContainer(pid))
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // remove — delete state when a leaf is closed
     // -------------------------------------------------------------------------
 
