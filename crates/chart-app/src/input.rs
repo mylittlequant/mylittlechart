@@ -316,6 +316,8 @@ impl ChartApp {
         self.sidebar_state.watchlist_config_dropdown_open = false;
         // Close watchlist color picker when clicking outside any registered widget.
         self.sidebar_state.watchlist_color_picker_open = None;
+        // Close slot spawn dropdown when clicking on canvas.
+        self.sidebar_state.slot_spawn_dropdown = None;
 
         // 4. Split panel routing — route click to the correct leaf.
         if self.panel_app.panel_grid.is_split() {
@@ -8279,6 +8281,18 @@ impl ChartApp {
             }
         }
 
+        // === Slot spawn dropdown — click-away-to-dismiss ===
+        // If a slot spawn dropdown is open and the clicked widget is not a
+        // spawn row or the [+] button for that slot, close it immediately.
+        if self.sidebar_state.slot_spawn_dropdown.is_some() {
+            let is_spawn_related = widget_id.contains(":spawn:")
+                || (widget_id.strip_prefix("slot:").and_then(|s| s.strip_suffix(":new")).is_some());
+            if !is_spawn_related {
+                self.sidebar_state.slot_spawn_dropdown = None;
+                self.sidebar_data_dirty = true;
+            }
+        }
+
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
@@ -8966,22 +8980,86 @@ impl ChartApp {
 
         // === Slot panel control clicks ===
 
-        // --- slot:{idx}:new — spawn a DOM panel into the slot ---
+        // --- slot:{idx}:new — toggle spawn dropdown for the slot ---
         if let Some(idx_str) = widget_id.strip_prefix("slot:").and_then(|s| s.strip_suffix(":new")) {
             if let Ok(idx) = idx_str.parse::<usize>() {
                 if idx < 4 {
-                    let symbol = self.panel_app.panel_grid.active_window()
-                        .map(|w| w.symbol.clone())
-                        .unwrap_or_else(|| "BTCUSDT".to_string());
-                    // TODO: popup menu with 11 variants — for now always spawn Dom.
-                    let panel_id = self.panels_store.create_dom(symbol, 0.01);
-                    let item = sidebar_content::free_slot::FreeItem::Dom(panel_id);
-                    self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
-                    eprintln!("[ChartApp] slot:{}:new — spawned Dom panel_id={}", idx, panel_id.0);
+                    if self.sidebar_state.slot_spawn_dropdown == Some(idx) {
+                        self.sidebar_state.slot_spawn_dropdown = None;
+                    } else {
+                        self.sidebar_state.slot_spawn_dropdown = Some(idx);
+                    }
                     self.sidebar_data_dirty = true;
                 }
             }
             return;
+        }
+
+        // --- slot:{idx}:spawn:{kind_str} — spawn the selected panel variant ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, kind_str)) = rest.split_once(":spawn:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if idx < 4 {
+                        let symbol = self.panel_app.panel_grid.active_window()
+                            .map(|w| w.symbol.clone())
+                            .unwrap_or_else(|| "BTCUSDT".to_string());
+                        let item_opt = match kind_str {
+                            "dom" => {
+                                let pid = self.panels_store.create_dom(symbol, 0.01);
+                                Some(sidebar_content::free_slot::FreeItem::Dom(pid))
+                            }
+                            "footprint" => {
+                                let pid = self.panels_store.create_footprint(symbol, 0.01);
+                                Some(sidebar_content::free_slot::FreeItem::Footprint(pid))
+                            }
+                            "volume_profile" => {
+                                let pid = self.panels_store.create_volume_profile(symbol, 0.01);
+                                Some(sidebar_content::free_slot::FreeItem::VolumeProfile(pid))
+                            }
+                            "liquidity_heatmap" => {
+                                let pid = self.panels_store.create_liquidity_heatmap(symbol, 0.01, 1000);
+                                Some(sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid))
+                            }
+                            "big_trades" => {
+                                let pid = self.panels_store.create_big_trades();
+                                Some(sidebar_content::free_slot::FreeItem::BigTrades(pid))
+                            }
+                            "l2_tape" => {
+                                let pid = self.panels_store.create_l2_tape();
+                                Some(sidebar_content::free_slot::FreeItem::L2Tape(pid))
+                            }
+                            "order_entry" => {
+                                let pid = self.panels_store.create_order_entry(symbol);
+                                Some(sidebar_content::free_slot::FreeItem::OrderEntry(pid))
+                            }
+                            "position_manager" => {
+                                let pid = self.panels_store.create_position_manager();
+                                Some(sidebar_content::free_slot::FreeItem::PositionManager(pid))
+                            }
+                            "trade_log" => {
+                                let pid = self.panels_store.create_trade_log();
+                                Some(sidebar_content::free_slot::FreeItem::TradeLog(pid))
+                            }
+                            "risk_calculator" => {
+                                let pid = self.panels_store.create_risk_calculator();
+                                Some(sidebar_content::free_slot::FreeItem::RiskCalculator(pid))
+                            }
+                            "trading_container" => {
+                                let pid = self.panels_store.create_trading_container(symbol, 0.01, 0.0);
+                                Some(sidebar_content::free_slot::FreeItem::TradingContainer(pid))
+                            }
+                            _ => None,
+                        };
+                        if let Some(item) = item_opt {
+                            eprintln!("[ChartApp] slot:{}:spawn:{} — spawned panel", idx, kind_str);
+                            self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
+                            self.sidebar_state.slot_spawn_dropdown = None;
+                            self.sidebar_data_dirty = true;
+                        }
+                    }
+                }
+                return;
+            }
         }
 
         // --- slot:{idx}:leaf:{leaf_id}:focus — set focused free leaf ---

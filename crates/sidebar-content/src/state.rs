@@ -348,6 +348,9 @@ pub struct SidebarState {
 
     /// `(slot_idx 0..4, leaf_id)` — currently focused leaf in free slot sidebars.
     pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
+
+    /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
+    pub slot_spawn_dropdown: Option<usize>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -588,6 +591,7 @@ impl Default for SidebarState {
                 crate::free_slot::SlotDockingManager::new(),
             ],
             focused_free_leaf: None,
+            slot_spawn_dropdown: None,
         }
     }
 }

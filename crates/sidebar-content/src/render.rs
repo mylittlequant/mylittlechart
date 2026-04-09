@@ -615,6 +615,23 @@ pub fn render_right_sidebar(
         );
     }
 
+    // -------------------------------------------------------------------------
+    // Slot spawn dropdown overlay (rendered on top of slot content).
+    // -------------------------------------------------------------------------
+    if let Some(slot_idx) = panel.slot_index() {
+        let slot_idx = slot_idx as usize;
+        if sidebar_state.slot_spawn_dropdown == Some(slot_idx) {
+            render_slot_spawn_dropdown(
+                ctx,
+                rect,
+                header_height,
+                slot_idx,
+                toolbar_theme,
+                input_coordinator,
+            );
+        }
+    }
+
     result
 }
 
@@ -761,6 +778,87 @@ fn render_watchlist_config_dropdown(
     }
 
     result.watchlist_config_dropdown_rect = Some(dropdown_rect);
+}
+
+// =============================================================================
+// Slot spawn dropdown
+// =============================================================================
+
+/// Render the slot `[+]` spawn dropdown overlay.
+///
+/// Appears directly below the sidebar header, right-aligned.  Lists all 11
+/// `FreeItem` variants.  Drawn last so it sits on top of all slot content.
+fn render_slot_spawn_dropdown(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    header_height: f64,
+    slot_idx: usize,
+    theme: &ToolbarTheme,
+    input_coordinator: &mut InputCoordinator,
+) {
+    const ITEMS: &[(&str, &str)] = &[
+        ("dom",                "DOM"),
+        ("footprint",          "Footprint"),
+        ("volume_profile",     "Volume Profile"),
+        ("liquidity_heatmap",  "Liquidity Heatmap"),
+        ("big_trades",         "Big Trades"),
+        ("l2_tape",            "L2 Tape"),
+        ("order_entry",        "Order Entry"),
+        ("position_manager",   "Positions"),
+        ("trade_log",          "Trade Log"),
+        ("risk_calculator",    "Risk Calculator"),
+        ("trading_container",  "Trading"),
+    ];
+
+    let row_h = 24.0;
+    let pad_v = 4.0;
+    let pad_h = 12.0;
+    let dropdown_w = 180.0;
+    let dropdown_h = row_h * ITEMS.len() as f64 + pad_v * 2.0;
+
+    // Anchor: right-aligned inside the sidebar, just below the header.
+    let dropdown_x = rect.x + rect.width - dropdown_w - 4.0;
+    let dropdown_y = rect.y + header_height;
+
+    // Background.
+    ctx.set_fill_color("#1a1f2aee");
+    ctx.fill_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h);
+
+    // Border.
+    ctx.set_stroke_color(theme.separator.as_str());
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(dropdown_x, dropdown_y);
+    ctx.line_to(dropdown_x + dropdown_w, dropdown_y);
+    ctx.line_to(dropdown_x + dropdown_w, dropdown_y + dropdown_h);
+    ctx.line_to(dropdown_x, dropdown_y + dropdown_h);
+    ctx.line_to(dropdown_x, dropdown_y);
+    ctx.stroke();
+
+    for (row_idx, (kind_str, label)) in ITEMS.iter().enumerate() {
+        let row_y = dropdown_y + pad_v + row_idx as f64 * row_h;
+        let row_rect = WidgetRect::new(dropdown_x, row_y, dropdown_w, row_h);
+
+        let widget_id = format!("slot:{}:spawn:{}", slot_idx, kind_str);
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&widget_id));
+
+        if is_hovered {
+            ctx.set_fill_color("#2d3748ff");
+            ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
+        }
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if is_hovered { "#e2e8f0" } else { "#c9d1d9" });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, dropdown_x + pad_h, row_y + row_h / 2.0);
+
+        input_coordinator.register(
+            widget_id.as_str(),
+            row_rect,
+            uzor::input::Sense::CLICK,
+        );
+    }
 }
 
 // =============================================================================
