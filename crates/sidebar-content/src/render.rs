@@ -3570,6 +3570,49 @@ fn render_slot_panel(
         free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx);
     }
 
+    // Draw slot separators and register their hit zones.
+    {
+        use uzor::panels::SeparatorOrientation;
+        let mgr = state.slot_dockings[slot_idx].inner();
+        let visual_thickness = 4.0_f64;
+        let sep_hit_w = 8.0_f64;
+        for (sep_idx, sep) in mgr.separators().iter().enumerate() {
+            let sep_wid = format!("slot:{}:sep:{}", slot_idx, sep_idx);
+            match sep.orientation {
+                SeparatorOrientation::Vertical => {
+                    let sep_x = sep.position as f64 - visual_thickness / 2.0;
+                    let sep_y = sep.start as f64;
+                    let sep_h = sep.length as f64;
+                    ctx.set_fill_color("#2a2a38");
+                    ctx.fill_rect(sep_x, sep_y, visual_thickness, sep_h);
+                    let hit_rect = WidgetRect::new(
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_y,
+                        sep_hit_w,
+                        sep_h,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((sep_wid, hit_rect));
+                }
+                SeparatorOrientation::Horizontal => {
+                    let sep_y = sep.position as f64 - visual_thickness / 2.0;
+                    let sep_x = sep.start as f64;
+                    let sep_w = sep.length as f64;
+                    ctx.set_fill_color("#2a2a38");
+                    ctx.fill_rect(sep_x, sep_y, sep_w, visual_thickness);
+                    let hit_rect = WidgetRect::new(
+                        sep_x,
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_w,
+                        sep_hit_w,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((sep_wid, hit_rect));
+                }
+            }
+        }
+    }
+
     inner_h
 }
 
@@ -4078,9 +4121,7 @@ fn render_agents_panel(
                 None => continue,
             };
             let is_focused = state.focused_agent_leaf == Some(leaf_id);
-
-            // No full-leaf rectangle — focus is shown by a subtle accent
-            // stripe at the top of the pane header (drawn inside render_agents_pane).
+            let is_hovered = !is_focused && state.hovered_agent_leaf == Some(leaf_id);
 
             render_agents_pane(
                 ctx,
@@ -4092,30 +4133,51 @@ fn render_agents_panel(
                 result,
                 input_coordinator,
                 is_focused,
+                is_hovered,
                 grid_rect,
             );
         }
 
-        // Draw separator drag handles.
-        for sep in docking.separators() {
+        // Draw separator drag handles and register hit zones.
+        let sep_hit_w = 8.0_f64; // wider hit area than the 4px visual bar
+        for (sep_idx, sep) in docking.separators().iter().enumerate() {
             use uzor::panels::SeparatorOrientation;
-            let thickness = 4.0_f64;
+            let visual_thickness = 4.0_f64;
+            let sep_wid = format!("agent:sep:{}", sep_idx);
             match sep.orientation {
                 SeparatorOrientation::Vertical => {
                     // position = x, start = y, length = height
-                    let sep_x = sep.position as f64 - thickness / 2.0;
+                    let sep_x = sep.position as f64 - visual_thickness / 2.0;
                     let sep_y = sep.start as f64;
                     let sep_h = sep.length as f64;
                     ctx.set_fill_color("#2a2a38");
-                    ctx.fill_rect(sep_x, sep_y, thickness, sep_h);
+                    ctx.fill_rect(sep_x, sep_y, visual_thickness, sep_h);
+                    // Hit zone (wider than visual bar for easier grabbing).
+                    let hit_rect = WidgetRect::new(
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_y,
+                        sep_hit_w,
+                        sep_h,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((sep_wid, hit_rect));
                 }
                 SeparatorOrientation::Horizontal => {
                     // position = y, start = x, length = width
-                    let sep_y = sep.position as f64 - thickness / 2.0;
+                    let sep_y = sep.position as f64 - visual_thickness / 2.0;
                     let sep_x = sep.start as f64;
                     let sep_w = sep.length as f64;
                     ctx.set_fill_color("#2a2a38");
-                    ctx.fill_rect(sep_x, sep_y, sep_w, thickness);
+                    ctx.fill_rect(sep_x, sep_y, sep_w, visual_thickness);
+                    // Hit zone.
+                    let hit_rect = WidgetRect::new(
+                        sep_x,
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_w,
+                        sep_hit_w,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((sep_wid, hit_rect));
                 }
             }
         }
@@ -4141,6 +4203,7 @@ fn render_agents_pane(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     is_focused: bool,
+    is_hovered: bool,
     grid_rect: uzor::panels::PanelRect,
 ) {
     let header_h = 18.0_f64;
@@ -4165,7 +4228,8 @@ fn render_agents_pane(
 
     // ── Pane header ───────────────────────────────────────────────────────────
     {
-        let hdr_bg = if is_focused { "#1a1a2e" } else { "#13131c" };
+        // Focused = bright accent; hovered (not focused) = subtle highlight; idle = dim.
+        let hdr_bg = if is_focused { "#1a1a2e" } else if is_hovered { "#171725" } else { "#13131c" };
         ctx.set_fill_color(hdr_bg);
         ctx.fill_rect(px, py, pw, header_h);
 

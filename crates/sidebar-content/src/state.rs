@@ -308,6 +308,12 @@ pub struct SidebarState {
     /// Which leaf's input field is focused (None = no leaf focused).
     pub agent_input_focused_leaf: Option<uzor::panels::LeafId>,
 
+    /// Which docking leaf is currently under the mouse cursor (hover highlight only).
+    ///
+    /// Updated on every `on_mouse_move` event. Does NOT drive keyboard routing —
+    /// that uses `focused_agent_leaf` which is set only on click/drag.
+    pub hovered_agent_leaf: Option<uzor::panels::LeafId>,
+
     /// Per-leaf scroll state for chat messages.
     pub agent_chat_scrolls: HashMap<uzor::panels::LeafId, ScrollState>,
 
@@ -577,6 +583,7 @@ impl Default for SidebarState {
             agent_input_selections: HashMap::new(),
             agent_input_cursor_visible: false,
             agent_input_focused_leaf: None,
+            hovered_agent_leaf: None,
             agent_chat_scrolls: HashMap::new(),
             agent_pty_scrolls: HashMap::new(),
             agent_pty_selections: HashMap::new(),

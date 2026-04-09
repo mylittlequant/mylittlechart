@@ -1012,6 +1012,81 @@ impl ChartApp {
             }
         }
 
+        // ── Agent-panel separator drag initiation ────────────────────────────
+        // Detect `"agent:sep:{idx}"` widget hover → begin separator resize drag.
+        if self.agent_sep_drag.is_none() {
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered_wid {
+                if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
+                    if let Ok(sep_idx) = idx_str.parse::<usize>() {
+                        // Extract sep info with a scoped borrow so the ref is dropped.
+                        let sep_info: Option<(uzor::panels::SeparatorOrientation, f32)> = {
+                            let docking = self.sidebar_state.agent_docking.inner();
+                            docking.separators().get(sep_idx).map(|sep| {
+                                use uzor::panels::SeparatorOrientation;
+                                let area = docking.layout_area();
+                                let total = match sep.orientation {
+                                    SeparatorOrientation::Vertical => area.width,
+                                    SeparatorOrientation::Horizontal => area.height,
+                                };
+                                (sep.orientation, total)
+                            })
+                        };
+                        if let Some((orient, total_size)) = sep_info {
+                            use uzor::panels::SeparatorOrientation;
+                            let start_pos = match orient {
+                                SeparatorOrientation::Vertical => x,
+                                SeparatorOrientation::Horizontal => y,
+                            };
+                            self.agent_sep_drag = Some((sep_idx, start_pos, total_size));
+                            self.ui_drag_active = true;
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Free-slot separator drag initiation ──────────────────────────────
+        // Detect `"slot:{slot_idx}:sep:{sep_idx}"` widget hover → begin separator resize drag.
+        if self.slot_sep_drag.is_none() {
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered_wid {
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
+                        if let (Ok(slot_idx), Ok(sep_idx)) =
+                            (slot_str.parse::<usize>(), sep_str.parse::<usize>())
+                        {
+                            if slot_idx < 4 {
+                                let sep_info: Option<(uzor::panels::SeparatorOrientation, f32)> = {
+                                    let docking = self.sidebar_state.slot_dockings[slot_idx].inner();
+                                    docking.separators().get(sep_idx).map(|sep| {
+                                        use uzor::panels::SeparatorOrientation;
+                                        let area = docking.layout_area();
+                                        let total = match sep.orientation {
+                                            SeparatorOrientation::Vertical => area.width,
+                                            SeparatorOrientation::Horizontal => area.height,
+                                        };
+                                        (sep.orientation, total)
+                                    })
+                                };
+                                if let Some((orient, total_size)) = sep_info {
+                                    use uzor::panels::SeparatorOrientation;
+                                    let start_pos = match orient {
+                                        SeparatorOrientation::Vertical => x,
+                                        SeparatorOrientation::Horizontal => y,
+                                    };
+                                    self.slot_sep_drag = Some((slot_idx, sep_idx, start_pos, total_size));
+                                    self.ui_drag_active = true;
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Cross-container free-leaf drag initiation ────────────────────────
         // If the drag starts on a `slot:{idx}:leaf:{leaf_id}:focus` widget,
         // prime a CrossDragState (not yet activated — activation requires
@@ -2411,6 +2486,44 @@ impl ChartApp {
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+        // ── Agent-panel separator resize drag ────────────────────────────────
+        if let Some((sep_idx, start_pos, _total_size)) = self.agent_sep_drag {
+            // Read orientation and area with a scoped borrow, then drop before mutable call.
+            let (is_vertical, content_width, content_height) = {
+                let d = self.sidebar_state.agent_docking.inner();
+                let area = d.layout_area();
+                let vert = d.separators().get(sep_idx)
+                    .map(|s| s.orientation == uzor::panels::SeparatorOrientation::Vertical)
+                    .unwrap_or(true);
+                (vert, area.width, area.height)
+            };
+            let cur_pos = if is_vertical { x } else { y };
+            let delta = (cur_pos - start_pos) as f32;
+            // Update start_pos so subsequent moves are incremental, not cumulative.
+            self.agent_sep_drag = Some((sep_idx, cur_pos, content_width));
+            self.sidebar_state.agent_docking.inner_mut().drag_separator(sep_idx, delta, content_width, content_height);
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── Free-slot separator resize drag ─────────────────────────────────
+        if let Some((slot_idx, sep_idx, start_pos, _total_size)) = self.slot_sep_drag {
+            let (is_vertical, content_width, content_height) = {
+                let d = self.sidebar_state.slot_dockings[slot_idx].inner();
+                let area = d.layout_area();
+                let vert = d.separators().get(sep_idx)
+                    .map(|s| s.orientation == uzor::panels::SeparatorOrientation::Vertical)
+                    .unwrap_or(true);
+                (vert, area.width, area.height)
+            };
+            let cur_pos = if is_vertical { x } else { y };
+            let delta = (cur_pos - start_pos) as f32;
+            self.slot_sep_drag = Some((slot_idx, sep_idx, cur_pos, content_width));
+            self.sidebar_state.slot_dockings[slot_idx].inner_mut().drag_separator(sep_idx, delta, content_width, content_height);
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // ── Cross-container free-leaf drag update ─────────────────────────
         if self.cross_drag.is_some() {
             let threshold = crate::CROSS_DRAG_THRESHOLD;
@@ -3380,6 +3493,18 @@ impl ChartApp {
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
 
+        // ── End agent-panel separator drag ───────────────────────────────────
+        if self.agent_sep_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End free-slot separator drag ─────────────────────────────────────
+        if self.slot_sep_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // ── End cross-container free-leaf drag ───────────────────────────────
         if let Some(cd) = self.cross_drag.take() {
             if cd.activated {
@@ -4092,6 +4217,8 @@ impl ChartApp {
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.watchlist_modal.hovered_widget = None;
+        // Reset agent hover highlight each frame; re-set below if still hovering.
+        self.sidebar_state.hovered_agent_leaf = None;
 
         // --- Update toolbar hover state from InputCoordinator ---
         // The coordinator's hovered_widget() returns the topmost widget under
@@ -4138,20 +4265,19 @@ impl ChartApp {
                 // Search overlay result items
                 self.modal_state.hovered_item_id = Some(rest.to_string());
             } else if let Some(rest) = id_str.strip_prefix("agent:leaf:") {
-                // Hover-to-focus for agent sidebar leaves.
+                // Hover over an agent leaf — update visual hover highlight ONLY.
+                // Keyboard focus (focused_agent_leaf) is set exclusively on click,
+                // so that typing into one pane is not interrupted by mouse movement.
                 if let Some(id_str2) = rest.strip_suffix(":focus") {
                     if let Ok(raw) = id_str2.parse::<u64>() {
                         let leaf_id = uzor::panels::LeafId(raw);
-                        if self.sidebar_state.focused_agent_leaf != Some(leaf_id) {
-                            self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                            self.sidebar_data_dirty = true;
-                        }
+                        self.sidebar_state.hovered_agent_leaf = Some(leaf_id);
+                        self.sidebar_data_dirty = true;
                     }
                 }
             }
         } else {
-            // No widget hovered — clear search overlay hover
+            // No widget hovered — clear search overlay hover.
             if self.modal_state.current.is_search_overlay() {
                 self.modal_state.hovered_item_id = None;
             }
@@ -21823,17 +21949,20 @@ impl ChartApp {
                 }
             }
             _ => {
-                // No target (released outside all slots) or same leaf → re-insert at root.
-                let panels_opt = self.sidebar_state.slot_dockings[src]
+                // No target (released outside all slots) or same exact leaf → no change.
+                // Removal only happens in the Some(target) arm above, so the leaf is still
+                // in the source slot. Verify this and warn if it somehow went missing.
+                let leaf_exists = self.sidebar_state.slot_dockings[src]
                     .inner()
                     .tree()
                     .leaf(src_leaf)
                     .is_some();
-                if !panels_opt {
-                    // Leaf was already removed during movement — nothing to re-insert.
+                if !leaf_exists {
+                    // Defensive: if the leaf disappeared despite no explicit removal, log it.
+                    // Nothing to re-insert without the payload, so we just note the anomaly.
+                    eprintln!("[cross_drag] warning: source leaf {:?} missing in slot {} at drop (no target)", src_leaf, src);
                 }
-                // Leaf still exists in source slot (we never removed it when there's no target).
-                eprintln!("[cross_drag] no target — leaf stays in slot {}", src);
+                // No action needed — leaf stays where it was.
             }
         }
 

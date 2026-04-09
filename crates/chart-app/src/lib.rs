@@ -665,6 +665,19 @@ pub struct ChartApp {
     /// Set when the user begins pressing on a free-leaf header and the cursor
     /// moves more than `CROSS_DRAG_THRESHOLD` pixels.  Cleared on mouse-up.
     pub(crate) cross_drag: Option<CrossDragState>,
+
+    /// Active agent-panel separator drag.
+    ///
+    /// `(separator_index, start_mouse_pos, total_available_size)` — the total
+    /// available size (width for vertical separators, height for horizontal) is
+    /// captured at drag-start so that `drag_separator` can convert pixel deltas
+    /// to proportions correctly even as the window resizes.
+    pub(crate) agent_sep_drag: Option<(usize, f64, f32)>,
+
+    /// Active free-slot separator drag.
+    ///
+    /// `(slot_index, separator_index, start_mouse_pos, total_available_size)`.
+    pub(crate) slot_sep_drag: Option<(usize, usize, f64, f32)>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1030,6 +1043,8 @@ impl ChartApp {
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             cross_drag: None,
+            agent_sep_drag: None,
+            slot_sep_drag: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1312,6 +1327,8 @@ impl ChartApp {
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             cross_drag: None,
+            agent_sep_drag: None,
+            slot_sep_drag: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1490,6 +1507,8 @@ impl ChartApp {
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             cross_drag: None,
+            agent_sep_drag: None,
+            slot_sep_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
