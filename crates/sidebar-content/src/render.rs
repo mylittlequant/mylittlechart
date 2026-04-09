@@ -3486,6 +3486,7 @@ fn render_slot_panel(
     }
 
     let focused_free_leaf = state.focused_free_leaf;
+    let hovered_free_leaf = state.hovered_free_leaf;
 
     for (leaf_id, item, r) in leaves {
         // Draw border/background frame for the leaf.
@@ -3501,9 +3502,20 @@ fn render_slot_panel(
         let header_w = r.width;
         let header_h = LEAF_HEADER_H;
 
-        // Header background — focused leaf gets a brighter shade.
+        // Header background:
+        //   focused   → bright (keyboard focus)
+        //   hovered   → subtle highlight (mouse hover, not focused)
+        //   otherwise → dark baseline
         let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
-        ctx.set_fill_color(if is_focused { "#2d3748" } else { "#1a1f2a" });
+        let is_hovered = hovered_free_leaf == Some((slot_idx, leaf_id));
+        let header_color = if is_focused {
+            "#2d3748"
+        } else if is_hovered {
+            "#222837"
+        } else {
+            "#1a1f2a"
+        };
+        ctx.set_fill_color(header_color);
         ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, header_h as f64);
 
         // Header bottom separator.
@@ -3525,27 +3537,72 @@ fn render_slot_panel(
             (header_y + header_h / 2.0) as f64,
         );
 
-        // Close [×] button — 16×16 box at right edge of header.
-        let close_w = 16.0_f32;
-        let close_h = 16.0_f32;
-        let close_x = header_x + header_w - close_w - 3.0;
-        let close_y = header_y + (header_h - close_h) / 2.0;
+        // Button layout (right-to-left from right edge):
+        //   [×] close  |  [H] split-h  |  [V] split-v
+        let btn_gap = 2.0_f32;
+        let btn_w = 14.0_f32;
+        let btn_h = 14.0_f32;
+        let btn_y = header_y + (header_h - btn_h) / 2.0;
+
+        // Close [×] button.
+        let close_x = header_x + header_w - btn_w - 3.0;
+        let close_y = btn_y;
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color("#8b949e");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(
             "\u{00d7}", // ×
-            (close_x + close_w / 2.0) as f64,
-            (close_y + close_h / 2.0) as f64,
+            (close_x + btn_w / 2.0) as f64,
+            (close_y + btn_h / 2.0) as f64,
         );
 
-        // Register header focus widget (full header minus close button area).
+        // Split-H [H] button — to the left of close.
+        let split_h_x = close_x - btn_gap - btn_w;
+        let split_h_id = format!("slot:{}:leaf:{}:split_h", slot_idx, leaf_id.0);
+        let is_split_h_hov = input_coordinator.is_hovered(
+            &uzor::types::WidgetId::new(&split_h_id),
+        );
+        ctx.set_font("9px sans-serif");
+        ctx.set_fill_color(if is_split_h_hov { "#58a6ff" } else { "#8b949e" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            "H",
+            (split_h_x + btn_w / 2.0) as f64,
+            (btn_y + btn_h / 2.0) as f64,
+        );
+
+        // Split-V [V] button — to the left of split-h.
+        let split_v_x = split_h_x - btn_gap - btn_w;
+        let split_v_id = format!("slot:{}:leaf:{}:split_v", slot_idx, leaf_id.0);
+        let is_split_v_hov = input_coordinator.is_hovered(
+            &uzor::types::WidgetId::new(&split_v_id),
+        );
+        ctx.set_fill_color(if is_split_v_hov { "#58a6ff" } else { "#8b949e" });
+        ctx.fill_text(
+            "V",
+            (split_v_x + btn_w / 2.0) as f64,
+            (btn_y + btn_h / 2.0) as f64,
+        );
+
+        // Register split-v widget.
+        let split_v_rect = WidgetRect::new(split_v_x as f64, btn_y as f64, btn_w as f64, btn_h as f64);
+        input_coordinator.register(split_v_id.as_str(), split_v_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((split_v_id, split_v_rect));
+
+        // Register split-h widget.
+        let split_h_rect = WidgetRect::new(split_h_x as f64, btn_y as f64, btn_w as f64, btn_h as f64);
+        input_coordinator.register(split_h_id.as_str(), split_h_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((split_h_id, split_h_rect));
+
+        // Register header focus widget (full header minus all right-side buttons).
+        let buttons_total_w = (btn_w + btn_gap) * 2.0 + btn_w + 3.0;
         let focus_id = format!("slot:{}:leaf:{}:focus", slot_idx, leaf_id.0);
         let focus_rect = WidgetRect::new(
             header_x as f64,
             header_y as f64,
-            (header_w - close_w - 3.0) as f64,
+            (header_w - buttons_total_w).max(0.0) as f64,
             header_h as f64,
         );
         input_coordinator.register(focus_id.as_str(), focus_rect, uzor::input::Sense::CLICK);
@@ -3556,8 +3613,8 @@ fn render_slot_panel(
         let close_rect = WidgetRect::new(
             close_x as f64,
             close_y as f64,
-            close_w as f64,
-            close_h as f64,
+            btn_w as f64,
+            btn_h as f64,
         );
         input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_id, close_rect));

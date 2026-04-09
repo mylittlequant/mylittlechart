@@ -357,6 +357,12 @@ pub struct SidebarState {
 
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
     pub slot_spawn_dropdown: Option<usize>,
+
+    /// Which docking leaf in a free slot is currently under the mouse cursor (hover highlight only).
+    ///
+    /// `(slot_idx 0..4, leaf_id)` — updated on every `on_mouse_move`, reset to `None` each frame.
+    /// Does NOT drive keyboard focus — that uses `focused_free_leaf` which is set only on click.
+    pub hovered_free_leaf: Option<(usize, uzor::panels::LeafId)>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -599,6 +605,7 @@ impl Default for SidebarState {
             ],
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
+            hovered_free_leaf: None,
         }
     }
 }

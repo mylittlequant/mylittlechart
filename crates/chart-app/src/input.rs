@@ -3496,12 +3496,14 @@ impl ChartApp {
         // ── End agent-panel separator drag ───────────────────────────────────
         if self.agent_sep_drag.take().is_some() {
             self.sidebar_data_dirty = true;
+            self.autosave_snapshot();
             return;
         }
 
         // ── End free-slot separator drag ─────────────────────────────────────
         if self.slot_sep_drag.take().is_some() {
             self.sidebar_data_dirty = true;
+            self.autosave_snapshot();
             return;
         }
 
@@ -4217,8 +4219,9 @@ impl ChartApp {
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.watchlist_modal.hovered_widget = None;
-        // Reset agent hover highlight each frame; re-set below if still hovering.
+        // Reset agent/slot hover highlights each frame; re-set below if still hovering.
         self.sidebar_state.hovered_agent_leaf = None;
+        self.sidebar_state.hovered_free_leaf = None;
 
         // --- Update toolbar hover state from InputCoordinator ---
         // The coordinator's hovered_widget() returns the topmost widget under
@@ -4273,6 +4276,20 @@ impl ChartApp {
                         let leaf_id = uzor::panels::LeafId(raw);
                         self.sidebar_state.hovered_agent_leaf = Some(leaf_id);
                         self.sidebar_data_dirty = true;
+                    }
+                }
+            } else if let Some(slot_rest) = id_str.strip_prefix("slot:") {
+                // Hover over a slot leaf — update visual hover highlight ONLY.
+                // Pattern: "slot:{idx}:leaf:{leaf_id}:focus"
+                if let Some((idx_str, leaf_rest)) = slot_rest.split_once(":leaf:") {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                self.sidebar_state.hovered_free_leaf = Some((idx, leaf_id));
+                                self.sidebar_data_dirty = true;
+                            }
+                        }
                     }
                 }
             }
@@ -5146,6 +5163,33 @@ impl ChartApp {
             return CursorStyle::None;
         }
 
+        // ── Active agent separator drag: show resize cursor for entire drag duration ──
+        if let Some((sep_idx, _, _)) = self.agent_sep_drag {
+            use uzor::panels::SeparatorOrientation;
+            let orientation = self.sidebar_state.agent_docking
+                .inner()
+                .separators()
+                .get(sep_idx)
+                .map(|s| s.orientation);
+            return match orientation {
+                Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
+                _ => CursorStyle::NsResize,
+            };
+        }
+
+        // ── Active slot separator drag: show resize cursor for entire drag duration ──
+        if let Some((slot_idx, sep_idx, _, _)) = self.slot_sep_drag {
+            use uzor::panels::SeparatorOrientation;
+            let orientation = self.sidebar_state.slot_dockings
+                .get(slot_idx)
+                .and_then(|d| d.inner().separators().get(sep_idx))
+                .map(|s| s.orientation);
+            return match orientation {
+                Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
+                _ => CursorStyle::NsResize,
+            };
+        }
+
         // Sidebar separator: show EwResize cursor when hovering over or dragging the separator.
         let on_sidebar_separator = self.sidebar_separator_drag_active
             || self.input_coordinator.borrow_mut().hovered_widget()
@@ -5168,6 +5212,48 @@ impl ChartApp {
         // should show the default cursor — modals capture all interaction.
         if self.watchlist_modal.is_open() || self.wl_group_name_input.is_open() {
             return CursorStyle::Default;
+        }
+
+        // ── Agent panel separator hover ────────────────────────────────────────
+        // Must be checked before the generic is_over_ui() → Default fallback,
+        // because separator widgets ARE registered UI elements (so is_over_ui()
+        // would fire first and swallow the resize cursor).
+        {
+            use uzor::panels::SeparatorOrientation;
+            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered {
+                if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
+                    if let Ok(sep_idx) = idx_str.parse::<usize>() {
+                        let orientation = self.sidebar_state.agent_docking
+                            .inner()
+                            .separators()
+                            .get(sep_idx)
+                            .map(|s| s.orientation);
+                        return match orientation {
+                            Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
+                            _ => CursorStyle::NsResize,
+                        };
+                    }
+                }
+
+                // slot:{slot_idx}:sep:{sep_idx}
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
+                        if let (Ok(slot_idx), Ok(sep_idx)) =
+                            (slot_str.parse::<usize>(), sep_str.parse::<usize>())
+                        {
+                            let orientation = self.sidebar_state.slot_dockings
+                                .get(slot_idx)
+                                .and_then(|d| d.inner().separators().get(sep_idx))
+                                .map(|s| s.orientation);
+                            return match orientation {
+                                Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
+                                _ => CursorStyle::NsResize,
+                            };
+                        }
+                    }
+                }
+            }
         }
 
         // Universal UI check: any registered widget hovered = default cursor.
@@ -8998,6 +9084,7 @@ impl ChartApp {
                         }
                     }
                     self.sidebar_data_dirty = true;
+                    self.autosave_snapshot();
                 }
                 return;
             }
@@ -9221,6 +9308,37 @@ impl ChartApp {
                             }
                             eprintln!("[ChartApp] slot:{}:leaf:{}:close", idx, raw);
                             self.sidebar_data_dirty = true;
+                            self.autosave_snapshot();
+                        }
+                        return;
+                    }
+
+                    // --- slot:{idx}:leaf:{leaf_id}:split_h / :split_v — add sibling leaf ---
+                    let is_split_h = leaf_rest.strip_suffix(":split_h");
+                    let is_split_v = leaf_rest.strip_suffix(":split_v");
+                    if let Some(leaf_id_str) = is_split_h.or(is_split_v) {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let src_leaf = uzor::panels::LeafId(raw);
+                            // Only act when the split target is the focused leaf.
+                            if self.sidebar_state.focused_free_leaf == Some((idx, src_leaf)) {
+                                // Spawn a new Dom panel as the split result.
+                                let symbol = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.symbol.clone())
+                                    .unwrap_or_else(|| "BTCUSDT".to_string());
+                                let new_pid = self.panels_store.create_dom(symbol, 0.01);
+                                let new_item = sidebar_content::free_slot::FreeItem::Dom(new_pid);
+                                let new_id = self.sidebar_state.slot_dockings[idx]
+                                    .inner_mut()
+                                    .tree_mut()
+                                    .add_leaf_near(new_item, src_leaf);
+                                self.sidebar_state.focused_free_leaf = Some((idx, new_id));
+                                eprintln!("[ChartApp] slot:{}:leaf:{}:{} → new leaf {:?}",
+                                    idx, raw,
+                                    if is_split_h.is_some() { "split_h" } else { "split_v" },
+                                    new_id);
+                                self.sidebar_data_dirty = true;
+                                self.autosave_snapshot();
+                            }
                         }
                         return;
                     }
@@ -21903,12 +22021,34 @@ impl ChartApp {
 
                 // --- 2. Insert into target slot ---
                 if tgt_slot == src {
-                    // Same slot, different leaf — use add_leaf_near for sibling placement.
-                    // (zone Right/Down → after, Left/Up → before — add_leaf_near always inserts after)
-                    let new_id = self.sidebar_state.slot_dockings[tgt_slot]
-                        .inner_mut()
-                        .tree_mut()
-                        .add_leaf_with_panels(panels, active_tab);
+                    // Same slot, different leaf — respect zone for sibling placement.
+                    let tgt_exists = self.sidebar_state.slot_dockings[tgt_slot]
+                        .inner()
+                        .tree()
+                        .leaf(tgt_leaf)
+                        .is_some();
+                    let new_id = if tgt_exists && zone != DropZone::Center {
+                        // Insert as sibling of target leaf.
+                        let first_panel = panels[0].clone();
+                        let new_id = self.sidebar_state.slot_dockings[tgt_slot]
+                            .inner_mut()
+                            .tree_mut()
+                            .add_leaf_near(first_panel, tgt_leaf);
+                        for p in panels.into_iter().skip(1) {
+                            self.sidebar_state.slot_dockings[tgt_slot]
+                                .inner_mut()
+                                .tree_mut()
+                                .add_tab(new_id, p);
+                        }
+                        new_id
+                    } else {
+                        // Center zone or target not found — re-insert at root.
+                        self.sidebar_state.slot_dockings[tgt_slot]
+                            .inner_mut()
+                            .tree_mut()
+                            .add_leaf_with_panels(panels, active_tab)
+                    };
+                    self.sidebar_state.focused_free_leaf = Some((tgt_slot, new_id));
                     eprintln!("[cross_drag] same-slot move src={:?} → new leaf {:?} (zone={:?})", src_leaf, new_id, zone);
                 } else {
                     // Different slot: check if target leaf still exists (it should — source is in a different slot).
