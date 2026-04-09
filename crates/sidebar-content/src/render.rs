@@ -14,6 +14,7 @@ use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_curs
 use zengeld_chart::ToolbarTheme;
 use zengeld_chart::state::command::ObjectCategory;
 use uzor::input::InputCoordinator;
+use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
 
 use crate::state::{SidebarState, RightSidebarPanel};
@@ -137,6 +138,18 @@ pub struct RightSidebarResult {
     pub agent_chat_viewport_h: f64,
     /// Viewport height of the agent PTY area (for drag math).
     pub agent_pty_viewport_h: f64,
+
+    /// Bounding rect of the currently-rendered free-slot body (inner padded area).
+    ///
+    /// Set only when a `Slot1..Slot4` panel is rendered.  Used by `chart-app`
+    /// for cross-container drag hit testing — checking whether the cursor is
+    /// inside this slot's DockingManager area.
+    pub active_slot_body_rect: Option<WidgetRect>,
+
+    /// Index of the currently-rendered free slot (0-based, matching `slot_dockings[]`).
+    ///
+    /// Set only when `active_slot_body_rect` is `Some`.
+    pub active_slot_index: Option<usize>,
 }
 
 // =============================================================================
@@ -376,6 +389,28 @@ pub fn render_right_sidebar(
 
     }
 
+    // Slot panels: add [+] button in the header to spawn a new trading panel.
+    if let Some(slot_idx) = panel.slot_index() {
+        let slot_idx = slot_idx as usize;
+        let add_size = 16.0;
+        let add_x = close_x - add_size - 8.0;
+        let add_y = rect.y + (header_height - add_size) / 2.0;
+        let spawn_id = format!("slot:{}:new", slot_idx);
+        let spawn_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&spawn_id));
+        if spawn_hov {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(add_x - close_pad, add_y - close_pad, add_size + close_pad * 2.0, add_size + close_pad * 2.0, 4.0);
+        }
+        let spawn_color = if spawn_hov { "#58a6ff" } else { &toolbar_theme.item_text_muted };
+        draw_svg_icon(ctx, Icon::Plus.svg(), add_x, add_y, add_size, add_size, spawn_color);
+        input_coordinator.register(
+            spawn_id.as_str(),
+            WidgetRect::new(add_x, add_y, add_size, add_size),
+            uzor::input::Sense::CLICK,
+        );
+        result.item_rects.push((spawn_id, WidgetRect::new(add_x, add_y, add_size, add_size)));
+    }
+
     // Header bottom border.
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
@@ -540,6 +575,8 @@ pub fn render_right_sidebar(
                 slot_idx,
                 sidebar_state,
                 toolbar_theme,
+                &mut result,
+                input_coordinator,
                 free_item_renderer,
             );
         }
@@ -3291,15 +3328,23 @@ fn render_slot_panel(
     slot_idx: usize,
     state: &mut SidebarState,
     theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
+
+    const LEAF_HEADER_H: f32 = 22.0;
 
     let pad = 8.0;
     let inner_x = rect.x + pad;
     let inner_y = content_y + pad;
     let inner_w = (content_width - pad * 2.0).max(0.0);
     let inner_h = (rect.height - (inner_y - rect.y) - pad).max(0.0);
+
+    // Record the slot body rect for cross-container drag hit testing.
+    result.active_slot_body_rect = Some(WidgetRect::new(inner_x, inner_y, inner_w, inner_h));
+    result.active_slot_index = Some(slot_idx);
 
     let mgr = state.slot_dockings[slot_idx].inner_mut();
     mgr.layout(UzorPanelRect {
@@ -3342,7 +3387,9 @@ fn render_slot_panel(
         return inner_h;
     }
 
-    for (_leaf_id, item, r) in leaves {
+    let focused_free_leaf = state.focused_free_leaf;
+
+    for (leaf_id, item, r) in leaves {
         // Draw border/background frame for the leaf.
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
@@ -3350,8 +3397,79 @@ fn render_slot_panel(
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
+        // ── Per-leaf header ──────────────────────────────────────────────────
+        let header_x = r.x;
+        let header_y = r.y;
+        let header_w = r.width;
+        let header_h = LEAF_HEADER_H;
+
+        // Header background — focused leaf gets a brighter shade.
+        let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
+        ctx.set_fill_color(if is_focused { "#2d3748" } else { "#1a1f2a" });
+        ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, header_h as f64);
+
+        // Header bottom separator.
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(header_x as f64, (header_y + header_h) as f64);
+        ctx.line_to((header_x + header_w) as f64, (header_y + header_h) as f64);
+        ctx.stroke();
+
+        // Panel title text.
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("#c9d1d9");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            item.title(),
+            (header_x + 6.0) as f64,
+            (header_y + header_h / 2.0) as f64,
+        );
+
+        // Close [×] button — 16×16 box at right edge of header.
+        let close_w = 16.0_f32;
+        let close_h = 16.0_f32;
+        let close_x = header_x + header_w - close_w - 3.0;
+        let close_y = header_y + (header_h - close_h) / 2.0;
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color("#8b949e");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            "\u{00d7}", // ×
+            (close_x + close_w / 2.0) as f64,
+            (close_y + close_h / 2.0) as f64,
+        );
+
+        // Register header focus widget (full header minus close button area).
+        let focus_id = format!("slot:{}:leaf:{}:focus", slot_idx, leaf_id.0);
+        let focus_rect = WidgetRect::new(
+            header_x as f64,
+            header_y as f64,
+            (header_w - close_w - 3.0) as f64,
+            header_h as f64,
+        );
+        input_coordinator.register(focus_id.as_str(), focus_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((focus_id, focus_rect));
+
+        // Register close button widget.
+        let close_id = format!("slot:{}:leaf:{}:close", slot_idx, leaf_id.0);
+        let close_rect = WidgetRect::new(
+            close_x as f64,
+            close_y as f64,
+            close_w as f64,
+            close_h as f64,
+        );
+        input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((close_id, close_rect));
+
+        // Body rect: everything below the header.
+        let body_y = r.y + LEAF_HEADER_H;
+        let body_h = (r.height - LEAF_HEADER_H).max(0.0);
+
         // Delegate actual panel content to the caller-supplied renderer.
-        free_item_renderer(&item, (r.x, r.y, r.width, r.height), ctx);
+        free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx);
     }
 
     inner_h

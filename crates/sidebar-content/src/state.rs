@@ -345,6 +345,9 @@ pub struct SidebarState {
     /// Content is per-chart-preset; these are rebuilt from the active preset's
     /// `slot_layouts` on preset switch.
     pub slot_dockings: [crate::free_slot::SlotDockingManager; 4],
+
+    /// `(slot_idx 0..4, leaf_id)` — currently focused leaf in free slot sidebars.
+    pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -584,6 +587,7 @@ impl Default for SidebarState {
                 crate::free_slot::SlotDockingManager::new(),
                 crate::free_slot::SlotDockingManager::new(),
             ],
+            focused_free_leaf: None,
         }
     }
 }

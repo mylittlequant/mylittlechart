@@ -104,6 +104,38 @@ use zengeld_chart::ui::modal_settings::DualSliderHandle;
 use zengeld_chart::drawing::TimeframeVisibilityConfig;
 
 // =============================================================================
+// Cross-drag helpers
+// =============================================================================
+
+/// Parse `"slot:{idx}:leaf:{leaf_id}:focus"` widget ids into `(slot_idx, LeafId)`.
+///
+/// Returns `None` when the string does not match the pattern or the numbers
+/// are out of valid range.
+pub(crate) fn parse_free_leaf_focus_widget(wid: &str) -> Option<(usize, uzor::panels::LeafId)> {
+    let rest = wid.strip_prefix("slot:")?;
+    let (idx_str, leaf_rest) = rest.split_once(":leaf:")?;
+    let leaf_id_str = leaf_rest.strip_suffix(":focus")?;
+    let slot_idx = idx_str.parse::<usize>().ok().filter(|&i| i < 4)?;
+    let raw = leaf_id_str.parse::<u64>().ok()?;
+    Some((slot_idx, uzor::panels::LeafId(raw)))
+}
+
+/// Compute the drop zone for a given cursor position relative to a `PanelRect`.
+///
+/// Uses 33% edge threshold for Up/Down/Left/Right, center otherwise.
+fn compute_drop_zone(cx: f32, cy: f32, r: &uzor::panels::PanelRect) -> uzor::panels::DropZone {
+    use uzor::panels::DropZone;
+    let rel_x = (cx - r.x) / r.width.max(1.0);
+    let rel_y = (cy - r.y) / r.height.max(1.0);
+    let edge = 0.33_f32;
+    if rel_x < edge { DropZone::Left }
+    else if rel_x > 1.0 - edge { DropZone::Right }
+    else if rel_y < edge { DropZone::Up }
+    else if rel_y > 1.0 - edge { DropZone::Down }
+    else { DropZone::Center }
+}
+
+// =============================================================================
 // ChartApp input methods
 // =============================================================================
 
@@ -973,6 +1005,41 @@ impl ChartApp {
                             }
                         }
                         None => {}
+                    }
+                }
+            }
+        }
+
+        // ── Cross-container free-leaf drag initiation ────────────────────────
+        // If the drag starts on a `slot:{idx}:leaf:{leaf_id}:focus` widget,
+        // prime a CrossDragState (not yet activated — activation requires
+        // CROSS_DRAG_THRESHOLD pixels of movement in on_drag_move).
+        if self.cross_drag.is_none() && self.sidebar_state.is_right_open() {
+            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered {
+                if let Some(cross) = parse_free_leaf_focus_widget(wid) {
+                    let (slot_idx, leaf_id) = cross;
+                    // Extract a clone of the FreeItem from the tree.
+                    let item_opt: Option<sidebar_content::free_slot::FreeItem> =
+                        self.sidebar_state.slot_dockings[slot_idx]
+                            .inner()
+                            .tree()
+                            .leaf(leaf_id)
+                            .and_then(|l| l.panels.get(l.active_tab).cloned());
+                    if let Some(item) = item_opt {
+                        self.cross_drag = Some(crate::CrossDragState {
+                            source_slot: slot_idx,
+                            source_leaf: leaf_id,
+                            item,
+                            start_pos: (x, y),
+                            current_pos: (x, y),
+                            activated: false,
+                            target: None,
+                        });
+                        // Let on_drag_move decide activation. The drag-to-scroll
+                        // below MUST NOT fire simultaneously with cross_drag.
+                        self.ui_drag_active = true;
+                        return false;
                     }
                 }
             }
@@ -2342,6 +2409,49 @@ impl ChartApp {
 
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+        // ── Cross-container free-leaf drag update ─────────────────────────
+        if self.cross_drag.is_some() {
+            let threshold = crate::CROSS_DRAG_THRESHOLD;
+            if let Some(ref mut cd) = self.cross_drag {
+                cd.current_pos = (x, y);
+                if !cd.activated {
+                    let dx2 = x - cd.start_pos.0;
+                    let dy2 = y - cd.start_pos.1;
+                    if (dx2 * dx2 + dy2 * dy2).sqrt() >= threshold {
+                        cd.activated = true;
+                    }
+                }
+            }
+            if self.cross_drag.as_ref().map(|cd| cd.activated).unwrap_or(false) {
+                // Compute drop target: scan all 4 slots' panel_rects.
+                let (cx, cy) = (x as f32, y as f32);
+                let mut found_target: Option<(usize, uzor::panels::LeafId, uzor::panels::DropZone)> = None;
+                for slot_idx in 0..4 {
+                    let rects: Vec<(uzor::panels::LeafId, uzor::panels::PanelRect)> = self
+                        .sidebar_state
+                        .slot_dockings[slot_idx]
+                        .inner()
+                        .panel_rects()
+                        .iter()
+                        .map(|(&id, &r)| (id, r))
+                        .collect();
+                    for (lid, r) in rects {
+                        if cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height {
+                            let zone = compute_drop_zone(cx, cy, &r);
+                            found_target = Some((slot_idx, lid, zone));
+                            break;
+                        }
+                    }
+                    if found_target.is_some() { break; }
+                }
+                if let Some(ref mut cd) = self.cross_drag {
+                    cd.target = found_target;
+                }
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // ── PTY host-side selection drag extension ────────────────────────
         if self.agent_pty_drag_active {
             // Clamp to the PTY rect for graceful out-of-bounds behavior.
@@ -3267,6 +3377,17 @@ impl ChartApp {
     /// Handle drag end at `(x, y)`.
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
+
+        // ── End cross-container free-leaf drag ───────────────────────────────
+        if let Some(cd) = self.cross_drag.take() {
+            if cd.activated {
+                self.apply_cross_drag_drop(cd);
+            }
+            // If not activated: no movement → was a click → fall through to
+            // normal click handling (sidebar_data_dirty will be set if needed).
+            self.sidebar_data_dirty = true;
+            return;
+        }
 
         // ── End host-side PTY selection drag ────────────────────────────────
         if self.agent_pty_drag_active {
@@ -8840,6 +8961,66 @@ impl ChartApp {
                     }
                 }
                 return;
+            }
+        }
+
+        // === Slot panel control clicks ===
+
+        // --- slot:{idx}:new — spawn a DOM panel into the slot ---
+        if let Some(idx_str) = widget_id.strip_prefix("slot:").and_then(|s| s.strip_suffix(":new")) {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if idx < 4 {
+                    let symbol = self.panel_app.panel_grid.active_window()
+                        .map(|w| w.symbol.clone())
+                        .unwrap_or_else(|| "BTCUSDT".to_string());
+                    // TODO: popup menu with 11 variants — for now always spawn Dom.
+                    let panel_id = self.panels_store.create_dom(symbol, 0.01);
+                    let item = sidebar_content::free_slot::FreeItem::Dom(panel_id);
+                    self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
+                    eprintln!("[ChartApp] slot:{}:new — spawned Dom panel_id={}", idx, panel_id.0);
+                    self.sidebar_data_dirty = true;
+                }
+            }
+            return;
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:focus — set focused free leaf ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            // Try to parse "slot:{idx}:leaf:{leaf_id}:focus"
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            self.sidebar_state.focused_free_leaf = Some((idx, leaf_id));
+                            self.sidebar_data_dirty = true;
+                        }
+                        return;
+                    }
+
+                    // --- slot:{idx}:leaf:{leaf_id}:close — remove leaf + clean up state ---
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":close") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            // Retrieve the FreeItem before removing so we can clean up the store.
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.panels.get(l.active_tab).cloned());
+                            self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().remove_leaf(leaf_id);
+                            if let Some(item) = item_opt {
+                                self.panels_store.remove(&item);
+                            }
+                            if self.sidebar_state.focused_free_leaf == Some((idx, leaf_id)) {
+                                self.sidebar_state.focused_free_leaf = None;
+                            }
+                            eprintln!("[ChartApp] slot:{}:leaf:{}:close", idx, raw);
+                            self.sidebar_data_dirty = true;
+                        }
+                        return;
+                    }
+                }
             }
         }
 
@@ -21466,6 +21647,119 @@ impl ChartApp {
                 eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
             }
         }
+    }
+
+    // =========================================================================
+    // Cross-container drag drop
+    // =========================================================================
+
+    /// Perform the actual cross-container leaf move when a drag is released.
+    ///
+    /// Extracts the source leaf from its slot, then inserts it into the target
+    /// slot.  If no target leaf was computed (cursor released over empty area or
+    /// outside all slots) the leaf is re-inserted at the root of the source slot.
+    /// If the source and target are in the same slot the move is a no-op to
+    /// avoid redundant layout churn.
+    fn apply_cross_drag_drop(&mut self, cd: crate::CrossDragState) {
+        use uzor::panels::DropZone;
+
+        let src = cd.source_slot;
+        let src_leaf = cd.source_leaf;
+
+        match cd.target {
+            Some((tgt_slot, tgt_leaf, zone)) if tgt_slot != src || tgt_leaf != src_leaf => {
+                // --- 1. Extract payload from source slot ---
+                // Clone the panels from the source leaf before removing.
+                let panels_opt: Option<Vec<sidebar_content::free_slot::FreeItem>> =
+                    self.sidebar_state.slot_dockings[src]
+                        .inner()
+                        .tree()
+                        .leaf(src_leaf)
+                        .map(|l| l.panels.clone());
+                let active_tab = self.sidebar_state.slot_dockings[src]
+                    .inner()
+                    .tree()
+                    .leaf(src_leaf)
+                    .map(|l| l.active_tab)
+                    .unwrap_or(0);
+
+                let panels = match panels_opt {
+                    Some(p) if !p.is_empty() => p,
+                    _ => {
+                        eprintln!("[cross_drag] source leaf {:?} not found — aborting", src_leaf);
+                        return;
+                    }
+                };
+
+                // Remove from source.
+                self.sidebar_state.slot_dockings[src].inner_mut().tree_mut().remove_leaf(src_leaf);
+                if self.sidebar_state.focused_free_leaf == Some((src, src_leaf)) {
+                    self.sidebar_state.focused_free_leaf = None;
+                }
+
+                // --- 2. Insert into target slot ---
+                if tgt_slot == src {
+                    // Same slot, different leaf — use add_leaf_near for sibling placement.
+                    // (zone Right/Down → after, Left/Up → before — add_leaf_near always inserts after)
+                    let new_id = self.sidebar_state.slot_dockings[tgt_slot]
+                        .inner_mut()
+                        .tree_mut()
+                        .add_leaf_with_panels(panels, active_tab);
+                    eprintln!("[cross_drag] same-slot move src={:?} → new leaf {:?} (zone={:?})", src_leaf, new_id, zone);
+                } else {
+                    // Different slot: check if target leaf still exists (it should — source is in a different slot).
+                    let tgt_exists = self.sidebar_state.slot_dockings[tgt_slot]
+                        .inner()
+                        .tree()
+                        .leaf(tgt_leaf)
+                        .is_some();
+
+                    let new_id = if tgt_exists && zone != DropZone::Center {
+                        // Insert as sibling of target leaf.
+                        let first_panel = panels[0].clone();
+                        let new_id = self.sidebar_state.slot_dockings[tgt_slot]
+                            .inner_mut()
+                            .tree_mut()
+                            .add_leaf_near(first_panel, tgt_leaf);
+                        // Add remaining panels as tabs on the new leaf.
+                        for p in panels.into_iter().skip(1) {
+                            self.sidebar_state.slot_dockings[tgt_slot]
+                                .inner_mut()
+                                .tree_mut()
+                                .add_tab(new_id, p);
+                        }
+                        new_id
+                    } else {
+                        // Center zone or target not found — add at root.
+                        self.sidebar_state.slot_dockings[tgt_slot]
+                            .inner_mut()
+                            .tree_mut()
+                            .add_leaf_with_panels(panels, active_tab)
+                    };
+
+                    self.sidebar_state.focused_free_leaf = Some((tgt_slot, new_id));
+                    eprintln!(
+                        "[cross_drag] slot {} leaf {:?} → slot {} new leaf {:?} (zone={:?})",
+                        src, src_leaf, tgt_slot, new_id, zone
+                    );
+                }
+            }
+            _ => {
+                // No target (released outside all slots) or same leaf → re-insert at root.
+                let panels_opt = self.sidebar_state.slot_dockings[src]
+                    .inner()
+                    .tree()
+                    .leaf(src_leaf)
+                    .is_some();
+                if !panels_opt {
+                    // Leaf was already removed during movement — nothing to re-insert.
+                }
+                // Leaf still exists in source slot (we never removed it when there's no target).
+                eprintln!("[cross_drag] no target — leaf stays in slot {}", src);
+            }
+        }
+
+        self.sidebar_data_dirty = true;
     }
 }
 
