@@ -369,6 +369,18 @@ pub struct SidebarState {
     /// Expand, and Reset Sizes actions.
     pub agent_layout_dropdown_open: bool,
 
+    /// Which agent Chat leaf's sessions dropdown is currently open (`None` = all closed).
+    ///
+    /// Only one leaf can have its dropdown open at a time. Clicking the
+    /// `[Sessions ▾]` button toggles this; clicking outside closes it.
+    pub agent_sessions_dropdown: Option<uzor::panels::LeafId>,
+
+    /// Cached list of past sessions for each leaf (populated when the dropdown opens).
+    pub agent_past_sessions: HashMap<uzor::panels::LeafId, Vec<gate4agent::SessionMeta>>,
+
+    /// Currently active session ID per Chat leaf (`None` = new/unsaved session).
+    pub agent_active_session_id: HashMap<uzor::panels::LeafId, Option<String>>,
+
     /// Which docking leaf in a free slot is currently under the mouse cursor (hover highlight only).
     ///
     /// `(slot_idx 0..4, leaf_id)` — updated on every `on_mouse_move`, reset to `None` each frame.
@@ -618,6 +630,9 @@ impl Default for SidebarState {
             slot_spawn_dropdown: None,
             hovered_free_leaf: None,
             agent_layout_dropdown_open: false,
+            agent_sessions_dropdown: None,
+            agent_past_sessions: HashMap::new(),
+            agent_active_session_id: HashMap::new(),
         }
     }
 }

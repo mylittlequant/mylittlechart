@@ -4343,7 +4343,7 @@ fn render_agents_pane(
     is_hovered: bool,
     grid_rect: uzor::panels::PanelRect,
 ) {
-    let header_h = 18.0_f64;
+    let header_h = 40.0_f64;
     let px = prect.x as f64;
     let py = prect.y as f64;
     let pw = prect.width as f64;
@@ -4363,7 +4363,7 @@ fn render_agents_pane(
         result.item_rects.push((pane_wid, pane_rect));
     }
 
-    // ── Pane header ───────────────────────────────────────────────────────────
+    // ── Pane header (40 px) ───────────────────────────────────────────────────
     {
         // Focused = bright accent; hovered (not focused) = subtle highlight; idle = dim.
         let hdr_bg = if is_focused { "#1a1a2e" } else if is_hovered { "#171725" } else { "#13131c" };
@@ -4376,7 +4376,8 @@ fn render_agents_pane(
             ctx.fill_rect(px, py, pw, 2.0);
         }
 
-        // CLI icon + short workdir label.
+        // ── Row 1: mode icon + CLI name + workdir (top half, y = py + 10) ────
+        let row1_y = py + 11.0;
         let workdir_str = desc.workdir
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -4386,16 +4387,16 @@ fn render_agents_pane(
             gate4agent::InstanceMode::Chat => "◎",
         };
         let label = format!("{} {} · {}", mode_icon, desc.cli.label(), workdir_str);
-        ctx.set_font("10px sans-serif");
+        ctx.set_font("11px sans-serif");
         ctx.set_fill_color(if is_focused { "#9090b0" } else { "#555566" });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&label, px + 4.0, py + header_h / 2.0);
+        ctx.fill_text(&label, px + 4.0, row1_y);
 
-        // [×] close button.
+        // [×] close button — vertically centred in top row.
         let close_w = 14.0;
-        let close_x = px + pw - close_w - 2.0;
-        let close_y = py + (header_h - close_w) / 2.0;
+        let close_x = px + pw - close_w - 4.0;
+        let close_y = row1_y - close_w / 2.0;
         let close_rect = WidgetRect::new(close_x, close_y, close_w, close_w);
         let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
         let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
@@ -4403,7 +4404,7 @@ fn render_agents_pane(
             ctx.set_fill_color("#7f1d1d");
             ctx.fill_rounded_rect(close_x, close_y, close_w, close_w, 2.0);
         }
-        ctx.set_font("10px sans-serif");
+        ctx.set_font("11px sans-serif");
         ctx.set_fill_color(if cl_hov { "#ffffff" } else { "#555566" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -4411,7 +4412,101 @@ fn render_agents_pane(
         input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_wid, close_rect));
 
-        // (Header focus widget removed — pane-wide focus absorber handles it.)
+        // ── Row 2: mode-specific controls (bottom half, y = py + 29) ─────────
+        let row2_y = py + 29.0;
+        let btn_h = 16.0;
+        let btn_pad = 4.0;
+
+        match desc.mode {
+            gate4agent::InstanceMode::Chat => {
+                // [+ New] button.
+                let new_label = "+ New";
+                let new_w = 46.0;
+                let new_x = px + 4.0;
+                let new_btn_y = row2_y - btn_h / 2.0;
+                let new_wid = format!("agent:leaf:{}:new_session", leaf_id.0);
+                let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(new_wid.as_str()));
+                ctx.set_fill_color(if new_hov { "#1d4ed8" } else { "#1e3a5f" });
+                ctx.fill_rounded_rect(new_x, new_btn_y, new_w, btn_h, 3.0);
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color("#c0d8ff");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(new_label, new_x + new_w / 2.0, new_btn_y + btn_h / 2.0);
+                let new_rect = WidgetRect::new(new_x, new_btn_y, new_w, btn_h);
+                input_coordinator.register(new_wid.as_str(), new_rect, uzor::input::Sense::CLICK);
+                result.item_rects.push((new_wid, new_rect));
+
+                // [Sessions ▾] button.
+                let sess_label = "Sessions ▾";
+                let sess_w = 72.0;
+                let sess_x = new_x + new_w + btn_pad;
+                let sess_btn_y = row2_y - btn_h / 2.0;
+                let sess_wid = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
+                let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
+                let sess_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(sess_wid.as_str()));
+                ctx.set_fill_color(if sess_open || sess_hov { "#1d4ed8" } else { "#1e3a5f" });
+                ctx.fill_rounded_rect(sess_x, sess_btn_y, sess_w, btn_h, 3.0);
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color("#c0d8ff");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(sess_label, sess_x + sess_w / 2.0, sess_btn_y + btn_h / 2.0);
+                let sess_rect = WidgetRect::new(sess_x, sess_btn_y, sess_w, btn_h);
+                input_coordinator.register(sess_wid.as_str(), sess_rect, uzor::input::Sense::CLICK);
+                result.item_rects.push((sess_wid, sess_rect));
+
+                // Active session indicator (small text after the buttons).
+                let indicator_x = sess_x + sess_w + btn_pad + 2.0;
+                let session_text = match state.agent_active_session_id.get(&leaf_id) {
+                    Some(Some(_)) => "●",
+                    _ => "○",
+                };
+                ctx.set_font("9px sans-serif");
+                ctx.set_fill_color("#445566");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(session_text, indicator_x, row2_y);
+            }
+
+            gate4agent::InstanceMode::Pty => {
+                // Check if PTY is running (snapshot exists with Pty mode).
+                let is_running = state.agent_leaf_snapshots.get(&leaf_id).map(|snap| {
+                    matches!(&snap.mode, crate::agent_types::AgentSnapshotMode::Pty(_))
+                }).unwrap_or(false);
+
+                if !is_running {
+                    // [▶ Start] button in the header.
+                    let start_label = "▶ Start";
+                    let start_w = 60.0;
+                    let start_x = px + 4.0;
+                    let start_btn_y = row2_y - btn_h / 2.0;
+                    let start_wid = format!("agent:leaf:{}:start", leaf_id.0);
+                    let start_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
+                    ctx.set_fill_color(if start_hov { "#2563eb" } else { "#1d4ed8" });
+                    ctx.fill_rounded_rect(start_x, start_btn_y, start_w, btn_h, 3.0);
+                    ctx.set_font("10px sans-serif");
+                    ctx.set_fill_color("#ffffff");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(start_label, start_x + start_w / 2.0, start_btn_y + btn_h / 2.0);
+                    let start_rect = WidgetRect::new(start_x, start_btn_y, start_w, btn_h);
+                    input_coordinator.register(start_wid.as_str(), start_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((start_wid, start_rect));
+                } else {
+                    // Running indicator.
+                    ctx.set_font("9px sans-serif");
+                    ctx.set_fill_color("#22c55e");
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text("● running", px + 4.0, row2_y);
+                }
+            }
+        }
+
+        // Thin separator at the bottom of the header.
+        ctx.set_fill_color("#222230");
+        ctx.fill_rect(px, py + header_h - 1.0, pw, 1.0);
     }
 
     // ── Content area (below header) ───────────────────────────────────────────
@@ -4430,6 +4525,91 @@ fn render_agents_pane(
                 ctx, leaf_id, px, content_y2, pw, content_h2,
                 desc, state, theme, result, input_coordinator, is_focused,
             );
+        }
+    }
+
+    // ── Sessions dropdown overlay (rendered last so it's on top) ──────────────
+    if state.agent_sessions_dropdown == Some(leaf_id) {
+        let drop_x = px + 4.0;
+        let drop_y = py + header_h;
+        let drop_w = (pw - 8.0).max(100.0);
+        let item_h = 22.0;
+        let sessions = state.agent_past_sessions.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
+        let drop_h = (sessions.len() as f64 * item_h + 4.0).max(28.0);
+
+        // Backdrop to close the dropdown on outside click.
+        let backdrop_wid = format!("agent:leaf:{}:sessions_backdrop", leaf_id.0);
+        let backdrop_rect = WidgetRect::new(px, py + header_h, pw, content_h2);
+        input_coordinator.register(backdrop_wid.as_str(), backdrop_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((backdrop_wid, backdrop_rect));
+
+        // Dropdown background.
+        ctx.set_fill_color("#1a1a2a");
+        ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
+        ctx.set_fill_color("#2a2a40");
+        ctx.fill_rect(drop_x, drop_y, drop_w, 1.0); // top border
+
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        if sessions.is_empty() {
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("#555566");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("No sessions yet", drop_x + drop_w / 2.0, drop_y + drop_h / 2.0);
+        } else {
+            for (idx, session) in sessions.iter().enumerate() {
+                let item_y = drop_y + 2.0 + idx as f64 * item_h;
+                let item_wid = format!("agent:leaf:{}:load_session:{}", leaf_id.0, idx);
+                let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
+                let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+                if item_hov {
+                    ctx.set_fill_color("#252540");
+                    ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
+                }
+
+                // Relative timestamp label.
+                let age_secs = (now_ts - session.timestamp).max(0) as u64;
+                let age_label = if age_secs < 60 {
+                    "just now".to_string()
+                } else if age_secs < 3600 {
+                    format!("{}m ago", age_secs / 60)
+                } else if age_secs < 86400 {
+                    format!("{}h ago", age_secs / 3600)
+                } else if age_secs < 172_800 {
+                    "yesterday".to_string()
+                } else {
+                    format!("{}d ago", age_secs / 86400)
+                };
+
+                ctx.set_font("9px sans-serif");
+                ctx.set_fill_color("#4466aa");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&age_label, drop_x + 6.0, item_y + item_h / 2.0);
+
+                let ts_w = 44.0;
+                let preview_x = drop_x + 6.0 + ts_w;
+                let preview_max_w = (drop_w - 6.0 - ts_w - 6.0).max(0.0);
+                let preview = if session.preview.len() > 38 {
+                    format!("{}…", &session.preview[..38])
+                } else {
+                    session.preview.clone()
+                };
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color(if item_hov { "#d0d8f0" } else { "#8888aa" });
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                // Clip the preview text to available width (simple truncation already applied).
+                let _ = preview_max_w;
+                ctx.fill_text(&preview, preview_x, item_y + item_h / 2.0);
+
+                input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
+                result.item_rects.push((item_wid, item_rect));
+            }
         }
     }
 }

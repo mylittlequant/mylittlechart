@@ -113,8 +113,6 @@ pub enum PersistedAgentCli {
     Claude,
     Codex,
     Gemini,
-    /// Cursor Agent (PIPE transport).
-    Cursor,
     /// OpenCode / sst-opencode (PIPE transport).
     OpenCode,
 }

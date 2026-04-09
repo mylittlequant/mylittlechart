@@ -1737,7 +1737,6 @@ impl ChartApp {
                                         zengeld_chart::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
                                         zengeld_chart::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
                                         zengeld_chart::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
-                                        zengeld_chart::PersistedAgentCli::Cursor => gate4agent::AgentCli::Cursor,
                                         zengeld_chart::PersistedAgentCli::OpenCode => gate4agent::AgentCli::OpenCode,
                                     };
                                     let mode = match persisted.mode {
@@ -7549,7 +7548,6 @@ impl ChartApp {
                         gate4agent::AgentCli::Claude => zengeld_chart::PersistedAgentCli::Claude,
                         gate4agent::AgentCli::Codex => zengeld_chart::PersistedAgentCli::Codex,
                         gate4agent::AgentCli::Gemini => zengeld_chart::PersistedAgentCli::Gemini,
-                        gate4agent::AgentCli::Cursor => zengeld_chart::PersistedAgentCli::Cursor,
                         gate4agent::AgentCli::OpenCode => zengeld_chart::PersistedAgentCli::OpenCode,
                     },
                     mode: match desc.mode {

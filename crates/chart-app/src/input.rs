@@ -9062,6 +9062,76 @@ impl ChartApp {
                 return;
             }
 
+            // --- Per-leaf: agent:leaf:{id}:new_session (clear chat, start fresh) ---
+            if let Some(id_str) = rest.strip_suffix(":new_session") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id) {
+                        let iid = desc.instance_id;
+                        self.agent.clear_chat_instance(iid);
+                        self.sidebar_state.agent_active_session_id.insert(leaf_id, None);
+                        self.sidebar_state.agent_leaf_snapshots.remove(&leaf_id);
+                        self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:sessions_toggle (open/close sessions dropdown) ---
+            if let Some(id_str) = rest.strip_suffix(":sessions_toggle") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if self.sidebar_state.agent_sessions_dropdown == Some(leaf_id) {
+                        self.sidebar_state.agent_sessions_dropdown = None;
+                    } else {
+                        if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id) {
+                            let iid = desc.instance_id;
+                            let sessions = self.agent.list_past_sessions_instance(iid);
+                            self.sidebar_state.agent_past_sessions.insert(leaf_id, sessions);
+                        }
+                        self.sidebar_state.agent_sessions_dropdown = Some(leaf_id);
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:sessions_backdrop (close dropdown on outside click) ---
+            if let Some(id_str) = rest.strip_suffix(":sessions_backdrop") {
+                if let Ok(_raw) = id_str.parse::<u64>() {
+                    self.sidebar_state.agent_sessions_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:load_session:{index} ---
+            if let Some(pos) = rest.find(":load_session:") {
+                let id_str = &rest[..pos];
+                let idx_str = &rest[pos + ":load_session:".len()..];
+                if let (Ok(raw), Ok(idx)) = (id_str.parse::<u64>(), idx_str.parse::<usize>()) {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    let (iid, session_id_opt) = {
+                        let desc = self.sidebar_state.agent_leaves.get(&leaf_id);
+                        let iid = desc.map(|d| d.instance_id);
+                        let session_id_opt = self.sidebar_state.agent_past_sessions
+                            .get(&leaf_id)
+                            .and_then(|sessions| sessions.get(idx))
+                            .map(|s| s.id.clone());
+                        (iid, session_id_opt)
+                    };
+                    if let (Some(iid), Some(session_id)) = (iid, session_id_opt) {
+                        self.agent.load_history_instance(iid, &session_id);
+                        self.sidebar_state.agent_active_session_id.insert(leaf_id, Some(session_id));
+                        self.sidebar_state.agent_chat_scrolls.remove(&leaf_id);
+                    }
+                    self.sidebar_state.agent_sessions_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
             // --- Per-leaf: agent:leaf:{id}:start (spawn on demand) ---
             if let Some(id_str) = rest.strip_suffix(":start") {
                 if let Ok(raw) = id_str.parse::<u64>() {
@@ -9076,7 +9146,6 @@ impl ChartApp {
                                     gate4agent::AgentCli::Claude   => CliTool::ClaudeCode,
                                     gate4agent::AgentCli::Codex    => CliTool::Codex,
                                     gate4agent::AgentCli::Gemini   => CliTool::Gemini,
-                                    gate4agent::AgentCli::Cursor   => CliTool::Cursor,
                                     gate4agent::AgentCli::OpenCode => CliTool::OpenCode,
                                 };
                                 let config = SessionConfig {

@@ -113,10 +113,6 @@ impl uzor::panels::DockPanel for AgentPaneLeaf {
                 InstanceMode::Pty  => "Gemini PTY",
                 InstanceMode::Chat => "Gemini Chat",
             },
-            AgentCli::Cursor => match self.mode {
-                InstanceMode::Pty  => "Cursor PTY",
-                InstanceMode::Chat => "Cursor Chat",
-            },
             AgentCli::OpenCode => match self.mode {
                 InstanceMode::Pty  => "OpenCode PTY",
                 InstanceMode::Chat => "OpenCode Chat",
