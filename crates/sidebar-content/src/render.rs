@@ -3631,9 +3631,9 @@ fn render_slot_panel(
     {
         use uzor::panels::SeparatorOrientation;
         let mgr = state.slot_dockings[slot_idx].inner();
-        let visual_thickness = 4.0_f64;
         let sep_hit_w = 8.0_f64;
         for (sep_idx, sep) in mgr.separators().iter().enumerate() {
+            let visual_thickness = sep.thickness_for_state() as f64;
             let sep_wid = format!("slot:{}:sep:{}", slot_idx, sep_idx);
             match sep.orientation {
                 SeparatorOrientation::Vertical => {
@@ -3984,13 +3984,15 @@ fn render_performance_panel(
 ///
 /// Layout:
 /// ```
-/// ┌─────────────────────────────────────────────────┐
-/// │ [+ Term] [+ Chat] [Split H] [Split V] [×] [CLI ▾]  ← control row (28px)
-/// ├─────────────────────────────────────────────────┤
-/// │                                                 │
-/// │  docking grid — one pane per leaf               │
-/// │                                                 │
-/// └─────────────────────────────────────────────────┘
+/// ┌─────────────────────────────────────────────────────────────────┐
+/// │ [PTY][Chat]  [Claude] [Codex] [Gemini] [OpenCode]  ← row 1 (28px)
+/// ├─────────────────────────────────────────────────────────────────┤
+/// │ [Layout ▾]  [×]                                    ← row 2 (28px)
+/// ├─────────────────────────────────────────────────────────────────┤
+/// │                                                                 │
+/// │  docking grid — one pane per leaf                               │
+/// │                                                                 │
+/// └─────────────────────────────────────────────────────────────────┘
 /// ```
 fn render_agents_panel(
     ctx: &mut dyn RenderContext,
@@ -4010,145 +4012,132 @@ fn render_agents_panel(
     let inner_w = content_width - pad * 2.0;
     let mut y = content_y + pad;
 
-    // ── Control row ───────────────────────────────────────────────────────────
+    // ── Row 1: Mode toggle [PTY][Chat] + CLI spawn buttons ────────────────────
     {
-        let focused = state.focused_agent_leaf;
-        let has_focused = focused.is_some();
+        let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
 
-        // Determine if focused leaf is Chat mode (for Chat-specific restrictions).
-        let focused_is_chat = focused
-            .and_then(|lid| state.agent_leaves.get(&lid))
-            .map(|desc| desc.mode == gate4agent::InstanceMode::Chat)
-            .unwrap_or(false);
-
-        // [+ Term] button
-        let term_btn_w = 56.0;
-        let term_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, term_btn_w, btn_h);
-        let term_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:new_pty"));
-        ctx.set_fill_color(if term_hov { "#2563eb" } else { "#1d4ed8" });
-        ctx.fill_rounded_rect(term_rect.x, term_rect.y, term_rect.width, term_rect.height, 3.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#ffffff");
+        // [PTY] segment
+        let toggle_w = 36.0;
+        let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
+        ctx.set_fill_color(if is_pty { "#1d4ed8" } else if pty_hov { "#2a2a45" } else { "#1e1e28" });
+        ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if is_pty { "#ffffff" } else { "#888899" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("+ Term", term_rect.x + term_btn_w / 2.0, term_rect.y + btn_h / 2.0);
-        input_coordinator.register("agent:new_pty", term_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:new_pty".to_string(), term_rect));
+        ctx.fill_text("PTY", pty_rect.x + toggle_w / 2.0, pty_rect.y + btn_h / 2.0);
+        if !is_pty {
+            input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
 
-        // [+ Chat] button — only meaningful for Claude, grey out for others
-        let chat_btn_x = x + term_btn_w + gap;
-        let chat_btn_w = 56.0;
-        let chat_rect = WidgetRect::new(chat_btn_x, y + (ctrl_h - btn_h) / 2.0, chat_btn_w, btn_h);
-        let chat_enabled = state.agent_default_cli == gate4agent::snapshot::AgentCli::Claude;
-        let chat_hov = chat_enabled && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:new_chat"));
-        ctx.set_fill_color(if !chat_enabled {
-            "#2a2a35"
-        } else if chat_hov {
-            "#0f766e"
+        // [Chat] segment
+        let chat_seg_x = x + toggle_w + 2.0;
+        let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
+        ctx.set_fill_color(if !is_pty { "#0d9488" } else if chat_hov { "#1a3535" } else { "#1e1e28" });
+        ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if !is_pty { "#ffffff" } else { "#888899" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Chat", chat_seg_rect.x + toggle_w / 2.0, chat_seg_rect.y + btn_h / 2.0);
+        if is_pty {
+            input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
+
+        // CLI spawn buttons: [Claude] [Codex] [Gemini] [OpenCode]
+        struct CliBtn { id: &'static str, label: &'static str, color: &'static str, hov_color: &'static str }
+        let cli_btns = [
+            CliBtn { id: "agent:spawn:claude",   label: "Claude",   color: "#2d1f4e", hov_color: "#3d2a66" },
+            CliBtn { id: "agent:spawn:codex",     label: "Codex",    color: "#1a2d1a", hov_color: "#243824" },
+            CliBtn { id: "agent:spawn:gemini",    label: "Gemini",   color: "#1a2040", hov_color: "#243055" },
+            CliBtn { id: "agent:spawn:opencode",  label: "OpenCode", color: "#2d2a15", hov_color: "#423d1e" },
+        ];
+        let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
+        let spawn_area_w = inner_w - (spawn_area_x - x);
+        let spawn_btn_w  = ((spawn_area_w - gap * 3.0) / 4.0).max(1.0);
+
+        for (i, btn) in cli_btns.iter().enumerate() {
+            let bx = spawn_area_x + i as f64 * (spawn_btn_w + gap);
+            let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
+            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
+            ctx.set_fill_color(if hov { btn.hov_color } else { btn.color });
+            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color("#ccccdd");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(btn.label, btn_rect.x + spawn_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
+            input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((btn.id.to_string(), btn_rect));
+        }
+
+        y += ctrl_h + gap;
+    }
+
+    // ── Row 2: Layout dropdown + close pane ───────────────────────────────────
+    {
+        let has_focused = state.focused_agent_leaf.is_some();
+
+        // [Layout ▾] dropdown button
+        let layout_w = 64.0;
+        let layout_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, layout_w, btn_h);
+        let layout_en   = has_focused;
+        let layout_open = state.agent_layout_dropdown_open;
+        let layout_hov  = layout_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:layout_menu"));
+        ctx.set_fill_color(if layout_open {
+            &theme.item_bg_hover
+        } else if !layout_en {
+            "#1e1e28"
+        } else if layout_hov {
+            &theme.item_bg_hover
         } else {
-            "#0d9488"
+            &theme.background
         });
-        ctx.fill_rounded_rect(chat_rect.x, chat_rect.y, chat_rect.width, chat_rect.height, 3.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if chat_enabled { "#ffffff" } else { "#666677" });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("+ Chat", chat_rect.x + chat_btn_w / 2.0, chat_rect.y + btn_h / 2.0);
-        if chat_enabled {
-            input_coordinator.register("agent:new_chat", chat_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:new_chat".to_string(), chat_rect));
-
-        // [Split H] button
-        let sh_x = chat_btn_x + chat_btn_w + gap;
-        let sh_w = 50.0;
-        let sh_rect = WidgetRect::new(sh_x, y + (ctrl_h - btn_h) / 2.0, sh_w, btn_h);
-        let sh_en = has_focused;
-        let sh_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split_h"));
-        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if sh_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(sh_rect.x, sh_rect.y, sh_rect.width, sh_rect.height, 3.0);
-        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
+        ctx.fill_rounded_rect(layout_rect.x, layout_rect.y, layout_rect.width, layout_rect.height, 3.0);
+        ctx.set_stroke_color(if layout_en { &theme.separator } else { "#333340" });
         ctx.set_stroke_width(1.0);
-        ctx.begin_path(); ctx.move_to(sh_rect.x, sh_rect.y); ctx.line_to(sh_rect.x + sh_w, sh_rect.y);
-        ctx.line_to(sh_rect.x + sh_w, sh_rect.y + btn_h); ctx.line_to(sh_rect.x, sh_rect.y + btn_h);
-        ctx.close_path(); ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(layout_rect.x, layout_rect.y);
+        ctx.line_to(layout_rect.x + layout_w, layout_rect.y);
+        ctx.line_to(layout_rect.x + layout_w, layout_rect.y + btn_h);
+        ctx.line_to(layout_rect.x, layout_rect.y + btn_h);
+        ctx.close_path();
+        ctx.stroke();
         ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if sh_en { &theme.item_text } else { "#555566" });
+        ctx.set_fill_color(if layout_en { &theme.item_text } else { "#555566" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Split H", sh_rect.x + sh_w / 2.0, sh_rect.y + btn_h / 2.0);
-        if sh_en {
-            input_coordinator.register("agent:split_h", sh_rect, uzor::input::Sense::CLICK);
+        ctx.fill_text("Layout \u{25be}", layout_rect.x + layout_w / 2.0, layout_rect.y + btn_h / 2.0);
+        if layout_en {
+            input_coordinator.register("agent:layout_menu", layout_rect, uzor::input::Sense::CLICK);
         }
-        result.item_rects.push(("agent:split_h".to_string(), sh_rect));
-
-        // [Split V] button
-        let sv_x = sh_x + sh_w + gap;
-        let sv_w = 50.0;
-        let sv_rect = WidgetRect::new(sv_x, y + (ctrl_h - btn_h) / 2.0, sv_w, btn_h);
-        let sv_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split_v"));
-        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if sv_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(sv_rect.x, sv_rect.y, sv_rect.width, sv_rect.height, 3.0);
-        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path(); ctx.move_to(sv_rect.x, sv_rect.y); ctx.line_to(sv_rect.x + sv_w, sv_rect.y);
-        ctx.line_to(sv_rect.x + sv_w, sv_rect.y + btn_h); ctx.line_to(sv_rect.x, sv_rect.y + btn_h);
-        ctx.close_path(); ctx.stroke();
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if sh_en { &theme.item_text } else { "#555566" });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Split V", sv_rect.x + sv_w / 2.0, sv_rect.y + btn_h / 2.0);
-        if sh_en {
-            input_coordinator.register("agent:split_v", sv_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:split_v".to_string(), sv_rect));
+        result.item_rects.push(("agent:layout_menu".to_string(), layout_rect));
 
         // [×] close pane
-        let close_x = sv_x + sv_w + gap;
+        let close_x = x + layout_w + gap;
         let close_w = 22.0;
         let close_rect = WidgetRect::new(close_x, y + (ctrl_h - btn_h) / 2.0, close_w, btn_h);
-        let cl_hov = sh_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
-        ctx.set_fill_color(if !sh_en { "#1e1e28" } else if cl_hov { "#7f1d1d" } else { &theme.background });
+        let cl_hov = layout_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+        ctx.set_fill_color(if !layout_en { "#1e1e28" } else if cl_hov { "#7f1d1d" } else { &theme.background });
         ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
-        ctx.set_stroke_color(if sh_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_color(if layout_en { &theme.separator } else { "#333340" });
         ctx.set_stroke_width(1.0);
         ctx.begin_path(); ctx.move_to(close_rect.x, close_rect.y); ctx.line_to(close_rect.x + close_w, close_rect.y);
         ctx.line_to(close_rect.x + close_w, close_rect.y + btn_h); ctx.line_to(close_rect.x, close_rect.y + btn_h);
         ctx.close_path(); ctx.stroke();
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if sh_en { "#ef4444" } else { "#555566" });
+        ctx.set_fill_color(if layout_en { "#ef4444" } else { "#555566" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("×", close_rect.x + close_w / 2.0, close_rect.y + btn_h / 2.0);
-        if sh_en {
+        if layout_en {
             input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:close_pane".to_string(), close_rect));
-
-        // [CLI ▾] cycle button — right-aligned
-        let cli_w = (inner_w - (close_x - x + close_w + gap)).max(50.0);
-        let cli_x = x + inner_w - cli_w;
-        let cli_rect = WidgetRect::new(cli_x, y + (ctrl_h - btn_h) / 2.0, cli_w, btn_h);
-        let cli_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:cli_cycle"));
-        ctx.set_fill_color(if cli_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(cli_rect.x, cli_rect.y, cli_rect.width, cli_rect.height, 3.0);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path(); ctx.move_to(cli_rect.x, cli_rect.y); ctx.line_to(cli_rect.x + cli_w, cli_rect.y);
-        ctx.line_to(cli_rect.x + cli_w, cli_rect.y + btn_h); ctx.line_to(cli_rect.x, cli_rect.y + btn_h);
-        ctx.close_path(); ctx.stroke();
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color("#4a9eff");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        let cli_label = format!("{} ▾", state.agent_default_cli.label());
-        ctx.fill_text(&cli_label, cli_rect.x + cli_w / 2.0, cli_rect.y + btn_h / 2.0);
-        input_coordinator.register("agent:cli_cycle", cli_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push(("agent:cli_cycle".to_string(), cli_rect));
-
-        // Suppress unused warning
-        let _ = focused_is_chat;
 
         y += ctrl_h + gap;
     }
@@ -4165,7 +4154,7 @@ fn render_agents_panel(
         ctx.set_fill_color("#555566");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Click + Term or + Chat to begin", x + inner_w / 2.0, y + grid_h / 2.0);
+        ctx.fill_text("Pick a CLI above to open a pane", x + inner_w / 2.0, y + grid_h / 2.0);
     } else {
         // Run layout every frame so panel_rects() always reflects the current grid_rect.
         state.agent_docking.inner_mut().layout(grid_rect);
@@ -4196,10 +4185,10 @@ fn render_agents_panel(
         }
 
         // Draw separator drag handles and register hit zones.
-        let sep_hit_w = 8.0_f64; // wider hit area than the 4px visual bar
+        let sep_hit_w = 8.0_f64; // wider hit area than the visual bar
         for (sep_idx, sep) in docking.separators().iter().enumerate() {
             use uzor::panels::SeparatorOrientation;
-            let visual_thickness = 4.0_f64;
+            let visual_thickness = sep.thickness_for_state() as f64;
             let sep_wid = format!("agent:sep:{}", sep_idx);
             match sep.orientation {
                 SeparatorOrientation::Vertical => {
@@ -4240,6 +4229,11 @@ fn render_agents_panel(
         }
     }
 
+    // ── Layout dropdown overlay (rendered on top of grid) ─────────────────────
+    if state.agent_layout_dropdown_open && state.focused_agent_leaf.is_some() {
+        render_agent_layout_dropdown(ctx, x, y, inner_w, theme, input_coordinator);
+    }
+
     y += grid_h + pad;
     y - content_y
 }
@@ -4248,6 +4242,92 @@ fn render_agents_panel(
 // Vertical:   position=x, offset=y, length=height
 // Horizontal: position=y, offset=x, length=width
 // This matches how the uzor separator module defines them.
+
+/// Render the Layout dropdown overlay for the agents control row.
+///
+/// Appears anchored just below the control row, left-aligned to the Layout
+/// button.  Lists Split H, Split V (separator), Expand, Reset Sizes.
+fn render_agent_layout_dropdown(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    grid_y: f64,
+    inner_w: f64,
+    theme: &ToolbarTheme,
+    input_coordinator: &mut InputCoordinator,
+) {
+    const ITEMS: &[Option<(&str, &str)>] = &[
+        Some(("agent:layout:split_h",   "Split H")),
+        Some(("agent:layout:split_v",   "Split V")),
+        None,                                          // separator line
+        Some(("agent:layout:expand",    "Expand")),
+        Some(("agent:layout:reset",     "Reset Sizes")),
+    ];
+
+    let row_h = 24.0;
+    let sep_h = 9.0;
+    let pad_v = 4.0;
+    let pad_h = 12.0;
+    let dropdown_w = 140.0_f64.min(inner_w);
+
+    // Height: sum of rows + separator + top/bottom padding.
+    let content_rows = ITEMS.iter().filter(|i| i.is_some()).count();
+    let sep_rows = ITEMS.iter().filter(|i| i.is_none()).count();
+    let dropdown_h = row_h * content_rows as f64 + sep_h * sep_rows as f64 + pad_v * 2.0;
+
+    // Anchor: below the control row, left-aligned to where the Layout button
+    // starts (chat_btn_x + chat_btn_w + gap = approximately x + 56 + 56 + 4 + 4 = x + 120).
+    // We use x directly for simplicity; the dropdown stays within the sidebar.
+    let layout_btn_x = x + 56.0 + 4.0 + 56.0 + 4.0; // term_w + gap + chat_w + gap
+    let dropdown_x = layout_btn_x.min(x + inner_w - dropdown_w);
+    let dropdown_y = grid_y - dropdown_h; // appear above the grid_y (just below the ctrl row)
+
+    // Background.
+    ctx.set_fill_color("#1a1f2aee");
+    ctx.fill_rounded_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h, 4.0);
+
+    // Border.
+    ctx.set_stroke_color(theme.separator.as_str());
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(dropdown_x, dropdown_y);
+    ctx.line_to(dropdown_x + dropdown_w, dropdown_y);
+    ctx.line_to(dropdown_x + dropdown_w, dropdown_y + dropdown_h);
+    ctx.line_to(dropdown_x, dropdown_y + dropdown_h);
+    ctx.line_to(dropdown_x, dropdown_y);
+    ctx.stroke();
+
+    let mut cur_y = dropdown_y + pad_v;
+    for item in ITEMS {
+        match item {
+            None => {
+                // Separator line.
+                let sep_mid = cur_y + sep_h / 2.0;
+                ctx.set_stroke_color(theme.separator.as_str());
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(dropdown_x + 4.0, sep_mid);
+                ctx.line_to(dropdown_x + dropdown_w - 4.0, sep_mid);
+                ctx.stroke();
+                cur_y += sep_h;
+            }
+            Some((widget_id, label)) => {
+                let row_rect = WidgetRect::new(dropdown_x, cur_y, dropdown_w, row_h);
+                let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(*widget_id));
+                if is_hov {
+                    ctx.set_fill_color("#2d3748ff");
+                    ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
+                }
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(if is_hov { "#e2e8f0" } else { "#c9d1d9" });
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(label, dropdown_x + pad_h, cur_y + row_h / 2.0);
+                input_coordinator.register(*widget_id, row_rect, uzor::input::Sense::CLICK);
+                cur_y += row_h;
+            }
+        }
+    }
+}
 
 /// Render a single agent pane within the docking grid.
 fn render_agents_pane(

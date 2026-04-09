@@ -104,38 +104,6 @@ use zengeld_chart::ui::modal_settings::DualSliderHandle;
 use zengeld_chart::drawing::TimeframeVisibilityConfig;
 
 // =============================================================================
-// Cross-drag helpers
-// =============================================================================
-
-/// Parse `"slot:{idx}:leaf:{leaf_id}:focus"` widget ids into `(slot_idx, LeafId)`.
-///
-/// Returns `None` when the string does not match the pattern or the numbers
-/// are out of valid range.
-pub(crate) fn parse_free_leaf_focus_widget(wid: &str) -> Option<(usize, uzor::panels::LeafId)> {
-    let rest = wid.strip_prefix("slot:")?;
-    let (idx_str, leaf_rest) = rest.split_once(":leaf:")?;
-    let leaf_id_str = leaf_rest.strip_suffix(":focus")?;
-    let slot_idx = idx_str.parse::<usize>().ok().filter(|&i| i < 4)?;
-    let raw = leaf_id_str.parse::<u64>().ok()?;
-    Some((slot_idx, uzor::panels::LeafId(raw)))
-}
-
-/// Compute the drop zone for a given cursor position relative to a `PanelRect`.
-///
-/// Uses 33% edge threshold for Up/Down/Left/Right, center otherwise.
-fn compute_drop_zone(cx: f32, cy: f32, r: &uzor::panels::PanelRect) -> uzor::panels::DropZone {
-    use uzor::panels::DropZone;
-    let rel_x = (cx - r.x) / r.width.max(1.0);
-    let rel_y = (cy - r.y) / r.height.max(1.0);
-    let edge = 0.33_f32;
-    if rel_x < edge { DropZone::Left }
-    else if rel_x > 1.0 - edge { DropZone::Right }
-    else if rel_y < edge { DropZone::Up }
-    else if rel_y > 1.0 - edge { DropZone::Down }
-    else { DropZone::Center }
-}
-
-// =============================================================================
 // ChartApp input methods
 // =============================================================================
 
@@ -1082,41 +1050,6 @@ impl ChartApp {
                                 }
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        // ── Cross-container free-leaf drag initiation ────────────────────────
-        // If the drag starts on a `slot:{idx}:leaf:{leaf_id}:focus` widget,
-        // prime a CrossDragState (not yet activated — activation requires
-        // CROSS_DRAG_THRESHOLD pixels of movement in on_drag_move).
-        if self.cross_drag.is_none() && self.sidebar_state.is_right_open() {
-            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
-            if let Some(ref wid) = hovered {
-                if let Some(cross) = parse_free_leaf_focus_widget(wid) {
-                    let (slot_idx, leaf_id) = cross;
-                    // Extract a clone of the FreeItem from the tree.
-                    let item_opt: Option<sidebar_content::free_slot::FreeItem> =
-                        self.sidebar_state.slot_dockings[slot_idx]
-                            .inner()
-                            .tree()
-                            .leaf(leaf_id)
-                            .and_then(|l| l.panels.get(l.active_tab).cloned());
-                    if let Some(item) = item_opt {
-                        self.cross_drag = Some(crate::CrossDragState {
-                            source_slot: slot_idx,
-                            source_leaf: leaf_id,
-                            item,
-                            start_pos: (x, y),
-                            current_pos: (x, y),
-                            activated: false,
-                            target: None,
-                        });
-                        // Let on_drag_move decide activation. The drag-to-scroll
-                        // below MUST NOT fire simultaneously with cross_drag.
-                        self.ui_drag_active = true;
-                        return false;
                     }
                 }
             }
@@ -2524,49 +2457,6 @@ impl ChartApp {
             return;
         }
 
-        // ── Cross-container free-leaf drag update ─────────────────────────
-        if self.cross_drag.is_some() {
-            let threshold = crate::CROSS_DRAG_THRESHOLD;
-            if let Some(ref mut cd) = self.cross_drag {
-                cd.current_pos = (x, y);
-                if !cd.activated {
-                    let dx2 = x - cd.start_pos.0;
-                    let dy2 = y - cd.start_pos.1;
-                    if (dx2 * dx2 + dy2 * dy2).sqrt() >= threshold {
-                        cd.activated = true;
-                    }
-                }
-            }
-            if self.cross_drag.as_ref().map(|cd| cd.activated).unwrap_or(false) {
-                // Compute drop target: scan all 4 slots' panel_rects.
-                let (cx, cy) = (x as f32, y as f32);
-                let mut found_target: Option<(usize, uzor::panels::LeafId, uzor::panels::DropZone)> = None;
-                for slot_idx in 0..4 {
-                    let rects: Vec<(uzor::panels::LeafId, uzor::panels::PanelRect)> = self
-                        .sidebar_state
-                        .slot_dockings[slot_idx]
-                        .inner()
-                        .panel_rects()
-                        .iter()
-                        .map(|(&id, &r)| (id, r))
-                        .collect();
-                    for (lid, r) in rects {
-                        if cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height {
-                            let zone = compute_drop_zone(cx, cy, &r);
-                            found_target = Some((slot_idx, lid, zone));
-                            break;
-                        }
-                    }
-                    if found_target.is_some() { break; }
-                }
-                if let Some(ref mut cd) = self.cross_drag {
-                    cd.target = found_target;
-                }
-            }
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
         // ── PTY host-side selection drag extension ────────────────────────
         if self.agent_pty_drag_active {
             // Clamp to the PTY rect for graceful out-of-bounds behavior.
@@ -3504,17 +3394,6 @@ impl ChartApp {
         if self.slot_sep_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             self.autosave_snapshot();
-            return;
-        }
-
-        // ── End cross-container free-leaf drag ───────────────────────────────
-        if let Some(cd) = self.cross_drag.take() {
-            if cd.activated {
-                self.apply_cross_drag_drop(cd);
-            }
-            // If not activated: no movement → was a click → fall through to
-            // normal click handling (sidebar_data_dirty will be set if needed).
-            self.sidebar_data_dirty = true;
             return;
         }
 
@@ -8881,53 +8760,159 @@ impl ChartApp {
 
         // === Agent panel control clicks ===
 
-        // --- [+ Term] button — add a new PTY leaf ---
-        if widget_id == "agent:new_pty" {
+        // --- [PTY] mode toggle ---
+        if widget_id == "agent:mode:pty" {
+            self.sidebar_state.agent_spawn_mode = gate4agent::InstanceMode::Pty;
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- [Chat] mode toggle ---
+        if widget_id == "agent:mode:chat" {
+            self.sidebar_state.agent_spawn_mode = gate4agent::InstanceMode::Chat;
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- CLI spawn buttons: agent:spawn:{claude|codex|gemini|opencode} ---
+        if let Some(cli_str) = widget_id.strip_prefix("agent:spawn:") {
+            use gate4agent::AgentCli;
             use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
-            let cli = self.sidebar_state.agent_default_cli;
+            let cli = match cli_str {
+                "claude"   => AgentCli::Claude,
+                "codex"    => AgentCli::Codex,
+                "gemini"   => AgentCli::Gemini,
+                "opencode" => AgentCli::OpenCode,
+                _ => return,
+            };
+            let mode = self.sidebar_state.agent_spawn_mode;
             let workdir = self.agent.cli_workdir(cli);
             let _ = std::fs::create_dir_all(&workdir);
-            match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
+            match self.agent.create_instance(cli, mode, workdir.clone()) {
                 Ok(instance_id) => {
-                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Pty };
+                    let leaf = AgentPaneLeaf { instance_id, cli, mode };
                     let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
                     let desc = AgentLeafDescriptor {
-                        instance_id, cli, mode: gate4agent::InstanceMode::Pty,
-                        workdir, chat_session_id: None,
+                        instance_id, cli, mode, workdir, chat_session_id: None,
                     };
                     self.sidebar_state.agent_leaves.insert(leaf_id, desc);
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    eprintln!("[ChartApp] agent:new_pty — leaf {:?} cli={:?}", leaf_id, cli);
+                    if mode == gate4agent::InstanceMode::Chat {
+                        self.agent.load_latest_history_instance(instance_id);
+                    }
+                    eprintln!("[ChartApp] agent:spawn:{} mode={:?} — leaf {:?}", cli_str, mode, leaf_id);
                 }
-                Err(e) => eprintln!("[ChartApp] agent:new_pty create_instance error: {}", e),
+                Err(e) => eprintln!("[ChartApp] agent:spawn:{} error: {}", cli_str, e),
             }
             self.sidebar_data_dirty = true;
             return;
         }
 
-        // --- [+ Chat] button — add a new Chat leaf ---
-        if widget_id == "agent:new_chat" {
-            use sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
-            let cli = self.sidebar_state.agent_default_cli;
-            let workdir = self.agent.cli_workdir(cli);
-            let _ = std::fs::create_dir_all(&workdir);
-            match self.agent.create_instance(cli, gate4agent::InstanceMode::Chat, workdir.clone()) {
-                Ok(instance_id) => {
-                    let leaf = AgentPaneLeaf { instance_id, cli, mode: gate4agent::InstanceMode::Chat };
-                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
-                    let desc = AgentLeafDescriptor {
-                        instance_id, cli, mode: gate4agent::InstanceMode::Chat,
-                        workdir, chat_session_id: None,
-                    };
-                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
-                    self.sidebar_state.focused_agent_leaf = Some(leaf_id);
-                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    // Pre-load latest chat history for the new chat leaf.
-                    self.agent.load_latest_history_instance(instance_id);
-                    eprintln!("[ChartApp] agent:new_chat — leaf {:?} cli={:?}", leaf_id, cli);
+        // --- [Layout ▾] menu toggle ---
+        if widget_id == "agent:layout_menu" {
+            self.sidebar_state.agent_layout_dropdown_open = !self.sidebar_state.agent_layout_dropdown_open;
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- Layout dropdown: Expand (hide all leaves except focused) ---
+        if widget_id == "agent:layout:expand" {
+            self.sidebar_state.agent_layout_dropdown_open = false;
+            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+                let all_ids: Vec<uzor::panels::LeafId> = self
+                    .sidebar_state
+                    .agent_leaves
+                    .keys()
+                    .copied()
+                    .collect();
+                for leaf_id in all_ids {
+                    if leaf_id != focus {
+                        self.sidebar_state.agent_docking.inner_mut().tree_mut().hide_leaf(leaf_id);
+                    } else {
+                        self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
+                    }
                 }
-                Err(e) => eprintln!("[ChartApp] agent:new_chat create_instance error: {}", e),
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- Layout dropdown: Reset Sizes (reset all separator proportions) ---
+        if widget_id == "agent:layout:reset" {
+            self.sidebar_state.agent_layout_dropdown_open = false;
+            // Show all leaves first (in case some were hidden by Expand).
+            let all_ids: Vec<uzor::panels::LeafId> = self
+                .sidebar_state
+                .agent_leaves
+                .keys()
+                .copied()
+                .collect();
+            for leaf_id in all_ids {
+                self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
+            }
+            self.sidebar_state.agent_docking.inner_mut().tree_mut().reset_proportions();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- Layout dropdown: Split H / Split V (via dropdown items) ---
+        // Also keep the old direct IDs so nothing breaks if called programmatically.
+        if widget_id == "agent:layout:split_h" || widget_id == "agent:layout:split_v" {
+            self.sidebar_state.agent_layout_dropdown_open = false;
+            // Rewrite to the canonical IDs so the shared split logic below handles them.
+            let canonical = if widget_id == "agent:layout:split_h" {
+                "agent:split_h"
+            } else {
+                "agent:split_v"
+            };
+            // Fall through by calling the split logic directly via a synthetic id.
+            // We duplicate the handler inline to avoid borrow issues.
+            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+                use uzor::panels::SplitKind;
+                use sidebar_content::agents_dock::AgentLeafDescriptor;
+                let kind = if canonical == "agent:split_h" { SplitKind::Horizontal } else { SplitKind::Vertical };
+                let rw = self.sidebar_state.right_sidebar_width as f32;
+                let rh = self.height as f32;
+                let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
+                    .split_leaf(focus, kind, rw, rh);
+                if new_ids.len() >= 2 {
+                    let original_id = new_ids[0];
+                    let sibling_id  = new_ids[1];
+                    if let Some(desc) = self.sidebar_state.agent_leaves.remove(&focus) {
+                        self.sidebar_state.agent_leaves.insert(original_id, desc);
+                    }
+                    let cli = gate4agent::AgentCli::Claude;
+                    let workdir = self.agent.cli_workdir(cli);
+                    let _ = std::fs::create_dir_all(&workdir);
+                    match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
+                        Ok(instance_id) => {
+                            let desc = AgentLeafDescriptor {
+                                instance_id, cli, mode: gate4agent::InstanceMode::Pty,
+                                workdir, chat_session_id: None,
+                            };
+                            self.sidebar_state.agent_leaves.insert(sibling_id, desc);
+                            self.sidebar_state.focused_agent_leaf = Some(sibling_id);
+                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(sibling_id);
+                        }
+                        Err(e) => eprintln!("[ChartApp] layout split create_instance error: {}", e),
+                    }
+                    if let Some(v) = self.sidebar_state.agent_pty_selections.remove(&focus) {
+                        self.sidebar_state.agent_pty_selections.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_pty_scrolls.remove(&focus) {
+                        self.sidebar_state.agent_pty_scrolls.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_chat_scrolls.remove(&focus) {
+                        self.sidebar_state.agent_chat_scrolls.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_input_buffers.remove(&focus) {
+                        self.sidebar_state.agent_input_buffers.insert(original_id, v);
+                    }
+                    if let Some(v) = self.sidebar_state.agent_leaf_snapshots.remove(&focus) {
+                        self.sidebar_state.agent_leaf_snapshots.insert(original_id, v);
+                    }
+                }
             }
             self.sidebar_data_dirty = true;
             return;
@@ -8953,7 +8938,7 @@ impl ChartApp {
                         self.sidebar_state.agent_leaves.insert(original_id, desc);
                     }
                     // Create a new instance for the sibling.
-                    let cli = self.sidebar_state.agent_default_cli;
+                    let cli = gate4agent::AgentCli::Claude;
                     let workdir = self.agent.cli_workdir(cli);
                     let _ = std::fs::create_dir_all(&workdir);
                     match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
@@ -9014,18 +8999,6 @@ impl ChartApp {
                 }
                 self.sidebar_data_dirty = true;
             }
-            return;
-        }
-
-        // --- [CLI ▾] cycle default CLI for new panes ---
-        if widget_id == "agent:cli_cycle" {
-            use gate4agent::AgentCli;
-            self.sidebar_state.agent_default_cli = match self.sidebar_state.agent_default_cli {
-                AgentCli::Claude => AgentCli::Codex,
-                AgentCli::Codex  => AgentCli::Gemini,
-                AgentCli::Gemini => AgentCli::Claude,
-            };
-            self.sidebar_data_dirty = true;
             return;
         }
 
@@ -9100,9 +9073,11 @@ impl ChartApp {
                             gate4agent::InstanceMode::Pty => {
                                 use gate4agent::{SessionConfig, CliTool};
                                 let tool = match desc.cli {
-                                    gate4agent::AgentCli::Claude => CliTool::ClaudeCode,
-                                    gate4agent::AgentCli::Codex  => CliTool::Codex,
-                                    gate4agent::AgentCli::Gemini => CliTool::Gemini,
+                                    gate4agent::AgentCli::Claude   => CliTool::ClaudeCode,
+                                    gate4agent::AgentCli::Codex    => CliTool::Codex,
+                                    gate4agent::AgentCli::Gemini   => CliTool::Gemini,
+                                    gate4agent::AgentCli::Cursor   => CliTool::Cursor,
+                                    gate4agent::AgentCli::OpenCode => CliTool::OpenCode,
                                 };
                                 let config = SessionConfig {
                                     tool,
@@ -21978,143 +21953,6 @@ impl ChartApp {
         }
     }
 
-    // =========================================================================
-    // Cross-container drag drop
-    // =========================================================================
-
-    /// Perform the actual cross-container leaf move when a drag is released.
-    ///
-    /// Extracts the source leaf from its slot, then inserts it into the target
-    /// slot.  If no target leaf was computed (cursor released over empty area or
-    /// outside all slots) the leaf is re-inserted at the root of the source slot.
-    /// If the source and target are in the same slot the move is a no-op to
-    /// avoid redundant layout churn.
-    fn apply_cross_drag_drop(&mut self, cd: crate::CrossDragState) {
-        use uzor::panels::DropZone;
-
-        let src = cd.source_slot;
-        let src_leaf = cd.source_leaf;
-
-        match cd.target {
-            Some((tgt_slot, tgt_leaf, zone)) if tgt_slot != src || tgt_leaf != src_leaf => {
-                // --- 1. Extract payload from source slot ---
-                // Clone the panels from the source leaf before removing.
-                let panels_opt: Option<Vec<sidebar_content::free_slot::FreeItem>> =
-                    self.sidebar_state.slot_dockings[src]
-                        .inner()
-                        .tree()
-                        .leaf(src_leaf)
-                        .map(|l| l.panels.clone());
-                let active_tab = self.sidebar_state.slot_dockings[src]
-                    .inner()
-                    .tree()
-                    .leaf(src_leaf)
-                    .map(|l| l.active_tab)
-                    .unwrap_or(0);
-
-                let panels = match panels_opt {
-                    Some(p) if !p.is_empty() => p,
-                    _ => {
-                        eprintln!("[cross_drag] source leaf {:?} not found — aborting", src_leaf);
-                        return;
-                    }
-                };
-
-                // Remove from source.
-                self.sidebar_state.slot_dockings[src].inner_mut().tree_mut().remove_leaf(src_leaf);
-                if self.sidebar_state.focused_free_leaf == Some((src, src_leaf)) {
-                    self.sidebar_state.focused_free_leaf = None;
-                }
-
-                // --- 2. Insert into target slot ---
-                if tgt_slot == src {
-                    // Same slot, different leaf — respect zone for sibling placement.
-                    let tgt_exists = self.sidebar_state.slot_dockings[tgt_slot]
-                        .inner()
-                        .tree()
-                        .leaf(tgt_leaf)
-                        .is_some();
-                    let new_id = if tgt_exists && zone != DropZone::Center {
-                        // Insert as sibling of target leaf.
-                        let first_panel = panels[0].clone();
-                        let new_id = self.sidebar_state.slot_dockings[tgt_slot]
-                            .inner_mut()
-                            .tree_mut()
-                            .add_leaf_near(first_panel, tgt_leaf);
-                        for p in panels.into_iter().skip(1) {
-                            self.sidebar_state.slot_dockings[tgt_slot]
-                                .inner_mut()
-                                .tree_mut()
-                                .add_tab(new_id, p);
-                        }
-                        new_id
-                    } else {
-                        // Center zone or target not found — re-insert at root.
-                        self.sidebar_state.slot_dockings[tgt_slot]
-                            .inner_mut()
-                            .tree_mut()
-                            .add_leaf_with_panels(panels, active_tab)
-                    };
-                    self.sidebar_state.focused_free_leaf = Some((tgt_slot, new_id));
-                    eprintln!("[cross_drag] same-slot move src={:?} → new leaf {:?} (zone={:?})", src_leaf, new_id, zone);
-                } else {
-                    // Different slot: check if target leaf still exists (it should — source is in a different slot).
-                    let tgt_exists = self.sidebar_state.slot_dockings[tgt_slot]
-                        .inner()
-                        .tree()
-                        .leaf(tgt_leaf)
-                        .is_some();
-
-                    let new_id = if tgt_exists && zone != DropZone::Center {
-                        // Insert as sibling of target leaf.
-                        let first_panel = panels[0].clone();
-                        let new_id = self.sidebar_state.slot_dockings[tgt_slot]
-                            .inner_mut()
-                            .tree_mut()
-                            .add_leaf_near(first_panel, tgt_leaf);
-                        // Add remaining panels as tabs on the new leaf.
-                        for p in panels.into_iter().skip(1) {
-                            self.sidebar_state.slot_dockings[tgt_slot]
-                                .inner_mut()
-                                .tree_mut()
-                                .add_tab(new_id, p);
-                        }
-                        new_id
-                    } else {
-                        // Center zone or target not found — add at root.
-                        self.sidebar_state.slot_dockings[tgt_slot]
-                            .inner_mut()
-                            .tree_mut()
-                            .add_leaf_with_panels(panels, active_tab)
-                    };
-
-                    self.sidebar_state.focused_free_leaf = Some((tgt_slot, new_id));
-                    eprintln!(
-                        "[cross_drag] slot {} leaf {:?} → slot {} new leaf {:?} (zone={:?})",
-                        src, src_leaf, tgt_slot, new_id, zone
-                    );
-                }
-            }
-            _ => {
-                // No target (released outside all slots) or same exact leaf → no change.
-                // Removal only happens in the Some(target) arm above, so the leaf is still
-                // in the source slot. Verify this and warn if it somehow went missing.
-                let leaf_exists = self.sidebar_state.slot_dockings[src]
-                    .inner()
-                    .tree()
-                    .leaf(src_leaf)
-                    .is_some();
-                if !leaf_exists {
-                    // Defensive: if the leaf disappeared despite no explicit removal, log it.
-                    // Nothing to re-insert without the payload, so we just note the anomaly.
-                    eprintln!("[cross_drag] warning: source leaf {:?} missing in slot {} at drop (no target)", src_leaf, src);
-                }
-                // No action needed — leaf stays where it was.
-            }
-        }
-
-        self.sidebar_data_dirty = true;
-    }
 }
 
 // =============================================================================

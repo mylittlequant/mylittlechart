@@ -124,105 +124,6 @@ fn parse_timeframe_name(name: &str) -> Option<zengeld_chart::state::Timeframe> {
 
 /// Draw the ghost rect + compass drop-zone indicator for an active cross-drag.
 ///
-/// Called at the end of each frame while `ChartApp::cross_drag` is `Some` and
-/// activated.  Draws directly into `ctx` so it appears above all other content.
-fn render_cross_drag_overlay(
-    ctx: &mut dyn zengeld_chart::render::RenderContext,
-    cd: &CrossDragState,
-    sidebar_state: &sidebar_content::state::SidebarState,
-) {
-    use uzor::panels::{DropZone, DockPanel};
-    use zengeld_chart::render::{TextAlign, TextBaseline};
-
-    let (mx, my) = (cd.current_pos.0, cd.current_pos.1);
-
-    // --- Ghost rect (160×28, centred horizontally on cursor) ---
-    let ghost_w = 160.0_f64;
-    let ghost_h = 28.0_f64;
-    let ghost_x = mx - ghost_w / 2.0;
-    let ghost_y = my - ghost_h - 4.0; // slightly above cursor
-
-    // Semi-transparent dark fill.
-    ctx.set_global_alpha(0.85);
-    ctx.set_fill_color("#2d3748");
-    ctx.fill_rounded_rect(ghost_x, ghost_y, ghost_w, ghost_h, 4.0);
-
-    // Blue border.
-    ctx.set_stroke_color("#58a6ff");
-    ctx.set_stroke_width(1.5);
-    ctx.stroke_rounded_rect(ghost_x, ghost_y, ghost_w, ghost_h, 4.0);
-
-    // Panel title text.
-    ctx.set_fill_color("#c9d1d9");
-    ctx.set_font("11px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(
-        cd.item.title(),
-        ghost_x + ghost_w / 2.0,
-        ghost_y + ghost_h / 2.0,
-    );
-
-    // --- Compass (5 zones around the target leaf) ---
-    if let Some((tgt_slot, tgt_leaf, active_zone)) = cd.target {
-        let rect_opt = sidebar_state.slot_dockings[tgt_slot]
-            .inner()
-            .panel_rects()
-            .get(&tgt_leaf)
-            .copied();
-
-        if let Some(r) = rect_opt {
-            let cx = (r.x + r.width / 2.0) as f64;
-            let cy = (r.y + r.height / 2.0) as f64;
-            let sq = 22.0_f64;
-            let gap = 28.0_f64;
-
-            let zones: [(DropZone, f64, f64); 5] = [
-                (DropZone::Center, cx,        cy       ),
-                (DropZone::Up,     cx,        cy - gap ),
-                (DropZone::Down,   cx,        cy + gap ),
-                (DropZone::Left,   cx - gap,  cy       ),
-                (DropZone::Right,  cx + gap,  cy       ),
-            ];
-
-            for (zone, zx, zy) in zones {
-                let is_active = zone == active_zone;
-                let bx = zx - sq / 2.0;
-                let by = zy - sq / 2.0;
-
-                ctx.set_global_alpha(0.92);
-                if is_active {
-                    ctx.set_fill_color("#58a6ff");
-                } else {
-                    ctx.set_fill_color("#1a1f2a");
-                }
-                ctx.fill_rounded_rect(bx, by, sq, sq, 4.0);
-
-                ctx.set_stroke_color("#58a6ff");
-                ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(bx, by, sq, sq, 4.0);
-
-                // Zone label arrow (unicode).
-                let label = match zone {
-                    DropZone::Up     => "\u{2191}", // ↑
-                    DropZone::Down   => "\u{2193}", // ↓
-                    DropZone::Left   => "\u{2190}", // ←
-                    DropZone::Right  => "\u{2192}", // →
-                    DropZone::Center => "\u{25A0}", // ■
-                };
-                ctx.set_fill_color(if is_active { "#ffffff" } else { "#58a6ff" });
-                ctx.set_font("12px sans-serif");
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, zx, zy);
-            }
-        }
-    }
-
-    // Reset alpha so subsequent rendering is unaffected.
-    ctx.set_global_alpha(1.0);
-}
-
 // =============================================================================
 // MiniTickerData
 // =============================================================================
@@ -660,12 +561,6 @@ pub struct ChartApp {
     /// `sidebar-content` free of `zengeld-panels`.
     pub panels_store: panels_store::TradingPanelsStore,
 
-    /// In-progress cross-container drag state.
-    ///
-    /// Set when the user begins pressing on a free-leaf header and the cursor
-    /// moves more than `CROSS_DRAG_THRESHOLD` pixels.  Cleared on mouse-up.
-    pub(crate) cross_drag: Option<CrossDragState>,
-
     /// Active agent-panel separator drag.
     ///
     /// `(separator_index, start_mouse_pos, total_available_size)` — the total
@@ -836,38 +731,6 @@ pub(crate) struct SplitSeparatorDragState {
     /// Screen Y at drag start
     pub start_y: f64,
 }
-
-// =============================================================================
-// CrossDragState
-// =============================================================================
-
-/// State for an in-progress cross-container free-leaf drag.
-///
-/// Initiates when mouse-down lands on a `slot:{idx}:leaf:{id}:focus` widget
-/// and the cursor moves more than [`CROSS_DRAG_THRESHOLD`] pixels.
-/// Cleared in `on_drag_end`.
-#[derive(Debug, Clone)]
-pub(crate) struct CrossDragState {
-    /// Source slot index (0-based).
-    pub source_slot: usize,
-    /// Source leaf id within that slot's DockingManager.
-    pub source_leaf: uzor::panels::LeafId,
-    /// Payload snapshot — cheap clone (only holds a `PanelId` u64 inside).
-    pub item: sidebar_content::free_slot::FreeItem,
-    /// Screen position where mouse-down occurred.
-    pub start_pos: (f64, f64),
-    /// Current screen position of the cursor.
-    pub current_pos: (f64, f64),
-    /// Whether the drag has been activated (cursor moved > threshold).
-    pub activated: bool,
-    /// Computed drop target under the cursor: (slot_idx, leaf_id, zone).
-    /// `None` when cursor is not over any target leaf.
-    pub target: Option<(usize, uzor::panels::LeafId, uzor::panels::DropZone)>,
-}
-
-/// Minimum movement in pixels before a mouse-down on a leaf header is
-/// treated as a drag rather than a click.
-pub(crate) const CROSS_DRAG_THRESHOLD: f64 = 4.0;
 
 // =============================================================================
 // RenderOutput
@@ -1042,7 +905,6 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
-            cross_drag: None,
             agent_sep_drag: None,
             slot_sep_drag: None,
         };
@@ -1326,7 +1188,6 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
-            cross_drag: None,
             agent_sep_drag: None,
             slot_sep_drag: None,
         };
@@ -1506,7 +1367,6 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
-            cross_drag: None,
             agent_sep_drag: None,
             slot_sep_drag: None,
         };
@@ -1869,29 +1729,39 @@ impl ChartApp {
                                     uzor::panels::DockingManager::from_tree(tree);
 
                                 // Rebuild the agent_leaves map from persisted descriptors.
-                                // Each leaf gets a fresh InstanceId — no live session
-                                // yet. User action (or chat auto-resume) will populate
-                                // it via `MultiCliManager::create_instance` later.
+                                // Each leaf gets a registered instance via create_instance so
+                                // the Start button can find the ID in MultiCliManager's map.
                                 self.sidebar_state.agent_leaves.clear();
                                 for persisted in &ws.agents_tab_leaves {
                                     let cli = match persisted.cli {
                                         zengeld_chart::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
                                         zengeld_chart::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
                                         zengeld_chart::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
+                                        zengeld_chart::PersistedAgentCli::Cursor => gate4agent::AgentCli::Cursor,
+                                        zengeld_chart::PersistedAgentCli::OpenCode => gate4agent::AgentCli::OpenCode,
                                     };
                                     let mode = match persisted.mode {
                                         zengeld_chart::PersistedInstanceMode::Pty => gate4agent::InstanceMode::Pty,
                                         zengeld_chart::PersistedInstanceMode::Chat => gate4agent::InstanceMode::Chat,
                                     };
                                     let leaf_id = uzor::panels::LeafId(persisted.leaf_id);
-                                    let desc = sidebar_content::agents_dock::AgentLeafDescriptor {
-                                        instance_id: gate4agent::InstanceId::new(),
-                                        cli,
-                                        mode,
-                                        workdir: persisted.workdir.clone(),
-                                        chat_session_id: persisted.chat_session_id.clone(),
-                                    };
-                                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                                    let workdir = persisted.workdir.clone();
+                                    let _ = std::fs::create_dir_all(&workdir);
+                                    match self.agent.create_instance(cli, mode, workdir.clone()) {
+                                        Ok(instance_id) => {
+                                            let desc = sidebar_content::agents_dock::AgentLeafDescriptor {
+                                                instance_id,
+                                                cli,
+                                                mode,
+                                                workdir,
+                                                chat_session_id: persisted.chat_session_id.clone(),
+                                            };
+                                            self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[ChartApp] agents restore create_instance failed: {}", e);
+                                        }
+                                    }
                                 }
                                 let _ = by_id; // documented for readability; restore_tree ignores it today
                                 eprintln!(
@@ -5843,13 +5713,6 @@ impl ChartApp {
             None
         };
 
-        // 8a-pre. Render cross-drag ghost + compass overlay (topmost, above all sidebars).
-        if let Some(ref cd) = self.cross_drag {
-            if cd.activated {
-                render_cross_drag_overlay(ctx, cd, &self.sidebar_state);
-            }
-        }
-
         // 8a. Render color picker popups AFTER the sidebar so they draw on top of it.
         {
             let cp_result = self.panel_app.render_color_picker_popups(
@@ -7686,6 +7549,8 @@ impl ChartApp {
                         gate4agent::AgentCli::Claude => zengeld_chart::PersistedAgentCli::Claude,
                         gate4agent::AgentCli::Codex => zengeld_chart::PersistedAgentCli::Codex,
                         gate4agent::AgentCli::Gemini => zengeld_chart::PersistedAgentCli::Gemini,
+                        gate4agent::AgentCli::Cursor => zengeld_chart::PersistedAgentCli::Cursor,
+                        gate4agent::AgentCli::OpenCode => zengeld_chart::PersistedAgentCli::OpenCode,
                     },
                     mode: match desc.mode {
                         gate4agent::InstanceMode::Pty => zengeld_chart::PersistedInstanceMode::Pty,

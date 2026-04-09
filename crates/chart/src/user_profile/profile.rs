@@ -113,6 +113,10 @@ pub enum PersistedAgentCli {
     Claude,
     Codex,
     Gemini,
+    /// Cursor Agent (PIPE transport).
+    Cursor,
+    /// OpenCode / sst-opencode (PIPE transport).
+    OpenCode,
 }
 
 /// Local serializable mirror of `gate4agent::InstanceMode`.

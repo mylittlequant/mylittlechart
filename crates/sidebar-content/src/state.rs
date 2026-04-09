@@ -136,7 +136,9 @@ impl RightSidebarPanel {
 // =============================================================================
 
 /// Which AI CLI agent to use — re-exported from `gate4agent`.
-pub use gate4agent::snapshot::AgentCli;
+pub use gate4agent::AgentCli;
+/// Spawn mode (PTY terminal or Chat) — re-exported from `gate4agent`.
+pub use gate4agent::InstanceMode;
 
 // =============================================================================
 // State struct
@@ -277,8 +279,10 @@ pub struct SidebarState {
 
     // ── Agents panel state ────────────────────────────────────────────────────
 
-    /// Default CLI used when creating a new terminal pane (cycles via the CLI button).
-    pub agent_default_cli: AgentCli,
+    /// Spawn mode for new agent leaves — PTY terminal or Chat.
+    ///
+    /// Controlled by the [PTY | Chat] mode toggle in the agents panel control row.
+    pub agent_spawn_mode: InstanceMode,
 
     /// Bounding rect of the agent terminal content area for the focused leaf,
     /// in sidebar-local coordinates.  `None` when the Agents panel is not open
@@ -357,6 +361,13 @@ pub struct SidebarState {
 
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
     pub slot_spawn_dropdown: Option<usize>,
+
+    /// Whether the agent panel Layout dropdown is open.
+    ///
+    /// Toggled by clicking the `agent:layout_menu` button.
+    /// The dropdown renders as a small overlay listing Split H, Split V,
+    /// Expand, and Reset Sizes actions.
+    pub agent_layout_dropdown_open: bool,
 
     /// Which docking leaf in a free slot is currently under the mouse cursor (hover highlight only).
     ///
@@ -581,7 +592,7 @@ impl Default for SidebarState {
             metrics_history: HashMap::new(),
             metrics_last_sample: None,
             performance_data: PerformanceData::default(),
-            agent_default_cli: AgentCli::Claude,
+            agent_spawn_mode: InstanceMode::Pty,
             agent_terminal_rect: None,
             agent_terminal_size: None,
             agent_input_buffers: HashMap::new(),
@@ -606,6 +617,7 @@ impl Default for SidebarState {
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
             hovered_free_leaf: None,
+            agent_layout_dropdown_open: false,
         }
     }
 }

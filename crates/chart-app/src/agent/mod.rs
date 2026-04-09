@@ -5,7 +5,7 @@
 //! without changes.
 
 pub use gate4agent::{MultiCliManager, ManagerConfig};
-pub use gate4agent::snapshot::{
+pub use gate4agent::{
     AgentRenderSnapshot, AgentSnapshotMode, ChatMessage, ChatRole, TermCell, TermGrid, AgentCli,
 };
 
