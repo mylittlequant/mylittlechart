@@ -704,6 +704,41 @@ impl ChartApp {
             }
         }
 
+        // ── Chat host-side selection drag ────────────────────────────────────
+        // If the drag starts inside a Chat leaf's content area, begin a
+        // line-level text selection. Runs after PTY so PTY leaves are not affected.
+        {
+            let is_chat_leaf = self.sidebar_state.focused_agent_leaf
+                .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
+                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                .unwrap_or(false);
+            if is_chat_leaf {
+                let in_content = self.last_sidebar_result.as_ref()
+                    .and_then(|r| r.agent_content_rect)
+                    .map(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                    .unwrap_or(false);
+                if in_content {
+                    if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                        let hit = self.last_sidebar_result.as_ref()
+                            .and_then(|r| {
+                                r.agent_chat_line_rects.iter()
+                                    .find(|&&(_, _, yt, yb, lid)| lid == leaf_id && y >= yt && y < yb)
+                                    .copied()
+                            });
+                        if let Some((msg_idx, line_idx, _, _, _)) = hit {
+                            self.sidebar_state.agent_chat_selections.insert(
+                                leaf_id,
+                                sidebar_content::state::ChatSelection::new(msg_idx, line_idx),
+                            );
+                            self.sidebar_state.agent_chat_drag_active = true;
+                            self.sidebar_data_dirty = true;
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
         // Let the TextInputManager claim the drag if (x, y) falls inside a registered
         // text field (e.g. the HexColor field when the L2 color picker is visible).
         // This must run BEFORE the sidebar-separator check so early returns don't miss it.
@@ -2479,6 +2514,26 @@ impl ChartApp {
             return;
         }
 
+        // ── Chat host-side selection drag extension ───────────────────────
+        if self.sidebar_state.agent_chat_drag_active {
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let hit = self.last_sidebar_result.as_ref()
+                    .and_then(|r| {
+                        r.agent_chat_line_rects.iter()
+                            .find(|&&(_, _, yt, yb, lid)| lid == leaf_id && y >= yt && y < yb)
+                            .copied()
+                    });
+                if let Some((msg_idx, line_idx, _, _, _)) = hit {
+                    if let Some(sel) = self.sidebar_state.agent_chat_selections.get_mut(&leaf_id) {
+                        sel.end_msg = msg_idx;
+                        sel.end_line = line_idx;
+                        self.sidebar_data_dirty = true;
+                    }
+                }
+            }
+            return;
+        }
+
         // Forward to TextInputManager for text-selection drag (e.g. HexColor field).
         self.text_input.on_drag_move(x);
 
@@ -3407,6 +3462,22 @@ impl ChartApp {
                     .unwrap_or(true);
                 if is_empty {
                     self.sidebar_state.agent_pty_selections.remove(&leaf_id);
+                }
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End host-side chat selection drag ────────────────────────────────
+        if self.sidebar_state.agent_chat_drag_active {
+            self.sidebar_state.agent_chat_drag_active = false;
+            // If start==end the selection is empty — clear it so overlay vanishes.
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let is_empty = self.sidebar_state.agent_chat_selections.get(&leaf_id)
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true);
+                if is_empty {
+                    self.sidebar_state.agent_chat_selections.remove(&leaf_id);
                 }
             }
             self.sidebar_data_dirty = true;

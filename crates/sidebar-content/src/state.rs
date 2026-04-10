@@ -327,6 +327,12 @@ pub struct SidebarState {
     /// Per-leaf host-side PTY text selection.
     pub agent_pty_selections: HashMap<uzor::panels::LeafId, PtySelection>,
 
+    /// Per-leaf chat text selection (line-level).
+    pub agent_chat_selections: HashMap<uzor::panels::LeafId, ChatSelection>,
+
+    /// True while a chat drag-selection is in progress.
+    pub agent_chat_drag_active: bool,
+
     /// Per-leaf render snapshots (set each frame by chart-app before render).
     pub agent_leaf_snapshots: HashMap<uzor::panels::LeafId, crate::agent_types::AgentRenderSnapshot>,
 
@@ -411,6 +417,38 @@ impl PtySelection {
 
     pub fn is_empty(&self) -> bool {
         self.start_row == self.end_row && self.start_col == self.end_col
+    }
+}
+
+/// A host-side chat text selection in line coordinates.
+///
+/// Selects whole lines (not individual characters) for simplicity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChatSelection {
+    /// Index of the message where drag started.
+    pub start_msg: u16,
+    /// Line index within that message.
+    pub start_line: u16,
+    /// Index of the message where drag currently is.
+    pub end_msg: u16,
+    /// Line index within that message.
+    pub end_line: u16,
+}
+
+impl ChatSelection {
+    pub fn new(msg: u16, line: u16) -> Self {
+        Self { start_msg: msg, start_line: line, end_msg: msg, end_line: line }
+    }
+
+    /// Returns `((lo_msg, lo_line), (hi_msg, hi_line))` in reading order.
+    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
+        let s = (self.start_msg, self.start_line);
+        let e = (self.end_msg, self.end_line);
+        if s <= e { (s, e) } else { (e, s) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start_msg == self.end_msg && self.start_line == self.end_line
     }
 }
 
@@ -616,6 +654,8 @@ impl Default for SidebarState {
             agent_chat_scrolls: HashMap::new(),
             agent_pty_scrolls: HashMap::new(),
             agent_pty_selections: HashMap::new(),
+            agent_chat_selections: HashMap::new(),
+            agent_chat_drag_active: false,
             agent_leaf_snapshots: HashMap::new(),
             agent_docking: AgentDockingManager::new(),
             focused_agent_leaf: None,
