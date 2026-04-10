@@ -639,19 +639,26 @@ impl ChartApp {
         }
 
         // Double-click inside a Chat agent leaf → focus the chat input field.
+        // Use focus_content item_rects for hit-test (agent_terminal_rect may
+        // still hold the previous PTY leaf's rect when switching PTY→Chat).
         if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
                     .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                     .unwrap_or(false);
                 if is_chat {
-                    if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
-                        let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
-                        if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
-                            self.text_input.focus(crate::text_input::FieldId::AgentChat);
-                            self.sidebar_data_dirty = true;
-                            return;
-                        }
+                    let hit = self.last_sidebar_result.as_ref().map(|sr| {
+                        let wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
+                        sr.item_rects.iter().any(|(w, r)| {
+                            w == &wid && x >= r.x && x < r.x + r.width
+                                && y >= r.y && y < r.y + r.height
+                        })
+                    }).unwrap_or(false);
+                    if hit {
+                        eprintln!("[ChartApp] agent leaf chat input focused");
+                        self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                        self.sidebar_data_dirty = true;
+                        return;
                     }
                 }
             }
@@ -741,12 +748,14 @@ impl ChartApp {
                     })
                     .next()
             }) {
-                let is_pty = self.sidebar_state.agent_leaves.get(&hovered_leaf_id)
-                    .map(|d| d.mode == gate4agent::InstanceMode::Pty)
-                    .unwrap_or(false);
-                if is_pty && self.sidebar_state.focused_agent_leaf != Some(hovered_leaf_id) {
+                let leaf_mode = self.sidebar_state.agent_leaves.get(&hovered_leaf_id)
+                    .map(|d| d.mode);
+                if self.sidebar_state.focused_agent_leaf != Some(hovered_leaf_id) {
                     self.sidebar_state.focused_agent_leaf = Some(hovered_leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(hovered_leaf_id);
+                    self.sidebar_data_dirty = true;
+                }
+                if leaf_mode == Some(gate4agent::InstanceMode::Pty) {
                     // Update terminal rect immediately so pty_cell_at() works
                     // on this same mousedown without waiting for a re-render.
                     self.sidebar_state.agent_terminal_rect = Some((
@@ -9200,13 +9209,16 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    // Also focus PTY field if this is a PTY leaf.
-                    let is_pty = self.sidebar_state.agent_leaves.get(&leaf_id)
-                        .map(|d| d.mode == gate4agent::InstanceMode::Pty)
-                        .unwrap_or(false);
-                    if is_pty {
-                        self.text_input.focus(crate::text_input::FieldId::AgentPty);
-                        self.agent_pty_hover_focused = true;
+                    // Focus the appropriate input field for this leaf type.
+                    match self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode) {
+                        Some(gate4agent::InstanceMode::Pty) => {
+                            self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                            self.agent_pty_hover_focused = true;
+                        }
+                        Some(gate4agent::InstanceMode::Chat) => {
+                            self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                        }
+                        None => {}
                     }
                     self.sidebar_data_dirty = true;
                 }

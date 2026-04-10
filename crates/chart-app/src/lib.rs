@@ -5960,13 +5960,15 @@ impl ChartApp {
             }
         }
 
-        // Auto-snap chat scroll to bottom when new messages arrive for the focused chat leaf.
-        if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-            let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
-                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
-                .unwrap_or(false);
-            if is_chat {
-                // Get new message count from the leaf's snapshot.
+        // Auto-snap chat scroll to bottom when new messages arrive.
+        // Check ALL chat leaves (not just focused) so switching to a leaf
+        // that received messages while unfocused shows the latest content.
+        {
+            let chat_leaf_ids: Vec<uzor::panels::LeafId> = self.sidebar_state.agent_leaves.iter()
+                .filter(|(_, d)| d.mode == gate4agent::InstanceMode::Chat)
+                .map(|(id, _)| *id)
+                .collect();
+            for leaf_id in chat_leaf_ids {
                 let new_len = self.sidebar_state.agent_leaf_snapshots.get(&leaf_id)
                     .and_then(|snap| {
                         if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
@@ -5976,16 +5978,28 @@ impl ChartApp {
                         }
                     })
                     .unwrap_or(0);
-                // Snap to bottom when new messages arrive, using current frame dimensions.
-                if let Some(ref sidebar_result) = self.last_sidebar_result {
-                    let content_h = sidebar_result.agent_chat_content_height;
-                    let viewport_h = sidebar_result.agent_chat_viewport_h;
-                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(leaf_id).or_default();
-                    // Only snap if messages grew (new content arrived).
-                    let was_at_bottom = scroll.offset >= (content_h - viewport_h - 1.0).max(0.0);
-                    if was_at_bottom && new_len > 0 {
-                        let max_offset = (content_h - viewport_h).max(0.0);
-                        scroll.offset = max_offset;
+                if new_len == 0 { continue; }
+                // For the focused leaf use current-frame dimensions from sidebar_result.
+                // For non-focused leaves we don't have exact dimensions — snap
+                // offset to a large value; render will clamp to actual max_scroll.
+                let is_focused = self.sidebar_state.focused_agent_leaf == Some(leaf_id);
+                let scroll = self.sidebar_state.agent_chat_scrolls.entry(leaf_id).or_default();
+                if is_focused {
+                    if let Some(ref sidebar_result) = self.last_sidebar_result {
+                        let content_h = sidebar_result.agent_chat_content_height;
+                        let viewport_h = sidebar_result.agent_chat_viewport_h;
+                        let was_at_bottom = scroll.offset >= (content_h - viewport_h - 1.0).max(0.0);
+                        if was_at_bottom {
+                            scroll.offset = (content_h - viewport_h).max(0.0);
+                        }
+                    }
+                } else {
+                    // Non-focused: snap to bottom so switching to this leaf
+                    // shows the latest messages.  Only snap if the user hasn't
+                    // manually scrolled up (offset 0.0 = never rendered / default,
+                    // f64::MAX = already snapped by us previously).
+                    if scroll.offset == 0.0 || scroll.offset >= 1e18 {
+                        scroll.offset = f64::MAX;
                     }
                 }
             }

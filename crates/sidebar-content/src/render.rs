@@ -5366,7 +5366,21 @@ fn word_wrap_text(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String
                 if !current.is_empty() {
                     lines.push(current);
                 }
-                current = word.to_string();
+                // Break long words that exceed max_w by themselves.
+                if ctx.measure_text(word) > max_w {
+                    let mut buf = String::new();
+                    for ch in word.chars() {
+                        buf.push(ch);
+                        if ctx.measure_text(&buf) > max_w {
+                            buf.pop();
+                            if !buf.is_empty() { lines.push(buf); }
+                            buf = ch.to_string();
+                        }
+                    }
+                    current = buf;
+                } else {
+                    current = word.to_string();
+                }
             }
         }
         lines.push(current);
