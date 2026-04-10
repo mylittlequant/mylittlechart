@@ -284,6 +284,11 @@ pub struct SidebarState {
     /// Controlled by the [PTY | Chat] mode toggle in the agents panel control row.
     pub agent_spawn_mode: InstanceMode,
 
+    /// Split direction used when spawning a new agent leaf next to an existing one.
+    ///
+    /// Controlled by the [H][V] toggle in Row 2 of the agents panel control bar.
+    pub agent_split_direction: uzor::panels::SplitKind,
+
     /// Bounding rect of the agent terminal content area for the focused leaf,
     /// in sidebar-local coordinates.  `None` when the Agents panel is not open
     /// or no pane is focused.
@@ -367,13 +372,6 @@ pub struct SidebarState {
 
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
     pub slot_spawn_dropdown: Option<usize>,
-
-    /// Whether the agent panel Layout dropdown is open.
-    ///
-    /// Toggled by clicking the `agent:layout_menu` button.
-    /// The dropdown renders as a small overlay listing Split H, Split V,
-    /// Expand, and Reset Sizes actions.
-    pub agent_layout_dropdown_open: bool,
 
     /// Which agent Chat leaf's sessions dropdown is currently open (`None` = all closed).
     ///
@@ -643,6 +641,7 @@ impl Default for SidebarState {
             metrics_last_sample: None,
             performance_data: PerformanceData::default(),
             agent_spawn_mode: InstanceMode::Pty,
+            agent_split_direction: uzor::panels::SplitKind::Vertical,
             agent_terminal_rect: None,
             agent_terminal_size: None,
             agent_input_buffers: HashMap::new(),
@@ -669,7 +668,6 @@ impl Default for SidebarState {
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
             hovered_free_leaf: None,
-            agent_layout_dropdown_open: false,
             agent_sessions_dropdown: None,
             agent_past_sessions: HashMap::new(),
             agent_active_session_id: HashMap::new(),

@@ -151,14 +151,6 @@ pub struct RightSidebarResult {
     /// Set only when `active_slot_body_rect` is `Some`.
     pub active_slot_index: Option<usize>,
 
-    /// Anchor for the agent Layout dropdown overlay.
-    ///
-    /// Set when the Agents panel is rendered and the Layout button exists.
-    /// Contains `(button_x, button_bottom_y, inner_w)` in screen coordinates,
-    /// so the caller can render the dropdown outside the scroll clip.
-    /// `None` when the Agents panel is not rendered or no focused leaf exists.
-    pub agent_layout_dropdown_anchor: Option<(f64, f64, f64)>,
-
     /// Chat line rects for selection hit-testing.
     ///
     /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id, line_text)`.
@@ -644,33 +636,6 @@ pub fn render_right_sidebar(
                 slot_idx,
                 toolbar_theme,
                 input_coordinator,
-            );
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Agent Layout dropdown overlay (rendered OUTSIDE the scroll clip so it
-    // is never clipped by the scrollable container).
-    // -------------------------------------------------------------------------
-    if panel == RightSidebarPanel::Agents
-        && sidebar_state.agent_layout_dropdown_open
-        && sidebar_state.focused_agent_leaf.is_some()
-    {
-        if let Some((button_x, button_bottom_y, inner_w)) = result.agent_layout_dropdown_anchor {
-            let any_hidden = sidebar_state
-                .agent_docking
-                .inner()
-                .tree()
-                .visible_leaf_count()
-                < sidebar_state.agent_docking.inner().tree().leaf_count();
-            render_agent_layout_dropdown(
-                ctx,
-                button_x,
-                button_bottom_y,
-                inner_w,
-                toolbar_theme,
-                input_coordinator,
-                any_hidden,
             );
         }
     }
@@ -4121,68 +4086,105 @@ fn render_agents_panel(
         y += ctrl_h + gap;
     }
 
-    // ── Row 2: Layout dropdown + close pane ───────────────────────────────────
+    // ── Row 2: [H][V] split direction  [⊞/⊟] expand/collapse  [↺] reset  [×] close ──
     {
         let has_focused = state.focused_agent_leaf.is_some();
+        let multi_leaf  = state.agent_leaves.len() > 1;
+        let toggle_w    = 28.0;
+        let btn_w       = 22.0;
+        let mut cur_x   = x;
 
-        // [Layout ▾] dropdown button
-        let layout_w = 64.0;
-        let layout_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, layout_w, btn_h);
-        let layout_en   = has_focused;
-        let layout_open = state.agent_layout_dropdown_open;
-        let layout_hov  = layout_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:layout_menu"));
-        ctx.set_fill_color(if layout_open {
-            &theme.item_bg_hover
-        } else if !layout_en {
-            &theme.button_bg
-        } else if layout_hov {
-            &theme.item_bg_hover
-        } else {
-            &theme.background
-        });
-        ctx.fill_rounded_rect(layout_rect.x, layout_rect.y, layout_rect.width, layout_rect.height, 3.0);
-        ctx.set_stroke_color(if layout_en { &theme.separator } else { &theme.separator });
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(layout_rect.x, layout_rect.y);
-        ctx.line_to(layout_rect.x + layout_w, layout_rect.y);
-        ctx.line_to(layout_rect.x + layout_w, layout_rect.y + btn_h);
-        ctx.line_to(layout_rect.x, layout_rect.y + btn_h);
-        ctx.close_path();
-        ctx.stroke();
+        // [H] split-direction toggle
+        let is_h = state.agent_split_direction == uzor::panels::SplitKind::Horizontal;
+        let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:h"));
+        ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.button_bg });
+        ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
         ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if layout_en { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_fill_color(if is_h { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Layout \u{25be}", layout_rect.x + layout_w / 2.0, layout_rect.y + btn_h / 2.0);
-        if layout_en {
-            input_coordinator.register("agent:layout_menu", layout_rect, uzor::input::Sense::CLICK);
+        ctx.fill_text("H", h_rect.x + toggle_w / 2.0, h_rect.y + btn_h / 2.0);
+        if !is_h {
+            input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK);
         }
-        result.item_rects.push(("agent:layout_menu".to_string(), layout_rect));
+        result.item_rects.push(("agent:split:h".to_string(), h_rect));
+        cur_x += toggle_w + 2.0;
 
-        // Save the button's bottom edge so the caller can render the dropdown
-        // overlay OUTSIDE the scroll clip (fixes clipping bug).
-        result.agent_layout_dropdown_anchor =
-            Some((layout_rect.x, layout_rect.y + layout_rect.height, inner_w));
+        // [V] split-direction toggle
+        let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let v_hov  = is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:v"));
+        ctx.set_fill_color(if !is_h { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.button_bg });
+        ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if !is_h { &theme.item_text_active } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("V", v_rect.x + toggle_w / 2.0, v_rect.y + btn_h / 2.0);
+        if is_h {
+            input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:split:v".to_string(), v_rect));
+        cur_x += toggle_w + gap * 2.0;
 
-        // [×] close pane
-        let close_x = x + layout_w + gap;
-        let close_w = 22.0;
-        let close_rect = WidgetRect::new(close_x, y + (ctrl_h - btn_h) / 2.0, close_w, btn_h);
-        let cl_hov = layout_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
-        ctx.set_fill_color(if !layout_en { &theme.button_bg } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
+        // [⊞/⊟] expand/collapse toggle
+        let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
+            state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
+        });
+        let expand_en    = has_focused && multi_leaf;
+        let expand_label = if any_hidden { "\u{229f}" } else { "\u{229e}" }; // ⊟ or ⊞
+        let exp_rect     = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+        let exp_hov      = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:expand_toggle"));
+        ctx.set_fill_color(if !expand_en { &theme.button_bg } else if exp_hov { &theme.button_bg_hover } else { &theme.button_bg });
+        ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if expand_en { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(expand_label, exp_rect.x + btn_w / 2.0, exp_rect.y + btn_h / 2.0);
+        if expand_en {
+            input_coordinator.register("agent:expand_toggle", exp_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:expand_toggle".to_string(), exp_rect));
+        cur_x += btn_w + gap;
+
+        // [↺] reset sizes
+        let reset_en   = has_focused && multi_leaf;
+        let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+        let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:reset_sizes"));
+        ctx.set_fill_color(if !reset_en { &theme.button_bg } else if reset_hov { &theme.button_bg_hover } else { &theme.button_bg });
+        ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(if reset_en { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("\u{21ba}", reset_rect.x + btn_w / 2.0, reset_rect.y + btn_h / 2.0);
+        if reset_en {
+            input_coordinator.register("agent:reset_sizes", reset_rect, uzor::input::Sense::CLICK);
+        }
+        result.item_rects.push(("agent:reset_sizes".to_string(), reset_rect));
+        cur_x += btn_w + gap;
+
+        // [×] close pane — right-aligned
+        let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+        let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+        ctx.set_fill_color(if !has_focused { &theme.button_bg } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
         ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
         ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);
-        ctx.begin_path(); ctx.move_to(close_rect.x, close_rect.y); ctx.line_to(close_rect.x + close_w, close_rect.y);
-        ctx.line_to(close_rect.x + close_w, close_rect.y + btn_h); ctx.line_to(close_rect.x, close_rect.y + btn_h);
-        ctx.close_path(); ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(close_rect.x, close_rect.y);
+        ctx.line_to(close_rect.x + btn_w, close_rect.y);
+        ctx.line_to(close_rect.x + btn_w, close_rect.y + btn_h);
+        ctx.line_to(close_rect.x, close_rect.y + btn_h);
+        ctx.close_path();
+        ctx.stroke();
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if layout_en { &theme.danger } else { &theme.item_text_muted });
+        ctx.set_fill_color(if has_focused { &theme.danger } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("×", close_rect.x + close_w / 2.0, close_rect.y + btn_h / 2.0);
-        if layout_en {
+        ctx.fill_text("\u{00d7}", close_rect.x + btn_w / 2.0, close_rect.y + btn_h / 2.0);
+        if has_focused {
             input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:close_pane".to_string(), close_rect));
@@ -4292,97 +4294,6 @@ fn render_agents_panel(
 /// Lists Split H, Split V (separator), Expand or Collapse (depending on
 /// `any_hidden`), Reset Sizes.
 ///
-/// `button_x` and `button_bottom_y` are the screen coordinates of the Layout
-/// button's left edge and bottom edge respectively.  `inner_w` is the panel's
-/// inner content width, used only to clamp the dropdown so it doesn't overflow.
-/// `any_hidden` controls whether "Collapse" replaces "Expand" in the menu.
-fn render_agent_layout_dropdown(
-    ctx: &mut dyn RenderContext,
-    button_x: f64,
-    button_bottom_y: f64,
-    inner_w: f64,
-    theme: &ToolbarTheme,
-    input_coordinator: &mut InputCoordinator,
-    any_hidden: bool,
-) {
-    let expand_or_collapse: (&str, &str) = if any_hidden {
-        ("agent:layout:collapse", "Collapse")
-    } else {
-        ("agent:layout:expand", "Expand")
-    };
-
-    let items: &[Option<(&str, &str)>] = &[
-        Some(("agent:layout:split_h", "Split H")),
-        Some(("agent:layout:split_v", "Split V")),
-        None, // separator line
-        Some(expand_or_collapse),
-        Some(("agent:layout:reset", "Reset Sizes")),
-    ];
-
-    let row_h = 24.0;
-    let sep_h = 9.0;
-    let pad_v = 4.0;
-    let pad_h = 12.0;
-    let dropdown_w = 140.0_f64.min(inner_w);
-
-    // Height: sum of rows + separator + top/bottom padding.
-    let content_rows = items.iter().filter(|i| i.is_some()).count();
-    let sep_rows = items.iter().filter(|i| i.is_none()).count();
-    let dropdown_h = row_h * content_rows as f64 + sep_h * sep_rows as f64 + pad_v * 2.0;
-
-    // Anchor: left-aligned to the Layout button's actual X position (bug 3 fix).
-    // Appears BELOW the button's bottom edge (bug 2 fix).
-    let dropdown_x = button_x.min(button_x + inner_w - dropdown_w);
-    let dropdown_y = button_bottom_y;
-
-    // Background.
-    ctx.set_fill_color(&theme.dropdown_bg);
-    ctx.fill_rounded_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h, 4.0);
-
-    // Border.
-    ctx.set_stroke_color(theme.separator.as_str());
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(dropdown_x, dropdown_y);
-    ctx.line_to(dropdown_x + dropdown_w, dropdown_y);
-    ctx.line_to(dropdown_x + dropdown_w, dropdown_y + dropdown_h);
-    ctx.line_to(dropdown_x, dropdown_y + dropdown_h);
-    ctx.line_to(dropdown_x, dropdown_y);
-    ctx.stroke();
-
-    let mut cur_y = dropdown_y + pad_v;
-    for item in items {
-        match item {
-            None => {
-                // Separator line.
-                let sep_mid = cur_y + sep_h / 2.0;
-                ctx.set_stroke_color(theme.separator.as_str());
-                ctx.set_stroke_width(1.0);
-                ctx.begin_path();
-                ctx.move_to(dropdown_x + 4.0, sep_mid);
-                ctx.line_to(dropdown_x + dropdown_w - 4.0, sep_mid);
-                ctx.stroke();
-                cur_y += sep_h;
-            }
-            Some((widget_id, label)) => {
-                let row_rect = WidgetRect::new(dropdown_x, cur_y, dropdown_w, row_h);
-                let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(*widget_id));
-                if is_hov {
-                    ctx.set_fill_color(&theme.item_bg_hover);
-                    ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
-                }
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(if is_hov { &theme.item_text_hover } else { &theme.item_text });
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, dropdown_x + pad_h, cur_y + row_h / 2.0);
-                input_coordinator.register(*widget_id, row_rect, uzor::input::Sense::CLICK);
-                cur_y += row_h;
-            }
-        }
-    }
-}
-
 /// Render a single agent pane within the docking grid.
 fn render_agents_pane(
     ctx: &mut dyn RenderContext,

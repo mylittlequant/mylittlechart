@@ -8890,12 +8890,11 @@ impl ChartApp {
                         instance_id, cli, mode, workdir, chat_session_id: None,
                     };
                     let leaf_id = if let Some(focus) = self.sidebar_state.focused_agent_leaf {
-                        // Tree already has leaves — split the focused one vertically.
-                        use uzor::panels::SplitKind;
+                        // Tree already has leaves — split the focused one using the selected direction.
                         let rw = self.sidebar_state.right_sidebar_width as f32;
                         let rh = self.height as f32;
                         let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
-                            .split_leaf(focus, SplitKind::Vertical, rw, rh);
+                            .split_leaf(focus, self.sidebar_state.agent_split_direction, rw, rh);
                         if new_ids.len() >= 2 {
                             let original_id = new_ids[0];
                             let sibling_id  = new_ids[1];
@@ -8949,28 +8948,48 @@ impl ChartApp {
             return;
         }
 
-        // --- [Layout ▾] menu toggle ---
-        if widget_id == "agent:layout_menu" {
-            self.sidebar_state.agent_layout_dropdown_open = !self.sidebar_state.agent_layout_dropdown_open;
+        // --- [H] split direction toggle ---
+        if widget_id == "agent:split:h" {
+            self.sidebar_state.agent_split_direction = uzor::panels::SplitKind::Horizontal;
             self.sidebar_data_dirty = true;
             return;
         }
 
-        // --- Layout dropdown: Expand (hide all leaves except focused) ---
-        if widget_id == "agent:layout:expand" {
-            self.sidebar_state.agent_layout_dropdown_open = false;
-            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+        // --- [V] split direction toggle ---
+        if widget_id == "agent:split:v" {
+            self.sidebar_state.agent_split_direction = uzor::panels::SplitKind::Vertical;
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // --- [⊞/⊟] expand/collapse toggle ---
+        if widget_id == "agent:expand_toggle" {
+            let any_hidden = self.sidebar_state.agent_leaves.keys().any(|&lid| {
+                self.sidebar_state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
+            });
+            if any_hidden {
+                // Collapse mode: show all leaves.
                 let all_ids: Vec<uzor::panels::LeafId> = self
                     .sidebar_state
                     .agent_leaves
                     .keys()
                     .copied()
                     .collect();
-                for leaf_id in all_ids {
-                    if leaf_id != focus {
-                        self.sidebar_state.agent_docking.inner_mut().tree_mut().hide_leaf(leaf_id);
-                    } else {
-                        self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
+                for lid in all_ids {
+                    self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(lid);
+                }
+                self.sidebar_state.agent_docking.inner_mut().tree_mut().reset_proportions();
+            } else if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+                // Expand mode: hide all leaves except the focused one.
+                let all_ids: Vec<uzor::panels::LeafId> = self
+                    .sidebar_state
+                    .agent_leaves
+                    .keys()
+                    .copied()
+                    .collect();
+                for lid in all_ids {
+                    if lid != focus {
+                        self.sidebar_state.agent_docking.inner_mut().tree_mut().hide_leaf(lid);
                     }
                 }
             }
@@ -8978,98 +8997,9 @@ impl ChartApp {
             return;
         }
 
-        // --- Layout dropdown: Collapse (show all leaves hidden by Expand) ---
-        if widget_id == "agent:layout:collapse" {
-            self.sidebar_state.agent_layout_dropdown_open = false;
-            let all_ids: Vec<uzor::panels::LeafId> = self
-                .sidebar_state
-                .agent_leaves
-                .keys()
-                .copied()
-                .collect();
-            for leaf_id in all_ids {
-                self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
-            }
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
-        // --- Layout dropdown: Reset Sizes (reset all separator proportions) ---
-        if widget_id == "agent:layout:reset" {
-            self.sidebar_state.agent_layout_dropdown_open = false;
-            // Show all leaves first (in case some were hidden by Expand).
-            let all_ids: Vec<uzor::panels::LeafId> = self
-                .sidebar_state
-                .agent_leaves
-                .keys()
-                .copied()
-                .collect();
-            for leaf_id in all_ids {
-                self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
-            }
+        // --- [↺] reset sizes ---
+        if widget_id == "agent:reset_sizes" {
             self.sidebar_state.agent_docking.inner_mut().tree_mut().reset_proportions();
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
-        // --- Layout dropdown: Split H / Split V (via dropdown items) ---
-        // Also keep the old direct IDs so nothing breaks if called programmatically.
-        if widget_id == "agent:layout:split_h" || widget_id == "agent:layout:split_v" {
-            self.sidebar_state.agent_layout_dropdown_open = false;
-            // Rewrite to the canonical IDs so the shared split logic below handles them.
-            let canonical = if widget_id == "agent:layout:split_h" {
-                "agent:split_h"
-            } else {
-                "agent:split_v"
-            };
-            // Fall through by calling the split logic directly via a synthetic id.
-            // We duplicate the handler inline to avoid borrow issues.
-            if let Some(focus) = self.sidebar_state.focused_agent_leaf {
-                use uzor::panels::SplitKind;
-                use sidebar_content::agents_dock::AgentLeafDescriptor;
-                let kind = if canonical == "agent:split_h" { SplitKind::Horizontal } else { SplitKind::Vertical };
-                let rw = self.sidebar_state.right_sidebar_width as f32;
-                let rh = self.height as f32;
-                let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
-                    .split_leaf(focus, kind, rw, rh);
-                if new_ids.len() >= 2 {
-                    let original_id = new_ids[0];
-                    let sibling_id  = new_ids[1];
-                    if let Some(desc) = self.sidebar_state.agent_leaves.remove(&focus) {
-                        self.sidebar_state.agent_leaves.insert(original_id, desc);
-                    }
-                    let cli = gate4agent::AgentCli::Claude;
-                    let workdir = self.agent.cli_workdir(cli);
-                    let _ = std::fs::create_dir_all(&workdir);
-                    match self.agent.create_instance(cli, gate4agent::InstanceMode::Pty, workdir.clone()) {
-                        Ok(instance_id) => {
-                            let desc = AgentLeafDescriptor {
-                                instance_id, cli, mode: gate4agent::InstanceMode::Pty,
-                                workdir, chat_session_id: None,
-                            };
-                            self.sidebar_state.agent_leaves.insert(sibling_id, desc);
-                            self.sidebar_state.focused_agent_leaf = Some(sibling_id);
-                            self.sidebar_state.agent_docking.inner_mut().set_active_leaf(sibling_id);
-                        }
-                        Err(e) => eprintln!("[ChartApp] layout split create_instance error: {}", e),
-                    }
-                    if let Some(v) = self.sidebar_state.agent_pty_selections.remove(&focus) {
-                        self.sidebar_state.agent_pty_selections.insert(original_id, v);
-                    }
-                    if let Some(v) = self.sidebar_state.agent_pty_scrolls.remove(&focus) {
-                        self.sidebar_state.agent_pty_scrolls.insert(original_id, v);
-                    }
-                    if let Some(v) = self.sidebar_state.agent_chat_scrolls.remove(&focus) {
-                        self.sidebar_state.agent_chat_scrolls.insert(original_id, v);
-                    }
-                    if let Some(v) = self.sidebar_state.agent_input_buffers.remove(&focus) {
-                        self.sidebar_state.agent_input_buffers.insert(original_id, v);
-                    }
-                    if let Some(v) = self.sidebar_state.agent_leaf_snapshots.remove(&focus) {
-                        self.sidebar_state.agent_leaf_snapshots.insert(original_id, v);
-                    }
-                }
-            }
             self.sidebar_data_dirty = true;
             return;
         }
