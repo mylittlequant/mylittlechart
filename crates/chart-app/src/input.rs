@@ -638,6 +638,25 @@ impl ChartApp {
             }
         }
 
+        // Double-click inside a Chat agent leaf → focus the chat input field.
+        if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
+            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
+                    .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                    .unwrap_or(false);
+                if is_chat {
+                    if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
+                        let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
+                        if x >= rx && x < rx + rw && y >= ry && y < ry + rh {
+                            self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                            self.sidebar_data_dirty = true;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Double-click on watchlist column header area → reset separators to equal widths.
         if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Watchlist {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
@@ -706,7 +725,7 @@ impl ChartApp {
         {
             // Auto-focus the PTY leaf on mouse-down so selection works immediately
             // even when clicking a non-focused leaf.
-            if let Some(hovered_leaf_id) = self.last_sidebar_result.as_ref().and_then(|sr| {
+            if let Some((hovered_leaf_id, content_rect)) = self.last_sidebar_result.as_ref().and_then(|sr| {
                 sr.item_rects.iter()
                     .filter_map(|(wid, wrect)| {
                         let id_str = wid.strip_prefix("agent:leaf:")?.strip_suffix(":focus_content")?;
@@ -715,7 +734,7 @@ impl ChartApp {
                         if x >= wrect.x && x < wrect.x + wrect.width
                             && y >= wrect.y && y < wrect.y + wrect.height
                         {
-                            Some(lid)
+                            Some((lid, *wrect))
                         } else {
                             None
                         }
@@ -728,6 +747,17 @@ impl ChartApp {
                 if is_pty && self.sidebar_state.focused_agent_leaf != Some(hovered_leaf_id) {
                     self.sidebar_state.focused_agent_leaf = Some(hovered_leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(hovered_leaf_id);
+                    // Update terminal rect immediately so pty_cell_at() works
+                    // on this same mousedown without waiting for a re-render.
+                    self.sidebar_state.agent_terminal_rect = Some((
+                        content_rect.x as f32,
+                        content_rect.y as f32,
+                        content_rect.width as f32,
+                        content_rect.height as f32,
+                    ));
+                    let pty_cols = ((content_rect.width / 7.0) as u16).max(1);
+                    let pty_rows = ((content_rect.height / 19.0) as u16).max(1);
+                    self.sidebar_state.agent_terminal_size = Some((pty_cols, pty_rows));
                 }
             }
 

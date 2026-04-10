@@ -7719,12 +7719,17 @@ impl ApplicationHandler for App<'_> {
                         {
                             if let Some(ref sr) = pw.chart.last_sidebar_result {
                                 for (wid_str, wrect) in &sr.item_rects {
+                                    // item_rects are in chart-space (rendered with
+                                    // translate(0, CHROME_HEIGHT)), so compare
+                                    // against chart_y, not window y.
                                     if x >= wrect.x && x < wrect.x + wrect.width
-                                        && y >= wrect.y && y < wrect.y + wrect.height
+                                        && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
                                     {
                                         if let Some(tip_text) = sidebar_content::render::find_agent_tooltip(wid_str) {
                                             let wid = uzor::WidgetId::new(&wid_str[..]);
                                             pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                                            // Tooltip renders in window-space (no
+                                            // translate), so pass window y for position.
                                             pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
                                             sidebar_tip = true;
                                             break;
