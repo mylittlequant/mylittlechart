@@ -2924,6 +2924,32 @@ impl ChartApp {
         if self.agent.drain_events() {
             self.sidebar_data_dirty = true;
         }
+        // Sync pipe_session_id from gate4agent into sidebar descriptors for persistence.
+        {
+            let updates: Vec<(uzor::panels::LeafId, Option<String>)> = self
+                .sidebar_state
+                .agent_leaves
+                .iter()
+                .filter(|(_, desc)| desc.mode == gate4agent::InstanceMode::Chat)
+                .filter_map(|(&leaf_id, desc)| {
+                    self.agent
+                        .snapshot_instance(desc.instance_id)
+                        .and_then(|snap| {
+                            if snap.pipe_session_id != desc.chat_session_id {
+                                Some((leaf_id, snap.pipe_session_id))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect();
+            for (leaf_id, session_id) in updates {
+                if let Some(desc) = self.sidebar_state.agent_leaves.get_mut(&leaf_id) {
+                    desc.chat_session_id = session_id;
+                }
+                self.profile_dirty = true;
+            }
+        }
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
     }
 
