@@ -4594,8 +4594,9 @@ fn render_agents_pane(
                 let ts_w = 44.0;
                 let preview_x = drop_x + 6.0 + ts_w;
                 let preview_max_w = (drop_w - 6.0 - ts_w - 6.0).max(0.0);
-                let preview = if session.preview.len() > 38 {
-                    format!("{}…", &session.preview[..38])
+                let preview = if session.preview.chars().count() > 38 {
+                    let truncated: String = session.preview.chars().take(38).collect();
+                    format!("{}…", truncated)
                 } else {
                     session.preview.clone()
                 };

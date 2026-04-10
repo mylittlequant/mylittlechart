@@ -5863,13 +5863,21 @@ impl ChartApp {
             .and_then(|r| r.agent_terminal_size);
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
-            if let Some((cols, rows)) = new_size {
-                // Resize the focused PTY leaf's instance.
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
-                        if desc.mode == gate4agent::InstanceMode::Pty {
-                            self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
-                        }
+            // Resize ALL visible PTY leaves using their actual rect dimensions.
+            let leaf_rects: Vec<(uzor::panels::LeafId, uzor::panels::PanelRect)> = self
+                .sidebar_state
+                .agent_docking
+                .inner()
+                .panel_rects()
+                .iter()
+                .map(|(&id, &r)| (id, r))
+                .collect();
+            for (leaf_id, rect) in leaf_rects {
+                if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                    if desc.mode == gate4agent::InstanceMode::Pty {
+                        let cols = ((rect.width / 7.0) as u16).max(1);
+                        let rows = ((rect.height / 19.0) as u16).max(1);
+                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
@@ -6104,12 +6112,21 @@ impl ChartApp {
         let new_size = sidebar_result.agent_terminal_size;
         if new_size.is_some() && new_size != self.sidebar_state.agent_terminal_size {
             self.sidebar_state.agent_terminal_size = new_size;
-            if let Some((cols, rows)) = new_size {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
-                        if desc.mode == gate4agent::InstanceMode::Pty {
-                            self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
-                        }
+            // Resize ALL visible PTY leaves using their actual rect dimensions.
+            let leaf_rects: Vec<(uzor::panels::LeafId, uzor::panels::PanelRect)> = self
+                .sidebar_state
+                .agent_docking
+                .inner()
+                .panel_rects()
+                .iter()
+                .map(|(&id, &r)| (id, r))
+                .collect();
+            for (leaf_id, rect) in leaf_rects {
+                if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                    if desc.mode == gate4agent::InstanceMode::Pty {
+                        let cols = ((rect.width / 7.0) as u16).max(1);
+                        let rows = ((rect.height / 19.0) as u16).max(1);
+                        self.bridge.runtime().block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
                     }
                 }
             }
