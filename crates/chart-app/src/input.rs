@@ -229,16 +229,36 @@ impl ChartApp {
         let leaf_id = self.sidebar_state.focused_agent_leaf?;
         let sel = self.sidebar_state.agent_chat_selections.get(&leaf_id)?;
         if sel.is_empty() { return None; }
-        let ((lo_msg, lo_line), (hi_msg, hi_line)) = sel.ordered();
+        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
         let rects = self.last_sidebar_result.as_ref().map(|r| &r.agent_chat_line_rects)?;
         let mut text = String::new();
         for entry in rects.iter() {
-            let (msg_i, line_i, _, _, lid, line_text) = entry;
+            let (msg_i, line_i, _, _, lid, line_text, _, _) = entry;
             if *lid != leaf_id { continue; }
             let pos = (*msg_i, *line_i);
             if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) { continue; }
             if !text.is_empty() { text.push('\n'); }
-            text.push_str(line_text);
+            let is_first = pos == (lo_msg, lo_line);
+            let is_last = pos == (hi_msg, hi_line);
+            if is_first && is_last {
+                // Single-line selection: extract char range.
+                let slice: String = line_text.chars()
+                    .skip(lo_char as usize)
+                    .take((hi_char as usize).saturating_sub(lo_char as usize))
+                    .collect();
+                text.push_str(&slice);
+            } else if is_first {
+                // First line: from start_char to end.
+                let slice: String = line_text.chars().skip(lo_char as usize).collect();
+                text.push_str(&slice);
+            } else if is_last {
+                // Last line: from start to end_char.
+                let slice: String = line_text.chars().take(hi_char as usize).collect();
+                text.push_str(&slice);
+            } else {
+                // Middle line: full text.
+                text.push_str(line_text);
+            }
         }
         if text.is_empty() { None } else { Some((leaf_id, text)) }
     }
@@ -804,28 +824,52 @@ impl ChartApp {
                 .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                 .unwrap_or(false);
             if is_chat_leaf {
+                // Use content_rect from auto-focus hit-test (not stale agent_content_rect
+                // from previous render, which may belong to a different leaf).
                 let in_content = self.last_sidebar_result.as_ref()
-                    .and_then(|r| r.agent_content_rect)
-                    .map(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                    .and_then(|sr| {
+                        sr.item_rects.iter()
+                            .filter_map(|(wid, wrect)| {
+                                let id_str = wid.strip_prefix("agent:leaf:")?.strip_suffix(":focus_content")?;
+                                let raw: u64 = id_str.parse().ok()?;
+                                let lid = uzor::panels::LeafId(raw);
+                                if lid == self.sidebar_state.focused_agent_leaf?
+                                    && x >= wrect.x && x < wrect.x + wrect.width
+                                    && y >= wrect.y && y < wrect.y + wrect.height
+                                {
+                                    Some(true)
+                                } else {
+                                    None
+                                }
+                            })
+                            .next()
+                    })
                     .unwrap_or(false);
                 if in_content {
+                    // Focus chat input immediately on mousedown (like PTY does).
+                    self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                    self.sidebar_data_dirty = true;
+
                     if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                         let hit = self.last_sidebar_result.as_ref()
                             .and_then(|r| {
                                 r.agent_chat_line_rects.iter()
                                     .find(|e| e.4 == leaf_id && y >= e.2 && y < e.3)
-                                    .map(|e| (e.0, e.1))
+                                    .map(|e| (e.0, e.1, &e.5, e.6))
                             });
-                        if let Some((msg_idx, line_idx)) = hit {
+                        if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                            let char_idx = chat_char_idx_from_x(line_text, x, text_x);
                             self.sidebar_state.agent_chat_selections.insert(
                                 leaf_id,
-                                sidebar_content::state::ChatSelection::new(msg_idx, line_idx),
+                                sidebar_content::state::ChatSelection::new_at(msg_idx, line_idx, char_idx),
                             );
                             self.sidebar_state.agent_chat_drag_active = true;
-                            self.sidebar_data_dirty = true;
                             return false;
                         }
                     }
+                    // Even if no chat line was hit (e.g. empty area), we still
+                    // activated the pane and focused input — don't fall through.
+                    return false;
                 }
             }
         }
@@ -2612,12 +2656,14 @@ impl ChartApp {
                     .and_then(|r| {
                         r.agent_chat_line_rects.iter()
                             .find(|e| e.4 == leaf_id && y >= e.2 && y < e.3)
-                            .map(|e| (e.0, e.1))
+                            .map(|e| (e.0, e.1, e.5.clone(), e.6))
                     });
-                if let Some((msg_idx, line_idx)) = hit {
+                if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                    let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                     if let Some(sel) = self.sidebar_state.agent_chat_selections.get_mut(&leaf_id) {
                         sel.end_msg = msg_idx;
                         sel.end_line = line_idx;
+                        sel.end_char = char_idx;
                         self.sidebar_data_dirty = true;
                     }
                 }
@@ -22230,6 +22276,27 @@ pub(crate) fn sync_colors_match(a: [f32; 4], b: [f32; 4]) -> bool {
     (a[0] - b[0]).abs() < 0.01
         && (a[1] - b[1]).abs() < 0.01
         && (a[2] - b[2]).abs() < 0.01
+}
+
+/// Estimate the character index in `line_text` closest to pixel coordinate `x`.
+///
+/// Uses proportional estimation based on text_x (where the line starts) and the
+/// total character count. This avoids needing a rendering context at input time;
+/// the selection overlay in render.rs will use the precise measure_text values.
+fn chat_char_idx_from_x(line_text: &str, x: f64, text_x: f64) -> u16 {
+    let char_count = line_text.chars().count();
+    if char_count == 0 {
+        return 0;
+    }
+    if x <= text_x {
+        return 0;
+    }
+    // Proportional estimate: assume ~7.5px per character for normal fonts.
+    // The render-side overlay uses precise measure_text, so this just needs
+    // to be a reasonable starting point for the drag anchor.
+    let offset_px = x - text_x;
+    let approx_char = (offset_px / 7.5).round() as usize;
+    approx_char.min(char_count) as u16
 }
 
 /// Convert a CSS hex color string (`#RRGGBB` or `#RRGGBBAA`) to an RGBA `[f32; 4]` array.

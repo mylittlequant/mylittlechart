@@ -153,11 +153,13 @@ pub struct RightSidebarResult {
 
     /// Chat line rects for selection hit-testing.
     ///
-    /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id, line_text)`.
+    /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id, line_text, text_x, font_tag)`.
+    /// - `text_x`: pixel x where rendered text starts on this line.
+    /// - `font_tag`: 0=normal 13px, 1=mono 11px, 2=italic 12px, 3=error 12px.
     /// Populated during `render_agents_chat_bubbles` for the focused leaf.
-    /// Used by `chart-app` to map mouse Y → (msg, line) during drag-select,
+    /// Used by `chart-app` to map mouse Y → (msg, line, char) during drag-select,
     /// and to extract the exact wrapped-line text when copying a selection.
-    pub agent_chat_line_rects: Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String)>,
+    pub agent_chat_line_rects: Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String, f64, u8)>,
 }
 
 // =============================================================================
@@ -5002,7 +5004,7 @@ fn render_agents_chat_bubbles(
     total_content_h: f64,
     selection: Option<&crate::state::ChatSelection>,
     leaf_id: uzor::panels::LeafId,
-    line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String)>,
+    line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String, f64, u8)>,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -5043,43 +5045,30 @@ fn render_agents_chat_bubbles(
         let msg_i = msg_idx as u16;
         match msg.role {
             ChatRole::User => {
-                // Right-aligned indigo bubble.
+                // Full-width block (VSCode-style), left-aligned text.
                 ctx.set_font("13px sans-serif");
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                let bx = x + 4.0;
+                let bubble_w = w - 12.0;
+                let text_x = bx + bubble_pad_x;
+                let lines = word_wrap_text(ctx, &msg.content, bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len().max(1);
                 let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
-                let text_w = lines.iter()
-                    .map(|l| ctx.measure_text(l))
-                    .fold(0.0_f64, f64::max)
-                    .min(max_bubble_w - bubble_pad_x * 2.0);
-                let bubble_w = (text_w + bubble_pad_x * 2.0).max(40.0).min(max_bubble_w);
-                let bx = x + w - bubble_w - 8.0;
 
-                // Record line rects for selection hit-testing.
+                // Record line rects for selection hit-testing (font_tag=0: normal 13px).
                 for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + bubble_pad_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), text_x, 0u8));
                 }
 
-                // Bubble background.
+                // Bubble background (no border — bg color difference is sufficient).
                 ctx.set_fill_color(&theme.bubble_user_bg);
                 ctx.fill_rounded_rect(bx, cursor_y, bubble_w, bubble_h, 6.0);
-                // Subtle border.
-                ctx.set_stroke_color(&theme.bubble_user_border);
-                ctx.set_stroke_width(1.0);
-                ctx.begin_path();
-                ctx.move_to(bx, cursor_y);
-                ctx.line_to(bx + bubble_w, cursor_y);
-                ctx.line_to(bx + bubble_w, cursor_y + bubble_h);
-                ctx.line_to(bx, cursor_y + bubble_h);
-                ctx.close_path();
-                ctx.stroke();
 
                 ctx.set_fill_color(&theme.bubble_user_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 for (li, line) in lines.iter().enumerate() {
-                    ctx.fill_text(line, bx + bubble_pad_x, cursor_y + bubble_pad_y + li as f64 * line_h_normal);
+                    ctx.fill_text(line, text_x, cursor_y + bubble_pad_y + li as f64 * line_h_normal);
                 }
                 cursor_y += bubble_h + bubble_gap;
             }
@@ -5087,21 +5076,22 @@ fn render_agents_chat_bubbles(
             ChatRole::Assistant => {
                 // Left-aligned, no bubble, subtle text.
                 ctx.set_font("13px sans-serif");
+                let text_x = x + 8.0;
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len();
                 let text_h = n_lines as f64 * line_h_normal;
 
-                // Record line rects for selection hit-testing.
+                // Record line rects for selection hit-testing (font_tag=0: normal 13px).
                 for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), text_x, 0u8));
                 }
 
                 ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 for (li, line) in lines.iter().enumerate() {
-                    ctx.fill_text(line, x + 8.0, cursor_y + li as f64 * line_h_normal);
+                    ctx.fill_text(line, text_x, cursor_y + li as f64 * line_h_normal);
                 }
                 cursor_y += text_h + bubble_gap;
             }
@@ -5115,12 +5105,13 @@ fn render_agents_chat_bubbles(
                 let n_lines = lines.len().max(1);
                 let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
 
-                // Record line rects (header + content lines).
+                // Record line rects (header + content lines, font_tag=1: mono 11px).
+                let tool_text_x = x + 4.0 + bubble_pad_x;
                 let header_y = cursor_y + bubble_pad_y;
-                line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone()));
+                line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone(), tool_text_x, 1u8));
                 for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono;
-                    line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id, line_text.clone()));
+                    line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id, line_text.clone(), tool_text_x, 1u8));
                 }
 
                 ctx.set_fill_color(&theme.bubble_tool_bg);
@@ -5146,14 +5137,15 @@ fn render_agents_chat_bubbles(
             ChatRole::Thinking => {
                 // Italic muted gray.
                 ctx.set_font("italic 12px sans-serif");
+                let thinking_text_x = x + 8.0;
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
                 let n_lines = lines.len();
                 let text_h = n_lines as f64 * line_h_normal;
 
-                // Record line rects for selection hit-testing.
+                // Record line rects for selection hit-testing (font_tag=2: italic 12px).
                 for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), thinking_text_x, 2u8));
                 }
 
                 ctx.set_fill_color(&theme.item_text_muted);
@@ -5168,14 +5160,15 @@ fn render_agents_chat_bubbles(
             ChatRole::Error => {
                 // Red error text.
                 ctx.set_font("12px sans-serif");
+                let error_text_x = x + 8.0;
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
                 let n_lines = lines.len();
                 let text_h = n_lines as f64 * line_h_normal;
 
-                // Record line rects for selection hit-testing.
+                // Record line rects for selection hit-testing (font_tag=3: error 12px).
                 for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), error_text_x, 3u8));
                 }
 
                 ctx.set_fill_color(&theme.danger);
@@ -5197,14 +5190,63 @@ fn render_agents_chat_bubbles(
     // ── Selection overlay ──────────────────────────────────────────────────
     if let Some(sel) = selection {
         if !sel.is_empty() {
-            let ((lo_msg, lo_line), (hi_msg, hi_line)) = sel.ordered();
+            let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
             ctx.set_fill_color(&theme.selection);
             ctx.set_global_alpha(0.35);
-            for (msg_i, line_i, line_y, line_y_bot, _lid, _line_text) in line_rects_out.iter() {
-                let (msg_i, line_i, line_y, line_y_bot) = (*msg_i, *line_i, *line_y, *line_y_bot);
+            for (msg_i, line_i, line_y, line_y_bot, _lid, line_text, text_x, font_tag) in line_rects_out.iter() {
+                let (msg_i, line_i) = (*msg_i, *line_i);
+                let (line_y, line_y_bot) = (*line_y, *line_y_bot);
+                let text_x = *text_x;
+                let line_h = line_y_bot - line_y;
+
+                // Only process lines within the selection range.
                 let pos = (msg_i, line_i);
-                if pos >= (lo_msg, lo_line) && pos <= (hi_msg, hi_line) {
-                    ctx.fill_rect(x, line_y, w, line_y_bot - line_y);
+                if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) {
+                    continue;
+                }
+
+                // Set the correct font for measurement.
+                match font_tag {
+                    1 => ctx.set_font("11px JetBrainsMono"),
+                    2 => ctx.set_font("italic 12px sans-serif"),
+                    3 => ctx.set_font("12px sans-serif"),
+                    _ => ctx.set_font("13px sans-serif"),
+                }
+
+                let is_first = pos == (lo_msg, lo_line);
+                let is_last = pos == (hi_msg, hi_line);
+
+                // Helper: convert char index to byte-safe substring.
+                let char_prefix = |n: usize| -> String {
+                    line_text.chars().take(n).collect()
+                };
+
+                let (sel_x, sel_w) = if is_first && is_last {
+                    // Selection starts and ends on the same line.
+                    let prefix = char_prefix(lo_char as usize);
+                    let selected = char_prefix(hi_char as usize);
+                    let prefix_w = ctx.measure_text(&prefix);
+                    let selected_w = (ctx.measure_text(&selected) - prefix_w).max(0.0);
+                    (text_x + prefix_w, selected_w)
+                } else if is_first {
+                    // First line: from start_char to end of line.
+                    let prefix = char_prefix(lo_char as usize);
+                    let prefix_w = ctx.measure_text(&prefix);
+                    let full_w = ctx.measure_text(line_text);
+                    (text_x + prefix_w, (full_w - prefix_w).max(4.0))
+                } else if is_last {
+                    // Last line: from start of line to end_char.
+                    let selected = char_prefix(hi_char as usize);
+                    let selected_w = ctx.measure_text(&selected).max(4.0);
+                    (text_x, selected_w)
+                } else {
+                    // Middle line: full line width.
+                    let full_w = ctx.measure_text(line_text).max(4.0);
+                    (text_x, full_w)
+                };
+
+                if sel_w > 0.0 {
+                    ctx.fill_rect(sel_x, line_y, sel_w, line_h);
                 }
             }
             ctx.set_global_alpha(1.0);
@@ -5284,6 +5326,7 @@ fn compute_chat_content_height(
         return 0.0;
     }
 
+    let bubble_pad_x = 8.0;
     let bubble_pad_y = 5.0;
     let bubble_gap = 6.0;
     let max_bubble_w = w - 24.0;
@@ -5295,15 +5338,17 @@ fn compute_chat_content_height(
     for msg in messages {
         match msg.role {
             ChatRole::User => {
+                // Full-width block: same wrap width as Tool/Assistant (full bubble_w minus padding).
                 ctx.set_font("13px sans-serif");
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
+                let bubble_w = w - 12.0;
+                let lines = word_wrap_text(ctx, &msg.content, bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len().max(1);
                 let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
                 total_h += bubble_h + bubble_gap;
             }
             ChatRole::Assistant => {
                 ctx.set_font("13px sans-serif");
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
                 let text_h = lines.len() as f64 * line_h_normal;
                 total_h += text_h + bubble_gap;
             }

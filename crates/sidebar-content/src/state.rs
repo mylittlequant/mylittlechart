@@ -433,35 +433,61 @@ impl PtySelection {
     }
 }
 
-/// A host-side chat text selection in line coordinates.
+/// A host-side chat text selection in character coordinates.
 ///
-/// Selects whole lines (not individual characters) for simplicity.
+/// Supports per-character selection within wrapped lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChatSelection {
     /// Index of the message where drag started.
     pub start_msg: u16,
     /// Line index within that message.
     pub start_line: u16,
+    /// Character index within the start line (0 = beginning of line).
+    pub start_char: u16,
     /// Index of the message where drag currently is.
     pub end_msg: u16,
     /// Line index within that message.
     pub end_line: u16,
+    /// Character index within the end line.
+    pub end_char: u16,
 }
 
 impl ChatSelection {
+    /// Create a selection anchored at the given message/line (char at start of line).
     pub fn new(msg: u16, line: u16) -> Self {
-        Self { start_msg: msg, start_line: line, end_msg: msg, end_line: line }
+        Self {
+            start_msg: msg,
+            start_line: line,
+            start_char: 0,
+            end_msg: msg,
+            end_line: line,
+            end_char: 0,
+        }
     }
 
-    /// Returns `((lo_msg, lo_line), (hi_msg, hi_line))` in reading order.
-    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
-        let s = (self.start_msg, self.start_line);
-        let e = (self.end_msg, self.end_line);
+    /// Create a selection anchored at the given message/line/character position.
+    pub fn new_at(msg: u16, line: u16, char_idx: u16) -> Self {
+        Self {
+            start_msg: msg,
+            start_line: line,
+            start_char: char_idx,
+            end_msg: msg,
+            end_line: line,
+            end_char: char_idx,
+        }
+    }
+
+    /// Returns `((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char))` in reading order.
+    pub fn ordered(&self) -> ((u16, u16, u16), (u16, u16, u16)) {
+        let s = (self.start_msg, self.start_line, self.start_char);
+        let e = (self.end_msg, self.end_line, self.end_char);
         if s <= e { (s, e) } else { (e, s) }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.start_msg == self.end_msg && self.start_line == self.end_line
+        self.start_msg == self.end_msg
+            && self.start_line == self.end_line
+            && self.start_char == self.end_char
     }
 }
 
