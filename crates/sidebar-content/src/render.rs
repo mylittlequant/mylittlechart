@@ -4361,25 +4361,6 @@ fn render_agents_pane(
         let btn_h   = 16.0;
         let btn_pad = 4.0;
 
-        // [×] close button — right side, 16×16, vertically centered.
-        let close_w   = 16.0;
-        let close_x   = px + pw - close_w - 4.0;
-        let close_y   = mid_y - close_w / 2.0;
-        let close_rect = WidgetRect::new(close_x, close_y, close_w, close_w);
-        let close_wid  = format!("agent:leaf:{}:close", leaf_id.0);
-        let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
-        if cl_hov {
-            ctx.set_fill_color(&theme.danger_hover_bg);
-            ctx.fill_rounded_rect(close_x, close_y, close_w, close_w, 2.0);
-        }
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("×", close_x + close_w / 2.0, close_y + close_w / 2.0);
-        input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((close_wid, close_rect));
-
         // Left: mode icon + CLI name — text vertically centered.
         let mode_icon = match desc.mode {
             gate4agent::InstanceMode::Pty  => ">_",
@@ -4541,6 +4522,24 @@ fn render_agents_pane(
                 result.item_rects.push((item_wid, item_rect));
             }
         }
+    }
+
+    // ── Overlay close [×] — always visible in top-right, on top of everything ──
+    {
+        let close_size = 16.0;
+        let close_pad = 2.0;
+        let ov_close_x = px + pw - close_size - close_pad;
+        let ov_close_y = py + close_pad;
+        let ov_close_rect = WidgetRect::new(ov_close_x, ov_close_y, close_size, close_size);
+        let ov_close_wid = format!("agent:leaf:{}:close", leaf_id.0);
+        let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(ov_close_wid.as_str()));
+        ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.pane_header_idle });
+        ctx.fill_rounded_rect(ov_close_x, ov_close_y, close_size, close_size, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
+            ov_close_x + 3.0, ov_close_y + 3.0, close_size - 6.0, close_size - 6.0,
+            if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
+        input_coordinator.register(ov_close_wid.as_str(), ov_close_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((ov_close_wid, ov_close_rect));
     }
 }
 
@@ -5376,4 +5375,23 @@ fn word_wrap_text(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String
         lines.push(String::new());
     }
     lines
+}
+
+/// Return tooltip text for agent panel widget IDs.
+pub fn find_agent_tooltip(widget_id: &str) -> Option<&'static str> {
+    match widget_id {
+        "agent:mode:pty" => Some("Terminal mode (PTY)"),
+        "agent:mode:chat" => Some("Chat mode"),
+        "agent:spawn:claude" => Some("Open Claude session"),
+        "agent:spawn:codex" => Some("Open Codex session"),
+        "agent:spawn:gemini" => Some("Open Gemini session"),
+        "agent:spawn:opencode" => Some("Open OpenCode session"),
+        "agent:split:h" => Some("Split horizontal"),
+        "agent:split:v" => Some("Split vertical"),
+        "agent:split:replace" => Some("Replace focused pane"),
+        "agent:expand_toggle" => Some("Expand / Collapse"),
+        "agent:reset_sizes" => Some("Reset pane sizes"),
+        "agent:close_pane" => Some("Close focused pane"),
+        _ => None,
+    }
 }

@@ -270,7 +270,7 @@ pub struct ChartApp {
     pub sidebar_state: sidebar_content::state::SidebarState,
 
     /// Right sidebar render result from the last frame (hit zones for click dispatch).
-    pub(crate) last_sidebar_result: Option<sidebar_content::render::RightSidebarResult>,
+    pub last_sidebar_result: Option<sidebar_content::render::RightSidebarResult>,
 
     /// True while the user is dragging the right-sidebar separator to resize it.
     ///

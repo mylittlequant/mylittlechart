@@ -704,6 +704,33 @@ impl ChartApp {
         // begin a host-side cell selection. This MUST run before TIM drag so
         // the sidebar scroll-drag fallback doesn't hijack the motion.
         {
+            // Auto-focus the PTY leaf on mouse-down so selection works immediately
+            // even when clicking a non-focused leaf.
+            if let Some(hovered_leaf_id) = self.last_sidebar_result.as_ref().and_then(|sr| {
+                sr.item_rects.iter()
+                    .filter_map(|(wid, wrect)| {
+                        let id_str = wid.strip_prefix("agent:leaf:")?.strip_suffix(":focus_content")?;
+                        let raw: u64 = id_str.parse().ok()?;
+                        let lid = uzor::panels::LeafId(raw);
+                        if x >= wrect.x && x < wrect.x + wrect.width
+                            && y >= wrect.y && y < wrect.y + wrect.height
+                        {
+                            Some(lid)
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+            }) {
+                let is_pty = self.sidebar_state.agent_leaves.get(&hovered_leaf_id)
+                    .map(|d| d.mode == gate4agent::InstanceMode::Pty)
+                    .unwrap_or(false);
+                if is_pty && self.sidebar_state.focused_agent_leaf != Some(hovered_leaf_id) {
+                    self.sidebar_state.focused_agent_leaf = Some(hovered_leaf_id);
+                    self.sidebar_state.agent_docking.inner_mut().set_active_leaf(hovered_leaf_id);
+                }
+            }
+
             let is_pty_leaf = self.sidebar_state.focused_agent_leaf
                 .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
@@ -8972,9 +8999,6 @@ impl ChartApp {
                     };
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    if mode == gate4agent::InstanceMode::Chat {
-                        self.agent.load_latest_history_instance(instance_id);
-                    }
                     eprintln!("[ChartApp] agent:spawn:{} mode={:?} — leaf {:?}", cli_str, mode, leaf_id);
                 }
                 Err(e) => eprintln!("[ChartApp] agent:spawn:{} error: {}", cli_str, e),
@@ -9016,7 +9040,6 @@ impl ChartApp {
                 for lid in all_ids {
                     self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(lid);
                 }
-                self.sidebar_state.agent_docking.inner_mut().tree_mut().reset_proportions();
             } else if let Some(focus) = self.sidebar_state.focused_agent_leaf {
                 // Expand mode: hide all leaves except the focused one.
                 let all_ids: Vec<uzor::panels::LeafId> = self

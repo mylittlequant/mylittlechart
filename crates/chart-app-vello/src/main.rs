@@ -7712,7 +7712,30 @@ impl ApplicationHandler for App<'_> {
                             pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
                         }
                     } else {
-                        pw.toolbar_tooltip.update(None, time_ms);
+                        // No toolbar button hovered — check sidebar agent buttons
+                        let mut sidebar_tip = false;
+                        if pw.chart.sidebar_state.is_right_open()
+                            && pw.chart.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents
+                        {
+                            if let Some(ref sr) = pw.chart.last_sidebar_result {
+                                for (wid_str, wrect) in &sr.item_rects {
+                                    if x >= wrect.x && x < wrect.x + wrect.width
+                                        && y >= wrect.y && y < wrect.y + wrect.height
+                                    {
+                                        if let Some(tip_text) = sidebar_content::render::find_agent_tooltip(wid_str) {
+                                            let wid = uzor::WidgetId::new(&wid_str[..]);
+                                            pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                                            pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
+                                            sidebar_tip = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !sidebar_tip {
+                            pw.toolbar_tooltip.update(None, time_ms);
+                        }
                     }
                 }
 
