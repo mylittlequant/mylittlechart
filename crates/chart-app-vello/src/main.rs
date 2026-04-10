@@ -4040,30 +4040,20 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // ── Agents panel: drain PTY events and force redraw every wake-up ───
-        // PTY data arrives on a background thread via broadcast channel and
-        // does not wake winit on its own. We must:
-        //   1. Drain pending events into the vt100 parser BEFORE the FPS cap
-        //      early-return, otherwise data piles up for seconds.
-        //   2. Mark the sidebar dirty when bytes arrive.
-        //   3. request_redraw() the window so winit doesn't sleep on
-        //      WaitUntil between frames — this drives the loop at full FPS
-        //      while the Agents panel is open.
-        let mut agents_open_anywhere = false;
+        // ── Agents panel: drain PTY events (non-blocking, before FPS cap) ───
+        // PTY data arrives on a background broadcast channel. We drain it
+        // every wake-up so bytes don't pile up, but rendering is still
+        // governed by the global FPS cap below — no bypass needed.
         for pw in self.windows.values_mut() {
             if pw.chart.sidebar_state.is_right_open()
                 && pw.chart.sidebar_state.right_panel
                     == sidebar_content::state::RightSidebarPanel::Agents
             {
-                agents_open_anywhere = true;
                 if pw.chart.agent.drain_events() {
                     pw.chart.sidebar_data_dirty = true;
                     pw.sidebar_dirty_scene = true;
+                    pw.window.request_redraw();
                 }
-                // Session activity is tracked per-instance — no single-CLI field to sync here.
-                // Always mark dirty so cursor blink and incoming data render.
-                pw.sidebar_dirty_scene = true;
-                pw.window.request_redraw();
             }
         }
 
@@ -4072,10 +4062,7 @@ impl ApplicationHandler for App<'_> {
         // 125-500 Hz), which preempts the WaitUntil timer set at the end of
         // this method.  We exit early here so no scene work or GPU submission
         // happens until the target frame interval has actually elapsed.
-        //
-        // EXCEPTION: when an Agents panel is open we must NOT skip frames —
-        // PTY output needs to be rendered as fast as possible.
-        if self.fps_limit > 0 && !agents_open_anywhere {
+        if self.fps_limit > 0 {
             let target_dt = std::time::Duration::from_secs_f64(1.0 / self.fps_limit as f64);
             if self.last_frame_instant.elapsed() < target_dt {
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -7182,9 +7169,8 @@ impl ApplicationHandler for App<'_> {
                 pw.chart_dirty = true;
             }
         }
-        // Note: Agents-panel force-redraw is handled at the very top of
-        // about_to_wait so it runs even when the FPS cap would otherwise
-        // early-return. See `agents_open_anywhere` block above.
+        // Note: Agents-panel drain_events() runs before the FPS cap guard
+        // in about_to_wait so PTY bytes are drained even when frames are skipped.
 
         let _t7 = std::time::Instant::now();
 
@@ -7393,9 +7379,7 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Set event loop control flow based on FPS limit ──────────────────
-        // When Agents panel is open we use Poll mode to drive PTY rendering
-        // at maximum FPS regardless of the user-configured cap.
-        if self.fps_limit > 0 && !agents_open_anywhere {
+        if self.fps_limit > 0 {
             let target_dt = std::time::Duration::from_secs_f64(1.0 / self.fps_limit as f64);
             let elapsed = self.last_frame_instant.elapsed();
             if elapsed < target_dt {
@@ -7404,7 +7388,6 @@ impl ApplicationHandler for App<'_> {
                 ));
             } else {
                 // Frame already over budget — don't spin, give the OS a tiny breather.
-                // This prevents 100% CPU when frames consistently exceed target_dt.
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
                     std::time::Instant::now() + std::time::Duration::from_millis(1),
                 ));
