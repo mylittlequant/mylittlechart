@@ -8886,12 +8886,56 @@ impl ChartApp {
             let _ = std::fs::create_dir_all(&workdir);
             match self.agent.create_instance(cli, mode, workdir.clone()) {
                 Ok(instance_id) => {
-                    let leaf = AgentPaneLeaf { instance_id, cli, mode };
-                    let leaf_id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
                     let desc = AgentLeafDescriptor {
                         instance_id, cli, mode, workdir, chat_session_id: None,
                     };
-                    self.sidebar_state.agent_leaves.insert(leaf_id, desc);
+                    let leaf_id = if let Some(focus) = self.sidebar_state.focused_agent_leaf {
+                        // Tree already has leaves — split the focused one vertically.
+                        use uzor::panels::SplitKind;
+                        let rw = self.sidebar_state.right_sidebar_width as f32;
+                        let rh = self.height as f32;
+                        let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
+                            .split_leaf(focus, SplitKind::Vertical, rw, rh);
+                        if new_ids.len() >= 2 {
+                            let original_id = new_ids[0];
+                            let sibling_id  = new_ids[1];
+                            // Remap the old focus descriptor to the retained original slot.
+                            if let Some(old_desc) = self.sidebar_state.agent_leaves.remove(&focus) {
+                                self.sidebar_state.agent_leaves.insert(original_id, old_desc);
+                            }
+                            // Transfer per-leaf state maps from old focus id to new original_id.
+                            if let Some(v) = self.sidebar_state.agent_pty_selections.remove(&focus) {
+                                self.sidebar_state.agent_pty_selections.insert(original_id, v);
+                            }
+                            if let Some(v) = self.sidebar_state.agent_pty_scrolls.remove(&focus) {
+                                self.sidebar_state.agent_pty_scrolls.insert(original_id, v);
+                            }
+                            if let Some(v) = self.sidebar_state.agent_chat_scrolls.remove(&focus) {
+                                self.sidebar_state.agent_chat_scrolls.insert(original_id, v);
+                            }
+                            if let Some(v) = self.sidebar_state.agent_input_buffers.remove(&focus) {
+                                self.sidebar_state.agent_input_buffers.insert(original_id, v);
+                            }
+                            if let Some(v) = self.sidebar_state.agent_leaf_snapshots.remove(&focus) {
+                                self.sidebar_state.agent_leaf_snapshots.insert(original_id, v);
+                            }
+                            // The new leaf goes into the sibling slot.
+                            self.sidebar_state.agent_leaves.insert(sibling_id, desc);
+                            sibling_id
+                        } else {
+                            // split_leaf returned unexpected result — fall back to add_leaf.
+                            let leaf = AgentPaneLeaf { instance_id, cli, mode };
+                            let id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                            self.sidebar_state.agent_leaves.insert(id, desc);
+                            id
+                        }
+                    } else {
+                        // Empty tree — add the first leaf normally.
+                        let leaf = AgentPaneLeaf { instance_id, cli, mode };
+                        let id = self.sidebar_state.agent_docking.inner_mut().tree_mut().add_leaf(leaf);
+                        self.sidebar_state.agent_leaves.insert(id, desc);
+                        id
+                    };
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
                     if mode == gate4agent::InstanceMode::Chat {
