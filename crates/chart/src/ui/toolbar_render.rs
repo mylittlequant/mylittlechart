@@ -109,6 +109,26 @@ pub struct ToolbarTheme {
     pub sidebar_style: bool,
     /// Background colour for embedded terminal (PTY) panes.
     pub terminal_bg: String,
+    /// Pane header background — focused state.
+    pub pane_header_focused: String,
+    /// Pane header background — hovered state.
+    pub pane_header_hover: String,
+    /// Pane header background — idle state.
+    pub pane_header_idle: String,
+    /// User chat bubble background.
+    pub bubble_user_bg: String,
+    /// User chat bubble border.
+    pub bubble_user_border: String,
+    /// User chat bubble text.
+    pub bubble_user_text: String,
+    /// Tool output bubble background.
+    pub bubble_tool_bg: String,
+    /// Tool output bubble text.
+    pub bubble_tool_text: String,
+    /// Text selection highlight color (used with alpha).
+    pub selection: String,
+    /// Danger button hover background (dark red).
+    pub danger_hover_bg: String,
 }
 
 impl Default for ToolbarTheme {
@@ -132,6 +152,16 @@ impl Default for ToolbarTheme {
             danger: "#f23645".into(),
             warning: "#ff9800".into(),
             terminal_bg: "#131722".into(),
+            pane_header_focused: "#1a1a2e".into(),
+            pane_header_hover: "#171725".into(),
+            pane_header_idle: "#13131c".into(),
+            bubble_user_bg: "#1e1e3f".into(),
+            bubble_user_border: "#6366f1".into(),
+            bubble_user_text: "#e0e0ff".into(),
+            bubble_tool_bg: "#0a0a14".into(),
+            bubble_tool_text: "#a0a0b0".into(),
+            selection: "#4a7bc8".into(),
+            danger_hover_bg: "#7f1d1d".into(),
             sidebar_style: false,
         }
     }

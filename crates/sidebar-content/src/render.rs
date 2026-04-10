@@ -3640,7 +3640,7 @@ fn render_slot_panel(
                     let sep_x = sep.position as f64 - visual_thickness / 2.0;
                     let sep_y = sep.start as f64;
                     let sep_h = sep.length as f64;
-                    ctx.set_fill_color("#2a2a38");
+                    ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, visual_thickness, sep_h);
                     let hit_rect = WidgetRect::new(
                         sep.position as f64 - sep_hit_w / 2.0,
@@ -4020,10 +4020,10 @@ fn render_agents_panel(
         let toggle_w = 36.0;
         let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
-        ctx.set_fill_color(if is_pty { "#1d4ed8" } else if pty_hov { "#2a2a45" } else { "#1e1e28" });
+        ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
         ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if is_pty { "#ffffff" } else { "#888899" });
+        ctx.set_fill_color(if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("PTY", pty_rect.x + toggle_w / 2.0, pty_rect.y + btn_h / 2.0);
@@ -4036,10 +4036,10 @@ fn render_agents_panel(
         let chat_seg_x = x + toggle_w + 2.0;
         let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
-        ctx.set_fill_color(if !is_pty { "#0d9488" } else if chat_hov { "#1a3535" } else { "#1e1e28" });
+        ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
         ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if !is_pty { "#ffffff" } else { "#888899" });
+        ctx.set_fill_color(if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Chat", chat_seg_rect.x + toggle_w / 2.0, chat_seg_rect.y + btn_h / 2.0);
@@ -4049,12 +4049,12 @@ fn render_agents_panel(
         result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
 
         // CLI spawn buttons: [Claude] [Codex] [Gemini] [OpenCode]
-        struct CliBtn { id: &'static str, label: &'static str, color: &'static str, hov_color: &'static str }
+        struct CliBtn { id: &'static str, label: &'static str }
         let cli_btns = [
-            CliBtn { id: "agent:spawn:claude",   label: "Claude",   color: "#2d1f4e", hov_color: "#3d2a66" },
-            CliBtn { id: "agent:spawn:codex",     label: "Codex",    color: "#1a2d1a", hov_color: "#243824" },
-            CliBtn { id: "agent:spawn:gemini",    label: "Gemini",   color: "#1a2040", hov_color: "#243055" },
-            CliBtn { id: "agent:spawn:opencode",  label: "OpenCode", color: "#2d2a15", hov_color: "#423d1e" },
+            CliBtn { id: "agent:spawn:claude",   label: "Claude"   },
+            CliBtn { id: "agent:spawn:codex",     label: "Codex"    },
+            CliBtn { id: "agent:spawn:gemini",    label: "Gemini"   },
+            CliBtn { id: "agent:spawn:opencode",  label: "OpenCode" },
         ];
         let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
         let spawn_area_w = inner_w - (spawn_area_x - x);
@@ -4064,10 +4064,10 @@ fn render_agents_panel(
             let bx = spawn_area_x + i as f64 * (spawn_btn_w + gap);
             let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
             let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
-            ctx.set_fill_color(if hov { btn.hov_color } else { btn.color });
+            ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.button_bg });
             ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
             ctx.set_font("10px sans-serif");
-            ctx.set_fill_color("#ccccdd");
+            ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(btn.label, btn_rect.x + spawn_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
@@ -4091,14 +4091,14 @@ fn render_agents_panel(
         ctx.set_fill_color(if layout_open {
             &theme.item_bg_hover
         } else if !layout_en {
-            "#1e1e28"
+            &theme.button_bg
         } else if layout_hov {
             &theme.item_bg_hover
         } else {
             &theme.background
         });
         ctx.fill_rounded_rect(layout_rect.x, layout_rect.y, layout_rect.width, layout_rect.height, 3.0);
-        ctx.set_stroke_color(if layout_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_color(if layout_en { &theme.separator } else { &theme.separator });
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
         ctx.move_to(layout_rect.x, layout_rect.y);
@@ -4108,7 +4108,7 @@ fn render_agents_panel(
         ctx.close_path();
         ctx.stroke();
         ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if layout_en { &theme.item_text } else { "#555566" });
+        ctx.set_fill_color(if layout_en { &theme.item_text } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Layout \u{25be}", layout_rect.x + layout_w / 2.0, layout_rect.y + btn_h / 2.0);
@@ -4122,15 +4122,15 @@ fn render_agents_panel(
         let close_w = 22.0;
         let close_rect = WidgetRect::new(close_x, y + (ctrl_h - btn_h) / 2.0, close_w, btn_h);
         let cl_hov = layout_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
-        ctx.set_fill_color(if !layout_en { "#1e1e28" } else if cl_hov { "#7f1d1d" } else { &theme.background });
+        ctx.set_fill_color(if !layout_en { &theme.button_bg } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
         ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
-        ctx.set_stroke_color(if layout_en { &theme.separator } else { "#333340" });
+        ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.begin_path(); ctx.move_to(close_rect.x, close_rect.y); ctx.line_to(close_rect.x + close_w, close_rect.y);
         ctx.line_to(close_rect.x + close_w, close_rect.y + btn_h); ctx.line_to(close_rect.x, close_rect.y + btn_h);
         ctx.close_path(); ctx.stroke();
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if layout_en { "#ef4444" } else { "#555566" });
+        ctx.set_fill_color(if layout_en { &theme.danger } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("×", close_rect.x + close_w / 2.0, close_rect.y + btn_h / 2.0);
@@ -4151,7 +4151,7 @@ fn render_agents_panel(
         ctx.set_fill_color(&theme.terminal_bg);
         ctx.fill_rounded_rect(x, y, inner_w, grid_h, 4.0);
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("#555566");
+        ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Pick a CLI above to open a pane", x + inner_w / 2.0, y + grid_h / 2.0);
@@ -4196,7 +4196,7 @@ fn render_agents_panel(
                     let sep_x = sep.position as f64 - visual_thickness / 2.0;
                     let sep_y = sep.start as f64;
                     let sep_h = sep.length as f64;
-                    ctx.set_fill_color("#2a2a38");
+                    ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, visual_thickness, sep_h);
                     // Hit zone (wider than visual bar for easier grabbing).
                     let hit_rect = WidgetRect::new(
@@ -4213,7 +4213,7 @@ fn render_agents_panel(
                     let sep_y = sep.position as f64 - visual_thickness / 2.0;
                     let sep_x = sep.start as f64;
                     let sep_w = sep.length as f64;
-                    ctx.set_fill_color("#2a2a38");
+                    ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, sep_w, visual_thickness);
                     // Hit zone.
                     let hit_rect = WidgetRect::new(
@@ -4282,7 +4282,7 @@ fn render_agent_layout_dropdown(
     let dropdown_y = grid_y - dropdown_h; // appear above the grid_y (just below the ctrl row)
 
     // Background.
-    ctx.set_fill_color("#1a1f2aee");
+    ctx.set_fill_color(&theme.dropdown_bg);
     ctx.fill_rounded_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h, 4.0);
 
     // Border.
@@ -4314,11 +4314,11 @@ fn render_agent_layout_dropdown(
                 let row_rect = WidgetRect::new(dropdown_x, cur_y, dropdown_w, row_h);
                 let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(*widget_id));
                 if is_hov {
-                    ctx.set_fill_color("#2d3748ff");
+                    ctx.set_fill_color(&theme.item_bg_hover);
                     ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
                 }
                 ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(if is_hov { "#e2e8f0" } else { "#c9d1d9" });
+                ctx.set_fill_color(if is_hov { &theme.item_text_hover } else { &theme.item_text });
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(label, dropdown_x + pad_h, cur_y + row_h / 2.0);
@@ -4366,13 +4366,13 @@ fn render_agents_pane(
     // ── Pane header (40 px) ───────────────────────────────────────────────────
     {
         // Focused = bright accent; hovered (not focused) = subtle highlight; idle = dim.
-        let hdr_bg = if is_focused { "#1a1a2e" } else if is_hovered { "#171725" } else { "#13131c" };
+        let hdr_bg = if is_focused { &theme.pane_header_focused } else if is_hovered { &theme.pane_header_hover } else { &theme.pane_header_idle };
         ctx.set_fill_color(hdr_bg);
         ctx.fill_rect(px, py, pw, header_h);
 
         // Subtle accent stripe at the very top of the header when focused.
         if is_focused {
-            ctx.set_fill_color("#4a9eff");
+            ctx.set_fill_color(&theme.accent);
             ctx.fill_rect(px, py, pw, 2.0);
         }
 
@@ -4388,7 +4388,7 @@ fn render_agents_pane(
         };
         let label = format!("{} {} · {}", mode_icon, desc.cli.label(), workdir_str);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if is_focused { "#9090b0" } else { "#555566" });
+        ctx.set_fill_color(if is_focused { &theme.item_text } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(&label, px + 4.0, row1_y);
@@ -4401,11 +4401,11 @@ fn render_agents_pane(
         let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
         let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
         if cl_hov {
-            ctx.set_fill_color("#7f1d1d");
+            ctx.set_fill_color(&theme.danger_hover_bg);
             ctx.fill_rounded_rect(close_x, close_y, close_w, close_w, 2.0);
         }
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if cl_hov { "#ffffff" } else { "#555566" });
+        ctx.set_fill_color(if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("×", close_x + close_w / 2.0, close_y + close_w / 2.0);
@@ -4426,10 +4426,10 @@ fn render_agents_pane(
                 let new_btn_y = row2_y - btn_h / 2.0;
                 let new_wid = format!("agent:leaf:{}:new_session", leaf_id.0);
                 let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(new_wid.as_str()));
-                ctx.set_fill_color(if new_hov { "#1d4ed8" } else { "#1e3a5f" });
+                ctx.set_fill_color(if new_hov { &theme.accent } else { &theme.button_bg });
                 ctx.fill_rounded_rect(new_x, new_btn_y, new_w, btn_h, 3.0);
                 ctx.set_font("10px sans-serif");
-                ctx.set_fill_color("#c0d8ff");
+                ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(new_label, new_x + new_w / 2.0, new_btn_y + btn_h / 2.0);
@@ -4445,10 +4445,10 @@ fn render_agents_pane(
                 let sess_wid = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
                 let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
                 let sess_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(sess_wid.as_str()));
-                ctx.set_fill_color(if sess_open || sess_hov { "#1d4ed8" } else { "#1e3a5f" });
+                ctx.set_fill_color(if sess_open || sess_hov { &theme.accent } else { &theme.button_bg });
                 ctx.fill_rounded_rect(sess_x, sess_btn_y, sess_w, btn_h, 3.0);
                 ctx.set_font("10px sans-serif");
-                ctx.set_fill_color("#c0d8ff");
+                ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(sess_label, sess_x + sess_w / 2.0, sess_btn_y + btn_h / 2.0);
@@ -4463,7 +4463,7 @@ fn render_agents_pane(
                     _ => "○",
                 };
                 ctx.set_font("9px sans-serif");
-                ctx.set_fill_color("#445566");
+                ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(session_text, indicator_x, row2_y);
@@ -4482,11 +4482,11 @@ fn render_agents_pane(
                     let start_x = px + 4.0;
                     let start_btn_y = row2_y - btn_h / 2.0;
                     let start_wid = format!("agent:leaf:{}:start", leaf_id.0);
-                    let start_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
-                    ctx.set_fill_color(if start_hov { "#2563eb" } else { "#1d4ed8" });
+                    let _start_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
+                    ctx.set_fill_color(&theme.accent);
                     ctx.fill_rounded_rect(start_x, start_btn_y, start_w, btn_h, 3.0);
                     ctx.set_font("10px sans-serif");
-                    ctx.set_fill_color("#ffffff");
+                    ctx.set_fill_color(&theme.item_text_active);
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text(start_label, start_x + start_w / 2.0, start_btn_y + btn_h / 2.0);
@@ -4496,7 +4496,7 @@ fn render_agents_pane(
                 } else {
                     // Running indicator.
                     ctx.set_font("9px sans-serif");
-                    ctx.set_fill_color("#22c55e");
+                    ctx.set_fill_color(&theme.success);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text("● running", px + 4.0, row2_y);
@@ -4505,7 +4505,7 @@ fn render_agents_pane(
         }
 
         // Thin separator at the bottom of the header.
-        ctx.set_fill_color("#222230");
+        ctx.set_fill_color(&theme.separator);
         ctx.fill_rect(px, py + header_h - 1.0, pw, 1.0);
     }
 
@@ -4544,9 +4544,9 @@ fn render_agents_pane(
         result.item_rects.push((backdrop_wid, backdrop_rect));
 
         // Dropdown background.
-        ctx.set_fill_color("#1a1a2a");
+        ctx.set_fill_color(&theme.dropdown_bg);
         ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
-        ctx.set_fill_color("#2a2a40");
+        ctx.set_fill_color(&theme.separator);
         ctx.fill_rect(drop_x, drop_y, drop_w, 1.0); // top border
 
         let now_ts = std::time::SystemTime::now()
@@ -4556,7 +4556,7 @@ fn render_agents_pane(
 
         if sessions.is_empty() {
             ctx.set_font("10px sans-serif");
-            ctx.set_fill_color("#555566");
+            ctx.set_fill_color(&theme.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("No sessions yet", drop_x + drop_w / 2.0, drop_y + drop_h / 2.0);
@@ -4567,7 +4567,7 @@ fn render_agents_pane(
                 let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
                 let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
                 if item_hov {
-                    ctx.set_fill_color("#252540");
+                    ctx.set_fill_color(&theme.item_bg_hover);
                     ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
                 }
 
@@ -4586,7 +4586,7 @@ fn render_agents_pane(
                 };
 
                 ctx.set_font("9px sans-serif");
-                ctx.set_fill_color("#4466aa");
+                ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(&age_label, drop_x + 6.0, item_y + item_h / 2.0);
@@ -4601,7 +4601,7 @@ fn render_agents_pane(
                     session.preview.clone()
                 };
                 ctx.set_font("10px sans-serif");
-                ctx.set_fill_color(if item_hov { "#d0d8f0" } else { "#8888aa" });
+                ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text_muted });
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 // Clip the preview text to available width (simple truncation already applied).
@@ -4676,7 +4676,7 @@ fn render_agents_pty_leaf(
                     result.agent_pty_viewport_h = h;
                 }
 
-                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg) {
+                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg, &theme.selection, &theme.item_text_active) {
                     if is_focused {
                         result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
                         result.agent_pty_scrollbar_track_rect = Some(track_rect);
@@ -4684,11 +4684,11 @@ fn render_agents_pty_leaf(
                 }
             } else {
                 // Snapshot exists but it's not PTY (Idle or Chat) — show idle state.
-                render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result);
+                render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result, theme);
             }
         }
         None => {
-            render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result);
+            render_pty_idle(ctx, leaf_id, x, y, w, h, input_coordinator, result, theme);
         }
     }
 
@@ -4708,12 +4708,13 @@ fn render_pty_idle(
     h: f64,
     input_coordinator: &mut InputCoordinator,
     result: &mut RightSidebarResult,
+    theme: &ToolbarTheme,
 ) {
-    ctx.set_fill_color("#0a0a10");
+    ctx.set_fill_color(&theme.terminal_bg);
     ctx.fill_rounded_rect(x, y, w, h, 2.0);
 
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#555566");
+    ctx.set_fill_color(&theme.item_text_muted);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("▶  Click Start", x + w / 2.0, y + h / 2.0 - 10.0);
@@ -4724,11 +4725,11 @@ fn render_pty_idle(
     let btn_y = y + h / 2.0 + 4.0;
     let start_rect = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
     let start_wid = format!("agent:leaf:{}:start", leaf_id.0);
-    let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
-    ctx.set_fill_color(if hov { "#2563eb" } else { "#1d4ed8" });
+    let _hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
+    ctx.set_fill_color(&theme.accent);
     ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(&theme.item_text_active);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Start", btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
@@ -4749,6 +4750,8 @@ fn render_agents_pty_grid(
     h: f64,
     scroll_offset: f64,
     terminal_bg: &str,
+    selection_color: &str,
+    cursor_color: &str,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::AgentSnapshotMode;
 
@@ -4822,7 +4825,7 @@ fn render_agents_pty_grid(
             let lo_col = lo_col as usize;
             let hi_col = hi_col as usize;
             let total_cols = grid.cols as usize;
-            ctx.set_fill_color("#4a7bc8");
+            ctx.set_fill_color(selection_color);
             ctx.set_global_alpha(0.35);
             for row in lo_row..=hi_row {
                 let (c0, c1) = if lo_row == hi_row {
@@ -4853,7 +4856,7 @@ fn render_agents_pty_grid(
             let cy = y + cur_row as f64 * char_h - scroll_offset;
             if cy + char_h > y && cy < y + h {
                 let cell = &grid.cells[cur_row][cur_col];
-                ctx.set_fill_color("#ffffff");
+                ctx.set_fill_color(cursor_color);
                 ctx.fill_rect(cx, cy, char_w, char_h);
                 if !cell.ch.is_empty() && cell.ch != " " {
                     ctx.set_fill_color(&rgb_to_hex(cell.bg));
@@ -5007,16 +5010,16 @@ fn render_agents_chat_leaf(
         text_disabled: theme.item_text_muted.clone(),
         border_normal: theme.separator.clone(),
         border_hover: theme.separator.clone(),
-        border_focused: "#3b82f6".to_string(),
-        accent: "#264f78".to_string(),
-        accent_hover: "#264f78".to_string(),
-        success: "#26a69a".to_string(),
-        warning: "#ff9800".to_string(),
-        danger: "#ef5350".to_string(),
+        border_focused: theme.accent.clone(),
+        accent: theme.selection.clone(),
+        accent_hover: theme.selection.clone(),
+        success: theme.success.clone(),
+        warning: theme.warning.clone(),
+        danger: theme.danger.clone(),
     };
     let input_draw_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &input_widget_theme);
     if is_input_focused && state.agent_input_cursor_visible {
-        draw_input_cursor(ctx, input_draw_result.cursor_x, input_draw_result.cursor_y, input_draw_result.cursor_height, "#d1d4dc");
+        draw_input_cursor(ctx, input_draw_result.cursor_x, input_draw_result.cursor_y, input_draw_result.cursor_height, &theme.item_text);
     }
 
     let input_wid = format!("agent:leaf:{}:input", leaf_id.0);
@@ -5033,11 +5036,11 @@ fn render_agents_chat_leaf(
     let send_x = x + input_w + send_gap;
     let send_rect = WidgetRect::new(send_x, input_y, send_w, row_h);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
-    let send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
-    ctx.set_fill_color(if send_hov { "#2563eb" } else { "#3b82f6" });
+    let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
+    ctx.set_fill_color(&theme.accent);
     ctx.fill_rounded_rect(send_x, input_y, send_w, row_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(&theme.item_text_active);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Send", send_x + send_w / 2.0, input_y + row_h / 2.0);
@@ -5080,7 +5083,7 @@ fn render_agents_chat_bubbles(
 
     if messages.is_empty() {
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("#8b8b9e");
+        ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("No messages yet", x + w / 2.0, y + h / 2.0);
@@ -5116,10 +5119,10 @@ fn render_agents_chat_bubbles(
                 let bx = x + w - bubble_w - 8.0;
 
                 // Bubble background.
-                ctx.set_fill_color("#1e1e3f");
+                ctx.set_fill_color(&theme.bubble_user_bg);
                 ctx.fill_rounded_rect(bx, cursor_y, bubble_w, bubble_h, 6.0);
                 // Subtle border.
-                ctx.set_stroke_color("#6366f1");
+                ctx.set_stroke_color(&theme.bubble_user_border);
                 ctx.set_stroke_width(1.0);
                 ctx.begin_path();
                 ctx.move_to(bx, cursor_y);
@@ -5129,7 +5132,7 @@ fn render_agents_chat_bubbles(
                 ctx.close_path();
                 ctx.stroke();
 
-                ctx.set_fill_color("#e0e0ff");
+                ctx.set_fill_color(&theme.bubble_user_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 for (li, line) in lines.iter().enumerate() {
@@ -5162,15 +5165,15 @@ fn render_agents_chat_bubbles(
                 let n_lines = lines.len().max(1);
                 let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
 
-                ctx.set_fill_color("#0a0a14");
+                ctx.set_fill_color(&theme.bubble_tool_bg);
                 ctx.fill_rounded_rect(x + 4.0, cursor_y, w - 12.0, bubble_h, 3.0);
 
-                ctx.set_fill_color("#6b7280");
+                ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.fill_text(&header, x + 4.0 + bubble_pad_x, cursor_y + bubble_pad_y);
 
-                ctx.set_fill_color("#a0a0b0");
+                ctx.set_fill_color(&theme.bubble_tool_text);
                 ctx.set_font("11px JetBrainsMono");
                 for (li, line) in lines.iter().enumerate() {
                     ctx.fill_text(
@@ -5188,7 +5191,7 @@ fn render_agents_chat_bubbles(
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
                 let text_h = lines.len() as f64 * line_h_normal;
 
-                ctx.set_fill_color("#8b8b9e");
+                ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 for (li, line) in lines.iter().enumerate() {
@@ -5203,7 +5206,7 @@ fn render_agents_chat_bubbles(
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
                 let text_h = lines.len() as f64 * line_h_normal;
 
-                ctx.set_fill_color("#ef4444");
+                ctx.set_fill_color(&theme.danger);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 for (li, line) in lines.iter().enumerate() {
@@ -5238,7 +5241,7 @@ fn render_agents_chat_bubbles(
             };
             if !status_text.is_empty() {
                 ctx.set_font("11px JetBrainsMono");
-                ctx.set_fill_color("#888888");
+                ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.fill_text(&status_text, x + 8.0, cursor_y);
