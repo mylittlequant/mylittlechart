@@ -4148,7 +4148,7 @@ fn render_agents_panel(
 
     if state.agent_leaves.is_empty() {
         // Empty state placeholder.
-        ctx.set_fill_color("#0d0d12");
+        ctx.set_fill_color(&theme.terminal_bg);
         ctx.fill_rounded_rect(x, y, inner_w, grid_h, 4.0);
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color("#555566");
@@ -5067,8 +5067,8 @@ fn render_agents_chat_bubbles(
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
-    // Dark content area background.
-    ctx.set_fill_color("#0d0d12");
+    // Chat content area background (from theme).
+    ctx.set_fill_color(&theme.terminal_bg);
     ctx.fill_rounded_rect(x, y, w, h, 4.0);
 
     let messages = match snapshot.and_then(|s| {
