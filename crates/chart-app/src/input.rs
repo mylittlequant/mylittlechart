@@ -9004,6 +9004,7 @@ impl ChartApp {
                 Err(e) => eprintln!("[ChartApp] agent:spawn:{} error: {}", cli_str, e),
             }
             self.sidebar_data_dirty = true;
+            self.profile_dirty = true;
             return;
         }
 
@@ -9120,6 +9121,7 @@ impl ChartApp {
                 }
             }
             self.sidebar_data_dirty = true;
+            self.profile_dirty = true;
             return;
         }
 
@@ -9145,6 +9147,7 @@ impl ChartApp {
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
                 }
                 self.sidebar_data_dirty = true;
+                self.profile_dirty = true;
             }
             return;
         }
@@ -9204,6 +9207,7 @@ impl ChartApp {
                         }
                     }
                     self.sidebar_data_dirty = true;
+                    self.profile_dirty = true;
                     self.autosave_snapshot();
                 }
                 return;
