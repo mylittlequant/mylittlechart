@@ -2694,6 +2694,7 @@ impl ChartPanelApp {
             danger: rt.colors.danger.clone(),
             warning: rt.colors.warning.clone(),
             sidebar_style: rt.style_params.toolbar_sidebar_style,
+            terminal_bg: rt.colors.toolbar_bg.clone(),
         }
     }
 

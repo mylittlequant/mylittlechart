@@ -107,6 +107,8 @@ pub struct ToolbarTheme {
     /// When `true` the toolbar is rendered in a compact sidebar style
     /// (no background blur, narrower padding).
     pub sidebar_style: bool,
+    /// Background colour for embedded terminal (PTY) panes.
+    pub terminal_bg: String,
 }
 
 impl Default for ToolbarTheme {
@@ -129,6 +131,7 @@ impl Default for ToolbarTheme {
             success: "#26a69a".into(),
             danger: "#f23645".into(),
             warning: "#ff9800".into(),
+            terminal_bg: "#131722".into(),
             sidebar_style: false,
         }
     }

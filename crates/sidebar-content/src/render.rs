@@ -4350,7 +4350,7 @@ fn render_agents_pane(
     let ph = prect.height as f64;
 
     // Pane background.
-    ctx.set_fill_color("#0d0d12");
+    ctx.set_fill_color(&theme.background);
     ctx.fill_rounded_rect(px, py, pw, ph, 2.0);
 
     // Whole-pane hover/focus absorber (registered FIRST so later widgets
@@ -4630,7 +4630,7 @@ fn render_agents_pty_leaf(
     h: f64,
     desc: &crate::agents_dock::AgentLeafDescriptor,
     state: &SidebarState,
-    _theme: &ToolbarTheme,
+    theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     is_focused: bool,
@@ -4676,7 +4676,7 @@ fn render_agents_pty_leaf(
                     result.agent_pty_viewport_h = h;
                 }
 
-                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped) {
+                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg) {
                     if is_focused {
                         result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
                         result.agent_pty_scrollbar_track_rect = Some(track_rect);
@@ -4748,11 +4748,12 @@ fn render_agents_pty_grid(
     w: f64,
     h: f64,
     scroll_offset: f64,
+    terminal_bg: &str,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::AgentSnapshotMode;
 
-    // Terminal black background.
-    ctx.set_fill_color("#000000");
+    // Terminal background.
+    ctx.set_fill_color(terminal_bg);
     ctx.fill_rounded_rect(x, y, w, h, 4.0);
 
     let grid = match snapshot.and_then(|s| {
