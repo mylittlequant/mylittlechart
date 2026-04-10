@@ -2113,18 +2113,23 @@ impl ChartApp {
         let _ = current_time_ms;
         let tick_start = std::time::Instant::now();
 
-        // Load latest history for any restored chat leaves on the very first tick.
+        // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).
         if !self.agent_autostarted {
             self.agent_autostarted = true;
-            // Load chat history for any chat leaves that were restored from profile.
-            let chat_instance_ids: Vec<gate4agent::InstanceId> = self.sidebar_state.agent_leaves
+            // Load chat history per leaf — use the persisted session_id when available
+            // so each leaf resumes its own conversation, not just the latest one.
+            let chat_leaves: Vec<(gate4agent::InstanceId, Option<String>)> = self.sidebar_state.agent_leaves
                 .values()
                 .filter(|d| d.mode == gate4agent::InstanceMode::Chat)
-                .map(|d| d.instance_id)
+                .map(|d| (d.instance_id, d.chat_session_id.clone()))
                 .collect();
-            for id in chat_instance_ids {
-                self.agent.load_latest_history_instance(id);
+            for (id, session_id) in chat_leaves {
+                if let Some(ref sid) = session_id {
+                    self.agent.load_history_instance(id, sid);
+                } else {
+                    self.agent.load_latest_history_instance(id);
+                }
             }
         }
 
