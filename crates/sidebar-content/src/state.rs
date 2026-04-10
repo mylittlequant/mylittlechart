@@ -11,6 +11,21 @@ use crate::watchlist::WatchlistManager;
 use crate::agents_dock::{AgentLeafDescriptor, AgentDockingManager};
 
 // =============================================================================
+// AgentSpawnLayout
+// =============================================================================
+
+/// How a new agent pane is added to the layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentSpawnLayout {
+    /// Split focused leaf horizontally (side by side).
+    SplitH,
+    /// Split focused leaf vertically (stacked).
+    SplitV,
+    /// Replace the focused leaf (kill old session, put new one in its place).
+    Replace,
+}
+
+// =============================================================================
 // MetricsSnapshot
 // =============================================================================
 
@@ -284,10 +299,10 @@ pub struct SidebarState {
     /// Controlled by the [PTY | Chat] mode toggle in the agents panel control row.
     pub agent_spawn_mode: InstanceMode,
 
-    /// Split direction used when spawning a new agent leaf next to an existing one.
+    /// Spawn layout mode used when spawning a new agent leaf.
     ///
-    /// Controlled by the [H][V] toggle in Row 2 of the agents panel control bar.
-    pub agent_split_direction: uzor::panels::SplitKind,
+    /// Controlled by the [H][V][R] toggle in Row 2 of the agents panel control bar.
+    pub agent_spawn_layout: AgentSpawnLayout,
 
     /// Bounding rect of the agent terminal content area for the focused leaf,
     /// in sidebar-local coordinates.  `None` when the Agents panel is not open
@@ -641,7 +656,7 @@ impl Default for SidebarState {
             metrics_last_sample: None,
             performance_data: PerformanceData::default(),
             agent_spawn_mode: InstanceMode::Pty,
-            agent_split_direction: uzor::panels::SplitKind::Vertical,
+            agent_spawn_layout: AgentSpawnLayout::SplitV,
             agent_terminal_rect: None,
             agent_terminal_size: None,
             agent_input_buffers: HashMap::new(),
