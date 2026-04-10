@@ -217,6 +217,31 @@ impl ChartApp {
         out
     }
 
+    /// Extract the currently selected chat text from the focused leaf.
+    ///
+    /// Uses the word-wrapped line layout stored in `last_sidebar_result` so that
+    /// only the exact visible lines within the selection range are copied — not the
+    /// full raw `msg.content`.  Returns `None` when there is no active selection.
+    ///
+    /// After returning `Some(text)` the caller is responsible for clearing the
+    /// selection via `agent_chat_selections.remove(&leaf_id)`.
+    pub fn chat_selection_text(&self) -> Option<(uzor::panels::LeafId, String)> {
+        let leaf_id = self.sidebar_state.focused_agent_leaf?;
+        let sel = self.sidebar_state.agent_chat_selections.get(&leaf_id)?;
+        if sel.is_empty() { return None; }
+        let ((lo_msg, lo_line), (hi_msg, hi_line)) = sel.ordered();
+        let rects = self.last_sidebar_result.as_ref().map(|r| &r.agent_chat_line_rects)?;
+        let mut text = String::new();
+        for entry in rects.iter() {
+            let (msg_i, line_i, _, _, lid, line_text) = entry;
+            if *lid != leaf_id { continue; }
+            let pos = (*msg_i, *line_i);
+            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) { continue; }
+            if !text.is_empty() { text.push('\n'); }
+            text.push_str(line_text);
+        }
+        if text.is_empty() { None } else { Some((leaf_id, text)) }
+    }
 
     /// Handle a left-click at screen coordinates `(x, y)`.
     ///
@@ -722,10 +747,10 @@ impl ChartApp {
                         let hit = self.last_sidebar_result.as_ref()
                             .and_then(|r| {
                                 r.agent_chat_line_rects.iter()
-                                    .find(|&&(_, _, yt, yb, lid)| lid == leaf_id && y >= yt && y < yb)
-                                    .copied()
+                                    .find(|e| e.4 == leaf_id && y >= e.2 && y < e.3)
+                                    .map(|e| (e.0, e.1))
                             });
-                        if let Some((msg_idx, line_idx, _, _, _)) = hit {
+                        if let Some((msg_idx, line_idx)) = hit {
                             self.sidebar_state.agent_chat_selections.insert(
                                 leaf_id,
                                 sidebar_content::state::ChatSelection::new(msg_idx, line_idx),
@@ -2520,10 +2545,10 @@ impl ChartApp {
                 let hit = self.last_sidebar_result.as_ref()
                     .and_then(|r| {
                         r.agent_chat_line_rects.iter()
-                            .find(|&&(_, _, yt, yb, lid)| lid == leaf_id && y >= yt && y < yb)
-                            .copied()
+                            .find(|e| e.4 == leaf_id && y >= e.2 && y < e.3)
+                            .map(|e| (e.0, e.1))
                     });
-                if let Some((msg_idx, line_idx, _, _, _)) = hit {
+                if let Some((msg_idx, line_idx)) = hit {
                     if let Some(sel) = self.sidebar_state.agent_chat_selections.get_mut(&leaf_id) {
                         sel.end_msg = msg_idx;
                         sel.end_line = line_idx;
@@ -8909,6 +8934,22 @@ impl ChartApp {
             return;
         }
 
+        // --- Layout dropdown: Collapse (show all leaves hidden by Expand) ---
+        if widget_id == "agent:layout:collapse" {
+            self.sidebar_state.agent_layout_dropdown_open = false;
+            let all_ids: Vec<uzor::panels::LeafId> = self
+                .sidebar_state
+                .agent_leaves
+                .keys()
+                .copied()
+                .collect();
+            for leaf_id in all_ids {
+                self.sidebar_state.agent_docking.inner_mut().tree_mut().show_leaf(leaf_id);
+            }
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // --- Layout dropdown: Reset Sizes (reset all separator proportions) ---
         if widget_id == "agent:layout:reset" {
             self.sidebar_state.agent_layout_dropdown_open = false;
@@ -9294,7 +9335,7 @@ impl ChartApp {
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
                         let id = desc.instance_id;
-                        let sessions = self.agent.list_past_sessions(desc.cli);
+                        let sessions = self.agent.list_past_sessions_instance(id);
                         if let Some(meta) = sessions.get(idx).cloned() {
                             if self.agent.load_history_instance(id, &meta.id) {
                                 self.sidebar_data_dirty = true;

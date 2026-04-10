@@ -161,10 +161,11 @@ pub struct RightSidebarResult {
 
     /// Chat line rects for selection hit-testing.
     ///
-    /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id)`.
+    /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id, line_text)`.
     /// Populated during `render_agents_chat_bubbles` for the focused leaf.
-    /// Used by `chart-app` to map mouse Y → (msg, line) during drag-select.
-    pub agent_chat_line_rects: Vec<(u16, u16, f64, f64, uzor::panels::LeafId)>,
+    /// Used by `chart-app` to map mouse Y → (msg, line) during drag-select,
+    /// and to extract the exact wrapped-line text when copying a selection.
+    pub agent_chat_line_rects: Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String)>,
 }
 
 // =============================================================================
@@ -656,6 +657,12 @@ pub fn render_right_sidebar(
         && sidebar_state.focused_agent_leaf.is_some()
     {
         if let Some((button_x, button_bottom_y, inner_w)) = result.agent_layout_dropdown_anchor {
+            let any_hidden = sidebar_state
+                .agent_docking
+                .inner()
+                .tree()
+                .visible_leaf_count()
+                < sidebar_state.agent_docking.inner().tree().leaf_count();
             render_agent_layout_dropdown(
                 ctx,
                 button_x,
@@ -663,6 +670,7 @@ pub fn render_right_sidebar(
                 inner_w,
                 toolbar_theme,
                 input_coordinator,
+                any_hidden,
             );
         }
     }
@@ -4281,11 +4289,13 @@ fn render_agents_panel(
 /// Render the Layout dropdown overlay for the agents control row.
 ///
 /// Appears anchored just below the Layout button.
-/// Lists Split H, Split V (separator), Expand, Reset Sizes.
+/// Lists Split H, Split V (separator), Expand or Collapse (depending on
+/// `any_hidden`), Reset Sizes.
 ///
 /// `button_x` and `button_bottom_y` are the screen coordinates of the Layout
 /// button's left edge and bottom edge respectively.  `inner_w` is the panel's
 /// inner content width, used only to clamp the dropdown so it doesn't overflow.
+/// `any_hidden` controls whether "Collapse" replaces "Expand" in the menu.
 fn render_agent_layout_dropdown(
     ctx: &mut dyn RenderContext,
     button_x: f64,
@@ -4293,13 +4303,20 @@ fn render_agent_layout_dropdown(
     inner_w: f64,
     theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
+    any_hidden: bool,
 ) {
-    const ITEMS: &[Option<(&str, &str)>] = &[
-        Some(("agent:layout:split_h",   "Split H")),
-        Some(("agent:layout:split_v",   "Split V")),
-        None,                                          // separator line
-        Some(("agent:layout:expand",    "Expand")),
-        Some(("agent:layout:reset",     "Reset Sizes")),
+    let expand_or_collapse: (&str, &str) = if any_hidden {
+        ("agent:layout:collapse", "Collapse")
+    } else {
+        ("agent:layout:expand", "Expand")
+    };
+
+    let items: &[Option<(&str, &str)>] = &[
+        Some(("agent:layout:split_h", "Split H")),
+        Some(("agent:layout:split_v", "Split V")),
+        None, // separator line
+        Some(expand_or_collapse),
+        Some(("agent:layout:reset", "Reset Sizes")),
     ];
 
     let row_h = 24.0;
@@ -4309,8 +4326,8 @@ fn render_agent_layout_dropdown(
     let dropdown_w = 140.0_f64.min(inner_w);
 
     // Height: sum of rows + separator + top/bottom padding.
-    let content_rows = ITEMS.iter().filter(|i| i.is_some()).count();
-    let sep_rows = ITEMS.iter().filter(|i| i.is_none()).count();
+    let content_rows = items.iter().filter(|i| i.is_some()).count();
+    let sep_rows = items.iter().filter(|i| i.is_none()).count();
     let dropdown_h = row_h * content_rows as f64 + sep_h * sep_rows as f64 + pad_v * 2.0;
 
     // Anchor: left-aligned to the Layout button's actual X position (bug 3 fix).
@@ -4334,7 +4351,7 @@ fn render_agent_layout_dropdown(
     ctx.stroke();
 
     let mut cur_y = dropdown_y + pad_v;
-    for item in ITEMS {
+    for item in items {
         match item {
             None => {
                 // Separator line.
@@ -4415,15 +4432,11 @@ fn render_agents_pane(
 
         // ── Row 1: mode icon + CLI name + workdir (top half, y = py + 10) ────
         let row1_y = py + 11.0;
-        let workdir_str = desc.workdir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agent".to_string());
         let mode_icon = match desc.mode {
             gate4agent::InstanceMode::Pty  => ">_",
             gate4agent::InstanceMode::Chat => "◎",
         };
-        let label = format!("{} {} · {}", mode_icon, desc.cli.label(), workdir_str);
+        let label = format!("{} {}", mode_icon, desc.cli.label());
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(if is_focused { &theme.item_text } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Left);
@@ -4493,17 +4506,6 @@ fn render_agents_pane(
                 input_coordinator.register(sess_wid.as_str(), sess_rect, uzor::input::Sense::CLICK);
                 result.item_rects.push((sess_wid, sess_rect));
 
-                // Active session indicator (small text after the buttons).
-                let indicator_x = sess_x + sess_w + btn_pad + 2.0;
-                let session_text = match state.agent_active_session_id.get(&leaf_id) {
-                    Some(Some(_)) => "●",
-                    _ => "○",
-                };
-                ctx.set_font("9px sans-serif");
-                ctx.set_fill_color(&theme.item_text_muted);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(session_text, indicator_x, row2_y);
             }
 
             gate4agent::InstanceMode::Pty => {
@@ -4530,13 +4532,6 @@ fn render_agents_pane(
                     let start_rect = WidgetRect::new(start_x, start_btn_y, start_w, btn_h);
                     input_coordinator.register(start_wid.as_str(), start_rect, uzor::input::Sense::CLICK);
                     result.item_rects.push((start_wid, start_rect));
-                } else {
-                    // Running indicator.
-                    ctx.set_font("9px sans-serif");
-                    ctx.set_fill_color(&theme.success);
-                    ctx.set_text_align(TextAlign::Left);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("● running", px + 4.0, row2_y);
                 }
             }
         }
@@ -5117,7 +5112,7 @@ fn render_agents_chat_bubbles(
     total_content_h: f64,
     selection: Option<&crate::state::ChatSelection>,
     leaf_id: uzor::panels::LeafId,
-    line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId)>,
+    line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String)>,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -5171,9 +5166,9 @@ fn render_agents_chat_bubbles(
                 let bx = x + w - bubble_w - 8.0;
 
                 // Record line rects for selection hit-testing.
-                for li in 0..n_lines {
+                for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + bubble_pad_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
                 }
 
                 // Bubble background.
@@ -5207,9 +5202,9 @@ fn render_agents_chat_bubbles(
                 let text_h = n_lines as f64 * line_h_normal;
 
                 // Record line rects for selection hit-testing.
-                for li in 0..n_lines {
+                for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
                 }
 
                 ctx.set_fill_color(&theme.item_text);
@@ -5232,10 +5227,10 @@ fn render_agents_chat_bubbles(
 
                 // Record line rects (header + content lines).
                 let header_y = cursor_y + bubble_pad_y;
-                line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id));
-                for li in 0..n_lines {
+                line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone()));
+                for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono;
-                    line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id));
+                    line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id, line_text.clone()));
                 }
 
                 ctx.set_fill_color(&theme.bubble_tool_bg);
@@ -5266,9 +5261,9 @@ fn render_agents_chat_bubbles(
                 let text_h = n_lines as f64 * line_h_normal;
 
                 // Record line rects for selection hit-testing.
-                for li in 0..n_lines {
+                for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
                 }
 
                 ctx.set_fill_color(&theme.item_text_muted);
@@ -5288,9 +5283,9 @@ fn render_agents_chat_bubbles(
                 let text_h = n_lines as f64 * line_h_normal;
 
                 // Record line rects for selection hit-testing.
-                for li in 0..n_lines {
+                for (li, line_text) in lines.iter().enumerate() {
                     let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id));
+                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone()));
                 }
 
                 ctx.set_fill_color(&theme.danger);
@@ -5315,7 +5310,8 @@ fn render_agents_chat_bubbles(
             let ((lo_msg, lo_line), (hi_msg, hi_line)) = sel.ordered();
             ctx.set_fill_color(&theme.selection);
             ctx.set_global_alpha(0.35);
-            for &(msg_i, line_i, line_y, line_y_bot, _lid) in line_rects_out.iter() {
+            for (msg_i, line_i, line_y, line_y_bot, _lid, _line_text) in line_rects_out.iter() {
+                let (msg_i, line_i, line_y, line_y_bot) = (*msg_i, *line_i, *line_y, *line_y_bot);
                 let pos = (msg_i, line_i);
                 if pos >= (lo_msg, lo_line) && pos <= (hi_msg, hi_line) {
                     ctx.fill_rect(x, line_y, w, line_y_bot - line_y);

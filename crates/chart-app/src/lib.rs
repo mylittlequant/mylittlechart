@@ -1720,11 +1720,26 @@ impl ChartApp {
                         // closure once per leaf — we return a zero-instance
                         // `AgentPaneLeaf` keyed by cli/mode so rendering works;
                         // the real InstanceId is stored in `agent_leaves`.
-                        let restore_result = snap.restore_tree(|_type_id| {
+                        let restore_result = snap.restore_tree_with_id(|leaf_id, _type_id| {
+                            let (cli, mode) = if let Some(persisted) = by_id.get(&leaf_id) {
+                                let cli = match persisted.cli {
+                                    zengeld_chart::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
+                                    zengeld_chart::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
+                                    zengeld_chart::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
+                                    zengeld_chart::PersistedAgentCli::OpenCode => gate4agent::AgentCli::OpenCode,
+                                };
+                                let mode = match persisted.mode {
+                                    zengeld_chart::PersistedInstanceMode::Pty => gate4agent::InstanceMode::Pty,
+                                    zengeld_chart::PersistedInstanceMode::Chat => gate4agent::InstanceMode::Chat,
+                                };
+                                (cli, mode)
+                            } else {
+                                (fallback_cli, fallback_mode)
+                            };
                             Some(sidebar_content::AgentPaneLeaf {
                                 instance_id: gate4agent::InstanceId::new(),
-                                cli: fallback_cli,
-                                mode: fallback_mode,
+                                cli,
+                                mode,
                             })
                         });
 
@@ -1768,7 +1783,6 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                let _ = by_id; // documented for readability; restore_tree ignores it today
                                 eprintln!(
                                     "[ChartApp] agents docking restored: {} leaves",
                                     self.sidebar_state.agent_leaves.len()

@@ -8080,26 +8080,7 @@ impl ApplicationHandler for App<'_> {
                                 // Chat-first: if the focused leaf is a Chat leaf with an
                                 // active selection, copy selected message lines to clipboard.
                                 {
-                                    use sidebar_content::agent_types::AgentSnapshotMode;
-                                    let chat_text = pw.chart.sidebar_state.focused_agent_leaf
-                                        .and_then(|leaf_id| {
-                                            let sel = pw.chart.sidebar_state.agent_chat_selections.get(&leaf_id)?;
-                                            if sel.is_empty() { return None; }
-                                            let snap = pw.chart.sidebar_state.agent_leaf_snapshots.get(&leaf_id)?;
-                                            let msgs = match &snap.mode {
-                                                AgentSnapshotMode::Chat(m) => m,
-                                                _ => return None,
-                                            };
-                                            let ((lo_msg, _lo_line), (hi_msg, _hi_line)) = sel.ordered();
-                                            let mut text = String::new();
-                                            for (idx, msg) in msgs.iter().enumerate() {
-                                                let idx = idx as u16;
-                                                if idx < lo_msg || idx > hi_msg { continue; }
-                                                if !text.is_empty() { text.push('\n'); }
-                                                text.push_str(&msg.content);
-                                            }
-                                            if text.is_empty() { None } else { Some((leaf_id, text)) }
-                                        });
+                                    let chat_text = pw.chart.chat_selection_text();
                                     if let Some((leaf_id, text)) = chat_text {
                                         if let Ok(mut cb) = arboard::Clipboard::new() {
                                             let _ = cb.set_text(text);
