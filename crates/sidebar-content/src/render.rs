@@ -150,6 +150,14 @@ pub struct RightSidebarResult {
     ///
     /// Set only when `active_slot_body_rect` is `Some`.
     pub active_slot_index: Option<usize>,
+
+    /// Anchor for the agent Layout dropdown overlay.
+    ///
+    /// Set when the Agents panel is rendered and the Layout button exists.
+    /// Contains `(button_x, button_bottom_y, inner_w)` in screen coordinates,
+    /// so the caller can render the dropdown outside the scroll clip.
+    /// `None` when the Agents panel is not rendered or no focused leaf exists.
+    pub agent_layout_dropdown_anchor: Option<(f64, f64, f64)>,
 }
 
 // =============================================================================
@@ -626,6 +634,26 @@ pub fn render_right_sidebar(
                 rect,
                 header_height,
                 slot_idx,
+                toolbar_theme,
+                input_coordinator,
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Agent Layout dropdown overlay (rendered OUTSIDE the scroll clip so it
+    // is never clipped by the scrollable container).
+    // -------------------------------------------------------------------------
+    if panel == RightSidebarPanel::Agents
+        && sidebar_state.agent_layout_dropdown_open
+        && sidebar_state.focused_agent_leaf.is_some()
+    {
+        if let Some((button_x, button_bottom_y, inner_w)) = result.agent_layout_dropdown_anchor {
+            render_agent_layout_dropdown(
+                ctx,
+                button_x,
+                button_bottom_y,
+                inner_w,
                 toolbar_theme,
                 input_coordinator,
             );
@@ -4117,6 +4145,11 @@ fn render_agents_panel(
         }
         result.item_rects.push(("agent:layout_menu".to_string(), layout_rect));
 
+        // Save the button's bottom edge so the caller can render the dropdown
+        // overlay OUTSIDE the scroll clip (fixes clipping bug).
+        result.agent_layout_dropdown_anchor =
+            Some((layout_rect.x, layout_rect.y + layout_rect.height, inner_w));
+
         // [×] close pane
         let close_x = x + layout_w + gap;
         let close_w = 22.0;
@@ -4229,11 +4262,6 @@ fn render_agents_panel(
         }
     }
 
-    // ── Layout dropdown overlay (rendered on top of grid) ─────────────────────
-    if state.agent_layout_dropdown_open && state.focused_agent_leaf.is_some() {
-        render_agent_layout_dropdown(ctx, x, y, inner_w, theme, input_coordinator);
-    }
-
     y += grid_h + pad;
     y - content_y
 }
@@ -4245,12 +4273,16 @@ fn render_agents_panel(
 
 /// Render the Layout dropdown overlay for the agents control row.
 ///
-/// Appears anchored just below the control row, left-aligned to the Layout
-/// button.  Lists Split H, Split V (separator), Expand, Reset Sizes.
+/// Appears anchored just below the Layout button.
+/// Lists Split H, Split V (separator), Expand, Reset Sizes.
+///
+/// `button_x` and `button_bottom_y` are the screen coordinates of the Layout
+/// button's left edge and bottom edge respectively.  `inner_w` is the panel's
+/// inner content width, used only to clamp the dropdown so it doesn't overflow.
 fn render_agent_layout_dropdown(
     ctx: &mut dyn RenderContext,
-    x: f64,
-    grid_y: f64,
+    button_x: f64,
+    button_bottom_y: f64,
     inner_w: f64,
     theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
@@ -4274,12 +4306,10 @@ fn render_agent_layout_dropdown(
     let sep_rows = ITEMS.iter().filter(|i| i.is_none()).count();
     let dropdown_h = row_h * content_rows as f64 + sep_h * sep_rows as f64 + pad_v * 2.0;
 
-    // Anchor: below the control row, left-aligned to where the Layout button
-    // starts (chat_btn_x + chat_btn_w + gap = approximately x + 56 + 56 + 4 + 4 = x + 120).
-    // We use x directly for simplicity; the dropdown stays within the sidebar.
-    let layout_btn_x = x + 56.0 + 4.0 + 56.0 + 4.0; // term_w + gap + chat_w + gap
-    let dropdown_x = layout_btn_x.min(x + inner_w - dropdown_w);
-    let dropdown_y = grid_y - dropdown_h; // appear above the grid_y (just below the ctrl row)
+    // Anchor: left-aligned to the Layout button's actual X position (bug 3 fix).
+    // Appears BELOW the button's bottom edge (bug 2 fix).
+    let dropdown_x = button_x.min(button_x + inner_w - dropdown_w);
+    let dropdown_y = button_bottom_y;
 
     // Background.
     ctx.set_fill_color(&theme.dropdown_bg);
