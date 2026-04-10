@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 zengeld-chart = { path = "../chart" }
-uzor = "=1.0.40"
+uzor = "=1.0.41"
 alerts = { path = "../alerts" }
 serde = { version = "1.0", features = ["derive"] }
 gate4agent = "=0.2.15"
