@@ -745,6 +745,41 @@ impl ChartApp {
         // Track whether this drag started on a UI element (for crosshair suppression).
         self.ui_drag_active = self.input_coordinator.borrow_mut().is_over_ui();
 
+        // ── Agent-panel separator drag initiation ────────────────────────────
+        // MUST run BEFORE PTY/Chat drag so separator hit zones take priority
+        // over the leaf content areas that may overlap the separator zone.
+        if self.agent_sep_drag.is_none() {
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered_wid {
+                if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
+                    if let Ok(sep_idx) = idx_str.parse::<usize>() {
+                        let sep_info: Option<(uzor::panels::SeparatorOrientation, f32)> = {
+                            let docking = self.sidebar_state.agent_docking.inner();
+                            docking.separators().get(sep_idx).map(|sep| {
+                                use uzor::panels::SeparatorOrientation;
+                                let area = docking.layout_area();
+                                let total = match sep.orientation {
+                                    SeparatorOrientation::Vertical => area.width,
+                                    SeparatorOrientation::Horizontal => area.height,
+                                };
+                                (sep.orientation, total)
+                            })
+                        };
+                        if let Some((orient, total_size)) = sep_info {
+                            use uzor::panels::SeparatorOrientation;
+                            let start_pos = match orient {
+                                SeparatorOrientation::Vertical => x,
+                                SeparatorOrientation::Horizontal => y,
+                            };
+                            self.agent_sep_drag = Some((sep_idx, start_pos, total_size));
+                            self.ui_drag_active = true;
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
         // ── PTY host-side selection drag ────────────────────────────────────
         // If the drag starts inside the Agent PTY terminal (in PTY mode),
         // begin a host-side cell selection. This MUST run before TIM drag so
@@ -1145,41 +1180,6 @@ impl ChartApp {
                             }
                         }
                         None => {}
-                    }
-                }
-            }
-        }
-
-        // ── Agent-panel separator drag initiation ────────────────────────────
-        // Detect `"agent:sep:{idx}"` widget hover → begin separator resize drag.
-        if self.agent_sep_drag.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
-            if let Some(ref wid) = hovered_wid {
-                if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
-                    if let Ok(sep_idx) = idx_str.parse::<usize>() {
-                        // Extract sep info with a scoped borrow so the ref is dropped.
-                        let sep_info: Option<(uzor::panels::SeparatorOrientation, f32)> = {
-                            let docking = self.sidebar_state.agent_docking.inner();
-                            docking.separators().get(sep_idx).map(|sep| {
-                                use uzor::panels::SeparatorOrientation;
-                                let area = docking.layout_area();
-                                let total = match sep.orientation {
-                                    SeparatorOrientation::Vertical => area.width,
-                                    SeparatorOrientation::Horizontal => area.height,
-                                };
-                                (sep.orientation, total)
-                            })
-                        };
-                        if let Some((orient, total_size)) = sep_info {
-                            use uzor::panels::SeparatorOrientation;
-                            let start_pos = match orient {
-                                SeparatorOrientation::Vertical => x,
-                                SeparatorOrientation::Horizontal => y,
-                            };
-                            self.agent_sep_drag = Some((sep_idx, start_pos, total_size));
-                            self.ui_drag_active = true;
-                            return false;
-                        }
                     }
                 }
             }

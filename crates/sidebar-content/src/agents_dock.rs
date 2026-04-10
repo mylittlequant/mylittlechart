@@ -125,7 +125,7 @@ impl uzor::panels::DockPanel for AgentPaneLeaf {
     }
 
     fn min_size(&self) -> (f32, f32) {
-        (200.0, 120.0)
+        (80.0, 60.0)
     }
 
     fn closable(&self) -> bool {
