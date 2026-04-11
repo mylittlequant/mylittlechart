@@ -5088,8 +5088,12 @@ fn render_agents_chat_leaf(
             .unwrap_or("Default");
         draw_pill(ctx, perm_label, &mut sx);
 
-        // 3. Context usage (stub until wired to ContextTracker).
-        draw_pill(ctx, "Context 0%", &mut sx);
+        // 3. Context usage from gate4agent snapshot.
+        let ctx_pct = snapshot
+            .and_then(|s| s.context_percent)
+            .unwrap_or(0.0);
+        let ctx_label = format!("Context {:.0}%", ctx_pct);
+        draw_pill(ctx, &ctx_label, &mut sx);
     }
 
     let _ = desc;
