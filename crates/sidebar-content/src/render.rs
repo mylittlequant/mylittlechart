@@ -5074,6 +5074,43 @@ fn render_agents_chat_leaf(
     input_coordinator.register(perm_wid.as_str(), perm_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((perm_wid, perm_rect));
 
+    // Context % with circle (right after permission).
+    let ctx_pct = snapshot
+        .and_then(|s| s.context_percent)
+        .unwrap_or(0.0);
+    let ctx_label = format!("{:.0}%", ctx_pct);
+    let ctx_text_w = ctx.measure_text(&ctx_label);
+    let circle_r = 5.0;
+    let circle_d = circle_r * 2.0;
+    let _ctx_total_w = circle_d + 3.0 + ctx_text_w;
+    let ctx_x = perm_x + perm_tw + 12.0;
+    let circle_cx = ctx_x + circle_r;
+    let circle_cy = ctrl_mid_y;
+
+    // Circle track.
+    ctx.set_stroke_color(&theme.separator);
+    ctx.set_stroke_width(1.5);
+    ctx.begin_path();
+    ctx.arc(circle_cx, circle_cy, circle_r - 0.5, 0.0, std::f64::consts::TAU);
+    ctx.stroke();
+
+    // Progress arc.
+    if ctx_pct > 0.0 {
+        let angle = ctx_pct / 100.0 * std::f64::consts::TAU;
+        let start = -std::f64::consts::FRAC_PI_2;
+        ctx.set_stroke_color(&theme.accent);
+        ctx.set_stroke_width(1.5);
+        ctx.begin_path();
+        ctx.arc(circle_cx, circle_cy, circle_r - 0.5, start, start + angle);
+        ctx.stroke();
+    }
+
+    // % text.
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color(&theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(&ctx_label, ctx_x + circle_d + 3.0, ctrl_mid_y);
+
     // Send button [↑] (far right of control bar).
     let send_sz = ctrl_bar_h - 4.0;
     let send_x = x + w - inner_pad - send_sz;
@@ -5105,43 +5142,6 @@ fn render_agents_chat_leaf(
     ctx.stroke();
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((send_wid, send_rect));
-
-    // Context % with circle (between perm and send, right-aligned before send).
-    let ctx_pct = snapshot
-        .and_then(|s| s.context_percent)
-        .unwrap_or(0.0);
-    let ctx_label = format!("{:.0}%", ctx_pct);
-    let ctx_text_w = ctx.measure_text(&ctx_label);
-    let circle_r = 5.0;
-    let circle_d = circle_r * 2.0;
-    let ctx_total_w = circle_d + 3.0 + ctx_text_w;
-    let ctx_x = send_x - 8.0 - ctx_total_w;
-    let circle_cx = ctx_x + circle_r;
-    let circle_cy = ctrl_mid_y;
-
-    // Circle track.
-    ctx.set_stroke_color(&theme.separator);
-    ctx.set_stroke_width(1.5);
-    ctx.begin_path();
-    ctx.arc(circle_cx, circle_cy, circle_r - 0.5, 0.0, std::f64::consts::TAU);
-    ctx.stroke();
-
-    // Progress arc.
-    if ctx_pct > 0.0 {
-        let angle = ctx_pct / 100.0 * std::f64::consts::TAU;
-        let start = -std::f64::consts::FRAC_PI_2;
-        ctx.set_stroke_color(&theme.accent);
-        ctx.set_stroke_width(1.5);
-        ctx.begin_path();
-        ctx.arc(circle_cx, circle_cy, circle_r - 0.5, start, start + angle);
-        ctx.stroke();
-    }
-
-    // % text.
-    ctx.set_font("10px sans-serif");
-    ctx.set_fill_color(&theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(&ctx_label, ctx_x + circle_d + 3.0, ctrl_mid_y);
 
     let _ = desc;
 }
