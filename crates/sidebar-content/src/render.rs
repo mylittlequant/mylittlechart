@@ -5047,32 +5047,53 @@ fn render_agents_chat_leaf(
     let caps = cli_tool.capabilities();
 
     // Model label (clickable text, no pill bg).
-    let model_label = caps.default_model()
-        .map(|m| m.display_name.as_str())
-        .unwrap_or("Model");
+    // Use per-leaf override if present, otherwise fall back to CLI default.
+    let model_label = if let Some(mid) = state.agent_selected_model.get(&leaf_id) {
+        caps.available_models.iter()
+            .find(|m| m.id == *mid)
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("Model")
+    } else {
+        caps.default_model()
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("Model")
+    };
+    let model_open = state.agent_model_dropdown == Some(leaf_id);
     let model_wid = format!("agent:leaf:{}:model", leaf_id.0);
     let model_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(model_wid.as_str()));
     let model_tw = ctx.measure_text(model_label);
     let model_rect = WidgetRect::new(x + inner_pad, ctrl_y, model_tw + 4.0, ctrl_bar_h);
-    ctx.set_fill_color(if model_hov { &theme.item_text } else { &theme.item_text_muted });
+    ctx.set_fill_color(if model_open || model_hov { &theme.item_text } else { &theme.item_text_muted });
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text(model_label, x + inner_pad, ctrl_mid_y);
     input_coordinator.register(model_wid.as_str(), model_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((model_wid, model_rect));
 
     // Permission label (clickable text, after model + gap).
+    // Use per-leaf override if present, otherwise fall back to CLI default.
     let perm_x = x + inner_pad + model_tw + 12.0;
-    let perm_label = caps.default_permission_mode()
-        .map(|p| p.display_name.as_str())
-        .unwrap_or("Default");
+    let perm_label = if let Some(pid) = state.agent_selected_perm.get(&leaf_id) {
+        caps.permission_modes.iter()
+            .find(|p| p.id == *pid)
+            .map(|p| p.display_name.as_str())
+            .unwrap_or("Default")
+    } else {
+        caps.default_permission_mode()
+            .map(|p| p.display_name.as_str())
+            .unwrap_or("Default")
+    };
+    let perm_open = state.agent_perm_dropdown == Some(leaf_id);
     let perm_wid = format!("agent:leaf:{}:perm", leaf_id.0);
     let perm_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(perm_wid.as_str()));
     let perm_tw = ctx.measure_text(perm_label);
     let perm_rect = WidgetRect::new(perm_x, ctrl_y, perm_tw + 4.0, ctrl_bar_h);
-    ctx.set_fill_color(if perm_hov { &theme.item_text } else { &theme.item_text_muted });
+    ctx.set_fill_color(if perm_open || perm_hov { &theme.item_text } else { &theme.item_text_muted });
     ctx.fill_text(perm_label, perm_x, ctrl_mid_y);
-    input_coordinator.register(perm_wid.as_str(), perm_rect, uzor::input::Sense::CLICK);
-    result.item_rects.push((perm_wid, perm_rect));
+    // Only register perm clickable if tool has permission modes.
+    if !caps.permission_modes.is_empty() {
+        input_coordinator.register(perm_wid.as_str(), perm_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((perm_wid, perm_rect));
+    }
 
     // Context % with circle (right after permission).
     let ctx_pct = snapshot
@@ -5142,6 +5163,117 @@ fn render_agents_chat_leaf(
     ctx.stroke();
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((send_wid, send_rect));
+
+    // ── Model dropdown overlay ─────────────────────────────────────────────
+    if state.agent_model_dropdown == Some(leaf_id) {
+        let drop_x = x + inner_pad;
+        let item_h = 24.0;
+        let models = &caps.available_models;
+        let drop_w = (w - inner_pad * 2.0).max(120.0);
+        let drop_h = models.len() as f64 * item_h + 6.0;
+        // Grow upward from the control bar.
+        let drop_y = ctrl_y - drop_h;
+
+        // Backdrop.
+        let backdrop_wid = format!("agent:leaf:{}:model_backdrop", leaf_id.0);
+        let backdrop_rect = WidgetRect::new(x, y, w, h);
+        input_coordinator.register(backdrop_wid.as_str(), backdrop_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((backdrop_wid, backdrop_rect));
+
+        // Dropdown background.
+        ctx.set_fill_color(&theme.dropdown_bg);
+        ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
+        ctx.set_fill_color(&theme.separator);
+        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0); // bottom border
+
+        let selected_mid = state.agent_selected_model.get(&leaf_id);
+        for (idx, model_info) in models.iter().enumerate() {
+            let item_y = drop_y + 3.0 + idx as f64 * item_h;
+            let item_wid = format!("agent:leaf:{}:select_model:{}", leaf_id.0, model_info.id);
+            let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
+            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+            if item_hov {
+                ctx.set_fill_color(&theme.item_bg_hover);
+                ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
+            }
+            // Check mark for selected / default.
+            let is_selected = selected_mid.map_or(model_info.is_default, |mid| *mid == model_info.id);
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let mid_y = item_y + item_h / 2.0;
+            if is_selected {
+                ctx.set_fill_color(&theme.accent);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y);
+            }
+            ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text });
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&model_info.display_name, drop_x + 16.0, mid_y);
+            // Context window right-aligned.
+            if let Some(ctx_w) = model_info.context_window {
+                let ctx_label = if ctx_w >= 1_000_000 {
+                    format!("{}M", ctx_w / 1_000_000)
+                } else {
+                    format!("{}K", ctx_w / 1_000)
+                };
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.set_text_align(TextAlign::Right);
+                ctx.fill_text(&ctx_label, drop_x + drop_w - 6.0, mid_y);
+            }
+            input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((item_wid, item_rect));
+        }
+    }
+
+    // ── Permission dropdown overlay ────────────────────────────────────────
+    if state.agent_perm_dropdown == Some(leaf_id) && !caps.permission_modes.is_empty() {
+        let drop_x = x + inner_pad + model_tw + 12.0;
+        let item_h = 24.0;
+        let modes = &caps.permission_modes;
+        let drop_w = ((w - inner_pad) - (model_tw + 12.0)).max(120.0);
+        let drop_h = modes.len() as f64 * item_h + 6.0;
+        // Grow upward from the control bar.
+        let drop_y = ctrl_y - drop_h;
+
+        // Backdrop.
+        let backdrop_wid = format!("agent:leaf:{}:perm_backdrop", leaf_id.0);
+        let backdrop_rect = WidgetRect::new(x, y, w, h);
+        input_coordinator.register(backdrop_wid.as_str(), backdrop_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((backdrop_wid, backdrop_rect));
+
+        // Dropdown background.
+        ctx.set_fill_color(&theme.dropdown_bg);
+        ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
+        ctx.set_fill_color(&theme.separator);
+        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0); // bottom border
+
+        let selected_pid = state.agent_selected_perm.get(&leaf_id);
+        for (idx, perm_info) in modes.iter().enumerate() {
+            let item_y = drop_y + 3.0 + idx as f64 * item_h;
+            let item_wid = format!("agent:leaf:{}:select_perm:{}", leaf_id.0, perm_info.id);
+            let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
+            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+            if item_hov {
+                ctx.set_fill_color(&theme.item_bg_hover);
+                ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
+            }
+            // Check mark for selected / default.
+            let is_selected = selected_pid.map_or(perm_info.is_default, |pid| *pid == perm_info.id);
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let mid_y = item_y + item_h / 2.0;
+            if is_selected {
+                ctx.set_fill_color(&theme.accent);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y);
+            }
+            ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text });
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&perm_info.display_name, drop_x + 16.0, mid_y);
+            input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((item_wid, item_rect));
+        }
+    }
 
     let _ = desc;
 }

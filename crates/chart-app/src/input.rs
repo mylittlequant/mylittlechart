@@ -9406,6 +9406,90 @@ impl ChartApp {
                 return;
             }
 
+            // --- Per-leaf: agent:leaf:{id}:model (toggle model dropdown) ---
+            if let Some(id_str) = rest.strip_suffix(":model") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if self.sidebar_state.agent_model_dropdown == Some(leaf_id) {
+                        self.sidebar_state.agent_model_dropdown = None;
+                    } else {
+                        self.sidebar_state.agent_sessions_dropdown = None;
+                        self.sidebar_state.agent_perm_dropdown = None;
+                        self.sidebar_state.agent_model_dropdown = Some(leaf_id);
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:perm (toggle permission dropdown) ---
+            if let Some(id_str) = rest.strip_suffix(":perm") {
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if self.sidebar_state.agent_perm_dropdown == Some(leaf_id) {
+                        self.sidebar_state.agent_perm_dropdown = None;
+                    } else {
+                        self.sidebar_state.agent_sessions_dropdown = None;
+                        self.sidebar_state.agent_model_dropdown = None;
+                        self.sidebar_state.agent_perm_dropdown = Some(leaf_id);
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:model_backdrop (close model dropdown) ---
+            if let Some(id_str) = rest.strip_suffix(":model_backdrop") {
+                if let Ok(_raw) = id_str.parse::<u64>() {
+                    self.sidebar_state.agent_model_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:perm_backdrop (close perm dropdown) ---
+            if let Some(id_str) = rest.strip_suffix(":perm_backdrop") {
+                if let Ok(_raw) = id_str.parse::<u64>() {
+                    self.sidebar_state.agent_perm_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:select_model:{model_id} ---
+            if let Some(pos) = rest.find(":select_model:") {
+                let id_str = &rest[..pos];
+                let model_id = &rest[pos + ":select_model:".len()..];
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if model_id == "__default__" {
+                        self.sidebar_state.agent_selected_model.remove(&leaf_id);
+                    } else {
+                        self.sidebar_state.agent_selected_model.insert(leaf_id, model_id.to_string());
+                    }
+                    self.sidebar_state.agent_model_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
+            // --- Per-leaf: agent:leaf:{id}:select_perm:{perm_id} ---
+            if let Some(pos) = rest.find(":select_perm:") {
+                let id_str = &rest[..pos];
+                let perm_id = &rest[pos + ":select_perm:".len()..];
+                if let Ok(raw) = id_str.parse::<u64>() {
+                    let leaf_id = uzor::panels::LeafId(raw);
+                    if perm_id == "__default__" {
+                        self.sidebar_state.agent_selected_perm.remove(&leaf_id);
+                    } else {
+                        self.sidebar_state.agent_selected_perm.insert(leaf_id, perm_id.to_string());
+                    }
+                    self.sidebar_state.agent_perm_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
+                return;
+            }
+
             // --- Per-leaf: agent:leaf:{id}:sessions_toggle (open/close sessions dropdown) ---
             if let Some(id_str) = rest.strip_suffix(":sessions_toggle") {
                 if let Ok(raw) = id_str.parse::<u64>() {
@@ -9413,6 +9497,8 @@ impl ChartApp {
                     if self.sidebar_state.agent_sessions_dropdown == Some(leaf_id) {
                         self.sidebar_state.agent_sessions_dropdown = None;
                     } else {
+                        self.sidebar_state.agent_model_dropdown = None;
+                        self.sidebar_state.agent_perm_dropdown = None;
                         if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id) {
                             let iid = desc.instance_id;
                             let sessions = self.agent.list_past_sessions_instance(iid);

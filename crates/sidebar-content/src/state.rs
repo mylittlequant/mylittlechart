@@ -401,6 +401,18 @@ pub struct SidebarState {
     /// `[Sessions ▾]` button toggles this; clicking outside closes it.
     pub agent_sessions_dropdown: Option<uzor::panels::LeafId>,
 
+    /// Which agent Chat leaf's model dropdown is currently open (`None` = closed).
+    pub agent_model_dropdown: Option<uzor::panels::LeafId>,
+
+    /// Which agent Chat leaf's permission dropdown is currently open (`None` = closed).
+    pub agent_perm_dropdown: Option<uzor::panels::LeafId>,
+
+    /// Per-leaf selected model ID override. `None` = use CLI default.
+    pub agent_selected_model: HashMap<uzor::panels::LeafId, String>,
+
+    /// Per-leaf selected permission mode ID override. `None` = use CLI default.
+    pub agent_selected_perm: HashMap<uzor::panels::LeafId, String>,
+
     /// Cached list of past sessions for each leaf (populated when the dropdown opens).
     pub agent_past_sessions: HashMap<uzor::panels::LeafId, Vec<gate4agent::SessionMeta>>,
 
@@ -718,6 +730,10 @@ impl Default for SidebarState {
             slot_spawn_dropdown: None,
             hovered_free_leaf: None,
             agent_sessions_dropdown: None,
+            agent_model_dropdown: None,
+            agent_perm_dropdown: None,
+            agent_selected_model: HashMap::new(),
+            agent_selected_perm: HashMap::new(),
             agent_past_sessions: HashMap::new(),
             agent_active_session_id: HashMap::new(),
         }
