@@ -4345,7 +4345,7 @@ fn render_agents_pane(
     // Apply a uniform 2 px inset from all four sides of the panel rect so that
     // headers, accent bars, input rows and close buttons do not overlap the
     // docking separators that surround this pane.
-    let inset = 2.0_f64;
+    let inset = 8.0_f64;
     let px = prect.x as f64 + inset;
     let py = prect.y as f64 + inset;
     let pw = (prect.width as f64 - inset * 2.0).max(1.0);
@@ -4901,7 +4901,9 @@ fn render_agents_chat_leaf(
 ) {
     let row_h = 28.0;
     let send_gap = 4.0;
-    let input_area_h = row_h + send_gap;
+    let strip_h = 20.0;
+    let strip_gap = 2.0;
+    let input_area_h = row_h + send_gap + strip_h + strip_gap;
     let chat_h = (h - input_area_h).max(20.0);
     let chat_y = y;
 
@@ -4946,7 +4948,7 @@ fn render_agents_chat_leaf(
 
     // ── Input row ─────────────────────────────────────────────────────────────
     let input_y = y + chat_h + send_gap;
-    let send_w = 48.0;
+    let send_w = row_h;
     let input_w = (w - send_w - send_gap).max(20.0);
 
     let input_buffer = state.agent_input_buffers.get(&leaf_id).cloned().unwrap_or_default();
@@ -5000,20 +5002,60 @@ fn render_agents_chat_leaf(
         result.agent_input_char_positions = Some(input_draw_result.char_x_positions);
     }
 
-    // Send button.
+    // Send button (square, arrow-up icon).
     let send_x = x + input_w + send_gap;
     let send_rect = WidgetRect::new(send_x, input_y, send_w, row_h);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
     let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
-    ctx.set_fill_color(&theme.accent);
+    // Background: accent when focused leaf, button_bg otherwise.
+    if is_focused {
+        ctx.set_fill_color(&theme.accent);
+    } else {
+        ctx.set_fill_color(&theme.button_bg);
+    }
     ctx.fill_rounded_rect(send_x, input_y, send_w, row_h, 4.0);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&theme.item_text_active);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Send", send_x + send_w / 2.0, input_y + row_h / 2.0);
+    // Arrow icon: pointing up.
+    let cx = send_x + send_w / 2.0;
+    let cy = input_y + row_h / 2.0;
+    let arrow_size = 7.0;
+    if is_focused {
+        ctx.set_stroke_color(&theme.item_text_active);
+    } else {
+        ctx.set_stroke_color(&theme.item_text_muted);
+    }
+    ctx.begin_path();
+    ctx.move_to(cx, cy + arrow_size);
+    ctx.line_to(cx, cy - arrow_size);
+    ctx.move_to(cx - 4.0, cy - arrow_size + 4.0);
+    ctx.line_to(cx, cy - arrow_size);
+    ctx.line_to(cx + 4.0, cy - arrow_size + 4.0);
+    ctx.set_stroke_width(2.0);
+    ctx.stroke();
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((send_wid, send_rect));
+
+    // ── Control strip (below input) ──────────────────────────────────────────
+    // Visual-only row with placeholder controls for model/permissions/usage.
+    {
+        let strip_y = input_y + row_h + strip_gap;
+        let strip_items: &[&str] = &["\u{2299} Opus 4.6", "\u{26a1} Fast", "\u{2298} Ask", "\u{2318} /cmd"];
+        let item_gap = 8.0;
+        let mut sx = x;
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let strip_mid_y = strip_y + strip_h / 2.0;
+        for &item_label in strip_items {
+            let tw = ctx.measure_text(item_label) + 8.0;
+            // Pill background.
+            ctx.set_fill_color(&theme.button_bg);
+            ctx.fill_rounded_rect(sx, strip_y, tw, strip_h, 3.0);
+            // Label.
+            ctx.set_fill_color(&theme.item_text_muted);
+            ctx.fill_text(item_label, sx + 4.0, strip_mid_y);
+            sx += tw + item_gap;
+        }
+    }
 
     let _ = desc;
 }

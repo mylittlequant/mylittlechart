@@ -115,10 +115,21 @@ pub fn try_handle_track_click(
 ) -> bool {
     for (info, state) in entries.iter_mut() {
         if let Some(ref track_rect) = info.track_rect {
-            if track_rect.contains(x, y) {
+            // Use ±5px horizontal tolerance (same as handle drag) so clicks
+            // near the scrollbar strip are captured instead of falling through
+            // to text selection.
+            let hit = x >= track_rect.x - 5.0
+                && x <= track_rect.x + track_rect.width + 5.0
+                && y >= track_rect.y
+                && y <= track_rect.y + track_rect.height;
+            if hit {
                 // Don't handle if click is on the handle (that's a drag start)
                 if let Some(ref handle_rect) = info.handle_rect {
-                    if handle_rect.contains(x, y) {
+                    let on_handle = x >= handle_rect.x - 5.0
+                        && x <= handle_rect.x + handle_rect.width + 5.0
+                        && y >= handle_rect.y
+                        && y <= handle_rect.y + handle_rect.height;
+                    if on_handle {
                         continue;
                     }
                 }
