@@ -3665,7 +3665,7 @@ fn render_slot_panel(
                     let sep_y = sep.position as f64 - visual_thickness / 2.0;
                     let sep_x = sep.start as f64;
                     let sep_w = sep.length as f64;
-                    ctx.set_fill_color("#2a2a38");
+                    ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, sep_w, visual_thickness);
                     let hit_rect = WidgetRect::new(
                         sep_x,
@@ -4353,10 +4353,11 @@ fn render_agents_pane(
         ctx.set_fill_color(hdr_bg);
         ctx.fill_rect(px, py, pw, header_h);
 
-        // Subtle accent stripe at the very top when focused.
+        // Small vertical accent bar on the left edge of focused pane header
+        // (same pattern as active chart leaf tabs).
         if is_focused {
             ctx.set_fill_color(&theme.accent);
-            ctx.fill_rect(px, py, pw, 2.0);
+            ctx.fill_rect(px, py + 4.0, 2.0, header_h - 8.0);
         }
 
         let mid_y   = py + header_h / 2.0;

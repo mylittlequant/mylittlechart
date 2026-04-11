@@ -6019,9 +6019,12 @@ impl ChartApp {
                     if let Some(ref sidebar_result) = self.last_sidebar_result {
                         let content_h = sidebar_result.agent_chat_content_height;
                         let viewport_h = sidebar_result.agent_chat_viewport_h;
-                        let was_at_bottom = scroll.offset >= (content_h - viewport_h - 1.0).max(0.0);
+                        let max_scroll = (content_h - viewport_h).max(0.0);
+                        let was_at_bottom = scroll.offset >= (max_scroll - 1.0).max(0.0);
                         if was_at_bottom {
-                            scroll.offset = (content_h - viewport_h).max(0.0);
+                            // Use sentinel — renderer clamps to actual max_scroll
+                            // on the next frame (avoids stale content_h lag).
+                            scroll.offset = f64::MAX;
                         }
                     }
                 } else {
