@@ -4955,17 +4955,34 @@ fn render_agents_chat_leaf(
     input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((focus_wid, focus_rect));
 
-    // ── Input row ─────────────────────────────────────────────────────────────
-    let input_y = y + chat_h + send_gap;
-    let send_w = row_h;
-    let input_w = (w - send_w - send_gap).max(20.0);
+    // ── Input bubble (input + strip unified container) ────────────────────────
+    let bubble_y = y + chat_h + send_gap;
+    let bubble_h = row_h + strip_gap + strip_h;  // input row + gap + strip row
+    let bubble_radius = 8.0;
+
+    // Unified bubble background.
+    ctx.set_fill_color(&theme.terminal_bg);
+    ctx.fill_rounded_rect(x, bubble_y, w, bubble_h, bubble_radius);
+
+    // Focused border — use stroke_rounded_rect (no arc_to needed).
+    if is_focused {
+        ctx.set_stroke_color(&theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x + 0.5, bubble_y + 0.5, w - 1.0, bubble_h - 1.0, bubble_radius);
+    }
+
+    // ── Top row: text input + send button ─────────────────────────────────
+    let input_y = bubble_y + 2.0;  // 2px inner padding top
+    let send_w = row_h - 4.0;  // slightly smaller than row height
+    let inner_pad = 4.0;
+    let input_w = (w - send_w - inner_pad * 3.0).max(20.0);  // left pad + gap + right pad
 
     let input_buffer = state.agent_input_buffers.get(&leaf_id).cloned().unwrap_or_default();
     let input_cursor = state.agent_input_cursors.get(&leaf_id).copied().unwrap_or(0);
     let (sel_start, sel_end) = state.agent_input_selections.get(&leaf_id).copied().unwrap_or((None, None));
     let is_input_focused = is_focused && state.agent_input_focused_leaf == Some(leaf_id);
 
-    let input_rect = WidgetRect::new(x, input_y, input_w, row_h);
+    let input_rect = WidgetRect::new(x + inner_pad, input_y, input_w, row_h - 4.0);
     let input_config = InputConfig {
         value: input_buffer,
         placeholder: "Message\u{2026}".to_string(),
@@ -4975,21 +4992,23 @@ fn render_agents_chat_leaf(
         selection_start: sel_start,
         selection_end: sel_end,
         font_size: 12.0,
-        padding: 8.0,
+        padding: 6.0,
         radius: 4.0,
         ..InputConfig::default()
     };
+    // Transparent bg — the bubble background shows through.
+    let transparent = "#00000000".to_string();
     let input_widget_theme = WidgetTheme {
-        bg_normal: theme.background.clone(),
-        bg_hover: theme.background.clone(),
-        bg_pressed: theme.background.clone(),
-        bg_disabled: theme.background.clone(),
+        bg_normal: transparent.clone(),
+        bg_hover: transparent.clone(),
+        bg_pressed: transparent.clone(),
+        bg_disabled: transparent.clone(),
         text_normal: theme.item_text.clone(),
         text_hover: theme.item_text.clone(),
         text_disabled: theme.item_text_muted.clone(),
-        border_normal: theme.separator.clone(),
-        border_hover: theme.separator.clone(),
-        border_focused: theme.accent.clone(),
+        border_normal: transparent.clone(),
+        border_hover: transparent.clone(),
+        border_focused: transparent.clone(),
         accent: theme.selection.clone(),
         accent_hover: theme.selection.clone(),
         success: theme.success.clone(),
@@ -5005,28 +5024,28 @@ fn render_agents_chat_leaf(
     input_coordinator.register(input_wid.as_str(), input_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((input_wid.clone(), input_rect));
 
-    // For the focused leaf, expose input rect to TIM.
     if is_focused {
         result.agent_input_rect = Some(input_rect);
         result.agent_input_char_positions = Some(input_draw_result.char_x_positions);
     }
 
-    // Send button (square, arrow-up icon).
-    let send_x = x + input_w + send_gap;
-    let send_rect = WidgetRect::new(send_x, input_y, send_w, row_h);
+    // Send button (inside bubble, right side).
+    let send_x = x + inner_pad + input_w + inner_pad;
+    let send_y = input_y + 2.0;
+    let send_sz = send_w;
+    let send_rect = WidgetRect::new(send_x, send_y, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
     let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
-    // Background: accent when focused leaf, button_bg otherwise.
     if is_focused {
         ctx.set_fill_color(&theme.accent);
     } else {
         ctx.set_fill_color(&theme.button_bg);
     }
-    ctx.fill_rounded_rect(send_x, input_y, send_w, row_h, 4.0);
+    ctx.fill_rounded_rect(send_x, send_y, send_sz, send_sz, 4.0);
     // Arrow icon: pointing up.
-    let cx = send_x + send_w / 2.0;
-    let cy = input_y + row_h / 2.0;
-    let arrow_size = 7.0;
+    let cx = send_x + send_sz / 2.0;
+    let cy = send_y + send_sz / 2.0;
+    let arrow_size = 6.0;
     if is_focused {
         ctx.set_stroke_color(&theme.item_text_active);
     } else {
@@ -5043,27 +5062,16 @@ fn render_agents_chat_leaf(
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((send_wid, send_rect));
 
-    // ── Control strip (below input) ──────────────────────────────────────────
-    // Shows per-leaf status: model, permission mode, context compression %.
+    // ── Bottom row: strip (model | permission | context %) ────────────────
     {
-        let strip_y = input_y + row_h + strip_gap;
+        let strip_y = bubble_y + row_h;
         let item_gap = 6.0;
         let pill_pad = 4.0;
-        let mut sx = x;
+        let mut sx = x + inner_pad;
         ctx.set_font("10px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         let strip_mid_y = strip_y + strip_h / 2.0;
-
-        // Helper closure to draw a pill.
-        let draw_pill = |ctx: &mut dyn RenderContext, label: &str, sx: &mut f64| {
-            let tw = ctx.measure_text(label) + pill_pad * 2.0;
-            ctx.set_fill_color(&theme.button_bg);
-            ctx.fill_rounded_rect(*sx, strip_y, tw, strip_h, 3.0);
-            ctx.set_fill_color(&theme.item_text_muted);
-            ctx.fill_text(label, *sx + pill_pad, strip_mid_y);
-            *sx += tw + item_gap;
-        };
 
         // Map AgentCli to CliTool so we can call capabilities().
         let cli_tool = match desc.cli {
@@ -5074,26 +5082,80 @@ fn render_agents_chat_leaf(
         };
         let caps = cli_tool.capabilities();
 
-        // 1. Model — from gate4agent capabilities.
+        // Model pill (clickable).
         let model_label = caps
             .default_model()
             .map(|m| m.display_name.as_str())
-            .unwrap_or("Unknown");
-        draw_pill(ctx, model_label, &mut sx);
+            .unwrap_or("Model");
+        let model_wid = format!("agent:leaf:{}:model", leaf_id.0);
+        {
+            let tw = ctx.measure_text(model_label) + pill_pad * 2.0;
+            let pill_rect = WidgetRect::new(sx, strip_y, tw, strip_h);
+            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(model_wid.as_str()));
+            ctx.set_fill_color(if hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(sx, strip_y, tw, strip_h, 3.0);
+            ctx.set_fill_color(if hov { &theme.item_text } else { &theme.item_text_muted });
+            ctx.fill_text(model_label, sx + pill_pad, strip_mid_y);
+            input_coordinator.register(model_wid.as_str(), pill_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((model_wid, pill_rect));
+            sx += tw + item_gap;
+        }
 
-        // 2. Permission mode — from gate4agent capabilities.
+        // Permission pill (clickable).
         let perm_label = caps
             .default_permission_mode()
             .map(|p| p.display_name.as_str())
             .unwrap_or("Default");
-        draw_pill(ctx, perm_label, &mut sx);
+        let perm_wid = format!("agent:leaf:{}:perm", leaf_id.0);
+        {
+            let tw = ctx.measure_text(perm_label) + pill_pad * 2.0;
+            let pill_rect = WidgetRect::new(sx, strip_y, tw, strip_h);
+            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(perm_wid.as_str()));
+            ctx.set_fill_color(if hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(sx, strip_y, tw, strip_h, 3.0);
+            ctx.set_fill_color(if hov { &theme.item_text } else { &theme.item_text_muted });
+            ctx.fill_text(perm_label, sx + pill_pad, strip_mid_y);
+            input_coordinator.register(perm_wid.as_str(), pill_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((perm_wid, pill_rect));
+            // sx not incremented — no more left-side pills after this
+        }
 
-        // 3. Context usage from gate4agent snapshot.
+        // Context % with circular indicator (right-aligned).
         let ctx_pct = snapshot
             .and_then(|s| s.context_percent)
             .unwrap_or(0.0);
-        let ctx_label = format!("Context {:.0}%", ctx_pct);
-        draw_pill(ctx, &ctx_label, &mut sx);
+        let ctx_label = format!("{:.0}%", ctx_pct);
+        let ctx_text_w = ctx.measure_text(&ctx_label);
+        let circle_r = 6.0;
+        let circle_d = circle_r * 2.0;
+        let ctx_total_w = circle_d + 4.0 + ctx_text_w;  // circle + gap + text
+        let ctx_x = x + w - inner_pad - ctx_total_w;
+        let circle_cx = ctx_x + circle_r;
+        let circle_cy = strip_mid_y;
+
+        // Background circle (track).
+        ctx.set_stroke_color(&theme.button_bg);
+        ctx.set_stroke_width(2.0);
+        ctx.begin_path();
+        ctx.arc(circle_cx, circle_cy, circle_r - 1.0, 0.0, std::f64::consts::TAU);
+        ctx.stroke();
+
+        // Filled arc (progress).
+        if ctx_pct > 0.0 {
+            let angle = ctx_pct / 100.0 * std::f64::consts::TAU;
+            let start = -std::f64::consts::FRAC_PI_2;  // 12 o'clock
+            ctx.set_stroke_color(&theme.accent);
+            ctx.set_stroke_width(2.0);
+            ctx.begin_path();
+            ctx.arc(circle_cx, circle_cy, circle_r - 1.0, start, start + angle);
+            ctx.stroke();
+        }
+
+        // Percentage text.
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text(&ctx_label, ctx_x + circle_d + 4.0, strip_mid_y);
     }
 
     let _ = desc;
