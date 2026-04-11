@@ -139,6 +139,20 @@ pub struct RightSidebarResult {
     /// Viewport height of the agent PTY area (for drag math).
     pub agent_pty_viewport_h: f64,
 
+    /// Per-leaf content and viewport heights.
+    ///
+    /// Key: `LeafId`. Value: `(content_height, viewport_height)`.
+    /// Populated for ALL rendered leaves (not just focused) so that wheel
+    /// events can be routed to whichever leaf the cursor is hovering over.
+    pub agent_leaf_content_heights: std::collections::HashMap<uzor::panels::LeafId, (f64, f64)>,
+
+    /// Per-leaf scrollbar handle and track rects.
+    ///
+    /// Key: `LeafId`. Value: `(handle_rect, track_rect)`.
+    /// Populated for ALL rendered leaves so that scrollbar drag can be
+    /// initiated on any visible leaf, not only the focused one.
+    pub agent_leaf_scrollbar_rects: std::collections::HashMap<uzor::panels::LeafId, (Option<WidgetRect>, Option<WidgetRect>)>,
+
     /// Bounding rect of the currently-rendered free-slot body (inner padded area).
     ///
     /// Set only when a `Slot1..Slot4` panel is rendered.  Used by `chart-app`
@@ -4331,7 +4345,9 @@ fn render_agents_pane(
     let px = prect.x as f64;
     let py = prect.y as f64;
     let pw = prect.width as f64;
-    let ph = prect.height as f64;
+    // Reserve 1 px at the bottom so the input row and other bottom-edge content
+    // do not visually bleed into the docking separator drawn below this pane.
+    let ph = (prect.height as f64 - 1.0).max(1.0);
 
     // Pane background.
     ctx.set_fill_color(&theme.background);
@@ -4602,16 +4618,23 @@ fn render_agents_pty_leaf(
                 let max_pty_scroll = (pty_content_h - h).max(0.0);
                 let scroll_clamped = pty_scroll_offset.clamp(0.0, max_pty_scroll);
 
+                // Always store per-leaf dimensions so wheel/scrollbar can route to any leaf.
+                result.agent_leaf_content_heights.insert(leaf_id, (pty_content_h, h));
+
                 if is_focused {
                     result.agent_pty_content_height = pty_content_h;
                     result.agent_pty_viewport_h = h;
                 }
 
                 if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg, &theme.selection, &theme.item_text_active) {
+                    // Always insert into per-leaf map; also keep legacy focused-only fields.
+                    result.agent_leaf_scrollbar_rects.insert(leaf_id, (Some(handle_rect), Some(track_rect)));
                     if is_focused {
                         result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
                         result.agent_pty_scrollbar_track_rect = Some(track_rect);
                     }
+                } else {
+                    result.agent_leaf_scrollbar_rects.entry(leaf_id).or_insert((None, None));
                 }
             } else {
                 // Snapshot exists but it's not PTY (Idle or Chat) — show idle state.
@@ -4886,6 +4909,9 @@ fn render_agents_chat_leaf(
     // Content height + scrollbar.
     let chat_content_h = compute_chat_content_height(ctx, snapshot, w, &state.agent_chat_expanded, leaf_id);
 
+    // Always store per-leaf dimensions so wheel/scrollbar can route to any leaf.
+    result.agent_leaf_content_heights.insert(leaf_id, (chat_content_h, chat_h));
+
     if is_focused {
         result.agent_chat_content_height = chat_content_h;
         result.agent_chat_viewport_h = chat_h;
@@ -4900,10 +4926,14 @@ fn render_agents_chat_leaf(
         ctx, snapshot, theme, x, chat_y, w, chat_h, scroll_clamped, chat_content_h,
         selection, leaf_id, &mut result.agent_chat_line_rects, &state.agent_chat_expanded,
     ) {
+        // Always insert into per-leaf map; also keep legacy focused-only fields.
+        result.agent_leaf_scrollbar_rects.insert(leaf_id, (Some(handle_rect), Some(track_rect)));
         if is_focused {
             result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
             result.agent_chat_scrollbar_track_rect = Some(track_rect);
         }
+    } else {
+        result.agent_leaf_scrollbar_rects.entry(leaf_id).or_insert((None, None));
     }
 
     // Click-to-focus: chat area registers focus.

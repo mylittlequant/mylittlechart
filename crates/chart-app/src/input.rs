@@ -1164,53 +1164,55 @@ impl ChartApp {
             }
         }
 
-        // Agent chat / PTY scrollbar handle drag + track click — routed to focused leaf's scroll.
+        // Agent chat / PTY scrollbar handle drag + track click — routed to any leaf's scroll.
+        // We check all rendered leaves (not just the focused one) so scrollbars on non-focused
+        // panes are also interactive.
         if self.sidebar_state.is_right_open() && !self.ui_drag_active {
-            if let Some(ref sidebar_result) = self.last_sidebar_result {
-                use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
-                        .map(|d| d.mode);
-                    match leaf_mode {
-                        Some(gate4agent::InstanceMode::Chat) => {
-                            let chat_info = ScrollableInfo {
-                                handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
-                                track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
-                                content_height: sidebar_result.agent_chat_content_height,
-                                viewport_height: sidebar_result.agent_chat_viewport_h,
-                                viewport_rect: sidebar_result.agent_content_rect,
-                            };
-                            let scroll = self.sidebar_state.agent_chat_scrolls
-                                .entry(leaf_id).or_default();
-                            if try_start_scrollbar_drag(x, y, &mut [(&chat_info, scroll)]) {
-                                return false;
-                            }
-                            let scroll = self.sidebar_state.agent_chat_scrolls
-                                .entry(leaf_id).or_default();
-                            if try_handle_track_click(x, y, &mut [(&chat_info, scroll)]) {
-                                return false;
-                            }
-                        }
-                        Some(gate4agent::InstanceMode::Pty) => {
-                            let pty_info = ScrollableInfo {
-                                handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
-                                track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
-                                content_height: sidebar_result.agent_pty_content_height,
-                                viewport_height: sidebar_result.agent_pty_viewport_h,
-                                viewport_rect: sidebar_result.agent_content_rect,
-                            };
-                            let scroll = self.sidebar_state.agent_pty_scrolls
-                                .entry(leaf_id).or_default();
-                            if try_start_scrollbar_drag(x, y, &mut [(&pty_info, scroll)]) {
-                                return false;
-                            }
-                            let scroll = self.sidebar_state.agent_pty_scrolls
-                                .entry(leaf_id).or_default();
-                            if try_handle_track_click(x, y, &mut [(&pty_info, scroll)]) {
-                                return false;
-                            }
-                        }
-                        None => {}
+            // Collect all leaf scrollbar infos from the last render pass before taking mutable
+            // borrows on sidebar_state (avoids simultaneous borrow conflicts).
+            let leaf_scroll_infos: Vec<(uzor::panels::LeafId, bool, crate::scroll_dispatch::ScrollableInfo)> = {
+                if let Some(ref sidebar_result) = self.last_sidebar_result {
+                    sidebar_result.agent_leaf_scrollbar_rects.iter()
+                        .filter_map(|(&lid, &(handle_rect, track_rect))| {
+                            let (content_h, vp_h) = sidebar_result.agent_leaf_content_heights
+                                .get(&lid).copied().unwrap_or((0.0, 0.0));
+                            if vp_h <= 0.0 { return None; }
+                            let is_chat = self.sidebar_state.agent_leaves.get(&lid)
+                                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                                .unwrap_or(true);
+                            Some((lid, is_chat, crate::scroll_dispatch::ScrollableInfo {
+                                handle_rect,
+                                track_rect,
+                                content_height: content_h,
+                                viewport_height: vp_h,
+                                viewport_rect: None,
+                            }))
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                }
+            };
+
+            use crate::scroll_dispatch::{try_start_scrollbar_drag, try_handle_track_click};
+            for (leaf_id, is_chat, info) in &leaf_scroll_infos {
+                if *is_chat {
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
+                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                } else {
+                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
+                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
+                        return false;
                     }
                 }
             }
@@ -3345,40 +3347,43 @@ impl ChartApp {
             return;
         }
 
-        // Agent chat / PTY scrollbar drag move — routed to focused leaf's scroll.
+        // Agent chat / PTY scrollbar drag move — route to whichever leaf is dragging.
         {
             use crate::scroll_dispatch::{ScrollableInfo, try_handle_scrollbar_drag};
-            if let Some(ref sidebar_result) = self.last_sidebar_result {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode);
-                    match leaf_mode {
-                        Some(gate4agent::InstanceMode::Chat) => {
-                            let chat_info = ScrollableInfo {
-                                handle_rect: sidebar_result.agent_chat_scrollbar_handle_rect,
-                                track_rect: sidebar_result.agent_chat_scrollbar_track_rect,
-                                content_height: sidebar_result.agent_chat_content_height,
-                                viewport_height: sidebar_result.agent_chat_viewport_h,
-                                viewport_rect: sidebar_result.agent_content_rect,
-                            };
-                            let scroll = self.sidebar_state.agent_chat_scrolls.entry(leaf_id).or_default();
-                            if try_handle_scrollbar_drag(y, &mut [(&chat_info, scroll)]) {
-                                return;
-                            }
-                        }
-                        Some(gate4agent::InstanceMode::Pty) => {
-                            let pty_info = ScrollableInfo {
-                                handle_rect: sidebar_result.agent_pty_scrollbar_handle_rect,
-                                track_rect: sidebar_result.agent_pty_scrollbar_track_rect,
-                                content_height: sidebar_result.agent_pty_content_height,
-                                viewport_height: sidebar_result.agent_pty_viewport_h,
-                                viewport_rect: sidebar_result.agent_content_rect,
-                            };
-                            let scroll = self.sidebar_state.agent_pty_scrolls.entry(leaf_id).or_default();
-                            if try_handle_scrollbar_drag(y, &mut [(&pty_info, scroll)]) {
-                                return;
-                            }
-                        }
-                        None => {}
+            let leaf_scroll_infos: Vec<(uzor::panels::LeafId, bool, ScrollableInfo)> = {
+                if let Some(ref sidebar_result) = self.last_sidebar_result {
+                    sidebar_result.agent_leaf_scrollbar_rects.iter()
+                        .filter_map(|(&lid, &(handle_rect, track_rect))| {
+                            let (content_h, vp_h) = sidebar_result.agent_leaf_content_heights
+                                .get(&lid).copied().unwrap_or((0.0, 0.0));
+                            if vp_h <= 0.0 { return None; }
+                            let is_chat = self.sidebar_state.agent_leaves.get(&lid)
+                                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                                .unwrap_or(true);
+                            Some((lid, is_chat, ScrollableInfo {
+                                handle_rect,
+                                track_rect,
+                                content_height: content_h,
+                                viewport_height: vp_h,
+                                viewport_rect: None,
+                            }))
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                }
+            };
+
+            for (leaf_id, is_chat, info) in &leaf_scroll_infos {
+                if *is_chat {
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_scrollbar_drag(y, &mut [(&*info, scroll)]) {
+                        return;
+                    }
+                } else {
+                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_scrollbar_drag(y, &mut [(&*info, scroll)]) {
+                        return;
                     }
                 }
             }
@@ -4083,19 +4088,27 @@ impl ChartApp {
             self.panel_app.user_settings_state.profile_list_scroll.end_drag();
             return;
         }
-        // Agent chat / PTY scrollbar drag end — routed to focused leaf's scroll.
+        // Agent chat / PTY scrollbar drag end — end drag on whichever leaf was dragging.
         {
             use crate::scroll_dispatch::try_end_scrollbar_drag;
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                let chat_ended = self.sidebar_state.agent_chat_scrolls.get_mut(&leaf_id)
-                    .map(|s| try_end_scrollbar_drag(&mut [s]))
-                    .unwrap_or(false);
-                let pty_ended = !chat_ended && self.sidebar_state.agent_pty_scrolls.get_mut(&leaf_id)
-                    .map(|s| try_end_scrollbar_drag(&mut [s]))
-                    .unwrap_or(false);
-                if chat_ended || pty_ended {
-                    return;
+            // Collect all leaf IDs from both chat and PTY scroll maps to avoid borrow conflicts.
+            let all_leaf_ids: Vec<uzor::panels::LeafId> = self.sidebar_state.agent_chat_scrolls.keys()
+                .chain(self.sidebar_state.agent_pty_scrolls.keys())
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            let mut any_ended = false;
+            for leaf_id in all_leaf_ids {
+                if let Some(s) = self.sidebar_state.agent_chat_scrolls.get_mut(&leaf_id) {
+                    if try_end_scrollbar_drag(&mut [s]) { any_ended = true; }
                 }
+                if let Some(s) = self.sidebar_state.agent_pty_scrolls.get_mut(&leaf_id) {
+                    if try_end_scrollbar_drag(&mut [s]) { any_ended = true; }
+                }
+            }
+            if any_ended {
+                return;
             }
         }
 
@@ -6140,21 +6153,25 @@ impl ChartApp {
                             })
                             .next();
 
-                        if let Some((hover_leaf_id, viewport_h)) = hovered {
+                        if let Some((hover_leaf_id, rect_h)) = hovered {
                             let leaf_mode = self.sidebar_state.agent_leaves.get(&hover_leaf_id)
                                 .map(|d| d.mode);
+                            // Use per-leaf dimensions stored during the render pass.
+                            // This is correct for all leaves, not just the focused one.
+                            let (total_h, vp_h) = sidebar_result.agent_leaf_content_heights
+                                .get(&hover_leaf_id)
+                                .copied()
+                                .unwrap_or((0.0, rect_h));
                             match leaf_mode {
                                 Some(gate4agent::InstanceMode::Chat) => {
-                                    let total_h = sidebar_result.agent_chat_content_height;
                                     self.sidebar_state.agent_chat_scrolls
                                         .entry(hover_leaf_id).or_default()
-                                        .handle_wheel(-dy, total_h, viewport_h);
+                                        .handle_wheel(-dy, total_h, vp_h);
                                 }
                                 Some(gate4agent::InstanceMode::Pty) => {
-                                    let total_h = sidebar_result.agent_pty_content_height;
                                     self.sidebar_state.agent_pty_scrolls
                                         .entry(hover_leaf_id).or_default()
-                                        .handle_wheel(-dy, total_h, viewport_h);
+                                        .handle_wheel(-dy, total_h, vp_h);
                                 }
                                 None => {}
                             }
