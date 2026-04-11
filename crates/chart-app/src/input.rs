@@ -808,6 +808,13 @@ impl ChartApp {
                 if self.sidebar_state.focused_agent_leaf != Some(hovered_leaf_id) {
                     self.sidebar_state.focused_agent_leaf = Some(hovered_leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(hovered_leaf_id);
+                    // Sync the chat text_input buffer so keystrokes go to the
+                    // correct leaf's buffer after focus switches.
+                    if leaf_mode == Some(gate4agent::InstanceMode::Chat) {
+                        let buf = self.sidebar_state.agent_input_buffers
+                            .get(&hovered_leaf_id).map(|s| s.as_str()).unwrap_or("");
+                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                    }
                     self.sidebar_data_dirty = true;
                 }
                 if leaf_mode == Some(gate4agent::InstanceMode::Pty) {
@@ -6113,38 +6120,46 @@ impl ChartApp {
                         return;
                     }
 
-                    // Agents panel: route wheel to focused leaf's chat or PTY scroll offset.
+                    // Agents panel: route wheel to the leaf the mouse is hovering over,
+                    // not the focused leaf.  This lets the user scroll any visible pane
+                    // without first clicking to focus it.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
-                        if let Some(ref content_rect) = sidebar_result.agent_content_rect {
-                            if x >= content_rect.x
-                                && x <= content_rect.x + content_rect.width
-                                && y >= content_rect.y
-                                && y <= content_rect.y + content_rect.height
-                            {
-                                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                                    let leaf_mode = self.sidebar_state.agent_leaves.get(&leaf_id)
-                                        .map(|d| d.mode);
-                                    let viewport_h = content_rect.height;
-                                    match leaf_mode {
-                                        Some(gate4agent::InstanceMode::Chat) => {
-                                            let total_h = sidebar_result.agent_chat_content_height;
-                                            self.sidebar_state.agent_chat_scrolls
-                                                .entry(leaf_id).or_default()
-                                                .handle_wheel(-dy, total_h, viewport_h);
-                                        }
-                                        Some(gate4agent::InstanceMode::Pty) => {
-                                            let total_h = sidebar_result.agent_pty_content_height;
-                                            self.sidebar_state.agent_pty_scrolls
-                                                .entry(leaf_id).or_default()
-                                                .handle_wheel(-dy, total_h, viewport_h);
-                                        }
-                                        None => {}
-                                    }
+                        // Hit-test all leaf content rects registered during the last render.
+                        let hovered = sidebar_result.item_rects.iter()
+                            .filter_map(|(wid, wrect)| {
+                                let id_str = wid.strip_prefix("agent:leaf:")?.strip_suffix(":focus_content")?;
+                                let raw: u64 = id_str.parse().ok()?;
+                                let lid = uzor::panels::LeafId(raw);
+                                if x >= wrect.x && x < wrect.x + wrect.width
+                                    && y >= wrect.y && y < wrect.y + wrect.height
+                                {
+                                    Some((lid, wrect.height))
+                                } else {
+                                    None
                                 }
-                                return;
+                            })
+                            .next();
+
+                        if let Some((hover_leaf_id, viewport_h)) = hovered {
+                            let leaf_mode = self.sidebar_state.agent_leaves.get(&hover_leaf_id)
+                                .map(|d| d.mode);
+                            match leaf_mode {
+                                Some(gate4agent::InstanceMode::Chat) => {
+                                    let total_h = sidebar_result.agent_chat_content_height;
+                                    self.sidebar_state.agent_chat_scrolls
+                                        .entry(hover_leaf_id).or_default()
+                                        .handle_wheel(-dy, total_h, viewport_h);
+                                }
+                                Some(gate4agent::InstanceMode::Pty) => {
+                                    let total_h = sidebar_result.agent_pty_content_height;
+                                    self.sidebar_state.agent_pty_scrolls
+                                        .entry(hover_leaf_id).or_default()
+                                        .handle_wheel(-dy, total_h, viewport_h);
+                                }
+                                None => {}
                             }
                         }
-                        // Swallow wheel events in the Agents panel (no outer sidebar scroll).
+                        // Always swallow wheel events in the Agents panel (no outer sidebar scroll).
                         return;
                     }
 
@@ -9254,6 +9269,15 @@ impl ChartApp {
                 self.sidebar_state.focused_agent_leaf = next;
                 if let Some(next_id) = next {
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                    // Sync the chat text_input buffer to the newly focused leaf.
+                    if self.sidebar_state.agent_leaves.get(&next_id)
+                        .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                        .unwrap_or(false)
+                    {
+                        let buf = self.sidebar_state.agent_input_buffers
+                            .get(&next_id).map(|s| s.as_str()).unwrap_or("");
+                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                    }
                 }
                 self.sidebar_data_dirty = true;
                 self.profile_dirty = true;
@@ -9268,6 +9292,16 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
+                    // Sync the chat text_input buffer to the newly focused leaf so
+                    // keystrokes go to the correct leaf's buffer.
+                    if self.sidebar_state.agent_leaves.get(&leaf_id)
+                        .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                        .unwrap_or(false)
+                    {
+                        let buf = self.sidebar_state.agent_input_buffers
+                            .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                    }
                     self.sidebar_data_dirty = true;
                 }
                 return;
@@ -9279,13 +9313,17 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    // Focus the appropriate input field for this leaf type.
+                    // Focus the appropriate input field for this leaf type and sync
+                    // the chat text_input buffer to prevent text leaking between leaves.
                     match self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode) {
                         Some(gate4agent::InstanceMode::Pty) => {
                             self.text_input.focus(crate::text_input::FieldId::AgentPty);
                             self.agent_pty_hover_focused = true;
                         }
                         Some(gate4agent::InstanceMode::Chat) => {
+                            let buf = self.sidebar_state.agent_input_buffers
+                                .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
                             self.text_input.focus(crate::text_input::FieldId::AgentChat);
                         }
                         None => {}
@@ -9316,6 +9354,15 @@ impl ChartApp {
                         self.sidebar_state.focused_agent_leaf = next;
                         if let Some(next_id) = next {
                             self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
+                            // Sync the chat text_input buffer to the newly focused leaf.
+                            if self.sidebar_state.agent_leaves.get(&next_id)
+                                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                                .unwrap_or(false)
+                            {
+                                let buf = self.sidebar_state.agent_input_buffers
+                                    .get(&next_id).map(|s| s.as_str()).unwrap_or("");
+                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                            }
                         }
                     }
                     self.sidebar_data_dirty = true;
@@ -9427,6 +9474,10 @@ impl ChartApp {
                             }
                             gate4agent::InstanceMode::Chat => {
                                 // Chat starts lazily on first send — focus input field.
+                                // Sync buffer first to avoid leaking previous leaf's text.
+                                let buf = self.sidebar_state.agent_input_buffers
+                                    .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
+                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
                                 self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
                                 self.text_input.focus(crate::text_input::FieldId::AgentChat);
                                 self.agent.load_latest_history_instance(id);

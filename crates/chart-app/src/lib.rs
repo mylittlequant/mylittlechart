@@ -6020,11 +6020,16 @@ impl ChartApp {
                         let content_h = sidebar_result.agent_chat_content_height;
                         let viewport_h = sidebar_result.agent_chat_viewport_h;
                         let max_scroll = (content_h - viewport_h).max(0.0);
+                        // Resolve the f64::MAX sentinel to the real clamped value so
+                        // that the was_at_bottom check reflects where the renderer
+                        // actually placed the viewport.  Without this, offset stays
+                        // at f64::MAX permanently and the user can never scroll up.
+                        if scroll.offset >= 1e18 {
+                            scroll.offset = max_scroll;
+                        }
                         let was_at_bottom = scroll.offset >= (max_scroll - 1.0).max(0.0);
                         if was_at_bottom {
-                            // Use sentinel — renderer clamps to actual max_scroll
-                            // on the next frame (avoids stale content_h lag).
-                            scroll.offset = f64::MAX;
+                            scroll.offset = max_scroll;
                         }
                     }
                 } else {
