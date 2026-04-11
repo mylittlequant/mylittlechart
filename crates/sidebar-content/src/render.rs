@@ -4342,12 +4342,14 @@ fn render_agents_pane(
     grid_rect: uzor::panels::PanelRect,
 ) {
     let header_h = 28.0_f64;
-    let px = prect.x as f64;
-    let py = prect.y as f64;
-    let pw = prect.width as f64;
-    // Reserve 1 px at the bottom so the input row and other bottom-edge content
-    // do not visually bleed into the docking separator drawn below this pane.
-    let ph = (prect.height as f64 - 1.0).max(1.0);
+    // Apply a uniform 2 px inset from all four sides of the panel rect so that
+    // headers, accent bars, input rows and close buttons do not overlap the
+    // docking separators that surround this pane.
+    let inset = 2.0_f64;
+    let px = prect.x as f64 + inset;
+    let py = prect.y as f64 + inset;
+    let pw = (prect.width as f64 - inset * 2.0).max(1.0);
+    let ph = (prect.height as f64 - inset * 2.0).max(1.0);
 
     // Pane background.
     ctx.set_fill_color(&theme.background);

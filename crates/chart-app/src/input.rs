@@ -780,6 +780,61 @@ impl ChartApp {
             }
         }
 
+        // ── Agent chat / PTY scrollbar handle drag + track click ─────────────
+        // MUST run BEFORE PTY/Chat drag so scrollbar clicks are not intercepted
+        // by the focus_content handler that covers the full leaf area (which
+        // overlaps the scrollbar strip).
+        if self.sidebar_state.is_right_open() && !self.ui_drag_active {
+            // Collect all leaf scrollbar infos from the last render pass before taking mutable
+            // borrows on sidebar_state (avoids simultaneous borrow conflicts).
+            let leaf_scroll_infos: Vec<(uzor::panels::LeafId, bool, crate::scroll_dispatch::ScrollableInfo)> = {
+                if let Some(ref sidebar_result) = self.last_sidebar_result {
+                    sidebar_result.agent_leaf_scrollbar_rects.iter()
+                        .filter_map(|(&lid, &(handle_rect, track_rect))| {
+                            let (content_h, vp_h) = sidebar_result.agent_leaf_content_heights
+                                .get(&lid).copied().unwrap_or((0.0, 0.0));
+                            if vp_h <= 0.0 { return None; }
+                            let is_chat = self.sidebar_state.agent_leaves.get(&lid)
+                                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                                .unwrap_or(true);
+                            Some((lid, is_chat, crate::scroll_dispatch::ScrollableInfo {
+                                handle_rect,
+                                track_rect,
+                                content_height: content_h,
+                                viewport_height: vp_h,
+                                viewport_rect: None,
+                            }))
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                }
+            };
+
+            use crate::scroll_dispatch::{try_start_scrollbar_drag, try_handle_track_click};
+            for (leaf_id, is_chat, info) in &leaf_scroll_infos {
+                if *is_chat {
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
+                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                } else {
+                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
+                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
+                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
+                        return false;
+                    }
+                }
+            }
+        }
+
         // ── PTY host-side selection drag ────────────────────────────────────
         // If the drag starts inside the Agent PTY terminal (in PTY mode),
         // begin a host-side cell selection. This MUST run before TIM drag so
@@ -1158,60 +1213,6 @@ impl ChartApp {
                         self.sidebar_state.current_right_scroll_mut().handle_track_click(
                             y, track_rect.y, track_rect.height, content_h, viewport_h,
                         );
-                        return false;
-                    }
-                }
-            }
-        }
-
-        // Agent chat / PTY scrollbar handle drag + track click — routed to any leaf's scroll.
-        // We check all rendered leaves (not just the focused one) so scrollbars on non-focused
-        // panes are also interactive.
-        if self.sidebar_state.is_right_open() && !self.ui_drag_active {
-            // Collect all leaf scrollbar infos from the last render pass before taking mutable
-            // borrows on sidebar_state (avoids simultaneous borrow conflicts).
-            let leaf_scroll_infos: Vec<(uzor::panels::LeafId, bool, crate::scroll_dispatch::ScrollableInfo)> = {
-                if let Some(ref sidebar_result) = self.last_sidebar_result {
-                    sidebar_result.agent_leaf_scrollbar_rects.iter()
-                        .filter_map(|(&lid, &(handle_rect, track_rect))| {
-                            let (content_h, vp_h) = sidebar_result.agent_leaf_content_heights
-                                .get(&lid).copied().unwrap_or((0.0, 0.0));
-                            if vp_h <= 0.0 { return None; }
-                            let is_chat = self.sidebar_state.agent_leaves.get(&lid)
-                                .map(|d| d.mode == gate4agent::InstanceMode::Chat)
-                                .unwrap_or(true);
-                            Some((lid, is_chat, crate::scroll_dispatch::ScrollableInfo {
-                                handle_rect,
-                                track_rect,
-                                content_height: content_h,
-                                viewport_height: vp_h,
-                                viewport_rect: None,
-                            }))
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                }
-            };
-
-            use crate::scroll_dispatch::{try_start_scrollbar_drag, try_handle_track_click};
-            for (leaf_id, is_chat, info) in &leaf_scroll_infos {
-                if *is_chat {
-                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
-                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
-                        return false;
-                    }
-                    let scroll = self.sidebar_state.agent_chat_scrolls.entry(*leaf_id).or_default();
-                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
-                        return false;
-                    }
-                } else {
-                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
-                    if try_start_scrollbar_drag(x, y, &mut [(&*info, scroll)]) {
-                        return false;
-                    }
-                    let scroll = self.sidebar_state.agent_pty_scrolls.entry(*leaf_id).or_default();
-                    if try_handle_track_click(x, y, &mut [(&*info, scroll)]) {
                         return false;
                     }
                 }

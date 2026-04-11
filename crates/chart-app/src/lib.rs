@@ -6033,12 +6033,29 @@ impl ChartApp {
                         }
                     }
                 } else {
-                    // Non-focused: snap to bottom so switching to this leaf
-                    // shows the latest messages.  Only snap if the user hasn't
-                    // manually scrolled up (offset 0.0 = never rendered / default,
-                    // f64::MAX = already snapped by us previously).
-                    if scroll.offset == 0.0 || scroll.offset >= 1e18 {
-                        scroll.offset = f64::MAX;
+                    // Non-focused: resolve the sentinel using per-leaf dimensions
+                    // when available, so that was_at_bottom detection works the
+                    // same way as for the focused leaf.  This prevents the offset
+                    // from staying at f64::MAX forever and reverting after new
+                    // messages arrive.
+                    if let Some((content_h, vp_h)) = self.last_sidebar_result
+                        .as_ref()
+                        .and_then(|sr| sr.agent_leaf_content_heights.get(&leaf_id).copied())
+                    {
+                        let max_scroll = (content_h - vp_h).max(0.0);
+                        if scroll.offset >= 1e18 {
+                            scroll.offset = max_scroll;
+                        }
+                        let was_at_bottom = scroll.offset >= (max_scroll - 1.0).max(0.0);
+                        if was_at_bottom {
+                            scroll.offset = max_scroll;
+                        }
+                    } else {
+                        // No dimensions yet (first frame / leaf not rendered).
+                        // Keep sentinel so render will show bottom on first display.
+                        if scroll.offset == 0.0 {
+                            scroll.offset = f64::MAX;
+                        }
                     }
                 }
             }
