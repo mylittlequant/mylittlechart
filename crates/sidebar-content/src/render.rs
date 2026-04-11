@@ -4444,17 +4444,20 @@ fn render_agents_pane(
     let content_y2 = py + header_h;
     let content_h2 = (ph - header_h).max(1.0);
 
+    let pane_right = prect.x as f64 + prect.width as f64;
     match desc.mode {
         gate4agent::InstanceMode::Pty => {
             render_agents_pty_leaf(
                 ctx, leaf_id, px, content_y2, pw, content_h2,
                 desc, state, theme, result, input_coordinator, is_focused, grid_rect,
+                pane_right,
             );
         }
         gate4agent::InstanceMode::Chat => {
             render_agents_chat_leaf(
                 ctx, leaf_id, px, content_y2, pw, content_h2,
                 desc, state, theme, result, input_coordinator, is_focused,
+                pane_right,
             );
         }
     }
@@ -4584,6 +4587,7 @@ fn render_agents_pty_leaf(
     input_coordinator: &mut InputCoordinator,
     is_focused: bool,
     _grid_rect: uzor::panels::PanelRect,
+    pane_right: f64,
 ) {
     // Snapshot for this specific instance.
     // The snapshot is stored in agent_snapshots map keyed by leaf_id.
@@ -4628,7 +4632,8 @@ fn render_agents_pty_leaf(
                     result.agent_pty_viewport_h = h;
                 }
 
-                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg, &theme.selection, &theme.item_text_active) {
+                let scrollbar_x = pane_right - 8.0 + 1.0;
+                if let Some((handle_rect, track_rect)) = render_agents_pty_grid(ctx, Some(snap), selection, x, y, w, h, scroll_clamped, &theme.terminal_bg, &theme.selection, &theme.item_text_active, scrollbar_x) {
                     // Always insert into per-leaf map; also keep legacy focused-only fields.
                     result.agent_leaf_scrollbar_rects.insert(leaf_id, (Some(handle_rect), Some(track_rect)));
                     if is_focused {
@@ -4702,6 +4707,7 @@ fn render_agents_pty_grid(
     terminal_bg: &str,
     selection_color: &str,
     cursor_color: &str,
+    scrollbar_x: f64,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::AgentSnapshotMode;
 
@@ -4830,7 +4836,7 @@ fn render_agents_pty_grid(
     let sb_rects = {
         let pty_content_h = grid.rows as f64 * char_h;
         let sb_w = 6.0;
-        let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
+        let sb_rect = uzor::types::Rect::new(scrollbar_x, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(pty_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
         let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
@@ -4898,6 +4904,7 @@ fn render_agents_chat_leaf(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     is_focused: bool,
+    pane_right: f64,
 ) {
     let row_h = 28.0;
     let send_gap = 4.0;
@@ -4926,9 +4933,11 @@ fn render_agents_chat_leaf(
     let scroll_clamped = chat_scroll_offset.clamp(0.0, max_scroll);
 
     let selection = state.agent_chat_selections.get(&leaf_id);
+    let scrollbar_x = pane_right - 8.0 + 1.0;
     if let Some((handle_rect, track_rect)) = render_agents_chat_bubbles(
         ctx, snapshot, theme, x, chat_y, w, chat_h, scroll_clamped, chat_content_h,
         selection, leaf_id, &mut result.agent_chat_line_rects, &state.agent_chat_expanded,
+        scrollbar_x,
     ) {
         // Always insert into per-leaf map; also keep legacy focused-only fields.
         result.agent_leaf_scrollbar_rects.insert(leaf_id, (Some(handle_rect), Some(track_rect)));
@@ -5056,25 +5065,30 @@ fn render_agents_chat_leaf(
             *sx += tw + item_gap;
         };
 
-        // 1. Model — per-CLI default stub until gate4agent exposes real data.
-        let model_label = match desc.cli {
-            gate4agent::AgentCli::Claude   => "Sonnet 4",
-            gate4agent::AgentCli::Codex    => "GPT-5.1 Codex",
-            gate4agent::AgentCli::Gemini   => "Gemini 3 Flash",
-            gate4agent::AgentCli::OpenCode => "GPT-5 Nano",
+        // Map AgentCli to CliTool so we can call capabilities().
+        let cli_tool = match desc.cli {
+            gate4agent::AgentCli::Claude   => gate4agent::CliTool::ClaudeCode,
+            gate4agent::AgentCli::Codex    => gate4agent::CliTool::Codex,
+            gate4agent::AgentCli::Gemini   => gate4agent::CliTool::Gemini,
+            gate4agent::AgentCli::OpenCode => gate4agent::CliTool::OpenCode,
         };
+        let caps = cli_tool.capabilities();
+
+        // 1. Model — from gate4agent capabilities.
+        let model_label = caps
+            .default_model()
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("Unknown");
         draw_pill(ctx, model_label, &mut sx);
 
-        // 2. Permission mode stub.
-        let perm_label = match desc.cli {
-            gate4agent::AgentCli::Claude   => "Auto-accept",
-            gate4agent::AgentCli::Codex    => "Full-auto",
-            gate4agent::AgentCli::Gemini   => "Sandbox",
-            gate4agent::AgentCli::OpenCode => "Default",
-        };
+        // 2. Permission mode — from gate4agent capabilities.
+        let perm_label = caps
+            .default_permission_mode()
+            .map(|p| p.display_name.as_str())
+            .unwrap_or("Default");
         draw_pill(ctx, perm_label, &mut sx);
 
-        // 3. Context compression % (stub — shows fake 0%).
+        // 3. Context usage (stub until wired to ContextTracker).
         draw_pill(ctx, "Context 0%", &mut sx);
     }
 
@@ -5102,6 +5116,7 @@ fn render_agents_chat_bubbles(
     leaf_id: uzor::panels::LeafId,
     line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String, f64, u8)>,
     expanded: &std::collections::HashSet<(uzor::panels::LeafId, u16)>,
+    scrollbar_x: f64,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -5427,7 +5442,7 @@ fn render_agents_chat_bubbles(
     // so the scrollbar handle size stays stable even when the loop breaks early due to scroll.
     let sb_rects = {
         let sb_w = 6.0;
-        let sb_rect = uzor::types::Rect::new(x + w - sb_w - 1.0, y, sb_w, h);
+        let sb_rect = uzor::types::Rect::new(scrollbar_x, y, sb_w, h);
         let sb_config = ScrollbarConfig::new(total_content_h, h, scroll_offset);
         let sb_state = SbState::Active;
         let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
