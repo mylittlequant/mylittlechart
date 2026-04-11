@@ -5035,26 +5035,47 @@ fn render_agents_chat_leaf(
     result.item_rects.push((send_wid, send_rect));
 
     // ── Control strip (below input) ──────────────────────────────────────────
-    // Visual-only row with placeholder controls for model/permissions/usage.
+    // Shows per-leaf status: model, permission mode, context compression %.
     {
         let strip_y = input_y + row_h + strip_gap;
-        let strip_items: &[&str] = &["\u{2299} Opus 4.6", "\u{26a1} Fast", "\u{2298} Ask", "\u{2318} /cmd"];
-        let item_gap = 8.0;
+        let item_gap = 6.0;
+        let pill_pad = 4.0;
         let mut sx = x;
         ctx.set_font("10px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         let strip_mid_y = strip_y + strip_h / 2.0;
-        for &item_label in strip_items {
-            let tw = ctx.measure_text(item_label) + 8.0;
-            // Pill background.
+
+        // Helper closure to draw a pill.
+        let draw_pill = |ctx: &mut dyn RenderContext, label: &str, sx: &mut f64| {
+            let tw = ctx.measure_text(label) + pill_pad * 2.0;
             ctx.set_fill_color(&theme.button_bg);
-            ctx.fill_rounded_rect(sx, strip_y, tw, strip_h, 3.0);
-            // Label.
+            ctx.fill_rounded_rect(*sx, strip_y, tw, strip_h, 3.0);
             ctx.set_fill_color(&theme.item_text_muted);
-            ctx.fill_text(item_label, sx + 4.0, strip_mid_y);
-            sx += tw + item_gap;
-        }
+            ctx.fill_text(label, *sx + pill_pad, strip_mid_y);
+            *sx += tw + item_gap;
+        };
+
+        // 1. Model — per-CLI default stub until gate4agent exposes real data.
+        let model_label = match desc.cli {
+            gate4agent::AgentCli::Claude   => "Sonnet 4",
+            gate4agent::AgentCli::Codex    => "GPT-5.1 Codex",
+            gate4agent::AgentCli::Gemini   => "Gemini 3 Flash",
+            gate4agent::AgentCli::OpenCode => "GPT-5 Nano",
+        };
+        draw_pill(ctx, model_label, &mut sx);
+
+        // 2. Permission mode stub.
+        let perm_label = match desc.cli {
+            gate4agent::AgentCli::Claude   => "Auto-accept",
+            gate4agent::AgentCli::Codex    => "Full-auto",
+            gate4agent::AgentCli::Gemini   => "Sandbox",
+            gate4agent::AgentCli::OpenCode => "Default",
+        };
+        draw_pill(ctx, perm_label, &mut sx);
+
+        // 3. Context compression % (stub — shows fake 0%).
+        draw_pill(ctx, "Context 0%", &mut sx);
     }
 
     let _ = desc;
