@@ -4883,7 +4883,7 @@ fn render_agents_chat_leaf(
     let chat_scroll_offset = state.agent_chat_scrolls.get(&leaf_id).map(|s| s.offset).unwrap_or(0.0);
 
     // Content height + scrollbar.
-    let chat_content_h = compute_chat_content_height(ctx, snapshot, w);
+    let chat_content_h = compute_chat_content_height(ctx, snapshot, w, &state.agent_chat_expanded, leaf_id);
 
     if is_focused {
         result.agent_chat_content_height = chat_content_h;
@@ -4897,7 +4897,7 @@ fn render_agents_chat_leaf(
     let selection = state.agent_chat_selections.get(&leaf_id);
     if let Some((handle_rect, track_rect)) = render_agents_chat_bubbles(
         ctx, snapshot, theme, x, chat_y, w, chat_h, scroll_clamped, chat_content_h,
-        selection, leaf_id, &mut result.agent_chat_line_rects,
+        selection, leaf_id, &mut result.agent_chat_line_rects, &state.agent_chat_expanded,
     ) {
         if is_focused {
             result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
@@ -5005,6 +5005,7 @@ fn render_agents_chat_bubbles(
     selection: Option<&crate::state::ChatSelection>,
     leaf_id: uzor::panels::LeafId,
     line_rects_out: &mut Vec<(u16, u16, f64, f64, uzor::panels::LeafId, String, f64, u8)>,
+    expanded: &std::collections::HashSet<(uzor::panels::LeafId, u16)>,
 ) -> Option<(WidgetRect, WidgetRect)> {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -5045,14 +5046,17 @@ fn render_agents_chat_bubbles(
         let msg_i = msg_idx as u16;
         match msg.role {
             ChatRole::User => {
-                // Full-width block (VSCode-style), left-aligned text.
+                // Fit-content width bubble, right-aligned (iMessage style).
                 ctx.set_font("13px sans-serif");
-                let bx = x + 4.0;
-                let bubble_w = w - 12.0;
-                let text_x = bx + bubble_pad_x;
-                let lines = word_wrap_text(ctx, &msg.content, bubble_w - bubble_pad_x * 2.0);
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len().max(1);
+                // Measure the widest line to size the bubble to its content.
+                let max_line_w = lines.iter().map(|l| ctx.measure_text(l)).fold(0.0f64, f64::max);
+                let bubble_w = (max_line_w + bubble_pad_x * 2.0).min(w - 12.0);
                 let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
+                // Right-align: pin right edge of bubble 4 px from the right edge of the column.
+                let bx = x + w - 4.0 - bubble_w;
+                let text_x = bx + bubble_pad_x;
 
                 // Record line rects for selection hit-testing (font_tag=0: normal 13px).
                 for (li, line_text) in lines.iter().enumerate() {
@@ -5060,7 +5064,7 @@ fn render_agents_chat_bubbles(
                     line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), text_x, 0u8));
                 }
 
-                // Bubble background (no border — bg color difference is sufficient).
+                // Bubble background.
                 ctx.set_fill_color(&theme.bubble_user_bg);
                 ctx.fill_rounded_rect(bx, cursor_y, bubble_w, bubble_h, 6.0);
 
@@ -5098,63 +5102,106 @@ fn render_agents_chat_bubbles(
 
             ChatRole::Tool => {
                 // Tool output — monospace, dark translucent bg.
+                // Collapsed (default): single-line pill showing the tool name.
+                // Expanded: header + full tool output.
+                let is_expanded = expanded.contains(&(leaf_id, msg_i));
+                let toggle_char = if is_expanded { '▼' } else { '▶' };
                 let tool_label = msg.tool_name.as_deref().unwrap_or("tool");
-                let header = format!("[{}]", tool_label);
-                ctx.set_font("bold 11px JetBrainsMono");
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
-                let n_lines = lines.len().max(1);
-                let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
-
-                // Record line rects (header + content lines, font_tag=1: mono 11px).
+                let header = format!("{} [{}]", toggle_char, tool_label);
                 let tool_text_x = x + 4.0 + bubble_pad_x;
-                let header_y = cursor_y + bubble_pad_y;
-                line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone(), tool_text_x, 1u8));
-                for (li, line_text) in lines.iter().enumerate() {
-                    let line_y = cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono;
-                    line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id, line_text.clone(), tool_text_x, 1u8));
+
+                if is_expanded {
+                    ctx.set_font("bold 11px JetBrainsMono");
+                    let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                    let n_lines = lines.len().max(1);
+                    let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
+
+                    // Record line rects (header + content lines, font_tag=1: mono 11px).
+                    let header_y = cursor_y + bubble_pad_y;
+                    line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone(), tool_text_x, 1u8));
+                    for (li, line_text) in lines.iter().enumerate() {
+                        let line_y = cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono;
+                        line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_mono, leaf_id, line_text.clone(), tool_text_x, 1u8));
+                    }
+
+                    ctx.set_fill_color(&theme.bubble_tool_bg);
+                    ctx.fill_rounded_rect(x + 4.0, cursor_y, w - 12.0, bubble_h, 3.0);
+
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Top);
+                    ctx.fill_text(&header, tool_text_x, cursor_y + bubble_pad_y);
+
+                    ctx.set_fill_color(&theme.bubble_tool_text);
+                    ctx.set_font("11px JetBrainsMono");
+                    for (li, line) in lines.iter().enumerate() {
+                        ctx.fill_text(line, tool_text_x, cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono);
+                    }
+                    cursor_y += bubble_h + bubble_gap;
+                } else {
+                    // Collapsed: minimal pill with just the tool name.
+                    ctx.set_font("bold 11px JetBrainsMono");
+                    let header_y = cursor_y;
+                    line_rects_out.push((msg_i, 0, header_y, header_y + line_h_mono, leaf_id, header.clone(), tool_text_x, 1u8));
+
+                    let header_w = (ctx.measure_text(&header) + bubble_pad_x * 2.0).min(w - 12.0);
+                    ctx.set_fill_color(&theme.bubble_tool_bg);
+                    ctx.fill_rounded_rect(x + 4.0, cursor_y, header_w, line_h_mono + bubble_pad_y, 3.0);
+
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Top);
+                    ctx.fill_text(&header, tool_text_x, cursor_y + bubble_pad_y * 0.5);
+                    cursor_y += line_h_mono + bubble_pad_y + bubble_gap;
                 }
-
-                ctx.set_fill_color(&theme.bubble_tool_bg);
-                ctx.fill_rounded_rect(x + 4.0, cursor_y, w - 12.0, bubble_h, 3.0);
-
-                ctx.set_fill_color(&theme.item_text_muted);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text(&header, x + 4.0 + bubble_pad_x, cursor_y + bubble_pad_y);
-
-                ctx.set_fill_color(&theme.bubble_tool_text);
-                ctx.set_font("11px JetBrainsMono");
-                for (li, line) in lines.iter().enumerate() {
-                    ctx.fill_text(
-                        line,
-                        x + 4.0 + bubble_pad_x,
-                        cursor_y + bubble_pad_y + line_h_mono + li as f64 * line_h_mono,
-                    );
-                }
-                cursor_y += bubble_h + bubble_gap;
             }
 
             ChatRole::Thinking => {
-                // Italic muted gray.
+                // Collapsed (default): one-line stub "▶ Thinking".
+                // Expanded: header + full italic thinking text.
+                let is_expanded = expanded.contains(&(leaf_id, msg_i));
+                let toggle_char = if is_expanded { '▼' } else { '▶' };
+                let thinking_text_x = x + 20.0; // indented past the toggle glyph
+                let header_text_x = x + 8.0;
+
                 ctx.set_font("italic 12px sans-serif");
-                let thinking_text_x = x + 8.0;
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
-                let n_lines = lines.len();
-                let text_h = n_lines as f64 * line_h_normal;
 
-                // Record line rects for selection hit-testing (font_tag=2: italic 12px).
-                for (li, line_text) in lines.iter().enumerate() {
-                    let line_y = cursor_y + li as f64 * line_h_normal;
-                    line_rects_out.push((msg_i, li as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), thinking_text_x, 2u8));
-                }
+                if is_expanded {
+                    let header = format!("{} Thinking", toggle_char);
+                    let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - 16.0);
+                    let n_lines = lines.len();
+                    let text_h = (n_lines + 1) as f64 * line_h_normal; // +1 for header line
 
-                ctx.set_fill_color(&theme.item_text_muted);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                for (li, line) in lines.iter().enumerate() {
-                    ctx.fill_text(line, x + 8.0, cursor_y + li as f64 * line_h_normal);
+                    // Header line rect (font_tag=2: italic 12px).
+                    let header_y = cursor_y;
+                    line_rects_out.push((msg_i, 0, header_y, header_y + line_h_normal, leaf_id, header.clone(), header_text_x, 2u8));
+
+                    // Content line rects.
+                    for (li, line_text) in lines.iter().enumerate() {
+                        let line_y = cursor_y + (li + 1) as f64 * line_h_normal;
+                        line_rects_out.push((msg_i, (li + 1) as u16, line_y, line_y + line_h_normal, leaf_id, line_text.clone(), thinking_text_x, 2u8));
+                    }
+
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Top);
+                    ctx.fill_text(&header, header_text_x, cursor_y);
+                    for (li, line) in lines.iter().enumerate() {
+                        ctx.fill_text(line, thinking_text_x, cursor_y + (li + 1) as f64 * line_h_normal);
+                    }
+                    cursor_y += text_h + bubble_gap;
+                } else {
+                    // Collapsed: one-line stub.
+                    let stub = format!("{} Thinking", toggle_char);
+                    let stub_y = cursor_y;
+                    line_rects_out.push((msg_i, 0, stub_y, stub_y + line_h_normal, leaf_id, stub.clone(), header_text_x, 2u8));
+
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Top);
+                    ctx.fill_text(&stub, header_text_x, cursor_y);
+                    cursor_y += line_h_normal + bubble_gap;
                 }
-                cursor_y += text_h + bubble_gap;
             }
 
             ChatRole::Error => {
@@ -5312,6 +5359,8 @@ fn compute_chat_content_height(
     ctx: &mut dyn RenderContext,
     snapshot: Option<&crate::agent_types::AgentRenderSnapshot>,
     w: f64,
+    expanded: &std::collections::HashSet<(uzor::panels::LeafId, u16)>,
+    leaf_id: uzor::panels::LeafId,
 ) -> f64 {
     use crate::agent_types::{AgentSnapshotMode, ChatRole};
 
@@ -5335,13 +5384,13 @@ fn compute_chat_content_height(
 
     let mut total_h = 8.0; // top padding
 
-    for msg in messages {
+    for (msg_idx, msg) in messages.iter().enumerate() {
+        let msg_i = msg_idx as u16;
         match msg.role {
             ChatRole::User => {
-                // Full-width block: same wrap width as Tool/Assistant (full bubble_w minus padding).
+                // Fit-content width bubble: wrap at max_bubble_w, measure widest line.
                 ctx.set_font("13px sans-serif");
-                let bubble_w = w - 12.0;
-                let lines = word_wrap_text(ctx, &msg.content, bubble_w - bubble_pad_x * 2.0);
+                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
                 let n_lines = lines.len().max(1);
                 let bubble_h = n_lines as f64 * line_h_normal + bubble_pad_y * 2.0;
                 total_h += bubble_h + bubble_gap;
@@ -5354,12 +5403,26 @@ fn compute_chat_content_height(
             }
             ChatRole::Tool => {
                 ctx.set_font("bold 11px JetBrainsMono");
-                let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_y * 2.0);
-                let n_lines = lines.len().max(1);
-                let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
-                total_h += bubble_h + bubble_gap;
+                if expanded.contains(&(leaf_id, msg_i)) {
+                    let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - bubble_pad_x * 2.0);
+                    let n_lines = lines.len().max(1);
+                    let bubble_h = line_h_mono + n_lines as f64 * line_h_mono + bubble_pad_y * 2.0;
+                    total_h += bubble_h + bubble_gap;
+                } else {
+                    total_h += line_h_mono + bubble_pad_y + bubble_gap;
+                }
             }
-            ChatRole::Thinking | ChatRole::Error => {
+            ChatRole::Thinking => {
+                ctx.set_font("italic 12px sans-serif");
+                if expanded.contains(&(leaf_id, msg_i)) {
+                    let lines = word_wrap_text(ctx, &msg.content, max_bubble_w - 16.0);
+                    let text_h = (lines.len() + 1) as f64 * line_h_normal; // +1 for header line
+                    total_h += text_h + bubble_gap;
+                } else {
+                    total_h += line_h_normal + bubble_gap;
+                }
+            }
+            ChatRole::Error => {
                 ctx.set_font("12px sans-serif");
                 let lines = word_wrap_text(ctx, &msg.content, max_bubble_w);
                 let text_h = lines.len() as f64 * line_h_normal;

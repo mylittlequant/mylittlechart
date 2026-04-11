@@ -893,6 +893,30 @@ impl ChartApp {
                                     .map(|e| (e.0, e.1, &e.5, e.6))
                             });
                         if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                            // Check if this is a click on the header (line 0) of a
+                            // collapsible Thinking or Tool bubble → toggle expand/collapse.
+                            if line_idx == 0 {
+                                let is_collapsible = self.sidebar_state.agent_leaf_snapshots.get(&leaf_id)
+                                    .and_then(|snap| {
+                                        if let sidebar_content::agent_types::AgentSnapshotMode::Chat(ref msgs) = snap.mode {
+                                            msgs.get(msg_idx as usize)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .map(|msg| msg.role == sidebar_content::agent_types::ChatRole::Thinking || msg.role == sidebar_content::agent_types::ChatRole::Tool)
+                                    .unwrap_or(false);
+                                if is_collapsible {
+                                    let key = (leaf_id, msg_idx);
+                                    if self.sidebar_state.agent_chat_expanded.contains(&key) {
+                                        self.sidebar_state.agent_chat_expanded.remove(&key);
+                                    } else {
+                                        self.sidebar_state.agent_chat_expanded.insert(key);
+                                    }
+                                    self.sidebar_data_dirty = true;
+                                    return false;
+                                }
+                            }
                             let char_idx = chat_char_idx_from_x(line_text, x, text_x);
                             self.sidebar_state.agent_chat_selections.insert(
                                 leaf_id,

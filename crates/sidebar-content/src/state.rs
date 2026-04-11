@@ -350,6 +350,13 @@ pub struct SidebarState {
     /// Per-leaf chat text selection (line-level).
     pub agent_chat_selections: HashMap<uzor::panels::LeafId, ChatSelection>,
 
+    /// Set of `(leaf_id, msg_index)` pairs for expanded chat messages.
+    ///
+    /// Messages **not** in this set are collapsed (default = collapsed).
+    /// Applies to `ChatRole::Thinking` and `ChatRole::Tool` bubbles — they
+    /// render as a one-line stub until the user clicks to expand.
+    pub agent_chat_expanded: HashSet<(uzor::panels::LeafId, u16)>,
+
     /// True while a chat drag-selection is in progress.
     pub agent_chat_drag_active: bool,
 
@@ -695,6 +702,7 @@ impl Default for SidebarState {
             agent_pty_scrolls: HashMap::new(),
             agent_pty_selections: HashMap::new(),
             agent_chat_selections: HashMap::new(),
+            agent_chat_expanded: HashSet::new(),
             agent_chat_drag_active: false,
             agent_leaf_snapshots: HashMap::new(),
             agent_docking: AgentDockingManager::new(),
