@@ -6149,6 +6149,17 @@ impl ChartApp {
             return;
         }
 
+        // Sync cursor blink state — render() does this in prepare_frame,
+        // but render_sidebar_only() skips prepare_frame so we must do it here.
+        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            self.sidebar_state.agent_input_cursor_visible = self.text_input.cursor_visible(now_ms);
+            self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_agent_leaf;
+        }
+
         let window_rect = LayoutRect::new(0.0, 0.0, w, h);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
 

@@ -4282,17 +4282,19 @@ fn render_agents_panel(
             ];
             let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
             let spawn_area_w = inner_w - (spawn_area_x - x);
-            // Measure text width per button: ~7px per char at 11px font + 16px h-padding
+            // CLI buttons stretch equally to fill available space.
             let char_w_2r = 7.0;
-            let btn_pad_2r = 16.0; // 8px each side
+            let btn_pad_2r = 16.0;
             let full_total_2r: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w_2r + btn_pad_2r).sum::<f64>() + gap * 3.0;
             let use_short = full_total_2r > spawn_area_w;
+            let n_cli_2r = cli_btns.len() as f64;
+            let total_gaps_2r = gap * (n_cli_2r - 1.0);
+            let per_btn_w_2r = ((spawn_area_w - total_gaps_2r) / n_cli_2r).max(24.0);
             let mut btn_cur_x_2r = spawn_area_x;
 
             for btn in cli_btns.iter() {
                 let label = if use_short { btn.short } else { btn.label };
-                let this_w = (label.len() as f64 * char_w_2r + btn_pad_2r).max(24.0);
-                let btn_rect = WidgetRect::new(btn_cur_x_2r, y + (ctrl_h - btn_h) / 2.0, this_w, btn_h);
+                let btn_rect = WidgetRect::new(btn_cur_x_2r, y + (ctrl_h - btn_h) / 2.0, per_btn_w_2r, btn_h);
                 let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
                 ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
                 ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
@@ -4300,10 +4302,10 @@ fn render_agents_panel(
                 ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, btn_rect.x + this_w / 2.0, btn_rect.y + btn_h / 2.0);
+                ctx.fill_text(label, btn_rect.x + per_btn_w_2r / 2.0, btn_rect.y + btn_h / 2.0);
                 input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
                 result.item_rects.push((btn.id.to_string(), btn_rect));
-                btn_cur_x_2r += this_w + gap;
+                btn_cur_x_2r += per_btn_w_2r + gap;
             }
 
             y += ctrl_h + gap;
