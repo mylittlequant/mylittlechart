@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uzor = "=1.0.41"
-uzor-backend-vello-cpu = "=1.0.41"
+uzor = "=1.0.42"
+uzor-backend-vello-cpu = "=1.0.42"
 zengeld-chart = { path = "../chart" }

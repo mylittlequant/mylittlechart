@@ -4053,32 +4053,30 @@ fn render_agents_panel(
         let icon_pad    = 4.0;
         let mut cur_x   = x;
 
-        // [PTY] segment
+        // [PTY] segment — terminal icon
         let pty_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
         ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
-        ctx.set_font("9px sans-serif");
-        ctx.set_fill_color(if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("PTY", pty_rect.x + toggle_w / 2.0, pty_rect.y + btn_h / 2.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
+            pty_rect.x + icon_pad, pty_rect.y + icon_pad,
+            pty_rect.width - icon_pad * 2.0, pty_rect.height - icon_pad * 2.0,
+            if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         if !is_pty {
             input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
         cur_x += toggle_w + 2.0;
 
-        // [Chat] segment
+        // [Chat] segment — chat bubble icon
         let chat_seg_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
         ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
-        ctx.set_font("9px sans-serif");
-        ctx.set_fill_color(if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Chat", chat_seg_rect.x + toggle_w / 2.0, chat_seg_rect.y + btn_h / 2.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
+            chat_seg_rect.x + icon_pad, chat_seg_rect.y + icon_pad,
+            chat_seg_rect.width - icon_pad * 2.0, chat_seg_rect.height - icon_pad * 2.0,
+            if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         if is_pty {
             input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
         }
@@ -4152,11 +4150,10 @@ fn render_agents_panel(
         let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
         ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if is_r { &theme.item_text_active } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("R", r_rect.x + split_w / 2.0, r_rect.y + btn_h / 2.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
+            r_rect.x + icon_pad, r_rect.y + icon_pad,
+            r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
+            if is_r { &theme.item_text_active } else { &theme.item_text_muted });
         if !is_r {
             input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
         }
@@ -4232,33 +4229,32 @@ fn render_agents_panel(
         {
             let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
 
-            // [PTY] segment
+            // [PTY] segment — terminal icon
             let toggle_w = 36.0;
+            let icon_pad_2r = 4.0;
             let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
             let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
             ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.button_bg });
             ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("PTY", pty_rect.x + toggle_w / 2.0, pty_rect.y + btn_h / 2.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
+                pty_rect.x + icon_pad_2r, pty_rect.y + icon_pad_2r,
+                pty_rect.width - icon_pad_2r * 2.0, pty_rect.height - icon_pad_2r * 2.0,
+                if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
             if !is_pty {
                 input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
             }
             result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
 
-            // [Chat] segment
+            // [Chat] segment — chat bubble icon
             let chat_seg_x = x + toggle_w + 2.0;
             let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
             let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
             ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.button_bg });
             ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Chat", chat_seg_rect.x + toggle_w / 2.0, chat_seg_rect.y + btn_h / 2.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
+                chat_seg_rect.x + icon_pad_2r, chat_seg_rect.y + icon_pad_2r,
+                chat_seg_rect.width - icon_pad_2r * 2.0, chat_seg_rect.height - icon_pad_2r * 2.0,
+                if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
             if is_pty {
                 input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
             }
@@ -4342,11 +4338,10 @@ fn render_agents_panel(
             let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
             ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.button_bg });
             ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(if is_r { &theme.item_text_active } else { &theme.item_text_muted });
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("R", r_rect.x + toggle_w / 2.0, r_rect.y + btn_h / 2.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
+                r_rect.x + icon_pad, r_rect.y + icon_pad,
+                r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
+                if is_r { &theme.item_text_active } else { &theme.item_text_muted });
             if !is_r {
                 input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
             }
