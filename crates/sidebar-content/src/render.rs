@@ -4036,17 +4036,29 @@ fn render_agents_panel(
     let inner_w = content_width - pad * 2.0;
     let mut y = content_y + pad;
 
-    // ── Row 1: Mode toggle [PTY][Chat] + CLI spawn buttons ────────────────────
-    {
-        let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+    // ── Header rows: adaptive 1-row or 2-row layout ───────────────────────────
+    // Minimum width for single-row: PTY(28)+2+Chat(28)+8 + 4*CLI + 3*gap + 8
+    //   + H(28)+2+V(28)+2+R(28) + 8 + exp(22)+gap+rst(22)+gap+close(22) ≈ 420px
+    let single_row = inner_w >= 420.0;
+
+    if single_row {
+        // ── Single-row: [PTY][Chat] [Claude][Codex][Gemini][OpenCode] [H][V][R] [⊞][↺][×] ──
+        use crate::state::AgentSpawnLayout;
+        let is_pty      = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+        let has_focused = state.focused_agent_leaf.is_some();
+        let multi_leaf  = state.agent_leaves.len() > 1;
+        let toggle_w    = 28.0;   // PTY/Chat narrow buttons
+        let split_w     = 28.0;   // H/V/R buttons
+        let btn_w       = 22.0;   // expand/reset/close buttons
+        let icon_pad    = 4.0;
+        let mut cur_x   = x;
 
         // [PTY] segment
-        let toggle_w = 36.0;
-        let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let pty_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
         ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
-        ctx.set_font("10px sans-serif");
+        ctx.set_font("9px sans-serif");
         ctx.set_fill_color(if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -4055,14 +4067,14 @@ fn render_agents_panel(
             input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
+        cur_x += toggle_w + 2.0;
 
         // [Chat] segment
-        let chat_seg_x = x + toggle_w + 2.0;
-        let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let chat_seg_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
         let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
         ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
-        ctx.set_font("10px sans-serif");
+        ctx.set_font("9px sans-serif");
         ctx.set_fill_color(if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -4071,8 +4083,13 @@ fn render_agents_panel(
             input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
+        cur_x += toggle_w + gap * 2.0;
 
-        // CLI spawn buttons: [Claude] [Codex] [Gemini] [OpenCode]
+        // CLI spawn buttons — allocate remaining space before the right-side controls
+        // Right-side fixed width: H+2+V+2+R + gap*2 + exp+gap+rst+gap+close
+        //   = 28+2+28+2+28 + gap*2 + 22+gap+22+gap+22
+        let right_fixed = split_w * 3.0 + 4.0 + gap * 2.0 + btn_w * 3.0 + gap * 2.0;
+        let cli_area_w  = inner_w - (cur_x - x) - right_fixed - gap * 2.0;
         struct CliBtn { id: &'static str, label: &'static str }
         let cli_btns = [
             CliBtn { id: "agent:spawn:claude",   label: "Claude"   },
@@ -4080,12 +4097,9 @@ fn render_agents_panel(
             CliBtn { id: "agent:spawn:gemini",    label: "Gemini"   },
             CliBtn { id: "agent:spawn:opencode",  label: "OpenCode" },
         ];
-        let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
-        let spawn_area_w = inner_w - (spawn_area_x - x);
-        let spawn_btn_w  = ((spawn_area_w - gap * 3.0) / 4.0).max(1.0);
-
+        let spawn_btn_w = ((cli_area_w - gap * 3.0) / 4.0).max(1.0);
         for (i, btn) in cli_btns.iter().enumerate() {
-            let bx = spawn_area_x + i as f64 * (spawn_btn_w + gap);
+            let bx = cur_x + i as f64 * (spawn_btn_w + gap);
             let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
             let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
             ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.button_bg });
@@ -4098,23 +4112,11 @@ fn render_agents_panel(
             input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((btn.id.to_string(), btn_rect));
         }
-
-        y += ctrl_h + gap;
-    }
-
-    // ── Row 2: [H][V][R] spawn layout  [expand/collapse] [reset] [×] close ──
-    {
-        use crate::state::AgentSpawnLayout;
-        let has_focused = state.focused_agent_leaf.is_some();
-        let multi_leaf  = state.agent_leaves.len() > 1;
-        let toggle_w    = 28.0;
-        let btn_w       = 22.0;
-        let icon_pad    = 4.0;
-        let mut cur_x   = x;
+        cur_x += cli_area_w + gap * 2.0;
 
         // [H] split-direction toggle
         let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
-        let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
         let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:h"));
         ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
@@ -4126,11 +4128,11 @@ fn render_agents_panel(
             input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:split:h".to_string(), h_rect));
-        cur_x += toggle_w + 2.0;
+        cur_x += split_w + 2.0;
 
         // [V] split-direction toggle
         let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
-        let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
         let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:v"));
         ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
@@ -4142,11 +4144,11 @@ fn render_agents_panel(
             input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:split:v".to_string(), v_rect));
-        cur_x += toggle_w + 2.0;
+        cur_x += split_w + 2.0;
 
         // [R] replace toggle
         let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
-        let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+        let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
         let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
         ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.button_bg });
         ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
@@ -4154,12 +4156,12 @@ fn render_agents_panel(
         ctx.set_fill_color(if is_r { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("R", r_rect.x + toggle_w / 2.0, r_rect.y + btn_h / 2.0);
+        ctx.fill_text("R", r_rect.x + split_w / 2.0, r_rect.y + btn_h / 2.0);
         if !is_r {
             input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
         }
         result.item_rects.push(("agent:split:replace".to_string(), r_rect));
-        cur_x += toggle_w + gap * 2.0;
+        cur_x += split_w + gap * 2.0;
 
         // [expand/collapse] toggle
         let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
@@ -4223,6 +4225,197 @@ fn render_agents_panel(
         result.item_rects.push(("agent:close_pane".to_string(), close_rect));
 
         y += ctrl_h + gap;
+    } else {
+        // ── Two-row layout (narrow sidebar) ───────────────────────────────────
+
+        // ── Row 1: Mode toggle [PTY][Chat] + CLI spawn buttons ────────────────
+        {
+            let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+
+            // [PTY] segment
+            let toggle_w = 36.0;
+            let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+            let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
+            ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("PTY", pty_rect.x + toggle_w / 2.0, pty_rect.y + btn_h / 2.0);
+            if !is_pty {
+                input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
+
+            // [Chat] segment
+            let chat_seg_x = x + toggle_w + 2.0;
+            let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+            let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
+            ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Chat", chat_seg_rect.x + toggle_w / 2.0, chat_seg_rect.y + btn_h / 2.0);
+            if is_pty {
+                input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
+
+            // CLI spawn buttons: [Claude] [Codex] [Gemini] [OpenCode]
+            struct CliBtn { id: &'static str, label: &'static str }
+            let cli_btns = [
+                CliBtn { id: "agent:spawn:claude",   label: "Claude"   },
+                CliBtn { id: "agent:spawn:codex",     label: "Codex"    },
+                CliBtn { id: "agent:spawn:gemini",    label: "Gemini"   },
+                CliBtn { id: "agent:spawn:opencode",  label: "OpenCode" },
+            ];
+            let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
+            let spawn_area_w = inner_w - (spawn_area_x - x);
+            let spawn_btn_w  = ((spawn_area_w - gap * 3.0) / 4.0).max(1.0);
+
+            for (i, btn) in cli_btns.iter().enumerate() {
+                let bx = spawn_area_x + i as f64 * (spawn_btn_w + gap);
+                let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
+                let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
+                ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.button_bg });
+                ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+                ctx.set_font("10px sans-serif");
+                ctx.set_fill_color(&theme.item_text);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(btn.label, btn_rect.x + spawn_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
+                input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
+                result.item_rects.push((btn.id.to_string(), btn_rect));
+            }
+
+            y += ctrl_h + gap;
+        }
+
+        // ── Row 2: [H][V][R] spawn layout  [expand/collapse] [reset] [×] close ──
+        {
+            use crate::state::AgentSpawnLayout;
+            let has_focused = state.focused_agent_leaf.is_some();
+            let multi_leaf  = state.agent_leaves.len() > 1;
+            let toggle_w    = 28.0;
+            let btn_w       = 22.0;
+            let icon_pad    = 4.0;
+            let mut cur_x   = x;
+
+            // [H] split-direction toggle
+            let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
+            let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+            let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:h"));
+            ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
+                h_rect.x + icon_pad, h_rect.y + icon_pad,
+                h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
+                if is_h { &theme.item_text_active } else { &theme.item_text_muted });
+            if !is_h {
+                input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:split:h".to_string(), h_rect));
+            cur_x += toggle_w + 2.0;
+
+            // [V] split-direction toggle
+            let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
+            let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:v"));
+            ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
+                v_rect.x + icon_pad, v_rect.y + icon_pad,
+                v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
+                if is_v { &theme.item_text_active } else { &theme.item_text_muted });
+            if !is_v {
+                input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:split:v".to_string(), v_rect));
+            cur_x += toggle_w + 2.0;
+
+            // [R] replace toggle
+            let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
+            let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
+            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
+            ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if is_r { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("R", r_rect.x + toggle_w / 2.0, r_rect.y + btn_h / 2.0);
+            if !is_r {
+                input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:split:replace".to_string(), r_rect));
+            cur_x += toggle_w + gap * 2.0;
+
+            // [expand/collapse] toggle
+            let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
+                state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
+            });
+            let expand_en = has_focused && multi_leaf;
+            let exp_rect  = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:expand_toggle"));
+            ctx.set_fill_color(if !expand_en { &theme.button_bg } else if exp_hov { &theme.button_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
+            {
+                let exp_icon = if any_hidden { uzor::render::icons::ui::ICON_COLLAPSE } else { uzor::render::icons::ui::ICON_EXPAND };
+                draw_svg_icon(ctx, exp_icon,
+                    exp_rect.x + icon_pad, exp_rect.y + icon_pad,
+                    exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
+                    if expand_en { &theme.item_text } else { &theme.item_text_muted });
+            }
+            if expand_en {
+                input_coordinator.register("agent:expand_toggle", exp_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:expand_toggle".to_string(), exp_rect));
+            cur_x += btn_w + gap;
+
+            // [reset] reset sizes
+            let reset_en   = has_focused && multi_leaf;
+            let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:reset_sizes"));
+            ctx.set_fill_color(if !reset_en { &theme.button_bg } else if reset_hov { &theme.button_bg_hover } else { &theme.button_bg });
+            ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
+                reset_rect.x + icon_pad, reset_rect.y + icon_pad,
+                reset_rect.width - icon_pad * 2.0, reset_rect.height - icon_pad * 2.0,
+                if reset_en { &theme.item_text } else { &theme.item_text_muted });
+            if reset_en {
+                input_coordinator.register("agent:reset_sizes", reset_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:reset_sizes".to_string(), reset_rect));
+            cur_x += btn_w + gap;
+
+            // [×] close pane
+            let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+            ctx.set_fill_color(if !has_focused { &theme.button_bg } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
+            ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(close_rect.x, close_rect.y);
+            ctx.line_to(close_rect.x + btn_w, close_rect.y);
+            ctx.line_to(close_rect.x + btn_w, close_rect.y + btn_h);
+            ctx.line_to(close_rect.x, close_rect.y + btn_h);
+            ctx.close_path();
+            ctx.stroke();
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
+                close_rect.x + icon_pad, close_rect.y + icon_pad,
+                close_rect.width - icon_pad * 2.0, close_rect.height - icon_pad * 2.0,
+                if has_focused { &theme.danger } else { &theme.item_text_muted });
+            if has_focused {
+                input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push(("agent:close_pane".to_string(), close_rect));
+
+            y += ctrl_h + gap;
+        }
     }
 
     // ── Grid area ─────────────────────────────────────────────────────────────
@@ -5031,7 +5224,7 @@ fn render_agents_chat_leaf(
         text_disabled: theme.item_text_muted.clone(),
         border_normal: transparent.clone(),
         border_hover: transparent.clone(),
-        border_focused: transparent.clone(),
+        border_focused: if is_focused { theme.accent.clone() } else { transparent.clone() },
         accent: theme.selection.clone(),
         accent_hover: theme.selection.clone(),
         success: theme.success.clone(),
@@ -5206,14 +5399,10 @@ fn render_agents_chat_leaf(
     }
     ctx.fill_rounded_rect(send_x, send_y2, send_sz, send_sz, 3.0);
     let acx = send_x + send_sz / 2.0;
-    let acy = send_y2 + send_sz / 2.0;
+    let acy = send_y2 + send_sz / 2.0 + 1.0; // +1px down
     let arrow_sz = 7.0;
-    let arrow_head = 5.0;
-    if is_focused && !send_hov {
-        ctx.set_stroke_color(&theme.accent);
-    } else {
-        ctx.set_stroke_color(&theme.background);
-    }
+    let arrow_head = 6.0; // wider tips
+    ctx.set_stroke_color(&theme.background); // always background color
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
     ctx.line_to(acx, acy - arrow_sz);
