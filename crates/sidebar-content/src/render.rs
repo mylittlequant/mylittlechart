@@ -4477,9 +4477,9 @@ fn render_agents_pane(
         let drop_w = (pw - 8.0).max(100.0);
         let item_h = 22.0;
         let sessions = state.agent_past_sessions.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
-        let max_visible = 8;
         let total_h = (sessions.len() as f64 * item_h + 4.0).max(28.0);
-        let drop_h = total_h.min(max_visible as f64 * item_h + 4.0).max(28.0);
+        let available_down = (py + ph - (py + header_h)).max(28.0); // space below header within leaf
+        let drop_h = total_h.min(8.0 * item_h + 4.0).min(available_down).max(28.0);
         let needs_scroll = total_h > drop_h;
         let scroll_off = state.agent_sessions_scroll.get(&leaf_id)
             .map(|s| s.offset).unwrap_or(0.0)
@@ -5186,15 +5186,15 @@ fn render_agents_chat_leaf(
     ctx.fill_text(&ctx_label, ctx_x + circle_d + 3.0, ctrl_mid_y);
 
     // Send button [↑] (far right of control bar).
-    let send_sz = ctrl_bar_h;
+    let send_sz = 20.0;
     let send_x = x + w - inner_pad - send_sz;
-    let send_y2 = ctrl_y;
+    let send_y2 = ctrl_y + (ctrl_bar_h - send_sz) / 2.0;
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
     let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
-    // Inverted: border/bg = text color, arrow = main background.
+    // Inverted: bg = accent (active) or muted, arrow = main background.
     if is_focused {
-        ctx.set_fill_color(&theme.item_text_active);
+        ctx.set_fill_color(&theme.accent);
     } else {
         ctx.set_fill_color(&theme.item_text_muted);
     }
@@ -5221,9 +5221,9 @@ fn render_agents_chat_leaf(
         let item_h = 24.0;
         let models = &caps.available_models;
         let drop_w = (w - inner_pad * 2.0).max(120.0);
-        let max_visible = 6;
         let total_h = models.len() as f64 * item_h + 6.0;
-        let drop_h = total_h.min(max_visible as f64 * item_h + 6.0);
+        let available_up = (ctrl_y - y).max(0.0); // space above ctrl bar within leaf
+        let drop_h = total_h.min(6.0 * item_h + 6.0).min(available_up);
         let needs_scroll = total_h > drop_h;
         let scroll_off = state.agent_model_scroll.get(&leaf_id)
             .map(|s| s.offset).unwrap_or(0.0)
@@ -5312,9 +5312,9 @@ fn render_agents_chat_leaf(
         let item_h = 24.0;
         let modes = &caps.permission_modes;
         let drop_w = ((w - inner_pad) - (model_tw + 12.0)).max(120.0);
-        let max_visible = 6;
         let total_h = modes.len() as f64 * item_h + 6.0;
-        let drop_h = total_h.min(max_visible as f64 * item_h + 6.0);
+        let available_up = (ctrl_y - y).max(0.0);
+        let drop_h = total_h.min(6.0 * item_h + 6.0).min(available_up);
         let needs_scroll = total_h > drop_h;
         let scroll_off = state.agent_perm_scroll.get(&leaf_id)
             .map(|s| s.offset).unwrap_or(0.0)
