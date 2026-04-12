@@ -7169,8 +7169,13 @@ impl ApplicationHandler for App<'_> {
                 pw.chart_dirty = true;
             }
         }
-        // Note: Agents-panel drain_events() runs before the FPS cap guard
-        // in about_to_wait so PTY bytes are drained even when frames are skipped.
+        // Sidebar redraws at FPS-cap rate — same cadence as chart.
+        // The FPS cap is already paid for; no reason to throttle sidebar
+        // separately.  This ensures cursor blink, hover highlights and
+        // agent PTY output are rendered within one frame of the event.
+        for pw in self.windows.values_mut() {
+            pw.sidebar_dirty_scene = true;
+        }
 
         let _t7 = std::time::Instant::now();
 

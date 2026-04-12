@@ -4029,7 +4029,7 @@ fn render_agents_panel(
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
     let pad = 8.0;
-    let ctrl_h = 36.0;
+    let ctrl_h = 28.0;
     let btn_h = 28.0;
     let gap = 4.0;
     let x = rect.x + pad;
@@ -4037,9 +4037,12 @@ fn render_agents_panel(
     let mut y = content_y + pad;
 
     // ── Header rows: adaptive 1-row or 2-row layout ───────────────────────────
-    // Minimum width for single-row: PTY(36)+2+Chat(36)+8 + 4*CLI + 3*gap + 8
-    //   + H(36)+2+V(36)+2+R(36) + 8 + exp(28)+gap+rst(28)+gap+close(28) ≈ 510px
-    let single_row = inner_w >= 510.0;
+    // Minimum width for single-row with all buttons 28px:
+    //   Left: PTY(28)+2+Chat(28)+8 = 66
+    //   Right: H(28)+2+V(28)+2+R(28)+8+exp(28)+4+rst(28)+4+close(28) = 188
+    //   CLI min (~32 each + 3*4 gaps): ~140
+    //   Total: 66+140+188 ≈ 394 → threshold 400px
+    let single_row = inner_w >= 400.0;
 
     if single_row {
         // ── Single-row: [PTY][Chat] [Claude][Codex][Gemini][OpenCode] [H][V][R] [⊞][↺][×] ──
@@ -4047,10 +4050,10 @@ fn render_agents_panel(
         let is_pty      = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
         let has_focused = state.focused_agent_leaf.is_some();
         let multi_leaf  = state.agent_leaves.len() > 1;
-        let toggle_w    = 36.0;   // PTY/Chat narrow buttons
-        let split_w     = 36.0;   // H/V/R buttons
+        let toggle_w    = 28.0;   // PTY/Chat narrow buttons
+        let split_w     = 28.0;   // H/V/R buttons
         let btn_w       = 28.0;   // expand/reset/close buttons
-        let icon_pad    = 6.0;
+        let icon_pad    = 4.0;
         let mut cur_x   = x;
 
         // [PTY] segment — terminal icon
@@ -4095,11 +4098,16 @@ fn render_agents_panel(
             CliBtn { id: "agent:spawn:gemini",    label: "GEMINI",   short: "GM" },
             CliBtn { id: "agent:spawn:opencode",  label: "OPENCODE", short: "OC" },
         ];
-        let spawn_btn_w = ((cli_area_w - gap * 3.0) / 4.0).max(1.0);
-        let use_short = spawn_btn_w < 50.0;
-        for (i, btn) in cli_btns.iter().enumerate() {
-            let bx = cur_x + i as f64 * (spawn_btn_w + gap);
-            let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
+        // Measure text width per button: ~7px per char at 11px font + 16px h-padding
+        let char_w = 7.0;
+        let btn_pad = 16.0; // 8px each side
+        let full_total: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w + btn_pad).sum::<f64>() + gap * 3.0;
+        let use_short = full_total > cli_area_w;
+        let mut btn_cur_x = cur_x;
+        for btn in cli_btns.iter() {
+            let label = if use_short { btn.short } else { btn.label };
+            let this_w = (label.len() as f64 * char_w + btn_pad).max(24.0);
+            let btn_rect = WidgetRect::new(btn_cur_x, y + (ctrl_h - btn_h) / 2.0, this_w, btn_h);
             let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
             ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
@@ -4107,11 +4115,12 @@ fn render_agents_panel(
             ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(if use_short { btn.short } else { btn.label }, btn_rect.x + spawn_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
+            ctx.fill_text(label, btn_rect.x + this_w / 2.0, btn_rect.y + btn_h / 2.0);
             input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((btn.id.to_string(), btn_rect));
+            btn_cur_x += this_w + gap;
         }
-        cur_x += cli_area_w + gap * 2.0;
+        cur_x = btn_cur_x + gap;
 
         // [H] split-direction toggle
         let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
@@ -4231,8 +4240,8 @@ fn render_agents_panel(
             let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
 
             // [PTY] segment — terminal icon
-            let toggle_w = 36.0;
-            let icon_pad_2r = 6.0;
+            let toggle_w = 28.0;
+            let icon_pad_2r = 4.0;
             let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
             let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
             ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
@@ -4271,12 +4280,17 @@ fn render_agents_panel(
             ];
             let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
             let spawn_area_w = inner_w - (spawn_area_x - x);
-            let spawn_btn_w  = ((spawn_area_w - gap * 3.0) / 4.0).max(1.0);
-            let use_short = spawn_btn_w < 50.0;
+            // Measure text width per button: ~7px per char at 11px font + 16px h-padding
+            let char_w_2r = 7.0;
+            let btn_pad_2r = 16.0; // 8px each side
+            let full_total_2r: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w_2r + btn_pad_2r).sum::<f64>() + gap * 3.0;
+            let use_short = full_total_2r > spawn_area_w;
+            let mut btn_cur_x_2r = spawn_area_x;
 
-            for (i, btn) in cli_btns.iter().enumerate() {
-                let bx = spawn_area_x + i as f64 * (spawn_btn_w + gap);
-                let btn_rect = WidgetRect::new(bx, y + (ctrl_h - btn_h) / 2.0, spawn_btn_w, btn_h);
+            for btn in cli_btns.iter() {
+                let label = if use_short { btn.short } else { btn.label };
+                let this_w = (label.len() as f64 * char_w_2r + btn_pad_2r).max(24.0);
+                let btn_rect = WidgetRect::new(btn_cur_x_2r, y + (ctrl_h - btn_h) / 2.0, this_w, btn_h);
                 let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
                 ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
                 ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
@@ -4284,9 +4298,10 @@ fn render_agents_panel(
                 ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(if use_short { btn.short } else { btn.label }, btn_rect.x + spawn_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
+                ctx.fill_text(label, btn_rect.x + this_w / 2.0, btn_rect.y + btn_h / 2.0);
                 input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
                 result.item_rects.push((btn.id.to_string(), btn_rect));
+                btn_cur_x_2r += this_w + gap;
             }
 
             y += ctrl_h + gap;
@@ -4297,9 +4312,9 @@ fn render_agents_panel(
             use crate::state::AgentSpawnLayout;
             let has_focused = state.focused_agent_leaf.is_some();
             let multi_leaf  = state.agent_leaves.len() > 1;
-            let toggle_w    = 36.0;
+            let toggle_w    = 28.0;
             let btn_w       = 28.0;
-            let icon_pad    = 6.0;
+            let icon_pad    = 4.0;
             let mut cur_x   = x;
 
             // [H] split-direction toggle
@@ -4570,20 +4585,9 @@ fn render_agents_pane(
         let btn_sz = 22.0; // square hit-area for icon buttons
         let icon_sz = 16.0; // all SVG icons: chevron, plus, close
 
-        // Close button — right-aligned, always visible.
+        // Close button position — used for text clip below; rendering is done LAST.
         let close_x   = px + pw - btn_sz - 4.0;
         let close_y   = mid_y - btn_sz / 2.0;
-        let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
-        let cl_hov    = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
-        ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.background });
-        ctx.fill_rounded_rect(close_x, close_y, btn_sz, btn_sz, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
-            close_x + (btn_sz - icon_sz) / 2.0, close_y + (btn_sz - icon_sz) / 2.0,
-            icon_sz, icon_sz,
-            if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
-        let close_rect = WidgetRect::new(close_x, close_y, btn_sz, btn_sz);
-        input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((close_wid, close_rect));
 
         // CLI name — uppercase, 13px, centered on mid_y.
         // Clip text so it never overlaps the close X button.
@@ -4644,6 +4648,21 @@ fn render_agents_pane(
             result.item_rects.push((new_wid, new_rect));
         }
         // PTY mode: no controls in header — Start button is in the content area.
+
+        // Close button — rendered LAST so it's always visually on top.
+        {
+            let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
+            let cl_hov    = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
+            ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.background });
+            ctx.fill_rounded_rect(close_x, close_y, btn_sz, btn_sz, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
+                close_x + (btn_sz - icon_sz) / 2.0, close_y + (btn_sz - icon_sz) / 2.0,
+                icon_sz, icon_sz,
+                if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
+            let close_rect = WidgetRect::new(close_x, close_y, btn_sz, btn_sz);
+            input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((close_wid, close_rect));
+        }
 
         // Thin separator at the bottom of the header.
         ctx.set_fill_color(&theme.separator);
@@ -5187,13 +5206,6 @@ fn render_agents_chat_leaf(
     // Panel background (user bubble color).
     ctx.set_fill_color(&theme.bubble_user_bg);
     ctx.fill_rounded_rect(x, panel_y, w, panel_h, panel_radius);
-
-    // Focused border.
-    if is_focused {
-        ctx.set_stroke_color(&theme.accent);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x + 0.5, panel_y + 0.5, w - 1.0, panel_h - 1.0, panel_radius);
-    }
 
     // ── Text input area (top section) ─────────────────────────────────────
     let input_y = panel_y + 2.0;
