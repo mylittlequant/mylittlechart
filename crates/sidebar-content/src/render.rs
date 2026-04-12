@@ -4371,8 +4371,8 @@ fn render_agents_pane(
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(px, py, pw, header_h);
 
-        // True visual center: account for inset above header.
-        let mid_y  = py + (header_h + inset) / 2.0; // (28+8)/2 = 18
+        // Visual center between leaf separator (py - inset) and header separator (py + header_h - 1).
+        let mid_y  = (py - inset + py + header_h - 1.0) / 2.0; // midpoint of full header zone
         let btn_sz = 22.0; // square hit-area for icon buttons
         let icon_sz = 16.0; // all SVG icons: chevron, plus, close
 
@@ -4407,7 +4407,7 @@ fn render_agents_pane(
 
             // [Sessions] + chevron button.
             let sess_text_w = "Sessions".len() as f64 * 8.0; // ~8px per char at 13px
-            let sess_w = sess_text_w + 2.0 + icon_sz + 8.0; // text + gap + 16px icon + h-padding
+            let sess_w = sess_text_w + 1.0 + icon_sz + 8.0; // text + 1px gap + 16px icon + h-padding
             let sess_y = mid_y - btn_sz / 2.0;
             let sess_wid  = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
             let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
@@ -4419,7 +4419,7 @@ fn render_agents_pane(
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Sessions", btn_x + 4.0, mid_y);
-            let chev_x = btn_x + 4.0 + sess_text_w + 2.0;
+            let chev_x = btn_x + 4.0 + sess_text_w + 1.0;
             let chev_y = mid_y - icon_sz / 2.0; // 16px icon centered on mid_y
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHEVRON_DOWN,
                 chev_x, chev_y, icon_sz, icon_sz, &theme.item_text_muted);
@@ -5037,33 +5037,24 @@ fn render_agents_chat_leaf(
     };
     let caps = cli_tool.capabilities();
 
-    // Model label (clickable text, no pill bg).
-    // Use per-leaf override if present, otherwise fall back to CLI default.
-    let model_label = if let Some(mid) = state.agent_selected_model.get(&leaf_id) {
-        caps.available_models.iter()
-            .find(|m| m.id == *mid)
-            .map(|m| m.display_name.as_str())
-            .unwrap_or("Model")
-    } else {
-        caps.default_model()
-            .map(|m| m.display_name.as_str())
-            .unwrap_or("Model")
-    };
-    let model_open = state.agent_model_dropdown == Some(leaf_id);
-    let model_wid = format!("agent:leaf:{}:model", leaf_id.0);
-    let model_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(model_wid.as_str()));
-    let model_tw = ctx.measure_text(model_label);
-    let model_rect = WidgetRect::new(x + inner_pad, ctrl_y, model_tw + 4.0, ctrl_bar_h);
-    ctx.set_fill_color(if model_open || model_hov { &theme.item_text } else { &theme.item_text_muted });
-    ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(model_label, x + inner_pad, ctrl_mid_y);
-    input_coordinator.register(model_wid.as_str(), model_rect, uzor::input::Sense::CLICK);
-    result.item_rects.push((model_wid, model_rect));
+    // Layout: [model...] [perm] [○ N%] ... [↑]
+    // Context % is always visible; model gets truncated with "..." when tight.
 
-    // Permission label (clickable text, after model + gap).
-    // Use per-leaf override if present, otherwise fall back to CLI default.
-    let perm_x = x + inner_pad + model_tw + 12.0;
-    let perm_label = if let Some(pid) = state.agent_selected_perm.get(&leaf_id) {
+    // Compute context % first — it's always shown, so we reserve space for it.
+    let ctx_pct = snapshot
+        .and_then(|s| s.context_percent)
+        .unwrap_or(0.0);
+    let ctx_label = format!("{:.0}%", ctx_pct);
+    let ctx_text_w = ctx.measure_text(&ctx_label);
+    let circle_r = 7.0;
+    let circle_d = circle_r * 2.0;
+    let ctx_total_w = circle_d + 3.0 + ctx_text_w;
+
+    // Send button width.
+    let send_reserved = ctrl_bar_h + inner_pad; // send_sz + gap
+
+    // Permission label.
+    let perm_label_full = if let Some(pid) = state.agent_selected_perm.get(&leaf_id) {
         caps.permission_modes.iter()
             .find(|p| p.id == *pid)
             .map(|p| p.display_name.as_str())
@@ -5073,28 +5064,71 @@ fn render_agents_chat_leaf(
             .map(|p| p.display_name.as_str())
             .unwrap_or("Default")
     };
+    let perm_tw = ctx.measure_text(perm_label_full);
+
+    // Available width for model label = total - perm - ctx - send - gaps.
+    let fixed_w = perm_tw + 12.0 + ctx_total_w + 12.0 + send_reserved;
+    let avail_model_w = (w - inner_pad * 2.0 - fixed_w).max(20.0);
+
+    // Model label — truncate with "..." if needed.
+    let model_label_full: &str = if let Some(mid) = state.agent_selected_model.get(&leaf_id) {
+        caps.available_models.iter()
+            .find(|m| m.id == *mid)
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("Model")
+    } else {
+        caps.default_model()
+            .map(|m| m.display_name.as_str())
+            .unwrap_or("Model")
+    };
+    let model_full_tw = ctx.measure_text(model_label_full);
+    let model_display: String;
+    let model_tw: f64;
+    if model_full_tw <= avail_model_w {
+        model_display = model_label_full.to_string();
+        model_tw = model_full_tw;
+    } else {
+        // Truncate: find how many chars fit, append "..."
+        let ellipsis_w = ctx.measure_text("...");
+        let target = avail_model_w - ellipsis_w;
+        let mut end = model_label_full.len();
+        for i in (1..=model_label_full.len()).rev() {
+            if model_label_full.is_char_boundary(i) {
+                let sub = &model_label_full[..i];
+                if ctx.measure_text(sub) <= target {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        model_display = format!("{}...", &model_label_full[..end]);
+        model_tw = ctx.measure_text(&model_display);
+    }
+
+    let model_open = state.agent_model_dropdown == Some(leaf_id);
+    let model_wid = format!("agent:leaf:{}:model", leaf_id.0);
+    let model_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(model_wid.as_str()));
+    let model_rect = WidgetRect::new(x + inner_pad, ctrl_y, model_tw + 4.0, ctrl_bar_h);
+    ctx.set_fill_color(if model_open || model_hov { &theme.item_text } else { &theme.item_text_muted });
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(&model_display, x + inner_pad, ctrl_mid_y);
+    input_coordinator.register(model_wid.as_str(), model_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((model_wid, model_rect));
+
+    // Permission label (after model + gap).
+    let perm_x = x + inner_pad + model_tw + 12.0;
     let perm_open = state.agent_perm_dropdown == Some(leaf_id);
     let perm_wid = format!("agent:leaf:{}:perm", leaf_id.0);
     let perm_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(perm_wid.as_str()));
-    let perm_tw = ctx.measure_text(perm_label);
     let perm_rect = WidgetRect::new(perm_x, ctrl_y, perm_tw + 4.0, ctrl_bar_h);
     ctx.set_fill_color(if perm_open || perm_hov { &theme.item_text } else { &theme.item_text_muted });
-    ctx.fill_text(perm_label, perm_x, ctrl_mid_y);
-    // Only register perm clickable if tool has permission modes.
+    ctx.fill_text(perm_label_full, perm_x, ctrl_mid_y);
     if !caps.permission_modes.is_empty() {
         input_coordinator.register(perm_wid.as_str(), perm_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((perm_wid, perm_rect));
     }
 
-    // Context % with circle (right after permission).
-    let ctx_pct = snapshot
-        .and_then(|s| s.context_percent)
-        .unwrap_or(0.0);
-    let ctx_label = format!("{:.0}%", ctx_pct);
-    let ctx_text_w = ctx.measure_text(&ctx_label);
-    let circle_r = 7.0;
-    let circle_d = circle_r * 2.0;
-    let _ctx_total_w = circle_d + 3.0 + ctx_text_w;
+    // Context % with circle (always visible, after perm).
     let ctx_x = perm_x + perm_tw + 12.0;
     let circle_cx = ctx_x + circle_r;
     let circle_cy = ctrl_mid_y;
@@ -5138,7 +5172,8 @@ fn render_agents_chat_leaf(
     ctx.fill_rounded_rect(send_x, send_y2, send_sz, send_sz, 3.0);
     let acx = send_x + send_sz / 2.0;
     let acy = send_y2 + send_sz / 2.0;
-    let arrow_sz = 10.0;
+    let arrow_sz = 7.0;
+    let arrow_head = 5.0;
     if is_focused {
         ctx.set_stroke_color(&theme.item_text_active);
     } else {
@@ -5147,9 +5182,9 @@ fn render_agents_chat_leaf(
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
     ctx.line_to(acx, acy - arrow_sz);
-    ctx.move_to(acx - 5.0, acy - arrow_sz + 5.0);
+    ctx.move_to(acx - arrow_head, acy - arrow_sz + arrow_head);
     ctx.line_to(acx, acy - arrow_sz);
-    ctx.line_to(acx + 5.0, acy - arrow_sz + 5.0);
+    ctx.line_to(acx + arrow_head, acy - arrow_sz + arrow_head);
     ctx.set_stroke_width(1.5);
     ctx.stroke();
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
