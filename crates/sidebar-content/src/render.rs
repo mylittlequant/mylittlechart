@@ -4098,16 +4098,18 @@ fn render_agents_panel(
             CliBtn { id: "agent:spawn:gemini",    label: "GEMINI",   short: "GM" },
             CliBtn { id: "agent:spawn:opencode",  label: "OPENCODE", short: "OC" },
         ];
-        // Measure text width per button: ~7px per char at 11px font + 16px h-padding
+        // CLI buttons stretch equally to fill the available space.
         let char_w = 7.0;
-        let btn_pad = 16.0; // 8px each side
+        let btn_pad = 16.0;
         let full_total: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w + btn_pad).sum::<f64>() + gap * 3.0;
         let use_short = full_total > cli_area_w;
+        let n_cli = cli_btns.len() as f64;
+        let total_gaps = gap * (n_cli - 1.0);
+        let per_btn_w = ((cli_area_w - total_gaps) / n_cli).max(24.0);
         let mut btn_cur_x = cur_x;
         for btn in cli_btns.iter() {
             let label = if use_short { btn.short } else { btn.label };
-            let this_w = (label.len() as f64 * char_w + btn_pad).max(24.0);
-            let btn_rect = WidgetRect::new(btn_cur_x, y + (ctrl_h - btn_h) / 2.0, this_w, btn_h);
+            let btn_rect = WidgetRect::new(btn_cur_x, y + (ctrl_h - btn_h) / 2.0, per_btn_w, btn_h);
             let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
             ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
@@ -4115,10 +4117,10 @@ fn render_agents_panel(
             ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, btn_rect.x + this_w / 2.0, btn_rect.y + btn_h / 2.0);
+            ctx.fill_text(label, btn_rect.x + per_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
             input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((btn.id.to_string(), btn_rect));
-            btn_cur_x += this_w + gap;
+            btn_cur_x += per_btn_w + gap;
         }
         cur_x = btn_cur_x + gap;
 
@@ -4589,21 +4591,21 @@ fn render_agents_pane(
         let close_x   = px + pw - btn_sz - 4.0;
         let close_y   = mid_y - btn_sz / 2.0;
 
-        // CLI name — uppercase, 13px, centered on mid_y.
-        // Clip text so it never overlaps the close X button.
+        // Clip everything before the X button so content never bleeds under it.
         let cli_name = desc.cli.label().to_uppercase();
         let text_x = px + 6.0;
-        let max_text_w = close_x - text_x - 4.0; // 4px gap before X
-        if max_text_w > 0.0 {
-            ctx.save();
-            ctx.clip_rect(text_x, py, max_text_w, header_h);
-            ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(&theme.item_text);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&cli_name, text_x, mid_y);
-            ctx.restore();
+        let clip_w = close_x - px - 4.0; // stop 4px before X
+        ctx.save();
+        if clip_w > 0.0 {
+            ctx.clip_rect(px, py, clip_w, header_h);
         }
+
+        // CLI name — uppercase, 13px, centered on mid_y.
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(&theme.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&cli_name, text_x, mid_y);
 
         // Chat-mode inline buttons: [Sessions + chevron] [+]
         if desc.mode == gate4agent::InstanceMode::Chat {
@@ -4647,7 +4649,8 @@ fn render_agents_pane(
             input_coordinator.register(new_wid.as_str(), new_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((new_wid, new_rect));
         }
-        // PTY mode: no controls in header — Start button is in the content area.
+
+        ctx.restore(); // end header content clip
 
         // Close button — rendered LAST so it's always visually on top.
         {
@@ -5207,6 +5210,13 @@ fn render_agents_chat_leaf(
     ctx.set_fill_color(&theme.bubble_user_bg);
     ctx.fill_rounded_rect(x, panel_y, w, panel_h, panel_radius);
 
+    // Accent border on the bubble when this leaf is focused.
+    if is_focused {
+        ctx.set_stroke_color(&theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x + 0.5, panel_y + 0.5, w - 1.0, panel_h - 1.0, panel_radius);
+    }
+
     // ── Text input area (top section) ─────────────────────────────────────
     let input_y = panel_y + 2.0;
     let input_h = row_h - 4.0;
@@ -5241,7 +5251,7 @@ fn render_agents_chat_leaf(
         text_disabled: theme.item_text_muted.clone(),
         border_normal: transparent.clone(),
         border_hover: transparent.clone(),
-        border_focused: if is_focused { theme.accent.clone() } else { transparent.clone() },
+        border_focused: transparent.clone(),
         accent: theme.selection.clone(),
         accent_hover: theme.selection.clone(),
         success: theme.success.clone(),
