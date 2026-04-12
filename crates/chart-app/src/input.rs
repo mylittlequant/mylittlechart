@@ -6149,7 +6149,9 @@ impl ChartApp {
                             let scroll_step = -dy; // normalised: positive = scroll down
 
                             // Helper: check if cursor is in a named scroll_area widget rect.
-                            let check_popup = |suffix: &str| -> Option<uzor::panels::LeafId> {
+                            // Returns (LeafId, rect_height) — rect_height is the real
+                            // viewport after leaf-size clamping.
+                            let check_popup = |suffix: &str| -> Option<(uzor::panels::LeafId, f64)> {
                                 for (wid, wrect) in &sidebar_result.item_rects {
                                     if wid.ends_with(suffix)
                                         && x >= wrect.x && x < wrect.x + wrect.width
@@ -6158,13 +6160,13 @@ impl ChartApp {
                                         let rest = wid.strip_prefix("agent:leaf:")?;
                                         let id_str = rest.strip_suffix(suffix)?;
                                         let raw: u64 = id_str.parse().ok()?;
-                                        return Some(uzor::panels::LeafId(raw));
+                                        return Some((uzor::panels::LeafId(raw), wrect.height));
                                     }
                                 }
                                 None
                             };
 
-                            if let Some(lid) = check_popup(":model_scroll_area") {
+                            if let Some((lid, viewport_h)) = check_popup(":model_scroll_area") {
                                 let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
                                     Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
                                     Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
@@ -6174,12 +6176,11 @@ impl ChartApp {
                                 };
                                 let item_h = 24.0;
                                 let total_h = caps2.available_models.len() as f64 * item_h + 6.0;
-                                let viewport_h = total_h.min(6.0 * item_h + 6.0);
                                 self.sidebar_state.agent_model_scroll
                                     .entry(lid).or_default()
                                     .handle_wheel(scroll_step, total_h, viewport_h);
                                 handled = true;
-                            } else if let Some(lid) = check_popup(":perm_scroll_area") {
+                            } else if let Some((lid, viewport_h)) = check_popup(":perm_scroll_area") {
                                 let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
                                     Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
                                     Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
@@ -6189,20 +6190,20 @@ impl ChartApp {
                                 };
                                 let item_h = 24.0;
                                 let total_h = caps2.permission_modes.len() as f64 * item_h + 6.0;
-                                let viewport_h = total_h.min(6.0 * item_h + 6.0);
                                 self.sidebar_state.agent_perm_scroll
                                     .entry(lid).or_default()
                                     .handle_wheel(scroll_step, total_h, viewport_h);
                                 handled = true;
-                            } else if let Some(lid) = check_popup(":sessions_scroll_area") {
+                            } else if let Some((lid, viewport_h)) = check_popup(":sessions_scroll_area") {
                                 let item_h = 22.0;
                                 let n = self.sidebar_state.agent_past_sessions.get(&lid)
                                     .map(|v| v.len()).unwrap_or(0);
                                 let total_h = (n as f64 * item_h + 4.0).max(28.0);
-                                let viewport_h = total_h.min(8.0 * item_h + 4.0).max(28.0);
+                                let _ = viewport_h; // use real rect height
+                                let real_vh = viewport_h.max(28.0);
                                 self.sidebar_state.agent_sessions_scroll
                                     .entry(lid).or_default()
-                                    .handle_wheel(scroll_step, total_h, viewport_h);
+                                    .handle_wheel(scroll_step, total_h, real_vh);
                                 handled = true;
                             }
                             handled

@@ -4355,6 +4355,10 @@ fn render_agents_pane(
     ctx.set_fill_color(&theme.background);
     ctx.fill_rounded_rect(px, py, pw, ph, 2.0);
 
+    // Clip all pane content to the pane rect so nothing bleeds into neighbours.
+    ctx.save();
+    ctx.clip_rect(px, py, pw, ph);
+
     // Whole-pane hover/focus absorber (registered FIRST so later widgets
     // like buttons and the terminal body take priority on clicks). Used to
     // drive hover-to-focus via InputCoordinator::hovered_widget().
@@ -4584,6 +4588,8 @@ fn render_agents_pane(
         }
     }
 
+    // End pane clip.
+    ctx.restore();
 }
 
 // =============================================================================
@@ -5188,12 +5194,12 @@ fn render_agents_chat_leaf(
     // Send button [↑] (far right of control bar).
     let send_sz = 20.0;
     let send_x = x + w - inner_pad - send_sz;
-    let send_y2 = ctrl_y + (ctrl_bar_h - send_sz) / 2.0;
+    let send_y2 = ctrl_y + (ctrl_bar_h - send_sz) / 2.0 - 1.0; // -1px: avoid bottom border overlap
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
-    let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
-    // Inverted: bg = accent (active) or muted, arrow = main background.
-    if is_focused {
+    let send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
+    // Hover: accent bg + background arrow.  Focused leaf: muted bg + accent arrow.  Else: muted bg + background arrow.
+    if send_hov {
         ctx.set_fill_color(&theme.accent);
     } else {
         ctx.set_fill_color(&theme.item_text_muted);
@@ -5203,7 +5209,11 @@ fn render_agents_chat_leaf(
     let acy = send_y2 + send_sz / 2.0;
     let arrow_sz = 7.0;
     let arrow_head = 5.0;
-    ctx.set_stroke_color(&theme.background);
+    if is_focused && !send_hov {
+        ctx.set_stroke_color(&theme.accent);
+    } else {
+        ctx.set_stroke_color(&theme.background);
+    }
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
     ctx.line_to(acx, acy - arrow_sz);
