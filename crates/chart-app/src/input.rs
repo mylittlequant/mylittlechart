@@ -331,6 +331,10 @@ impl ChartApp {
         self.sidebar_state.watchlist_color_picker_open = None;
         // Close slot spawn dropdown when clicking on canvas.
         self.sidebar_state.slot_spawn_dropdown = None;
+        // Close agent popups when clicking on canvas.
+        self.sidebar_state.agent_model_dropdown = None;
+        self.sidebar_state.agent_perm_dropdown = None;
+        self.sidebar_state.agent_sessions_dropdown = None;
 
         // 4. Split panel routing — route click to the correct leaf.
         if self.panel_app.panel_grid.is_split() {
@@ -6138,6 +6142,75 @@ impl ChartApp {
                     // not the focused leaf.  This lets the user scroll any visible pane
                     // without first clicking to focus it.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
+                        // --- Popup dropdown scroll routing (model/perm/sessions) ---
+                        // If mouse is over an open popup's scroll area, scroll it instead of the leaf.
+                        let popup_scroll_handled = {
+                            let mut handled = false;
+                            let scroll_step = -dy; // normalised: positive = scroll down
+
+                            // Helper: check if cursor is in a named scroll_area widget rect.
+                            let check_popup = |suffix: &str| -> Option<uzor::panels::LeafId> {
+                                for (wid, wrect) in &sidebar_result.item_rects {
+                                    if wid.ends_with(suffix)
+                                        && x >= wrect.x && x < wrect.x + wrect.width
+                                        && y >= wrect.y && y < wrect.y + wrect.height
+                                    {
+                                        let rest = wid.strip_prefix("agent:leaf:")?;
+                                        let id_str = rest.strip_suffix(suffix)?;
+                                        let raw: u64 = id_str.parse().ok()?;
+                                        return Some(uzor::panels::LeafId(raw));
+                                    }
+                                }
+                                None
+                            };
+
+                            if let Some(lid) = check_popup(":model_scroll_area") {
+                                let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
+                                    Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                    Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
+                                    Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
+                                    Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
+                                    None => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                };
+                                let item_h = 24.0;
+                                let total_h = caps2.available_models.len() as f64 * item_h + 6.0;
+                                let viewport_h = total_h.min(6.0 * item_h + 6.0);
+                                self.sidebar_state.agent_model_scroll
+                                    .entry(lid).or_default()
+                                    .handle_wheel(scroll_step, total_h, viewport_h);
+                                handled = true;
+                            } else if let Some(lid) = check_popup(":perm_scroll_area") {
+                                let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
+                                    Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                    Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
+                                    Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
+                                    Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
+                                    None => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                };
+                                let item_h = 24.0;
+                                let total_h = caps2.permission_modes.len() as f64 * item_h + 6.0;
+                                let viewport_h = total_h.min(6.0 * item_h + 6.0);
+                                self.sidebar_state.agent_perm_scroll
+                                    .entry(lid).or_default()
+                                    .handle_wheel(scroll_step, total_h, viewport_h);
+                                handled = true;
+                            } else if let Some(lid) = check_popup(":sessions_scroll_area") {
+                                let item_h = 22.0;
+                                let n = self.sidebar_state.agent_past_sessions.get(&lid)
+                                    .map(|v| v.len()).unwrap_or(0);
+                                let total_h = (n as f64 * item_h + 4.0).max(28.0);
+                                let viewport_h = total_h.min(8.0 * item_h + 4.0).max(28.0);
+                                self.sidebar_state.agent_sessions_scroll
+                                    .entry(lid).or_default()
+                                    .handle_wheel(scroll_step, total_h, viewport_h);
+                                handled = true;
+                            }
+                            handled
+                        };
+                        if popup_scroll_handled {
+                            return;
+                        }
+
                         // Hit-test all leaf content rects registered during the last render.
                         let hovered = sidebar_result.item_rects.iter()
                             .filter_map(|(wid, wrect)| {
@@ -8646,6 +8719,31 @@ impl ChartApp {
             if !is_spawn_related {
                 self.sidebar_state.slot_spawn_dropdown = None;
                 self.sidebar_data_dirty = true;
+            }
+        }
+
+        // === Agent dropdowns (model/perm/sessions) — click-away-to-dismiss ===
+        // If any agent popup is open and click is NOT on a popup-related widget, close all.
+        {
+            let any_open = self.sidebar_state.agent_model_dropdown.is_some()
+                || self.sidebar_state.agent_perm_dropdown.is_some()
+                || self.sidebar_state.agent_sessions_dropdown.is_some();
+            if any_open {
+                let is_popup_widget = widget_id.contains(":model")
+                    || widget_id.contains(":perm")
+                    || widget_id.contains(":sessions_toggle")
+                    || widget_id.contains(":sessions_backdrop")
+                    || widget_id.contains(":select_model:")
+                    || widget_id.contains(":select_perm:")
+                    || widget_id.contains(":select_session:")
+                    || widget_id.contains(":model_backdrop")
+                    || widget_id.contains(":perm_backdrop");
+                if !is_popup_widget {
+                    self.sidebar_state.agent_model_dropdown = None;
+                    self.sidebar_state.agent_perm_dropdown = None;
+                    self.sidebar_state.agent_sessions_dropdown = None;
+                    self.sidebar_data_dirty = true;
+                }
             }
         }
 

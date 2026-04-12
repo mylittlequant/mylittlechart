@@ -407,6 +407,15 @@ pub struct SidebarState {
     /// Which agent Chat leaf's permission dropdown is currently open (`None` = closed).
     pub agent_perm_dropdown: Option<uzor::panels::LeafId>,
 
+    /// Scroll offset for model dropdown popup.
+    pub agent_model_scroll: HashMap<uzor::panels::LeafId, zengeld_chart::ui::scroll_state::ScrollState>,
+
+    /// Scroll offset for permission dropdown popup.
+    pub agent_perm_scroll: HashMap<uzor::panels::LeafId, zengeld_chart::ui::scroll_state::ScrollState>,
+
+    /// Scroll offset for sessions dropdown popup.
+    pub agent_sessions_scroll: HashMap<uzor::panels::LeafId, zengeld_chart::ui::scroll_state::ScrollState>,
+
     /// Per-leaf selected model ID override. `None` = use CLI default.
     pub agent_selected_model: HashMap<uzor::panels::LeafId, String>,
 
@@ -732,6 +741,9 @@ impl Default for SidebarState {
             agent_sessions_dropdown: None,
             agent_model_dropdown: None,
             agent_perm_dropdown: None,
+            agent_model_scroll: HashMap::new(),
+            agent_perm_scroll: HashMap::new(),
+            agent_sessions_scroll: HashMap::new(),
             agent_selected_model: HashMap::new(),
             agent_selected_perm: HashMap::new(),
             agent_past_sessions: HashMap::new(),

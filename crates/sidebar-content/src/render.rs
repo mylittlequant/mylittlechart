@@ -4477,7 +4477,13 @@ fn render_agents_pane(
         let drop_w = (pw - 8.0).max(100.0);
         let item_h = 22.0;
         let sessions = state.agent_past_sessions.get(&leaf_id).map(|v| v.as_slice()).unwrap_or(&[]);
-        let drop_h = (sessions.len() as f64 * item_h + 4.0).max(28.0);
+        let max_visible = 8;
+        let total_h = (sessions.len() as f64 * item_h + 4.0).max(28.0);
+        let drop_h = total_h.min(max_visible as f64 * item_h + 4.0).max(28.0);
+        let needs_scroll = total_h > drop_h;
+        let scroll_off = state.agent_sessions_scroll.get(&leaf_id)
+            .map(|s| s.offset).unwrap_or(0.0)
+            .clamp(0.0, (total_h - drop_h).max(0.0));
 
         // Backdrop to close the dropdown on outside click.
         let backdrop_wid = format!("agent:leaf:{}:sessions_backdrop", leaf_id.0);
@@ -4491,6 +4497,12 @@ fn render_agents_pane(
         ctx.set_fill_color(&theme.separator);
         ctx.fill_rect(drop_x, drop_y, drop_w, 1.0); // top border
 
+        // Scroll area for wheel routing.
+        let scroll_wid = format!("agent:leaf:{}:sessions_scroll_area", leaf_id.0);
+        let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        result.item_rects.push((scroll_wid, scroll_rect));
+
         let now_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -4503,8 +4515,11 @@ fn render_agents_pane(
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("No sessions yet", drop_x + drop_w / 2.0, drop_y + drop_h / 2.0);
         } else {
+            ctx.save();
+            ctx.clip_rect(drop_x, drop_y + 1.0, drop_w, drop_h - 2.0);
             for (idx, session) in sessions.iter().enumerate() {
-                let item_y = drop_y + 2.0 + idx as f64 * item_h;
+                let item_y = drop_y + 2.0 + idx as f64 * item_h - scroll_off;
+                if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
                 let item_wid = format!("agent:leaf:{}:load_session:{}", leaf_id.0, idx);
                 let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
                 let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
@@ -4513,7 +4528,6 @@ fn render_agents_pane(
                     ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
                 }
 
-                // Relative timestamp label.
                 let age_secs = (now_ts - session.timestamp).max(0) as u64;
                 let age_label = if age_secs < 60 {
                     "just now".to_string()
@@ -4535,7 +4549,6 @@ fn render_agents_pane(
 
                 let ts_w = 44.0;
                 let preview_x = drop_x + 6.0 + ts_w;
-                let preview_max_w = (drop_w - 6.0 - ts_w - 6.0).max(0.0);
                 let preview = if session.preview.chars().count() > 38 {
                     let truncated: String = session.preview.chars().take(38).collect();
                     format!("{}…", truncated)
@@ -4546,13 +4559,28 @@ fn render_agents_pane(
                 ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text_muted });
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                // Clip the preview text to available width (simple truncation already applied).
-                let _ = preview_max_w;
                 ctx.fill_text(&preview, preview_x, item_y + item_h / 2.0);
 
                 input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
                 result.item_rects.push((item_wid, item_rect));
             }
+            ctx.restore();
+        }
+
+        // Thin scrollbar.
+        if needs_scroll {
+            let sb_w = 4.0;
+            let sb_x = drop_x + drop_w - sb_w - 1.0;
+            let handle_ratio = drop_h / total_h;
+            let handle_h = (drop_h * handle_ratio).max(16.0);
+            let max_travel = drop_h - handle_h;
+            let handle_y = drop_y + (scroll_off / (total_h - drop_h)) * max_travel;
+            ctx.set_fill_color(&theme.separator);
+            ctx.set_global_alpha(0.2);
+            ctx.fill_rect(sb_x, drop_y, sb_w, drop_h);
+            ctx.set_global_alpha(0.5);
+            ctx.fill_rounded_rect(sb_x, handle_y, sb_w, handle_h, 2.0);
+            ctx.set_global_alpha(1.0);
         }
     }
 
@@ -5164,21 +5192,18 @@ fn render_agents_chat_leaf(
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
     let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
+    // Inverted: border/bg = text color, arrow = main background.
     if is_focused {
-        ctx.set_fill_color(&theme.accent);
+        ctx.set_fill_color(&theme.item_text_active);
     } else {
-        ctx.set_fill_color(&theme.button_bg);
+        ctx.set_fill_color(&theme.item_text_muted);
     }
     ctx.fill_rounded_rect(send_x, send_y2, send_sz, send_sz, 3.0);
     let acx = send_x + send_sz / 2.0;
     let acy = send_y2 + send_sz / 2.0;
     let arrow_sz = 7.0;
     let arrow_head = 5.0;
-    if is_focused {
-        ctx.set_stroke_color(&theme.item_text_active);
-    } else {
-        ctx.set_stroke_color(&theme.item_text_muted);
-    }
+    ctx.set_stroke_color(&theme.background);
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
     ctx.line_to(acx, acy - arrow_sz);
@@ -5196,7 +5221,13 @@ fn render_agents_chat_leaf(
         let item_h = 24.0;
         let models = &caps.available_models;
         let drop_w = (w - inner_pad * 2.0).max(120.0);
-        let drop_h = models.len() as f64 * item_h + 6.0;
+        let max_visible = 6;
+        let total_h = models.len() as f64 * item_h + 6.0;
+        let drop_h = total_h.min(max_visible as f64 * item_h + 6.0);
+        let needs_scroll = total_h > drop_h;
+        let scroll_off = state.agent_model_scroll.get(&leaf_id)
+            .map(|s| s.offset).unwrap_or(0.0)
+            .clamp(0.0, (total_h - drop_h).max(0.0));
         // Grow upward from the control bar.
         let drop_y = ctrl_y - drop_h;
 
@@ -5210,11 +5241,20 @@ fn render_agents_chat_leaf(
         ctx.set_fill_color(&theme.dropdown_bg);
         ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
         ctx.set_fill_color(&theme.separator);
-        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0); // bottom border
+        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0);
 
+        // Register scroll area for wheel routing.
+        let scroll_wid = format!("agent:leaf:{}:model_scroll_area", leaf_id.0);
+        let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        result.item_rects.push((scroll_wid, scroll_rect));
+
+        ctx.save();
+        ctx.clip_rect(drop_x, drop_y + 1.0, drop_w, drop_h - 2.0);
         let selected_mid = state.agent_selected_model.get(&leaf_id);
         for (idx, model_info) in models.iter().enumerate() {
-            let item_y = drop_y + 3.0 + idx as f64 * item_h;
+            let item_y = drop_y + 3.0 + idx as f64 * item_h - scroll_off;
+            if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
             let item_wid = format!("agent:leaf:{}:select_model:{}", leaf_id.0, model_info.id);
             let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
             let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
@@ -5222,32 +5262,47 @@ fn render_agents_chat_leaf(
                 ctx.set_fill_color(&theme.item_bg_hover);
                 ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
             }
-            // Check mark for selected / default.
             let is_selected = selected_mid.map_or(model_info.is_default, |mid| *mid == model_info.id);
             ctx.set_font("10px sans-serif");
             ctx.set_text_baseline(TextBaseline::Middle);
-            let mid_y = item_y + item_h / 2.0;
+            let mid_y2 = item_y + item_h / 2.0;
             if is_selected {
                 ctx.set_fill_color(&theme.accent);
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y);
+                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y2);
             }
             ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text });
             ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text(&model_info.display_name, drop_x + 16.0, mid_y);
-            // Context window right-aligned.
+            ctx.fill_text(&model_info.display_name, drop_x + 16.0, mid_y2);
             if let Some(ctx_w) = model_info.context_window {
-                let ctx_label = if ctx_w >= 1_000_000 {
+                let ctx_label2 = if ctx_w >= 1_000_000 {
                     format!("{}M", ctx_w / 1_000_000)
                 } else {
                     format!("{}K", ctx_w / 1_000)
                 };
                 ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Right);
-                ctx.fill_text(&ctx_label, drop_x + drop_w - 6.0, mid_y);
+                ctx.fill_text(&ctx_label2, drop_x + drop_w - 6.0, mid_y2);
             }
             input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((item_wid, item_rect));
+        }
+        ctx.restore();
+
+        // Thin scrollbar.
+        if needs_scroll {
+            let sb_w = 4.0;
+            let sb_x = drop_x + drop_w - sb_w - 1.0;
+            let handle_ratio = drop_h / total_h;
+            let handle_h = (drop_h * handle_ratio).max(16.0);
+            let max_travel = drop_h - handle_h;
+            let handle_y = drop_y + (scroll_off / (total_h - drop_h)) * max_travel;
+            ctx.set_fill_color(&theme.separator);
+            ctx.set_global_alpha(0.2);
+            ctx.fill_rect(sb_x, drop_y, sb_w, drop_h);
+            ctx.set_global_alpha(0.5);
+            ctx.fill_rounded_rect(sb_x, handle_y, sb_w, handle_h, 2.0);
+            ctx.set_global_alpha(1.0);
         }
     }
 
@@ -5257,8 +5312,13 @@ fn render_agents_chat_leaf(
         let item_h = 24.0;
         let modes = &caps.permission_modes;
         let drop_w = ((w - inner_pad) - (model_tw + 12.0)).max(120.0);
-        let drop_h = modes.len() as f64 * item_h + 6.0;
-        // Grow upward from the control bar.
+        let max_visible = 6;
+        let total_h = modes.len() as f64 * item_h + 6.0;
+        let drop_h = total_h.min(max_visible as f64 * item_h + 6.0);
+        let needs_scroll = total_h > drop_h;
+        let scroll_off = state.agent_perm_scroll.get(&leaf_id)
+            .map(|s| s.offset).unwrap_or(0.0)
+            .clamp(0.0, (total_h - drop_h).max(0.0));
         let drop_y = ctrl_y - drop_h;
 
         // Backdrop.
@@ -5271,11 +5331,20 @@ fn render_agents_chat_leaf(
         ctx.set_fill_color(&theme.dropdown_bg);
         ctx.fill_rounded_rect(drop_x, drop_y, drop_w, drop_h, 4.0);
         ctx.set_fill_color(&theme.separator);
-        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0); // bottom border
+        ctx.fill_rect(drop_x, drop_y + drop_h - 1.0, drop_w, 1.0);
 
+        // Scroll area for wheel routing.
+        let scroll_wid = format!("agent:leaf:{}:perm_scroll_area", leaf_id.0);
+        let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        result.item_rects.push((scroll_wid, scroll_rect));
+
+        ctx.save();
+        ctx.clip_rect(drop_x, drop_y + 1.0, drop_w, drop_h - 2.0);
         let selected_pid = state.agent_selected_perm.get(&leaf_id);
         for (idx, perm_info) in modes.iter().enumerate() {
-            let item_y = drop_y + 3.0 + idx as f64 * item_h;
+            let item_y = drop_y + 3.0 + idx as f64 * item_h - scroll_off;
+            if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
             let item_wid = format!("agent:leaf:{}:select_perm:{}", leaf_id.0, perm_info.id);
             let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
             let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
@@ -5283,21 +5352,37 @@ fn render_agents_chat_leaf(
                 ctx.set_fill_color(&theme.item_bg_hover);
                 ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
             }
-            // Check mark for selected / default.
             let is_selected = selected_pid.map_or(perm_info.is_default, |pid| *pid == perm_info.id);
             ctx.set_font("10px sans-serif");
             ctx.set_text_baseline(TextBaseline::Middle);
-            let mid_y = item_y + item_h / 2.0;
+            let mid_y2 = item_y + item_h / 2.0;
             if is_selected {
                 ctx.set_fill_color(&theme.accent);
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y);
+                ctx.fill_text("\u{2713}", drop_x + 5.0, mid_y2);
             }
             ctx.set_fill_color(if item_hov { &theme.item_text_hover } else { &theme.item_text });
             ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text(&perm_info.display_name, drop_x + 16.0, mid_y);
+            ctx.fill_text(&perm_info.display_name, drop_x + 16.0, mid_y2);
             input_coordinator.register(item_wid.as_str(), item_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((item_wid, item_rect));
+        }
+        ctx.restore();
+
+        // Thin scrollbar.
+        if needs_scroll {
+            let sb_w = 4.0;
+            let sb_x = drop_x + drop_w - sb_w - 1.0;
+            let handle_ratio = drop_h / total_h;
+            let handle_h = (drop_h * handle_ratio).max(16.0);
+            let max_travel = drop_h - handle_h;
+            let handle_y = drop_y + (scroll_off / (total_h - drop_h)) * max_travel;
+            ctx.set_fill_color(&theme.separator);
+            ctx.set_global_alpha(0.2);
+            ctx.fill_rect(sb_x, drop_y, sb_w, drop_h);
+            ctx.set_global_alpha(0.5);
+            ctx.fill_rounded_rect(sb_x, handle_y, sb_w, handle_h, 2.0);
+            ctx.set_global_alpha(1.0);
         }
     }
 
