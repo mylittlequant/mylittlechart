@@ -4338,7 +4338,7 @@ fn render_agents_pane(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     is_focused: bool,
-    is_hovered: bool,
+    _is_hovered: bool,
     grid_rect: uzor::panels::PanelRect,
 ) {
     let header_h = 28.0_f64;
@@ -4367,71 +4367,79 @@ fn render_agents_pane(
 
     // ── Pane header (28 px) — single line ────────────────────────────────────
     {
-        let hdr_bg = if is_focused { &theme.pane_header_focused } else if is_hovered { &theme.pane_header_hover } else { &theme.pane_header_idle };
-        ctx.set_fill_color(hdr_bg);
+        // Header background matches leaf body — no separate header color.
+        ctx.set_fill_color(&theme.background);
         ctx.fill_rect(px, py, pw, header_h);
 
-        // Small vertical accent bar on the left edge of focused pane header
-        // (same pattern as active chart leaf tabs).
-        if is_focused {
-            ctx.set_fill_color(&theme.accent);
-            ctx.fill_rect(px, py + 4.0, 2.0, header_h - 8.0);
-        }
+        let mid_y  = py + header_h / 2.0;
+        let btn_sz = 20.0; // square button size
+        let icon_sz = 12.0; // icon area inside button
 
-        let mid_y   = py + header_h / 2.0;
-        let btn_h   = 16.0;
-        let btn_pad = 4.0;
+        // Close button — right-aligned, always visible.
+        let close_x   = px + pw - btn_sz - 4.0;
+        let close_y   = mid_y - btn_sz / 2.0;
+        let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
+        let cl_hov    = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
+        ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.background });
+        ctx.fill_rounded_rect(close_x, close_y, btn_sz, btn_sz, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
+            close_x + (btn_sz - icon_sz) / 2.0, close_y + (btn_sz - icon_sz) / 2.0,
+            icon_sz, icon_sz,
+            if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
+        let close_rect = WidgetRect::new(close_x, close_y, btn_sz, btn_sz);
+        input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((close_wid, close_rect));
 
-        // Left: mode icon + CLI name — text vertically centered.
-        let mode_icon = match desc.mode {
-            gate4agent::InstanceMode::Pty  => ">_",
-            gate4agent::InstanceMode::Chat => "◎",
-        };
-        let label = format!("{} {}", mode_icon, desc.cli.label());
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if is_focused { &theme.item_text } else { &theme.item_text_muted });
+        // CLI name — uppercase, bigger font, always item_text color.
+        let cli_name = desc.cli.label().to_uppercase();
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(&theme.item_text);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&label, px + 4.0, mid_y);
+        ctx.fill_text(&cli_name, px + 6.0, mid_y);
 
-        // Mode-specific inline buttons (Chat only): [+ New] [Sessions ▾]
+        // Chat-mode inline buttons: [Sessions + chevron] [+]
         if desc.mode == gate4agent::InstanceMode::Chat {
-            // Approximate label width at 11px ~ 7px per char.
-            let label_w = label.len() as f64 * 6.5 + 4.0;
-            let mut btn_x = px + 4.0 + label_w + 6.0;
-            let btn_y   = mid_y - btn_h / 2.0;
+            // Approximate name text width at 13px ~ 8px per char.
+            let name_w = cli_name.len() as f64 * 8.0 + 6.0;
+            let mut btn_x = px + 6.0 + name_w + 10.0;
 
-            // [+ New] button.
-            let new_w   = 46.0;
-            let new_wid = format!("agent:leaf:{}:new_session", leaf_id.0);
-            let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(new_wid.as_str()));
-            ctx.set_fill_color(if new_hov { &theme.accent } else { &theme.button_bg });
-            ctx.fill_rounded_rect(btn_x, btn_y, new_w, btn_h, 3.0);
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(&theme.item_text);
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("+ New", btn_x + new_w / 2.0, btn_y + btn_h / 2.0);
-            let new_rect = WidgetRect::new(btn_x, btn_y, new_w, btn_h);
-            input_coordinator.register(new_wid.as_str(), new_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((new_wid, new_rect));
-            btn_x += new_w + btn_pad;
-
-            // [Sessions ▾] button.
-            let sess_w   = 72.0;
-            let sess_wid = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
+            // [Sessions] + chevron button.
+            // Text "Sessions" at 12px + 10×10 chevron icon + padding.
+            let sess_text_w = "Sessions".len() as f64 * 7.0; // ~7px per char at 12px
+            let sess_w = sess_text_w + 2.0 + 10.0 + 8.0; // text + gap + icon + h-padding
+            let sess_y = mid_y - btn_sz / 2.0;
+            let sess_wid  = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
             let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
             let sess_hov  = input_coordinator.is_hovered(&uzor::types::WidgetId::new(sess_wid.as_str()));
-            ctx.set_fill_color(if sess_open || sess_hov { &theme.accent } else { &theme.button_bg });
-            ctx.fill_rounded_rect(btn_x, btn_y, sess_w, btn_h, 3.0);
-            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if sess_open || sess_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(btn_x, sess_y, sess_w, btn_sz, 3.0);
+            ctx.set_font("12px sans-serif");
             ctx.set_fill_color(&theme.item_text);
-            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Sessions \u{25be}", btn_x + sess_w / 2.0, btn_y + btn_h / 2.0);
-            let sess_rect = WidgetRect::new(btn_x, btn_y, sess_w, btn_h);
+            ctx.fill_text("Sessions", btn_x + 4.0, mid_y);
+            let chev_x = btn_x + 4.0 + sess_text_w + 2.0;
+            let chev_y = mid_y - 5.0; // 10px icon centered
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHEVRON_DOWN,
+                chev_x, chev_y, 10.0, 10.0, &theme.item_text_muted);
+            let sess_rect = WidgetRect::new(btn_x, sess_y, sess_w, btn_sz);
             input_coordinator.register(sess_wid.as_str(), sess_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((sess_wid, sess_rect));
+            btn_x += sess_w + 4.0;
+
+            // [+] new session button — icon only.
+            let new_y   = mid_y - btn_sz / 2.0;
+            let new_wid = format!("agent:leaf:{}:new_session", leaf_id.0);
+            let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(new_wid.as_str()));
+            ctx.set_fill_color(if new_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(btn_x, new_y, btn_sz, btn_sz, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
+                btn_x + (btn_sz - icon_sz) / 2.0, new_y + (btn_sz - icon_sz) / 2.0,
+                icon_sz, icon_sz, &theme.item_text_muted);
+            let new_rect = WidgetRect::new(btn_x, new_y, btn_sz, btn_sz);
+            input_coordinator.register(new_wid.as_str(), new_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((new_wid, new_rect));
         }
         // PTY mode: no controls in header — Start button is in the content area.
 
@@ -4548,23 +4556,6 @@ fn render_agents_pane(
         }
     }
 
-    // ── Overlay close [×] — always visible in top-right, on top of everything ──
-    {
-        let close_size = 16.0;
-        let close_pad = 2.0;
-        let ov_close_x = px + pw - close_size - close_pad;
-        let ov_close_y = py + close_pad;
-        let ov_close_rect = WidgetRect::new(ov_close_x, ov_close_y, close_size, close_size);
-        let ov_close_wid = format!("agent:leaf:{}:close", leaf_id.0);
-        let cl_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(ov_close_wid.as_str()));
-        ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.pane_header_idle });
-        ctx.fill_rounded_rect(ov_close_x, ov_close_y, close_size, close_size, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
-            ov_close_x + 3.0, ov_close_y + 3.0, close_size - 6.0, close_size - 6.0,
-            if cl_hov { &theme.item_text_active } else { &theme.item_text_muted });
-        input_coordinator.register(ov_close_wid.as_str(), ov_close_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((ov_close_wid, ov_close_rect));
-    }
 }
 
 // =============================================================================
