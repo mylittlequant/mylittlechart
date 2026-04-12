@@ -4371,9 +4371,10 @@ fn render_agents_pane(
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(px, py, pw, header_h);
 
-        let mid_y  = py + header_h / 2.0;
-        let btn_sz = 20.0; // square button size
-        let icon_sz = 12.0; // icon area inside button
+        // True visual center: account for inset above header.
+        let mid_y  = py + (header_h + inset) / 2.0; // (28+8)/2 = 18
+        let btn_sz = 22.0; // square hit-area for icon buttons
+        let icon_sz = 16.0; // all SVG icons: chevron, plus, close
 
         // Close button — right-aligned, always visible.
         let close_x   = px + pw - btn_sz - 4.0;
@@ -4390,7 +4391,7 @@ fn render_agents_pane(
         input_coordinator.register(close_wid.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_wid, close_rect));
 
-        // CLI name — uppercase, bigger font, always item_text color.
+        // CLI name — uppercase, 13px, centered on mid_y.
         let cli_name = desc.cli.label().to_uppercase();
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color(&theme.item_text);
@@ -4405,24 +4406,23 @@ fn render_agents_pane(
             let mut btn_x = px + 6.0 + name_w + 10.0;
 
             // [Sessions] + chevron button.
-            // Text "Sessions" at 12px + 10×10 chevron icon + padding.
-            let sess_text_w = "Sessions".len() as f64 * 7.0; // ~7px per char at 12px
-            let sess_w = sess_text_w + 2.0 + 10.0 + 8.0; // text + gap + icon + h-padding
+            let sess_text_w = "Sessions".len() as f64 * 8.0; // ~8px per char at 13px
+            let sess_w = sess_text_w + 2.0 + icon_sz + 8.0; // text + gap + 16px icon + h-padding
             let sess_y = mid_y - btn_sz / 2.0;
             let sess_wid  = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
             let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
             let sess_hov  = input_coordinator.is_hovered(&uzor::types::WidgetId::new(sess_wid.as_str()));
             ctx.set_fill_color(if sess_open || sess_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_x, sess_y, sess_w, btn_sz, 3.0);
-            ctx.set_font("12px sans-serif");
+            ctx.set_font("13px sans-serif");
             ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Sessions", btn_x + 4.0, mid_y);
             let chev_x = btn_x + 4.0 + sess_text_w + 2.0;
-            let chev_y = mid_y - 5.0; // 10px icon centered
+            let chev_y = mid_y - icon_sz / 2.0; // 16px icon centered on mid_y
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHEVRON_DOWN,
-                chev_x, chev_y, 10.0, 10.0, &theme.item_text_muted);
+                chev_x, chev_y, icon_sz, icon_sz, &theme.item_text_muted);
             let sess_rect = WidgetRect::new(btn_x, sess_y, sess_w, btn_sz);
             input_coordinator.register(sess_wid.as_str(), sess_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((sess_wid, sess_rect));
@@ -5026,7 +5026,7 @@ fn render_agents_chat_leaf(
     // ── Control bar (bottom section) ──────────────────────────────────────
     let ctrl_y = divider_y + 1.0;
     let ctrl_mid_y = ctrl_y + ctrl_bar_h / 2.0;
-    ctx.set_font("10px sans-serif");
+    ctx.set_font("12px sans-serif");
     ctx.set_text_baseline(TextBaseline::Middle);
 
     let cli_tool = match desc.cli {
@@ -5092,7 +5092,7 @@ fn render_agents_chat_leaf(
         .unwrap_or(0.0);
     let ctx_label = format!("{:.0}%", ctx_pct);
     let ctx_text_w = ctx.measure_text(&ctx_label);
-    let circle_r = 5.0;
+    let circle_r = 7.0;
     let circle_d = circle_r * 2.0;
     let _ctx_total_w = circle_d + 3.0 + ctx_text_w;
     let ctx_x = perm_x + perm_tw + 12.0;
@@ -5118,15 +5118,15 @@ fn render_agents_chat_leaf(
     }
 
     // % text.
-    ctx.set_font("10px sans-serif");
+    ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text(&ctx_label, ctx_x + circle_d + 3.0, ctrl_mid_y);
 
     // Send button [↑] (far right of control bar).
-    let send_sz = ctrl_bar_h - 4.0;
+    let send_sz = ctrl_bar_h;
     let send_x = x + w - inner_pad - send_sz;
-    let send_y2 = ctrl_y + 2.0;
+    let send_y2 = ctrl_y;
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
     let _send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
@@ -5138,7 +5138,7 @@ fn render_agents_chat_leaf(
     ctx.fill_rounded_rect(send_x, send_y2, send_sz, send_sz, 3.0);
     let acx = send_x + send_sz / 2.0;
     let acy = send_y2 + send_sz / 2.0;
-    let arrow_sz = 5.0;
+    let arrow_sz = 10.0;
     if is_focused {
         ctx.set_stroke_color(&theme.item_text_active);
     } else {
@@ -5147,9 +5147,9 @@ fn render_agents_chat_leaf(
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
     ctx.line_to(acx, acy - arrow_sz);
-    ctx.move_to(acx - 3.5, acy - arrow_sz + 3.5);
+    ctx.move_to(acx - 5.0, acy - arrow_sz + 5.0);
     ctx.line_to(acx, acy - arrow_sz);
-    ctx.line_to(acx + 3.5, acy - arrow_sz + 3.5);
+    ctx.line_to(acx + 5.0, acy - arrow_sz + 5.0);
     ctx.set_stroke_width(1.5);
     ctx.stroke();
     input_coordinator.register(send_wid.as_str(), send_rect, uzor::input::Sense::CLICK);
