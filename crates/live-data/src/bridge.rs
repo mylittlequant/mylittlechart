@@ -144,6 +144,24 @@ pub enum LiveUpdate {
         /// Maximum rate-limit tokens allowed in the window (0 = unknown).
         rate_max: u32,
     },
+    /// Private stream: order lifecycle event (new, partial fill, fill, cancel).
+    OrderUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        event: digdigdig3::OrderUpdateEvent,
+    },
+    /// Private stream: account balance change event.
+    BalanceUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        event: digdigdig3::BalanceUpdateEvent,
+    },
+    /// Private stream: position change event (futures/margin).
+    PositionUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        event: digdigdig3::PositionUpdateEvent,
+    },
 }
 
 /// Async-to-sync bridge that owns a tokio runtime and a connector pool.
@@ -741,7 +759,7 @@ impl DataBridge {
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -755,7 +773,7 @@ impl DataBridge {
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -770,8 +788,38 @@ impl DataBridge {
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+        }
+    }
+
+    /// Connect a private (authenticated) WebSocket stream for the given exchange.
+    ///
+    /// Spawns a dedicated private-stream actor that authenticates with the
+    /// exchange and subscribes to order updates, balance changes, and position
+    /// changes.  Events are broadcast as [`LiveUpdate::OrderUpdate`],
+    /// [`LiveUpdate::BalanceUpdate`], and [`LiveUpdate::PositionUpdate`].
+    ///
+    /// Calling this when a private actor is already running for the same
+    /// `(exchange_id, account_type)` pair is a no-op — the existing actor is
+    /// reused.
+    pub fn connect_private(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        credentials: digdigdig3::Credentials,
+    ) {
+        let key = WsKey {
+            exchange_id,
+            stream_type: WsStreamType::Private,
+            account_type,
+        };
+        let tx = self.tx.clone();
+        let rtt = self.ws_rtt_handles.clone();
+        let rt = self.runtime.handle().clone();
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            // get_or_spawn returns existing cmd_tx if already running.
+            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials));
         }
     }
 

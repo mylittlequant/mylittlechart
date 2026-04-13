@@ -2716,6 +2716,51 @@ impl ChartApp {
                     // Metrics snapshots are collected on-demand by the metrics panel.
                     // No action needed in the main update loop.
                 }
+                LiveUpdate::OrderUpdate { event, .. } => {
+                    use digdigdig3::{OrderStatus, OrderSide};
+                    let status_filled = matches!(event.status, OrderStatus::Filled | OrderStatus::PartiallyFilled);
+                    let status_terminal = matches!(event.status, OrderStatus::Filled | OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired);
+                    // Route to Order Entry
+                    for state in self.panels_store.order_entry.values_mut() {
+                        state.apply_order_update(
+                            event.client_order_id.as_deref(),
+                            status_filled,
+                            status_terminal,
+                        );
+                    }
+                    // Route to Trade Log — record fills
+                    for state in self.panels_store.trade_log.values_mut() {
+                        state.apply_order_update(
+                            &event.symbol,
+                            event.side == OrderSide::Buy,
+                            status_filled,
+                            event.last_fill_price,
+                            event.last_fill_quantity,
+                            event.last_fill_commission,
+                            event.timestamp,
+                        );
+                    }
+                }
+                LiveUpdate::BalanceUpdate { event, .. } => {
+                    for state in self.panels_store.order_entry.values_mut() {
+                        state.apply_balance_update(event.free);
+                    }
+                }
+                LiveUpdate::PositionUpdate { event, .. } => {
+                    let side_long = !format!("{:?}", event.side).contains("Short");
+                    for state in self.panels_store.position_manager.values_mut() {
+                        state.apply_position_update(
+                            &event.symbol,
+                            side_long,
+                            event.quantity,
+                            event.entry_price,
+                            event.mark_price,
+                            event.unrealized_pnl,
+                            event.liquidation_price,
+                            event.leverage,
+                        );
+                    }
+                }
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;

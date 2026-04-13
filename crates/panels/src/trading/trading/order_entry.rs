@@ -216,6 +216,45 @@ impl OrderEntryState {
         let elapsed = now_ms.wrapping_sub(self.editing_blink_time);
         (elapsed / 500) % 2 == 0
     }
+
+    /// Apply an order update event received from the private WebSocket stream.
+    ///
+    /// Parameters match the fields of `digdigdig3::core::types::websocket::OrderUpdateEvent`.
+    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
+    ///
+    /// - `client_order_id`: the client-assigned ID, used to match against a pending submission
+    /// - `status_filled`: true when status is Filled or PartiallyFilled (order touched the market)
+    /// - `status_terminal`: true when status is Filled, Canceled, Rejected, or Expired
+    pub fn apply_order_update(
+        &mut self,
+        client_order_id: Option<&str>,
+        status_filled: bool,
+        status_terminal: bool,
+    ) {
+        // If we are currently waiting for confirmation of a submitted order, clear the flag
+        // when the event is terminal (Filled / Canceled / Rejected / Expired).
+        if self.submitting && status_terminal {
+            self.submitting = false;
+        }
+
+        // A fill means the order reached the market — clear any lingering validation errors
+        // so the UI does not keep showing stale warnings.
+        if status_filled && client_order_id.is_some() {
+            self.errors.clear();
+        }
+    }
+
+    /// Apply a balance update event received from the private WebSocket stream.
+    ///
+    /// Parameters match the fields of `digdigdig3::core::types::websocket::BalanceUpdateEvent`.
+    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
+    ///
+    /// - `free`: the new free (available) balance for the asset
+    pub fn apply_balance_update(&mut self, free: f64) {
+        self.available_balance = free;
+        // Recalculate the post-order balance estimate based on the refreshed balance.
+        self.post_order_balance = (self.available_balance - self.estimated_cost).max(0.0);
+    }
 }
 
 fn format_currency(value: f64) -> String {

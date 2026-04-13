@@ -61,6 +61,8 @@ pub(crate) enum WsStreamType {
     Trades,
     Ticker,
     Depth,
+    /// Private authenticated stream: order updates, balance changes, position changes.
+    Private,
 }
 
 /// Command sent to a running WS actor.
@@ -92,6 +94,7 @@ impl WsActorMap {
         tx: broadcast::Sender<LiveUpdate>,
         ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
         rt: &tokio::runtime::Handle,
+        credentials: Option<digdigdig3::Credentials>,
     ) -> mpsc::Sender<WsCmd> {
         if let Some(handle) = self.actors.get(&key) {
             if !handle.task.is_finished() {
@@ -100,7 +103,7 @@ impl WsActorMap {
             self.actors.remove(&key);
         }
         let (cmd_tx, cmd_rx) = mpsc::channel::<WsCmd>(64);
-        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles));
+        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials));
         self.actors.insert(key, WsActorHandle { cmd_tx: cmd_tx.clone(), task });
         cmd_tx
     }
@@ -157,7 +160,15 @@ async fn run_ws_actor(
     mut cmd_rx: mpsc::Receiver<WsCmd>,
     tx: broadcast::Sender<LiveUpdate>,
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+    credentials: Option<digdigdig3::Credentials>,
 ) {
+    // Private actors use a simplified loop that connects immediately and
+    // subscribes to all three private streams without any per-symbol logic.
+    if key.stream_type == WsStreamType::Private {
+        run_private_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials).await;
+        return;
+    }
+
     let mut state = WsActorState {
         exchange_id: key.exchange_id,
         stream_type: key.stream_type,
@@ -181,7 +192,7 @@ async fn run_ws_actor(
 
         // Build a new WS connection.
         let mut ws: Box<dyn WebSocketConnector> =
-            match build_ws(key.exchange_id, &ws_rtt_handles).await {
+            match build_ws(key.exchange_id, &ws_rtt_handles, None).await {
                 Ok(ws) => ws,
                 Err(e) => {
                     eprintln!(
@@ -316,16 +327,129 @@ async fn run_ws_actor(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PRIVATE STREAM ACTOR
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Dedicated actor for private (authenticated) WebSocket streams.
+///
+/// Unlike public stream actors, the private actor:
+/// - Connects immediately without waiting for any `AddSymbol` command.
+/// - Subscribes to all three private stream types (orders, balances, positions).
+/// - Ignores `AddSymbol`/`RemoveSymbol` commands entirely.
+/// - Only responds to `WsCmd::Shutdown`.
+async fn run_private_ws_actor(
+    key: WsKey,
+    mut cmd_rx: mpsc::Receiver<WsCmd>,
+    tx: broadcast::Sender<LiveUpdate>,
+    ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+    credentials: Option<digdigdig3::Credentials>,
+) {
+    let state = WsActorState {
+        exchange_id: key.exchange_id,
+        stream_type: WsStreamType::Private,
+        account_type: key.account_type,
+        refcounts: HashMap::new(),
+        deferred_unsub: HashMap::new(),
+    };
+    let mut retry_count: u32 = 0;
+
+    'outer: loop {
+        if retry_count > 0 {
+            let base_secs = std::cmp::min(1u64 << std::cmp::min(retry_count - 1, 5), 30);
+            let jitter_ms = (retry_count as u64 * 137) % 500;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                base_secs * 1000 + jitter_ms,
+            ))
+            .await;
+        }
+        retry_count += 1;
+
+        let mut ws: Box<dyn WebSocketConnector> =
+            match build_ws(key.exchange_id, &ws_rtt_handles, credentials.clone()).await {
+                Ok(ws) => ws,
+                Err(e) => {
+                    eprintln!(
+                        "[WsActor] {:?}/Private connect failed: {}",
+                        key.exchange_id, e
+                    );
+                    continue 'outer;
+                }
+            };
+
+        let mut event_stream = ws.event_stream();
+
+        // Subscribe to all three private stream types immediately.
+        use digdigdig3::{StreamType, Symbol};
+        let private_streams = [
+            StreamType::OrderUpdate,
+            StreamType::BalanceUpdate,
+            StreamType::PositionUpdate,
+        ];
+        for stream_type in private_streams {
+            let req = SubscriptionRequest::new(Symbol::empty(), stream_type.clone());
+            if let Err(e) = ws.subscribe(req).await {
+                eprintln!(
+                    "[WsActor] {:?}/Private subscribe {:?} failed: {}",
+                    key.exchange_id, stream_type, e
+                );
+            }
+        }
+
+        loop {
+            tokio::select! {
+                biased;
+
+                cmd = cmd_rx.recv() => {
+                    match cmd {
+                        None | Some(WsCmd::Shutdown) => break 'outer,
+                        // Private actors ignore symbol commands.
+                        Some(WsCmd::AddSymbol { .. }) | Some(WsCmd::RemoveSymbol { .. }) => {}
+                    }
+                }
+
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    event_stream.next(),
+                ) => {
+                    match result {
+                        Ok(Some(Ok(event))) => {
+                            retry_count = 0;
+                            dispatch_event(&tx, &state, event);
+                        }
+                        Ok(Some(Err(e))) => {
+                            eprintln!(
+                                "[WsActor] {:?}/Private stream error: {}",
+                                key.exchange_id, e
+                            );
+                            break;
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            eprintln!(
+                                "[WsActor] {:?}/Private 60s silence, reconnecting",
+                                key.exchange_id
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BUILD WS — create + connect without subscribing to any symbol
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn build_ws(
     exchange_id: ExchangeId,
     ws_rtt_handles: &Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
+    credentials: Option<digdigdig3::Credentials>,
 ) -> Result<Box<dyn WebSocketConnector>, String> {
     macro_rules! standard {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(None, false, AccountType::Spot)
+            let mut ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -338,7 +462,7 @@ async fn build_ws(
 
     macro_rules! no_account_type {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(None, false)
+            let mut ws = <$ws_type>::new(credentials.clone(), false)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -351,7 +475,7 @@ async fn build_ws(
 
     macro_rules! credentials_only {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(None)
+            let mut ws = <$ws_type>::new(credentials.clone())
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -364,7 +488,7 @@ async fn build_ws(
 
     macro_rules! sync_new {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(None, false, AccountType::Spot)
+            let mut ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
                 .await
@@ -387,7 +511,7 @@ async fn build_ws(
 
         // ── OKX: new(creds, testnet) — no AccountType in constructor ──
         ExchangeId::OKX => {
-            let mut ws = OkxWebSocket::new(None, false)
+            let mut ws = OkxWebSocket::new(credentials.clone(), false)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -412,7 +536,7 @@ async fn build_ws(
         // ── Sync constructor ──
         ExchangeId::HTX => sync_new!(HtxWebSocket),
 
-        // ── Kraken: new(creds, account_type) async ──
+        // ── Kraken: new(token_opt, account_type) async — uses its own token type ──
         ExchangeId::Kraken => {
             let mut ws = KrakenWebSocket::new(None, AccountType::Spot)
                 .await
@@ -448,7 +572,7 @@ async fn build_ws(
 
         // ── Upbit: new(creds, region) async ──
         ExchangeId::Upbit => {
-            let mut ws = UpbitWebSocket::new(None, "sg")
+            let mut ws = UpbitWebSocket::new(credentials.clone(), "sg")
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -496,7 +620,7 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── Crypto.com: sync new(creds, testnet) ──
+        // ── Crypto.com: sync new(auth, is_user_stream) — uses its own auth type ──
         ExchangeId::CryptoCom => {
             let mut ws = CryptoComWebSocket::new(None, false);
             WebSocketConnector::connect(&mut ws, AccountType::Spot)
@@ -565,6 +689,13 @@ pub(crate) fn make_sub_request(
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
         WsStreamType::Depth => SubscriptionRequest::orderbook(sym),
+        // Private streams don't use per-symbol subscription requests.
+        // This arm exists for exhaustiveness only; the private actor bypasses
+        // this function entirely.
+        WsStreamType::Private => SubscriptionRequest::new(
+            digdigdig3::Symbol::empty(),
+            digdigdig3::StreamType::OrderUpdate,
+        ),
     }
 }
 
@@ -697,6 +828,27 @@ fn dispatch_event(
                     }
                 }
             }
+        }
+        StreamEvent::OrderUpdate(event) => {
+            let _ = tx.send(LiveUpdate::OrderUpdate {
+                exchange_id: state.exchange_id,
+                account_type: state.account_type,
+                event,
+            });
+        }
+        StreamEvent::BalanceUpdate(event) => {
+            let _ = tx.send(LiveUpdate::BalanceUpdate {
+                exchange_id: state.exchange_id,
+                account_type: state.account_type,
+                event,
+            });
+        }
+        StreamEvent::PositionUpdate(event) => {
+            let _ = tx.send(LiveUpdate::PositionUpdate {
+                exchange_id: state.exchange_id,
+                account_type: state.account_type,
+                event,
+            });
         }
         _ => {}
     }
