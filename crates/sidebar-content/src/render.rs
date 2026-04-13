@@ -5153,9 +5153,9 @@ fn render_agents_chat_leaf(
     is_focused: bool,
     pane_right: f64,
 ) {
-    let row_h = 28.0;
+    let row_h = 35.0;
     let send_gap = 4.0;
-    let ctrl_bar_h_reserve = 22.0;
+    let ctrl_bar_h_reserve = 28.0;
     let input_area_h = row_h + send_gap + 1.0 + ctrl_bar_h_reserve;  // input + gap + divider + control bar
     let chat_h = (h - input_area_h).max(20.0);
     let chat_y = y;
@@ -5203,7 +5203,7 @@ fn render_agents_chat_leaf(
 
     // ── Input panel (Claude Code style) ──────────────────────────────────────
     let panel_y = y + chat_h + send_gap;
-    let ctrl_bar_h = 22.0;
+    let ctrl_bar_h = 28.0;
     let panel_h = row_h + 1.0 + ctrl_bar_h;  // input row + divider + control bar
     let panel_radius = 8.0;
     let inner_pad = 8.0;
