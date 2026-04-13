@@ -5153,9 +5153,9 @@ fn render_agents_chat_leaf(
     is_focused: bool,
     pane_right: f64,
 ) {
-    let row_h = 39.0;
+    let row_h = 37.0;
     let send_gap = 4.0;
-    let ctrl_bar_h_reserve = 31.0;
+    let ctrl_bar_h_reserve = 33.0;
     let input_area_h = row_h + send_gap + 1.0 + ctrl_bar_h_reserve;  // input + gap + divider + control bar
     let chat_h = (h - input_area_h).max(20.0);
     let chat_y = y;
@@ -5203,7 +5203,7 @@ fn render_agents_chat_leaf(
 
     // ── Input panel (Claude Code style) ──────────────────────────────────────
     let panel_y = y + chat_h + send_gap;
-    let ctrl_bar_h = 31.0;
+    let ctrl_bar_h = 33.0;
     let panel_h = row_h + 1.0 + ctrl_bar_h;  // input row + divider + control bar
     let panel_radius = 8.0;
     let inner_pad = 8.0;
@@ -5414,7 +5414,7 @@ fn render_agents_chat_leaf(
     ctx.fill_text(&ctx_label, ctx_x + circle_d + 3.0, ctrl_mid_y);
 
     // Send button [↑] (far right of control bar).
-    let send_sz = 20.0;
+    let send_sz = 26.0;
     let send_x = x + w - inner_pad - send_sz;
     let send_y2 = ctrl_y + (ctrl_bar_h - send_sz) / 2.0 - 1.0; // -1px: avoid bottom border overlap
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
@@ -5429,8 +5429,8 @@ fn render_agents_chat_leaf(
     ctx.fill_rounded_rect(send_x, send_y2, send_sz, send_sz, 3.0);
     let acx = send_x + send_sz / 2.0;
     let acy = send_y2 + send_sz / 2.0 + 1.0; // +1px down
-    let arrow_sz = 7.0;
-    let arrow_head = 6.0; // wider tips
+    let arrow_sz = 9.0;
+    let arrow_head = 8.0; // wider tips
     ctx.set_stroke_color(if send_hov { &theme.item_text_muted } else { &theme.background });
     ctx.begin_path();
     ctx.move_to(acx, acy + arrow_sz);
