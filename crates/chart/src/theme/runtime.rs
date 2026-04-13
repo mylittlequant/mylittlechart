@@ -65,6 +65,9 @@ pub struct RuntimeUIColors {
     pub success: String,
     pub danger: String,
     pub warning: String,
+    // Agent panel
+    pub text_selection: String,
+    pub bubble_user_bg: String,
 }
 
 /// Chart-specific colors (background, grid, scales, crosshair)
@@ -271,6 +274,8 @@ impl From<&UITheme> for RuntimeTheme {
                 success: theme.colors.success.to_string(),
                 danger: theme.colors.danger.to_string(),
                 warning: theme.colors.warning.to_string(),
+                text_selection: theme.colors.text_selection.to_string(),
+                bubble_user_bg: theme.colors.bubble_user_bg.to_string(),
             },
             chart: RuntimeChartColors {
                 background: theme.chart.background.to_string(),

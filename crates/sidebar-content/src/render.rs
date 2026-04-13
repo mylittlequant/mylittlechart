@@ -845,7 +845,7 @@ fn render_slot_spawn_dropdown(
     let dropdown_y = rect.y + header_height;
 
     // Background.
-    ctx.set_fill_color("#1a1f2aee");
+    ctx.set_fill_color(theme.dropdown_bg.as_str());
     ctx.fill_rect(dropdown_x, dropdown_y, dropdown_w, dropdown_h);
 
     // Border.
@@ -867,12 +867,12 @@ fn render_slot_spawn_dropdown(
         let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&widget_id));
 
         if is_hovered {
-            ctx.set_fill_color("#2d3748ff");
+            ctx.set_fill_color(theme.item_bg_hover.as_str());
             ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
         }
 
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_hovered { "#e2e8f0" } else { "#c9d1d9" });
+        ctx.set_fill_color(if is_hovered { theme.item_text_hover.as_str() } else { theme.item_text.as_str() });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(label, dropdown_x + pad_h, row_y + row_h / 2.0);
@@ -3533,11 +3533,11 @@ fn render_slot_panel(
         let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
         let is_hovered = hovered_free_leaf == Some((slot_idx, leaf_id));
         let header_color = if is_focused {
-            "#2d3748"
+            theme.accent.as_str()
         } else if is_hovered {
-            "#222837"
+            theme.item_bg_hover.as_str()
         } else {
-            "#1a1f2a"
+            theme.background.as_str()
         };
         ctx.set_fill_color(header_color);
         ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, header_h as f64);

@@ -2695,31 +2695,16 @@ impl ChartPanelApp {
             warning: rt.colors.warning.clone(),
             sidebar_style: rt.style_params.toolbar_sidebar_style,
             terminal_bg: rt.colors.toolbar_bg.clone(),
-            pane_header_focused: {
-                let base = &rt.colors.toolbar_bg;
-                if base == "#f8f9fa" { "#e8eaed".into() }
-                else if base == "#000000" { "#0a0a1a".into() }
-                else { "#1a1a2e".into() }
-            },
-            pane_header_hover: {
-                let base = &rt.colors.toolbar_bg;
-                if base == "#f8f9fa" { "#dfe1e5".into() }
-                else if base == "#000000" { "#080818".into() }
-                else { "#171725".into() }
-            },
-            pane_header_idle: {
-                let base = &rt.colors.toolbar_bg;
-                if base == "#f8f9fa" { "#f0f1f3".into() }
-                else if base == "#000000" { "#050510".into() }
-                else { "#13131c".into() }
-            },
-            bubble_user_bg: "#1e1e3f".into(),
+            pane_header_focused: rt.colors.accent.clone(),
+            pane_header_hover: rt.colors.button_bg_hover.clone(),
+            pane_header_idle: rt.colors.toolbar_bg.clone(),
+            bubble_user_bg: rt.colors.bubble_user_bg.clone(),
             bubble_user_border: rt.colors.accent.clone(),
-            bubble_user_text: "#e0e0ff".into(),
+            bubble_user_text: rt.colors.text_primary.clone(),
             bubble_tool_bg: rt.colors.toolbar_bg.clone(),
             bubble_tool_text: rt.colors.text_secondary.clone(),
-            selection: "#4a7bc8".into(),
-            danger_hover_bg: "#7f1d1d".into(),
+            selection: rt.colors.text_selection.clone(),
+            danger_hover_bg: crate::apply_opacity(&rt.colors.danger, 0.25),
         }
     }
 
