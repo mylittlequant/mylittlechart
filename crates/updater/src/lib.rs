@@ -919,7 +919,7 @@ async fn do_check_and_telemetry(
 async fn do_install(
     status_tx: &watch::Sender<UpdateStatus>,
     info: &state::UpdateInfo,
-    server_port: u16,
+    _server_port: u16,
 ) {
     // Rollback / downgrade protection — defense-in-depth on top of check::is_newer().
     // This catches any path that bypasses the check (e.g. ManualInstall command).
@@ -989,11 +989,12 @@ async fn do_install(
             let _ = status_tx.send(UpdateStatus::Installing);
             match replace::self_replace(&binary_data) {
                 Ok(()) => {
+                    // Signal RestartPending — the main thread (about_to_wait)
+                    // will call save_all() and then spawn_and_exit().
+                    // We must NOT call process::exit() from the async task
+                    // because the main thread would never get a chance to
+                    // persist profile/agents/presets to disk.
                     let _ = status_tx.send(UpdateStatus::RestartPending);
-                    // Spawn new process and exit
-                    if let Err(e) = replace::spawn_and_exit(Some(server_port)) {
-                        let _ = status_tx.send(UpdateStatus::Error(format!("Restart failed: {}", e)));
-                    }
                 }
                 Err(e) => {
                     let _ = status_tx.send(UpdateStatus::Error(format!("Install failed: {}", e)));

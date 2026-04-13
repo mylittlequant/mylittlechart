@@ -4106,11 +4106,38 @@ impl ApplicationHandler for App<'_> {
                             duration_ms: 8000,
                         });
                     }
+                    zengeld_updater::UpdateStatus::RestartPending => {
+                        eprintln!("[Updater] RestartPending — saving all state before restart");
+                        // CRITICAL: save_all() MUST run before process::exit()
+                        // so that agents, presets, and profile are persisted.
+                        // Previously spawn_and_exit() was called from the async
+                        // updater task, bypassing save_all() entirely and causing
+                        // data loss (agent leaves, slot layouts, etc.).
+                    }
                     zengeld_updater::UpdateStatus::Error(e) => {
                         eprintln!("[Updater] Error: {}", e);
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // ── OTA restart: save state then spawn new process ──────────────
+        // Runs AFTER the status_rx borrow is released to avoid holding
+        // an immutable ref to updater_handle during save_all (which needs &mut self).
+        #[cfg(all(feature = "updater", not(feature = "standalone")))]
+        {
+            let restart_pending = self.updater_handle.as_ref()
+                .map(|h| matches!(*h.status_rx.borrow(), zengeld_updater::UpdateStatus::RestartPending))
+                .unwrap_or(false);
+            if restart_pending {
+                self.save_all(&[]);
+                eprintln!("[Updater] State saved — spawning new process");
+                let port = self.app_state.server_port;
+                if let Err(e) = zengeld_updater::replace::spawn_and_exit(Some(port)) {
+                    eprintln!("[Updater] spawn_and_exit failed: {} — continuing", e);
+                }
+                // spawn_and_exit calls process::exit(0), so we only reach here on error.
             }
         }
 
