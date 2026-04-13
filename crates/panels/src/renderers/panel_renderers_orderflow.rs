@@ -14,6 +14,15 @@ use crate::trading::order_flow::footprint::{FootprintState, FootprintConfig};
 use crate::trading::order_flow::volume_profile::{VolumeProfileState, VolumeProfileConfig};
 use crate::trading::order_flow::liquidity_heatmap::{LiquidityHeatmapState, LiquidityHeatmapConfig};
 
+use crate::trading::order_flow::big_trades::{BigTradesState, TradeSide};
+use crate::trading::order_flow::l2_tape::{L2TapeState, L2Side};
+use crate::trading::trading::risk_calculator::RiskCalculatorState;
+use crate::trading::order_entry::{
+    OrderEntryState,
+    OrderSide as OeSide,
+    OrderType as OeOrderType,
+};
+
 /// Convert RGBA array [0.0-1.0] to hex color string
 fn rgba_to_hex(rgba: [f32; 4]) -> String {
     let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
@@ -618,6 +627,304 @@ pub fn render_liquidity_heatmap_panel(
 }
 
 
+// ==========================
+// Big Trades Panel
+// ==========================
+
+// Big Trades Colors
+const BT_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];           // #0d1117ff
+const BT_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];    // #121620ff
+const BT_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];      // grey
+const BT_TEXT_DEFAULT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];    // #e0e0e0ff
+const BT_BUY_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];          // green
+const BT_SELL_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];       // red
+const BT_BAR_BUY: [f32; 4] = [0.0, 0.67, 0.33, 0.18];         // faded green
+const BT_BAR_SELL: [f32; 4] = [0.8, 0.1, 0.15, 0.18];         // faded red
+const BT_SYMBOL_TEXT: [f32; 4] = [0.4, 0.45, 0.55, 1.0];      // dim grey
+
+// Big Trades Layout
+const BT_HEADER_HEIGHT: f32 = 18.0;
+const BT_ROW_HEIGHT: f32 = 20.0;
+const BT_LEFT_PAD: f32 = 6.0;
+
+/// Render Big Trades panel — scrolling list of large trades above the size threshold
+pub fn render_big_trades_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &BigTradesState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(BT_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    // === STEP 2: Column layout ===
+    // TIME | SIDE | PRICE | SIZE | NOTIONAL
+    let time_col_x = x + BT_LEFT_PAD;
+    let time_col_w = 60.0_f32;
+
+    let side_col_x = time_col_x + time_col_w + 4.0;
+    let side_col_w = 36.0_f32;
+
+    let price_col_x = side_col_x + side_col_w + 4.0;
+    let price_col_w = 80.0_f32;
+
+    let size_col_x = price_col_x + price_col_w + 4.0;
+    let size_col_w = 70.0_f32;
+
+    let notional_col_x = size_col_x + size_col_w + 4.0;
+
+    // === STEP 3: Header row ===
+    ctx.set_fill_color(&rgba_to_hex(BT_HEADER_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, BT_HEADER_HEIGHT as f64);
+
+    ctx.set_fill_color(&rgba_to_hex(BT_HEADER_TEXT));
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    let header_y = (y + BT_HEADER_HEIGHT / 2.0) as f64;
+    ctx.fill_text("TIME", time_col_x as f64, header_y);
+    ctx.fill_text("SIDE", side_col_x as f64, header_y);
+    ctx.fill_text("PRICE", price_col_x as f64, header_y);
+    ctx.fill_text("SIZE", size_col_x as f64, header_y);
+    ctx.fill_text("NOTIONAL", notional_col_x as f64, header_y);
+
+    // === STEP 4: Trade rows ===
+    let available_height = height - BT_HEADER_HEIGHT;
+    let max_rows = (available_height / BT_ROW_HEIGHT) as usize;
+    let trades = state.visible_trades(max_rows);
+
+    // Max size for bar proportions — use the largest trade in the visible set
+    let bar_max_width = width - BT_LEFT_PAD * 2.0;
+
+    for (i, trade) in trades.iter().enumerate() {
+        let row_y = y + BT_HEADER_HEIGHT + (i as f32 * BT_ROW_HEIGHT);
+
+        // --- Step 4.1: Background size bar ---
+        let bar_width = state.size_bar_width(trade, bar_max_width);
+        let bar_color = match trade.side {
+            TradeSide::Buy => BT_BAR_BUY,
+            TradeSide::Sell => BT_BAR_SELL,
+        };
+        ctx.set_fill_color(&rgba_to_hex(bar_color));
+        ctx.fill_rect(x as f64, row_y as f64, bar_width as f64, BT_ROW_HEIGHT as f64);
+
+        let text_y = (row_y + BT_ROW_HEIGHT / 2.0) as f64;
+
+        // --- Step 4.2: TIME column ---
+        let time_str = {
+            let secs = (trade.timestamp / 1000) % 86400;
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            let s = secs % 60;
+            format!("{:02}:{:02}:{:02}", h, m, s)
+        };
+
+        ctx.set_fill_color(&rgba_to_hex(BT_TEXT_DEFAULT));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&time_str, time_col_x as f64, text_y);
+
+        // --- Step 4.3: SIDE column ---
+        let (side_str, side_color) = match trade.side {
+            TradeSide::Buy => ("BUY", BT_BUY_TEXT),
+            TradeSide::Sell => ("SELL", BT_SELL_TEXT),
+        };
+        ctx.set_fill_color(&rgba_to_hex(side_color));
+        ctx.fill_text(side_str, side_col_x as f64, text_y);
+
+        // --- Step 4.4: PRICE column ---
+        let price_str = format!("{:.4}", trade.price);
+        ctx.set_fill_color(&rgba_to_hex(BT_TEXT_DEFAULT));
+        ctx.fill_text(&price_str, price_col_x as f64, text_y);
+
+        // --- Step 4.5: SIZE column ---
+        let size_str = format!("{:.4}", trade.quantity);
+        ctx.fill_text(&size_str, size_col_x as f64, text_y);
+
+        // --- Step 4.6: NOTIONAL column ---
+        let notional = trade.price * trade.quantity;
+        let notional_str = format!("{:.2}", notional);
+        ctx.fill_text(&notional_str, notional_col_x as f64, text_y);
+
+        // --- Step 4.7: Row separator ---
+        ctx.set_fill_color(&rgba_to_hex([0.15, 0.17, 0.22, 0.6]));
+        ctx.fill_rect(x as f64, (row_y + BT_ROW_HEIGHT - 1.0) as f64, width as f64, 1.0);
+    }
+
+    // === STEP 5: Symbol label (top-right corner) ===
+    if !state.symbol.is_empty() {
+        ctx.set_fill_color(&rgba_to_hex(BT_SYMBOL_TEXT));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let sym_x = (x + width - BT_LEFT_PAD) as f64;
+        let sym_y = (y + BT_HEADER_HEIGHT / 2.0) as f64;
+        ctx.fill_text(&state.symbol, sym_x, sym_y);
+    }
+}
+
+// =======================
+// L2 Tape Panel
+// =======================
+
+// L2 Tape Colors
+const L2_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const L2_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
+const L2_HEADER_BG: [f32; 4] = [0.075, 0.094, 0.118, 1.0];
+const L2_HEADER_TEXT: [f32; 4] = [0.5, 0.52, 0.57, 1.0];
+const L2_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
+const L2_SIDE_BID: [f32; 4] = [0.055, 0.796, 0.506, 1.0];
+const L2_SIDE_ASK: [f32; 4] = [0.965, 0.275, 0.365, 1.0];
+const L2_SYMBOL_TEXT: [f32; 4] = [0.4, 0.42, 0.47, 1.0];
+
+// L2 Tape Layout
+const L2_ROW_HEIGHT: f32 = 16.0;
+const L2_HEADER_HEIGHT: f32 = 16.0;
+const L2_LEFT_PAD: f32 = 6.0;
+
+/// Render L2 Tape panel — scrolling table of order book events (Add/Modify/Cancel/Execute)
+pub fn render_l2_tape_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &L2TapeState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(L2_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    // === STEP 2: Column layout ===
+    // TIME | TYPE | SIDE | PRICE | QTY
+    let time_w  = (width * 0.28).max(70.0);
+    let type_w  = (width * 0.12).max(30.0);
+    let side_w  = (width * 0.12).max(28.0);
+    let price_w = (width * 0.24).max(60.0);
+
+    let col_time_x  = x + L2_LEFT_PAD;
+    let col_type_x  = col_time_x  + time_w;
+    let col_side_x  = col_type_x  + type_w;
+    let col_price_x = col_side_x  + side_w;
+    let col_qty_x   = col_price_x + price_w;
+
+    // === STEP 3: Header row ===
+    ctx.set_fill_color(&rgba_to_hex(L2_HEADER_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, L2_HEADER_HEIGHT as f64);
+
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+
+    let header_text_y = (y + L2_HEADER_HEIGHT / 2.0) as f64;
+    ctx.fill_text("TIME",  col_time_x  as f64, header_text_y);
+    ctx.fill_text("TYPE",  col_type_x  as f64, header_text_y);
+    ctx.fill_text("SIDE",  col_side_x  as f64, header_text_y);
+    ctx.fill_text("PRICE", col_price_x as f64, header_text_y);
+    ctx.fill_text("QTY",   col_qty_x   as f64, header_text_y);
+
+    // === STEP 4: Symbol label (top-right corner of header) ===
+    if !state.symbol.is_empty() {
+        ctx.set_font("9px sans-serif");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(L2_SYMBOL_TEXT));
+        ctx.fill_text(&state.symbol, (x + width - 6.0) as f64, header_text_y);
+    }
+
+    // === STEP 5: Event rows ===
+    let content_h = height - L2_HEADER_HEIGHT;
+    let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
+    if max_rows == 0 {
+        return;
+    }
+
+    let events = state.visible_events(max_rows);
+
+    for (row_idx, event) in events.iter().enumerate() {
+        let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
+        let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
+
+        // --- Step 5.1: Row background (alternating) ---
+        let row_bg = if row_idx % 2 == 0 { L2_BG } else { L2_BG_ALT };
+        ctx.set_fill_color(&rgba_to_hex(row_bg));
+        ctx.fill_rect(x as f64, row_y as f64, width as f64, L2_ROW_HEIGHT as f64);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+
+        // --- Step 5.2: TIME column ---
+        let total_secs = (event.timestamp / 1000) % 86400;
+        let hours  = total_secs / 3600;
+        let mins   = (total_secs % 3600) / 60;
+        let secs   = total_secs % 60;
+        let millis = event.timestamp % 1000;
+        let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
+
+        ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+        ctx.fill_text(&time_str, col_time_x as f64, row_mid_y);
+
+        // --- Step 5.3: TYPE column (colored by event type + side) ---
+        let type_color = state.event_color(event);
+        ctx.set_fill_color(&rgba_to_hex(type_color));
+        ctx.fill_text(L2TapeState::event_label(&event.event_type), col_type_x as f64, row_mid_y);
+
+        // --- Step 5.4: SIDE column (green/red) ---
+        let side_color = match event.side {
+            L2Side::Bid => L2_SIDE_BID,
+            L2Side::Ask => L2_SIDE_ASK,
+        };
+        ctx.set_fill_color(&rgba_to_hex(side_color));
+        ctx.fill_text(L2TapeState::side_label(&event.side), col_side_x as f64, row_mid_y);
+
+        // --- Step 5.5: PRICE column ---
+        let decimals = if state.tick_size >= 1.0 {
+            0usize
+        } else if state.tick_size >= 0.1 {
+            1
+        } else if state.tick_size >= 0.01 {
+            2
+        } else if state.tick_size >= 0.001 {
+            3
+        } else {
+            4
+        };
+        let price_str = format!("{:.prec$}", event.price, prec = decimals);
+        ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+        ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
+
+        // --- Step 5.6: QTY column ---
+        let qty_str = if event.quantity >= 1000.0 {
+            format!("{:.0}", event.quantity)
+        } else if event.quantity >= 1.0 {
+            format!("{:.2}", event.quantity)
+        } else {
+            format!("{:.4}", event.quantity)
+        };
+        ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
+    }
+
+    // === STEP 6: Empty state hint ===
+    if events.is_empty() {
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+        ctx.fill_text(
+            "No events",
+            (x + width / 2.0) as f64,
+            (y + height / 2.0) as f64,
+        );
+    }
+}
+
 /// Render the trading container (DOM + sub-panels)
 pub fn render_trading_container(
     ctx: &mut dyn RenderContext,
@@ -664,6 +971,566 @@ pub fn render_trading_container(
     }
 }
 
+// ==========================
+// Risk Calculator Panel
+// ==========================
+
+// Risk Calculator Colors
+const RC_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];           // #0d1117
+const RC_TITLE_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];     // slightly lighter
+const RC_LABEL: [f32; 4] = [0.533, 0.533, 0.533, 1.0];         // #888888
+const RC_VALUE: [f32; 4] = [0.878, 0.878, 0.878, 1.0];         // #e0e0e0
+const RC_RED: [f32; 4] = [0.871, 0.204, 0.267, 1.0];           // red for risk
+const RC_GREEN: [f32; 4] = [0.196, 0.804, 0.447, 1.0];         // green for profit
+const RC_GOLD: [f32; 4] = [1.0, 0.843, 0.0, 1.0];              // gold for good R:R
+const RC_DIVIDER: [f32; 4] = [0.2, 0.22, 0.27, 1.0];           // grey divider
+const RC_TITLE_TEXT: [f32; 4] = [0.75, 0.78, 0.85, 1.0];       // title text
+const RC_ERROR: [f32; 4] = [0.9, 0.3, 0.3, 1.0];               // validation error
+
+// Risk Calculator Layout
+const RC_TITLE_HEIGHT: f32 = 20.0;
+const RC_ROW_HEIGHT: f32 = 20.0;
+const RC_LEFT_PAD: f32 = 8.0;
+const RC_LABEL_WIDTH: f32 = 105.0;
+
+/// Render Risk Calculator panel — form-style display of position sizing and risk/reward calculations
+pub fn render_risk_calculator_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &RiskCalculatorState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(RC_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    // === STEP 2: Title bar ===
+    ctx.set_fill_color(&rgba_to_hex(RC_TITLE_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, RC_TITLE_HEIGHT as f64);
+
+    ctx.set_fill_color(&rgba_to_hex(RC_TITLE_TEXT));
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(
+        "Risk Calculator",
+        (x + width / 2.0) as f64,
+        (y + RC_TITLE_HEIGHT / 2.0) as f64,
+    );
+
+    // === STEP 3: Input fields section ===
+    let mut cursor_y = y + RC_TITLE_HEIGHT;
+
+    let input_rows: &[(&str, String)] = &[
+        ("Account Size:", format!("${:.2}", state.account_size)),
+        ("Risk %:", format!("{:.1}%", state.risk_percent)),
+        ("Entry Price:", format!("{:.4}", state.entry_price)),
+        ("Stop Loss:", format!("{:.4}", state.stop_loss_price)),
+        (
+            "Take Profit:",
+            state.take_profit_price
+                .map(|tp| format!("{:.4}", tp))
+                .unwrap_or_else(|| "—".to_string()),
+        ),
+    ];
+
+    for (label, value) in input_rows {
+        let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
+
+        // Label (grey, left-aligned)
+        ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
+
+        // Value (white, left-aligned after label column)
+        ctx.set_fill_color(&rgba_to_hex(RC_VALUE));
+        ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
+
+        cursor_y += RC_ROW_HEIGHT;
+    }
+
+    // === STEP 4: Divider line ===
+    ctx.set_fill_color(&rgba_to_hex(RC_DIVIDER));
+    ctx.fill_rect(
+        (x + RC_LEFT_PAD) as f64,
+        cursor_y as f64,
+        (width - RC_LEFT_PAD * 2.0) as f64,
+        1.0,
+    );
+    cursor_y += 6.0;
+
+    // === STEP 5: Computed results section ===
+
+    // R:R color logic: gold if >= 2.0, white otherwise
+    let rr_color = if let Some(rr) = state.risk_reward_ratio {
+        if rr >= 2.0 { RC_GOLD } else { RC_VALUE }
+    } else {
+        RC_VALUE
+    };
+
+    // Leverage display
+    let leverage_str = state.leverage
+        .map(|lev| format!("{}x", lev))
+        .unwrap_or_else(|| "1x".to_string());
+
+    let computed_rows: &[(&str, String, [f32; 4])] = &[
+        (
+            "Risk Amount:",
+            state.format_output("risk_amount"),
+            RC_RED,
+        ),
+        (
+            "Position Size:",
+            state.format_output("position_size"),
+            RC_VALUE,
+        ),
+        (
+            "Risk/Unit:",
+            state.format_output("risk_per_unit"),
+            RC_VALUE,
+        ),
+        (
+            "Potential Profit:",
+            state.format_output("potential_profit"),
+            RC_GREEN,
+        ),
+        (
+            "R:R Ratio:",
+            state.format_output("risk_reward_ratio"),
+            rr_color,
+        ),
+        (
+            "Leverage:",
+            leverage_str,
+            RC_VALUE,
+        ),
+        (
+            "Margin Req:",
+            state.format_output("margin_required"),
+            RC_VALUE,
+        ),
+    ];
+
+    for (label, value, color) in computed_rows {
+        // Guard: stop rendering if we've run out of panel height (leave 20px for potential errors)
+        if cursor_y + RC_ROW_HEIGHT > y + height - 20.0 {
+            break;
+        }
+
+        let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
+
+        // Label (grey)
+        ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
+
+        // Value (colored)
+        ctx.set_fill_color(&rgba_to_hex(*color));
+        ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
+
+        cursor_y += RC_ROW_HEIGHT;
+    }
+
+    // === STEP 6: Validation errors ===
+    if !state.errors.is_empty() {
+        cursor_y += 4.0;
+        ctx.set_fill_color(&rgba_to_hex(RC_ERROR));
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+
+        for error in &state.errors {
+            if cursor_y > y + height - RC_ROW_HEIGHT {
+                break;
+            }
+            ctx.fill_text(error, (x + RC_LEFT_PAD) as f64, cursor_y as f64);
+            cursor_y += RC_ROW_HEIGHT;
+        }
+    }
+}
+
+// =======================
+// Trade Log Panel
+// =======================
+
+use crate::trading::trading::trade_log::{OrderSide, TradeLogState};
+
+// Trade Log Colors
+const TL_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const TL_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
+const TL_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
+const TL_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
+const TL_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
+const TL_TEXT_GREY: [f32; 4] = [0.45, 0.48, 0.54, 1.0];
+const TL_BUY_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
+const TL_SELL_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+const TL_PNL_POS: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
+const TL_PNL_NEG: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+
+// Trade Log Layout
+const TL_HEADER_HEIGHT: f32 = 18.0;
+const TL_ROW_HEIGHT: f32 = 18.0;
+const TL_SUMMARY_HEIGHT: f32 = 20.0;
+const TL_LEFT_PAD: f32 = 6.0;
+
+/// Render Trade Log panel — scrollable table of executed trades/fills
+pub fn render_trade_log_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &TradeLogState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(TL_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    // === STEP 2: Column layout (TIME | SYMBOL | SIDE | PRICE | QTY | FEE) ===
+    let time_w   = (width * 0.20).max(64.0);
+    let symbol_w = (width * 0.20).max(58.0);
+    let side_w   = (width * 0.11).max(34.0);
+    let price_w  = (width * 0.20).max(60.0);
+    let qty_w    = (width * 0.16).max(48.0);
+
+    let col_time_x   = x + TL_LEFT_PAD;
+    let col_symbol_x = col_time_x   + time_w;
+    let col_side_x   = col_symbol_x + symbol_w;
+    let col_price_x  = col_side_x   + side_w;
+    let col_qty_x    = col_price_x  + price_w;
+    let col_fee_x    = col_qty_x    + qty_w;
+
+    // === STEP 3: Header row ===
+    ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, TL_HEADER_HEIGHT as f64);
+
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+
+    let header_text_y = (y + TL_HEADER_HEIGHT / 2.0) as f64;
+    ctx.fill_text("TIME",   col_time_x   as f64, header_text_y);
+    ctx.fill_text("SYMBOL", col_symbol_x as f64, header_text_y);
+    ctx.fill_text("SIDE",   col_side_x   as f64, header_text_y);
+    ctx.fill_text("PRICE",  col_price_x  as f64, header_text_y);
+    ctx.fill_text("QTY",    col_qty_x    as f64, header_text_y);
+    ctx.fill_text("FEE",    col_fee_x    as f64, header_text_y);
+
+    // === STEP 4: Trade rows ===
+    let content_h = height - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
+    let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
+
+    let trades = state.visible_trades(0, max_rows);
+
+    if trades.is_empty() {
+        // Empty state: centered "No trades" message
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.fill_text(
+            "No trades",
+            (x + width / 2.0) as f64,
+            (y + TL_HEADER_HEIGHT + content_h / 2.0) as f64,
+        );
+    } else {
+        for (i, trade) in trades.iter().enumerate() {
+            let row_y = y + TL_HEADER_HEIGHT + (i as f32 * TL_ROW_HEIGHT);
+
+            // Alternating row background
+            let row_bg = if i % 2 == 0 { TL_BG } else { TL_BG_ALT };
+            ctx.set_fill_color(&rgba_to_hex(row_bg));
+            ctx.fill_rect(x as f64, row_y as f64, width as f64, TL_ROW_HEIGHT as f64);
+
+            let text_y = (row_y + TL_ROW_HEIGHT / 2.0) as f64;
+
+            ctx.set_font("10px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+
+            // TIME column
+            let secs = (trade.timestamp / 1000) % 86400;
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            let s = secs % 60;
+            let time_str = format!("{:02}:{:02}:{:02}", h, m, s);
+            ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+            ctx.fill_text(&time_str, col_time_x as f64, text_y);
+
+            // SYMBOL column (truncate to 9 chars)
+            let symbol = if trade.symbol.len() > 9 {
+                &trade.symbol[..9]
+            } else {
+                trade.symbol.as_str()
+            };
+            ctx.fill_text(symbol, col_symbol_x as f64, text_y);
+
+            // SIDE column (green/red)
+            let (side_str, side_color) = match trade.side {
+                OrderSide::Buy  => ("BUY",  TL_BUY_TEXT),
+                OrderSide::Sell => ("SELL", TL_SELL_TEXT),
+            };
+            ctx.set_fill_color(&rgba_to_hex(side_color));
+            ctx.fill_text(side_str, col_side_x as f64, text_y);
+
+            // PRICE column
+            ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+            let price_str = format!("{:.4}", trade.price);
+            ctx.fill_text(&price_str, col_price_x as f64, text_y);
+
+            // QTY column
+            let qty_str = format!("{:.4}", trade.quantity);
+            ctx.fill_text(&qty_str, col_qty_x as f64, text_y);
+
+            // FEE column (grey, 9px)
+            ctx.set_font("9px monospace");
+            ctx.set_fill_color(&rgba_to_hex(TL_TEXT_GREY));
+            let fee_str = format!("{:.4}", trade.commission);
+            ctx.fill_text(&fee_str, col_fee_x as f64, text_y);
+
+            // Row separator
+            ctx.set_fill_color(&rgba_to_hex([0.15, 0.17, 0.22, 0.5]));
+            ctx.fill_rect(x as f64, (row_y + TL_ROW_HEIGHT - 1.0) as f64, width as f64, 1.0);
+        }
+    }
+
+    // === STEP 5: Summary bar at bottom ===
+    let summary_y = y + height - TL_SUMMARY_HEIGHT;
+
+    // Separator line above summary
+    ctx.set_fill_color(&rgba_to_hex([0.2, 0.22, 0.28, 0.8]));
+    ctx.fill_rect(x as f64, summary_y as f64, width as f64, 1.0);
+
+    ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+    ctx.fill_rect(x as f64, (summary_y + 1.0) as f64, width as f64, (TL_SUMMARY_HEIGHT - 1.0) as f64);
+
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    let summary_text_y = (summary_y + TL_SUMMARY_HEIGHT / 2.0) as f64;
+
+    // "Total PnL:" label
+    ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+    ctx.fill_text("Total PnL:", (x + TL_LEFT_PAD) as f64, summary_text_y);
+
+    // PnL value (green/red)
+    let pnl_color = if state.total_pnl >= 0.0 { TL_PNL_POS } else { TL_PNL_NEG };
+    ctx.set_fill_color(&rgba_to_hex(pnl_color));
+    let pnl_str = format!("{:+.2}", state.total_pnl);
+    ctx.fill_text(&pnl_str, (x + TL_LEFT_PAD + 68.0) as f64, summary_text_y);
+
+    // Trade count (right-aligned)
+    ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+    ctx.set_text_align(TextAlign::Right);
+    let count_str = format!("Trades: {}", state.trades.len());
+    ctx.fill_text(&count_str, (x + width - TL_LEFT_PAD) as f64, summary_text_y);
+}
+
+// ===========================
+// Position Manager Panel
+// ===========================
+
+use crate::trading::trading::position_manager::{PositionManagerState, PositionSide};
+
+// Position Manager Colors
+const PM_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const PM_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
+const PM_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
+const PM_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
+const PM_LONG_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
+const PM_SHORT_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+const PM_PNL_POS: [f32; 4] = [0.2, 0.8, 0.3, 1.0];
+const PM_PNL_NEG: [f32; 4] = [0.9, 0.2, 0.2, 1.0];
+const PM_PNL_NEUTRAL: [f32; 4] = [0.6, 0.6, 0.7, 1.0];
+const PM_LIQ_TEXT: [f32; 4] = [1.0, 0.87, 0.2, 1.0];
+const PM_SELECTED_BG: [f32; 4] = [0.12, 0.16, 0.22, 1.0];
+const PM_SUMMARY_BG: [f32; 4] = [0.063, 0.078, 0.102, 1.0];
+const PM_SEPARATOR: [f32; 4] = [0.15, 0.17, 0.22, 0.6];
+
+// Position Manager Layout
+const PM_HEADER_HEIGHT: f32 = 20.0;
+const PM_ROW_HEIGHT: f32 = 20.0;
+const PM_SUMMARY_HEIGHT: f32 = 20.0;
+const PM_LEFT_PAD: f32 = 6.0;
+
+/// Render Position Manager panel — open positions table with PnL, entry/mark price, leverage
+pub fn render_position_manager_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &PositionManagerState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(PM_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    // === STEP 2: Column layout ===
+    // SYMBOL | SIDE | QTY | ENTRY | MARK | PNL | LIQ | LEV
+    let sym_w   = (width * 0.14).max(52.0);
+    let side_w  = (width * 0.08).max(38.0);
+    let qty_w   = (width * 0.10).max(44.0);
+    let entry_w = (width * 0.14).max(56.0);
+    let mark_w  = (width * 0.14).max(56.0);
+    let pnl_w   = (width * 0.14).max(52.0);
+    let liq_w   = (width * 0.14).max(52.0);
+    // LEV takes the remaining space
+
+    let col_sym_x   = x + PM_LEFT_PAD;
+    let col_side_x  = col_sym_x  + sym_w;
+    let col_qty_x   = col_side_x + side_w;
+    let col_entry_x = col_qty_x  + qty_w;
+    let col_mark_x  = col_entry_x + entry_w;
+    let col_pnl_x   = col_mark_x + mark_w;
+    let col_liq_x   = col_pnl_x  + pnl_w;
+    let col_lev_x   = col_liq_x  + liq_w;
+
+    // === STEP 3: Header row ===
+    ctx.set_fill_color(&rgba_to_hex(PM_HEADER_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, PM_HEADER_HEIGHT as f64);
+
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+
+    let header_mid_y = (y + PM_HEADER_HEIGHT / 2.0) as f64;
+    ctx.fill_text("SYMBOL", col_sym_x   as f64, header_mid_y);
+    ctx.fill_text("SIDE",   col_side_x  as f64, header_mid_y);
+    ctx.fill_text("QTY",    col_qty_x   as f64, header_mid_y);
+    ctx.fill_text("ENTRY",  col_entry_x as f64, header_mid_y);
+    ctx.fill_text("MARK",   col_mark_x  as f64, header_mid_y);
+    ctx.fill_text("PNL",    col_pnl_x   as f64, header_mid_y);
+    ctx.fill_text("LIQ",    col_liq_x   as f64, header_mid_y);
+    ctx.fill_text("LEV",    col_lev_x   as f64, header_mid_y);
+
+    // === STEP 4: Empty state ===
+    if state.positions.is_empty() {
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+        ctx.fill_text(
+            "No open positions",
+            (x + width / 2.0) as f64,
+            (y + height / 2.0) as f64,
+        );
+        return;
+    }
+
+    // === STEP 5: Position rows ===
+    let content_h = height - PM_HEADER_HEIGHT - PM_SUMMARY_HEIGHT;
+    let max_rows  = (content_h / PM_ROW_HEIGHT).floor() as usize;
+    let visible   = state.visible_positions(0, max_rows);
+
+    for (row_idx, pos) in visible.iter().enumerate() {
+        let row_y     = y + PM_HEADER_HEIGHT + (row_idx as f32 * PM_ROW_HEIGHT);
+        let row_mid_y = (row_y + PM_ROW_HEIGHT / 2.0) as f64;
+
+        // --- Step 5.1: Row background (selected highlight) ---
+        let is_selected = state.selected == Some(row_idx);
+        let row_bg = if is_selected { PM_SELECTED_BG } else { PM_BG };
+        ctx.set_fill_color(&rgba_to_hex(row_bg));
+        ctx.fill_rect(x as f64, row_y as f64, width as f64, PM_ROW_HEIGHT as f64);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+
+        // --- Step 5.2: SYMBOL ---
+        ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+        ctx.fill_text(&pos.symbol, col_sym_x as f64, row_mid_y);
+
+        // --- Step 5.3: SIDE (green LONG / red SHORT) ---
+        let (side_text, side_color) = match pos.side {
+            PositionSide::Long  => ("LONG",  PM_LONG_TEXT),
+            PositionSide::Short => ("SHORT", PM_SHORT_TEXT),
+        };
+        ctx.set_fill_color(&rgba_to_hex(side_color));
+        ctx.fill_text(side_text, col_side_x as f64, row_mid_y);
+
+        // --- Step 5.4: QTY ---
+        let qty_str = format!("{:.4}", pos.quantity);
+        ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+        ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
+
+        // --- Step 5.5: ENTRY ---
+        let entry_str = format!("{:.4}", pos.entry_price);
+        ctx.fill_text(&entry_str, col_entry_x as f64, row_mid_y);
+
+        // --- Step 5.6: MARK ---
+        let mark_str = format!("{:.4}", pos.mark_price);
+        ctx.fill_text(&mark_str, col_mark_x as f64, row_mid_y);
+
+        // --- Step 5.7: PNL (green +, red -, grey 0) ---
+        let pnl_color = if pos.unrealized_pnl > 0.0 {
+            PM_PNL_POS
+        } else if pos.unrealized_pnl < 0.0 {
+            PM_PNL_NEG
+        } else {
+            PM_PNL_NEUTRAL
+        };
+        let pnl_str = format!("{:+.2}", pos.unrealized_pnl);
+        ctx.set_fill_color(&rgba_to_hex(pnl_color));
+        ctx.fill_text(&pnl_str, col_pnl_x as f64, row_mid_y);
+
+        // --- Step 5.8: LIQ (yellow, or "--" if None) ---
+        let liq_str = pos.liquidation_price
+            .map(|p| format!("{:.4}", p))
+            .unwrap_or_else(|| "--".to_string());
+        ctx.set_fill_color(&rgba_to_hex(PM_LIQ_TEXT));
+        ctx.fill_text(&liq_str, col_liq_x as f64, row_mid_y);
+
+        // --- Step 5.9: LEV ---
+        let lev_str = format!("{}x", pos.leverage);
+        ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+        ctx.fill_text(&lev_str, col_lev_x as f64, row_mid_y);
+
+        // --- Step 5.10: Row separator ---
+        ctx.set_fill_color(&rgba_to_hex(PM_SEPARATOR));
+        ctx.fill_rect(x as f64, (row_y + PM_ROW_HEIGHT - 1.0) as f64, width as f64, 1.0);
+    }
+
+    // === STEP 6: Summary row at bottom ===
+    let summary_y = y + height - PM_SUMMARY_HEIGHT;
+
+    ctx.set_fill_color(&rgba_to_hex(PM_SUMMARY_BG));
+    ctx.fill_rect(x as f64, summary_y as f64, width as f64, PM_SUMMARY_HEIGHT as f64);
+
+    // Top separator above summary
+    ctx.set_fill_color(&rgba_to_hex([0.2, 0.23, 0.30, 1.0]));
+    ctx.fill_rect(x as f64, summary_y as f64, width as f64, 1.0);
+
+    let summary_mid_y = (summary_y + PM_SUMMARY_HEIGHT / 2.0) as f64;
+
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+    ctx.fill_text("Total PnL:", (x + PM_LEFT_PAD) as f64, summary_mid_y);
+
+    let total_pnl   = state.total_unrealized_pnl;
+    let total_color = if total_pnl > 0.0 {
+        PM_PNL_POS
+    } else if total_pnl < 0.0 {
+        PM_PNL_NEG
+    } else {
+        PM_PNL_NEUTRAL
+    };
+    let total_str = format!("{:+.2}", total_pnl);
+    ctx.set_fill_color(&rgba_to_hex(total_color));
+    ctx.fill_text(&total_str, (x + PM_LEFT_PAD + 70.0) as f64, summary_mid_y);
+}
+
 fn render_sub_panel(
     ctx: &mut dyn RenderContext,
     x: f64, y: f64, w: f64, h: f64,
@@ -689,12 +1556,318 @@ fn render_sub_panel(
             }
         }
         SubPanelSlot::BigTrades => {
-            // BigTrades panel — state present, renderer wired externally
-            let _ = &state.big_trades;
+            if let Some(ref bt) = state.big_trades {
+                render_big_trades_panel(ctx, x as f32, y as f32, w as f32, h as f32, bt);
+            }
         }
         SubPanelSlot::L2Tape => {
-            // L2Tape panel — state present, renderer wired externally
-            let _ = &state.l2_tape;
+            if let Some(ref tape) = state.l2_tape {
+                render_l2_tape_panel(ctx, x as f32, y as f32, w as f32, h as f32, tape);
+            }
         }
     }
+}
+
+
+// ==========================
+// Order Entry Panel
+// ==========================
+
+// Order Entry Colors
+const OE_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const OE_FIELD_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
+const OE_TITLE_BG: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
+const OE_TITLE_TEXT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
+const OE_SYMBOL_TEXT: [f32; 4] = [0.5, 0.53, 0.60, 1.0];
+const OE_LABEL_TEXT: [f32; 4] = [0.55, 0.58, 0.65, 1.0];
+const OE_VALUE_TEXT: [f32; 4] = [0.92, 0.92, 0.92, 1.0];
+const OE_ERROR_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+
+// Buy/Sell toggle
+const OE_BUY_ACTIVE: [f32; 4] = [0.0, 0.667, 0.333, 1.0];
+const OE_BUY_TEXT: [f32; 4] = [0.0, 1.0, 0.533, 1.0];
+const OE_BUY_INACTIVE: [f32; 4] = [0.0, 0.20, 0.13, 1.0];
+const OE_SELL_ACTIVE: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
+const OE_SELL_TEXT: [f32; 4] = [1.0, 0.267, 0.4, 1.0];
+const OE_SELL_INACTIVE: [f32; 4] = [0.22, 0.04, 0.08, 1.0];
+
+// Order type tabs
+const OE_TAB_ACTIVE_BG: [f32; 4] = [0.14, 0.18, 0.26, 1.0];
+const OE_TAB_INACTIVE_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
+const OE_TAB_TEXT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
+
+// Submit button
+const OE_SUBMIT_BUY: [f32; 4] = [0.0, 0.667, 0.333, 1.0];
+const OE_SUBMIT_SELL: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
+const OE_SUBMIT_TEXT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+// Layout
+const OE_TITLE_HEIGHT: f32 = 22.0;
+const OE_TOGGLE_HEIGHT: f32 = 28.0;
+const OE_TAB_HEIGHT: f32 = 22.0;
+const OE_FIELD_HEIGHT: f32 = 22.0;
+const OE_SUBMIT_HEIGHT: f32 = 30.0;
+const OE_PAD: f32 = 6.0;
+const OE_ERROR_HEIGHT: f32 = 16.0;
+
+/// Render Order Entry panel — Buy/Sell toggle, order type tabs, form fields,
+/// available balance, and submit button.
+pub fn render_order_entry_panel(
+    ctx: &mut dyn RenderContext,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    state: &OrderEntryState,
+) {
+    // === STEP 1: Background ===
+    ctx.set_fill_color(&rgba_to_hex(OE_BG));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
+    let mut cursor_y = y;
+
+    // === STEP 2: Title bar ===
+    ctx.set_fill_color(&rgba_to_hex(OE_TITLE_BG));
+    ctx.fill_rect(x as f64, cursor_y as f64, width as f64, OE_TITLE_HEIGHT as f64);
+
+    ctx.set_fill_color(&rgba_to_hex(OE_TITLE_TEXT));
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(
+        "Order Entry",
+        (x + OE_PAD) as f64,
+        (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64,
+    );
+
+    if !state.symbol.is_empty() {
+        ctx.set_fill_color(&rgba_to_hex(OE_SYMBOL_TEXT));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(
+            &state.symbol,
+            (x + width - OE_PAD) as f64,
+            (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64,
+        );
+    }
+
+    cursor_y += OE_TITLE_HEIGHT;
+
+    // === STEP 3: Buy/Sell toggle ===
+    let half_w = width / 2.0;
+
+    let buy_bg = if state.side == OeSide::Buy { OE_BUY_ACTIVE } else { OE_BUY_INACTIVE };
+    ctx.set_fill_color(&rgba_to_hex(buy_bg));
+    ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+
+    ctx.set_fill_color(&rgba_to_hex(OE_BUY_TEXT));
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(
+        "BUY",
+        (x + half_w / 2.0) as f64,
+        (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64,
+    );
+
+    let sell_bg = if state.side == OeSide::Sell { OE_SELL_ACTIVE } else { OE_SELL_INACTIVE };
+    ctx.set_fill_color(&rgba_to_hex(sell_bg));
+    ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+
+    ctx.set_fill_color(&rgba_to_hex(OE_SELL_TEXT));
+    ctx.fill_text(
+        "SELL",
+        (x + half_w + half_w / 2.0) as f64,
+        (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64,
+    );
+
+    cursor_y += OE_TOGGLE_HEIGHT;
+
+    // === STEP 4: Order type tabs ===
+    let tabs: &[(&str, OeOrderType)] = &[
+        ("Limit",   OeOrderType::Limit),
+        ("Market",  OeOrderType::Market),
+        ("Stp-Lmt", OeOrderType::StopLimit),
+        ("Stp-Mkt", OeOrderType::StopMarket),
+    ];
+    let tab_w = width / tabs.len() as f32;
+
+    for (i, (label, ot)) in tabs.iter().enumerate() {
+        let tab_x = x + i as f32 * tab_w;
+        let is_active = state.order_type == *ot;
+
+        let tab_bg = if is_active { OE_TAB_ACTIVE_BG } else { OE_TAB_INACTIVE_BG };
+        ctx.set_fill_color(&rgba_to_hex(tab_bg));
+        ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64);
+
+        if is_active {
+            let accent = match state.side {
+                OeSide::Buy => OE_BUY_ACTIVE,
+                OeSide::Sell => OE_SELL_ACTIVE,
+            };
+            ctx.set_fill_color(&rgba_to_hex(accent));
+            ctx.fill_rect(
+                tab_x as f64,
+                (cursor_y + OE_TAB_HEIGHT - 2.0) as f64,
+                tab_w as f64,
+                2.0,
+            );
+        }
+
+        ctx.set_fill_color(&rgba_to_hex(OE_TAB_TEXT));
+        ctx.set_font("9px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            label,
+            (tab_x + tab_w / 2.0) as f64,
+            (cursor_y + OE_TAB_HEIGHT / 2.0) as f64,
+        );
+
+        if i + 1 < tabs.len() {
+            ctx.set_fill_color(&rgba_to_hex([0.15, 0.18, 0.24, 1.0]));
+            ctx.fill_rect(
+                (tab_x + tab_w - 1.0) as f64,
+                cursor_y as f64,
+                1.0,
+                OE_TAB_HEIGHT as f64,
+            );
+        }
+    }
+
+    cursor_y += OE_TAB_HEIGHT;
+
+    // === STEP 5: Form fields ===
+    let field_value_right = x + width - OE_PAD;
+
+    let draw_field = |ctx: &mut dyn RenderContext, row_y: f32, label: &str, value: &str| {
+        ctx.set_fill_color(&rgba_to_hex(OE_FIELD_BG));
+        ctx.fill_rect(x as f64, row_y as f64, width as f64, OE_FIELD_HEIGHT as f64);
+
+        ctx.set_fill_color(&rgba_to_hex([0.12, 0.15, 0.20, 1.0]));
+        ctx.fill_rect(x as f64, (row_y + OE_FIELD_HEIGHT - 1.0) as f64, width as f64, 1.0);
+
+        ctx.set_fill_color(&rgba_to_hex(OE_LABEL_TEXT));
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+
+        ctx.set_fill_color(&rgba_to_hex(OE_VALUE_TEXT));
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+    };
+
+    // Price — Limit / StopLimit
+    if matches!(state.order_type, OeOrderType::Limit | OeOrderType::StopLimit) {
+        let price_str = state.price
+            .map(|p| format!("{:.4}", p))
+            .unwrap_or_else(|| "\u{2014}".to_string());
+        draw_field(ctx, cursor_y, "Price:", &price_str);
+        cursor_y += OE_FIELD_HEIGHT;
+    }
+
+    // Stop price — StopLimit / StopMarket
+    if matches!(state.order_type, OeOrderType::StopLimit | OeOrderType::StopMarket) {
+        let stop_str = state.stop_price
+            .map(|p| format!("{:.4}", p))
+            .unwrap_or_else(|| "\u{2014}".to_string());
+        draw_field(ctx, cursor_y, "Stop:", &stop_str);
+        cursor_y += OE_FIELD_HEIGHT;
+    }
+
+    // Quantity — always
+    draw_field(ctx, cursor_y, "Quantity:", &state.format_quantity());
+    cursor_y += OE_FIELD_HEIGHT;
+
+    // Leverage — futures only
+    if let Some(lev) = state.leverage {
+        draw_field(ctx, cursor_y, "Leverage:", &format!("{}x", lev));
+        cursor_y += OE_FIELD_HEIGHT;
+    }
+
+    // === STEP 6: Available balance ===
+    let bal = state.available_balance;
+    let balance_str = if bal >= 1_000_000.0 {
+        format!("${:.2}M", bal / 1_000_000.0)
+    } else if bal >= 1_000.0 {
+        format!("${:.2}K", bal / 1_000.0)
+    } else {
+        format!("${:.2}", bal)
+    };
+    draw_field(ctx, cursor_y, "Available:", &balance_str);
+    cursor_y += OE_FIELD_HEIGHT;
+
+    // Estimated cost row (when non-zero)
+    if state.estimated_cost > 0.0 {
+        draw_field(ctx, cursor_y, "Est. Cost:", &state.format_estimated_cost());
+        cursor_y += OE_FIELD_HEIGHT;
+    }
+
+    // === STEP 7: Submit button ===
+    let error_area_h = state.errors.len() as f32 * OE_ERROR_HEIGHT;
+    let remaining = y + height - cursor_y - error_area_h;
+
+    if remaining >= OE_SUBMIT_HEIGHT {
+        let submit_y = cursor_y + (remaining - OE_SUBMIT_HEIGHT).max(0.0);
+
+        let base_color = match state.side {
+            OeSide::Buy => OE_SUBMIT_BUY,
+            OeSide::Sell => OE_SUBMIT_SELL,
+        };
+        let submit_color = if state.submitting {
+            [base_color[0] * 0.6, base_color[1] * 0.6, base_color[2] * 0.6, 1.0]
+        } else {
+            base_color
+        };
+
+        ctx.set_fill_color(&rgba_to_hex(submit_color));
+        ctx.fill_rect(
+            (x + OE_PAD) as f64,
+            submit_y as f64,
+            (width - OE_PAD * 2.0) as f64,
+            OE_SUBMIT_HEIGHT as f64,
+        );
+
+        let submit_label = if state.submitting {
+            "..."
+        } else {
+            match state.side {
+                OeSide::Buy => "BUY",
+                OeSide::Sell => "SELL",
+            }
+        };
+
+        ctx.set_fill_color(&rgba_to_hex(OE_SUBMIT_TEXT));
+        ctx.set_font("13px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            submit_label,
+            (x + width / 2.0) as f64,
+            (submit_y + OE_SUBMIT_HEIGHT / 2.0) as f64,
+        );
+
+        cursor_y = submit_y + OE_SUBMIT_HEIGHT;
+    }
+
+    // === STEP 8: Validation errors ===
+    for error in &state.errors {
+        if cursor_y + OE_ERROR_HEIGHT > y + height {
+            break;
+        }
+        ctx.set_fill_color(&rgba_to_hex(OE_ERROR_TEXT));
+        ctx.set_font("9px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            error,
+            (x + OE_PAD) as f64,
+            (cursor_y + OE_ERROR_HEIGHT / 2.0) as f64,
+        );
+        cursor_y += OE_ERROR_HEIGHT;
+    }
+
+    let _ = cursor_y;
 }
