@@ -136,6 +136,30 @@ impl VolumeProfileState {
         }
     }
 
+    /// Apply a live trade to the volume profile
+    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool) {
+        let tick = (price / self.tick_size).round() as i64;
+
+        // Update total volume
+        *self.volume_by_price.entry(tick).or_insert(0.0) += quantity;
+
+        // Update buy/sell split
+        let entry = self.buy_sell_by_price.entry(tick).or_insert((0.0, 0.0));
+        if is_buyer_maker {
+            entry.1 += quantity; // sell volume (seller-initiated)
+        } else {
+            entry.0 += quantity; // buy volume (buyer-initiated)
+        }
+
+        // Update total_volume and max_volume_at_price
+        self.total_volume += quantity;
+        let tick_vol = self.volume_by_price[&tick];
+        if tick_vol > self.max_volume_at_price {
+            self.max_volume_at_price = tick_vol;
+            self.poc = tick as f64 * self.tick_size;
+        }
+    }
+
     /// Get the POC level data
     pub fn poc_level(&self) -> VolumeLevel {
         VolumeLevel {

@@ -3,7 +3,7 @@
 //! Shows individual MBO (Market-By-Order) events: order additions,
 //! modifications, cancellations, and executions in real-time.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use serde::{Serialize, Deserialize};
 
 /// Types of L2 order book events
@@ -72,6 +72,10 @@ pub struct L2TapeState {
     pub flash_events: Vec<(usize, u64)>,
     /// Spoofing detection: recent large order adds that cancelled quickly
     pub spoof_alerts: VecDeque<SpoofAlert>,
+    /// Previous orderbook state for event classification (Add vs Modify vs Cancel)
+    pub previous_book: HashMap<i64, (f64, f64)>,  // tick -> (bid_qty, ask_qty)
+    /// Tick size for price-to-tick conversion
+    pub tick_size: f64,
 }
 
 /// Spoofing alert data
@@ -124,6 +128,8 @@ impl L2TapeState {
             scroll_offset: 0.0,
             flash_events: vec![],
             spoof_alerts: VecDeque::new(),
+            previous_book: HashMap::new(),
+            tick_size: 0.01,
         }
     }
 
@@ -191,5 +197,116 @@ impl L2TapeState {
             self.events.pop_front();
         }
         self.events.push_back(event);
+    }
+
+    /// Set tick size (called when panel is linked to a symbol with known tick size)
+    pub fn set_tick_size(&mut self, tick_size: f64) {
+        self.tick_size = if tick_size > 0.0 { tick_size } else { 0.01 };
+    }
+
+    fn price_to_tick(&self, price: f64) -> i64 {
+        (price / self.tick_size).round() as i64
+    }
+
+    /// Apply a full orderbook snapshot — resets previous_book, generates no events
+    /// (snapshot is the baseline, events come from subsequent deltas).
+    pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], _timestamp: i64) {
+        self.previous_book.clear();
+        for &(price, qty) in bids {
+            let tick = self.price_to_tick(price);
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.0 = qty;
+        }
+        for &(price, qty) in asks {
+            let tick = self.price_to_tick(price);
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.1 = qty;
+        }
+        // Update synced market price
+        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+        if best_bid > 0.0 && best_ask > 0.0 {
+            self.dom_market_price = Some((best_bid + best_ask) / 2.0);
+        }
+    }
+
+    /// Apply an incremental orderbook delta — generates L2Events from changes.
+    pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp: i64) {
+        for &(price, qty) in bids {
+            let tick = self.price_to_tick(price);
+            let prev_qty = self.previous_book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
+
+            let event_type = if qty == 0.0 && prev_qty > 0.0 {
+                L2EventType::Cancel
+            } else if qty > 0.0 && prev_qty == 0.0 {
+                L2EventType::Add
+            } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
+                L2EventType::Modify
+            } else {
+                continue; // No change
+            };
+
+            // Apply min_quantity filter early to avoid filling the buffer with noise
+            if let Some(min_q) = self.min_quantity {
+                let relevant_qty = if qty > 0.0 { qty } else { prev_qty };
+                if relevant_qty < min_q {
+                    // Still update previous_book, just don't generate event
+                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    entry.0 = qty;
+                    continue;
+                }
+            }
+
+            self.push_event(L2Event {
+                timestamp,
+                event_type,
+                side: L2Side::Bid,
+                price,
+                quantity: if qty > 0.0 { qty } else { prev_qty },
+                order_count: None,
+                order_id: None,
+            });
+
+            // Update previous state
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.0 = qty;
+        }
+
+        for &(price, qty) in asks {
+            let tick = self.price_to_tick(price);
+            let prev_qty = self.previous_book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
+
+            let event_type = if qty == 0.0 && prev_qty > 0.0 {
+                L2EventType::Cancel
+            } else if qty > 0.0 && prev_qty == 0.0 {
+                L2EventType::Add
+            } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
+                L2EventType::Modify
+            } else {
+                continue;
+            };
+
+            if let Some(min_q) = self.min_quantity {
+                let relevant_qty = if qty > 0.0 { qty } else { prev_qty };
+                if relevant_qty < min_q {
+                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    entry.1 = qty;
+                    continue;
+                }
+            }
+
+            self.push_event(L2Event {
+                timestamp,
+                event_type,
+                side: L2Side::Ask,
+                price,
+                quantity: if qty > 0.0 { qty } else { prev_qty },
+                order_count: None,
+                order_id: None,
+            });
+
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.1 = qty;
+        }
     }
 }

@@ -33,6 +33,11 @@ pub struct LiquidityHeatmapState {
 
     /// Heatmap side (bid or ask or both)
     pub side: HeatmapSide,
+
+    /// Timestamp (ms) of last sampled snapshot — for rate-limiting
+    pub last_snapshot_ms: i64,
+    /// Maximum snapshots to retain (rolling window)
+    pub max_snapshots: usize,
 }
 
 impl LiquidityHeatmapState {
@@ -48,7 +53,70 @@ impl LiquidityHeatmapState {
             scroll_y: 0.0,
             max_depth: 0.0,
             side: HeatmapSide::Both,
+            last_snapshot_ms: 0,
+            max_snapshots: 1000,
         }
+    }
+
+    /// Apply an orderbook snapshot — rate-limited by snapshot_interval_ms.
+    /// Returns true if a snapshot was actually recorded.
+    pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp_ms: i64) -> bool {
+        // Rate-limit: skip if too soon since last snapshot
+        if timestamp_ms - self.last_snapshot_ms < self.snapshot_interval_ms as i64 {
+            return false;
+        }
+        self.last_snapshot_ms = timestamp_ms;
+
+        // Build depth map
+        let mut depth_by_price: HashMap<i64, (f64, f64)> = HashMap::new();
+        for &(price, qty) in bids {
+            if qty > 0.0 {
+                let tick = (price / self.tick_size).round() as i64;
+                let entry = depth_by_price.entry(tick).or_insert((0.0, 0.0));
+                entry.0 += qty;
+            }
+        }
+        for &(price, qty) in asks {
+            if qty > 0.0 {
+                let tick = (price / self.tick_size).round() as i64;
+                let entry = depth_by_price.entry(tick).or_insert((0.0, 0.0));
+                entry.1 += qty;
+            }
+        }
+
+        // Update max_depth
+        for &(bid_d, ask_d) in depth_by_price.values() {
+            let total = match self.side {
+                HeatmapSide::Bids => bid_d,
+                HeatmapSide::Asks => ask_d,
+                HeatmapSide::Both => bid_d + ask_d,
+            };
+            if total > self.max_depth {
+                self.max_depth = total;
+            }
+        }
+
+        let snapshot = LiquiditySnapshot {
+            timestamp: timestamp_ms,
+            depth_by_price,
+        };
+
+        self.snapshots.push(snapshot);
+
+        // Enforce rolling window
+        while self.snapshots.len() > self.max_snapshots {
+            self.snapshots.remove(0);
+        }
+
+        // Update time range
+        if let Some(first) = self.snapshots.first() {
+            self.start_time = first.timestamp;
+        }
+        if let Some(last) = self.snapshots.last() {
+            self.end_time = last.timestamp;
+        }
+
+        true
     }
 
     /// Get intensity (0.0-1.0) for a specific cell in the heatmap

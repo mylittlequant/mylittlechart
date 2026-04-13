@@ -60,6 +60,7 @@ pub(crate) struct WsKey {
 pub(crate) enum WsStreamType {
     Trades,
     Ticker,
+    Depth,
 }
 
 /// Command sent to a running WS actor.
@@ -563,6 +564,7 @@ pub(crate) fn make_sub_request(
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
+        WsStreamType::Depth => SubscriptionRequest::orderbook(sym),
     }
 }
 
@@ -584,6 +586,7 @@ fn dispatch_event(
                 price: trade.price,
                 quantity: trade.quantity,
                 timestamp: trade.timestamp,
+                is_buyer_maker: trade.side == digdigdig3::core::types::TradeSide::Sell,
             });
         }
         StreamEvent::Ticker(ticker) => {
@@ -631,8 +634,22 @@ fn dispatch_event(
                     }
                 }
             }
+            if state.stream_type == WsStreamType::Depth {
+                for (sym, &count) in &state.refcounts {
+                    if count > 0 {
+                        let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                            exchange_id: state.exchange_id,
+                            account_type: state.account_type,
+                            symbol: sym.clone(),
+                            bids: ob.bids.clone(),
+                            asks: ob.asks.clone(),
+                            timestamp: ob.timestamp,
+                        });
+                    }
+                }
+            }
         }
-        StreamEvent::OrderbookDelta { bids, asks, .. } => {
+        StreamEvent::OrderbookDelta { bids, asks, timestamp } => {
             if state.stream_type == WsStreamType::Ticker {
                 let best_bid = bids
                     .iter()
@@ -663,6 +680,20 @@ fn dispatch_event(
                                 volume: None,
                             });
                         }
+                    }
+                }
+            }
+            if state.stream_type == WsStreamType::Depth {
+                for (sym, &count) in &state.refcounts {
+                    if count > 0 {
+                        let _ = tx.send(LiveUpdate::OrderbookDelta {
+                            exchange_id: state.exchange_id,
+                            account_type: state.account_type,
+                            symbol: sym.clone(),
+                            bids: bids.clone(),
+                            asks: asks.clone(),
+                            timestamp,
+                        });
                     }
                 }
             }

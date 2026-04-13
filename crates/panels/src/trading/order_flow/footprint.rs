@@ -169,6 +169,49 @@ impl FootprintState {
     pub fn poc_price_for_candle(&self, candle_index: usize) -> Option<f64> {
         self.poc_by_candle.get(candle_index).copied()
     }
+
+    /// Apply a live trade to the current candle's footprint
+    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool, timestamp: i64) {
+        let tick = (price / self.tick_size).round() as i64;
+
+        // Check if we need a new candle
+        if self.footprints.is_empty() || self.should_new_candle(timestamp) {
+            self.footprints.push(HashMap::new());
+            self.poc_by_candle.push(0.0);
+            self.imbalances.push(HashMap::new());
+        }
+
+        // Add volume to current candle
+        if let Some(current) = self.footprints.last_mut() {
+            let entry = current.entry(tick).or_insert((0.0, 0.0));
+            if is_buyer_maker {
+                entry.0 += quantity; // seller-initiated (bid side hit)
+            } else {
+                entry.1 += quantity; // buyer-initiated (ask side hit)
+            }
+
+            let total = entry.0 + entry.1;
+            let candle_idx = self.footprints.len().saturating_sub(1);
+            if let Some(poc) = self.poc_by_candle.get_mut(candle_idx) {
+                // Retrieve the current POC tick to compare volumes
+                let current_poc_tick = (*poc / self.tick_size).round() as i64;
+                let current_poc_vol = self.footprints
+                    .last()
+                    .and_then(|fp| fp.get(&current_poc_tick))
+                    .map(|(b, a)| b + a)
+                    .unwrap_or(0.0);
+                if total > current_poc_vol {
+                    *poc = tick as f64 * self.tick_size;
+                }
+            }
+        }
+    }
+
+    fn should_new_candle(&self, _timestamp: i64) -> bool {
+        // Candle boundary management is handled externally via bulk data loads.
+        // Live trades accumulate into the most recent candle.
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

@@ -52,6 +52,7 @@ pub enum LiveUpdate {
         price: f64,
         quantity: f64,
         timestamp: i64,
+        is_buyer_maker: bool,
     },
     /// Mini ticker update from WebSocket (24h stats for watchlist).
     ///
@@ -103,6 +104,24 @@ pub enum LiveUpdate {
         timeframe: String,
         bars: Vec<Bar>,
         prepend_count: usize,
+    },
+    /// Full orderbook snapshot from WebSocket.
+    OrderbookSnapshot {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+        timestamp: i64,
+    },
+    /// Incremental orderbook delta from WebSocket.
+    OrderbookDelta {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bids: Vec<(f64, f64)>,
+        asks: Vec<(f64, f64)>,
+        timestamp: i64,
     },
     /// An error occurred during an async operation.
     Error {
@@ -738,6 +757,29 @@ impl DataBridge {
         if let Ok(mut actors) = self.ws_actors.lock() {
             let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+        }
+    }
+
+    /// Subscribe to L2 orderbook depth updates via WebSocket.
+    ///
+    /// Routes the symbol to the shared per-exchange depth actor, which
+    /// multiplexes all symbols over a single WS connection.
+    pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
+        let tx = self.tx.clone();
+        let rtt = self.ws_rtt_handles.clone();
+        let rt = self.runtime.handle().clone();
+        if let Ok(mut actors) = self.ws_actors.lock() {
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt);
+            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+        }
+    }
+
+    /// Remove one consumer interest in depth stream for this symbol.
+    pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
+        if let Ok(actors) = self.ws_actors.lock() {
+            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
     }
 

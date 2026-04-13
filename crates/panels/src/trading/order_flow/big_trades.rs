@@ -84,6 +84,27 @@ impl BigTradesState {
         base_color
     }
 
+    /// Apply a live trade — only keeps trades above the size threshold
+    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool, timestamp: i64) {
+        if quantity < self.size_threshold {
+            return;
+        }
+
+        let trade = PublicTrade {
+            price,
+            quantity,
+            side: if is_buyer_maker { TradeSide::Sell } else { TradeSide::Buy },
+            timestamp,
+        };
+
+        // Cap ring buffer at a fixed maximum to prevent unbounded growth
+        const MAX_TRADES: usize = 1000;
+        if self.big_trades.len() >= MAX_TRADES {
+            self.big_trades.pop_front();
+        }
+        self.big_trades.push_back(trade);
+    }
+
     /// Calculate bar width for size visualization (0.0-1.0)
     pub fn size_bar_width(&self, trade: &PublicTrade, max_width: f32) -> f32 {
         if self.size_threshold == 0.0 {

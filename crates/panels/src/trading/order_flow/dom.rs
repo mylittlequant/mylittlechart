@@ -183,6 +183,94 @@ impl DomState {
             _ => 0.0,
         }
     }
+
+    /// Apply a full orderbook snapshot — replaces all volume data.
+    pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.volume_by_price.clear();
+        for &(price, qty) in bids {
+            if qty > 0.0 {
+                let tick = self.price_to_tick(price);
+                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+                entry.0 += qty;   // bid volume
+                entry.2 += 1;     // bid order count
+            }
+        }
+        for &(price, qty) in asks {
+            if qty > 0.0 {
+                let tick = self.price_to_tick(price);
+                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+                entry.1 += qty;   // ask volume
+                entry.3 += 1;     // ask order count
+            }
+        }
+        self.recompute_max_volume();
+        // Update market price from best bid/ask mid
+        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+        if best_bid > 0.0 && best_ask > 0.0 {
+            self.market_price = (best_bid + best_ask) / 2.0;
+            if self.center_price == 0.0 {
+                self.center_price = self.market_price;
+            }
+        }
+    }
+
+    /// Apply an incremental orderbook delta — update changed levels only.
+    pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        for &(price, qty) in bids {
+            let tick = self.price_to_tick(price);
+            if qty == 0.0 {
+                // Remove level
+                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
+                    entry.0 = 0.0;
+                    entry.2 = 0;
+                    if entry.1 == 0.0 {
+                        self.volume_by_price.remove(&tick);
+                    }
+                }
+            } else {
+                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+                entry.0 = qty;
+                entry.2 = 1;
+            }
+        }
+        for &(price, qty) in asks {
+            let tick = self.price_to_tick(price);
+            if qty == 0.0 {
+                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
+                    entry.1 = 0.0;
+                    entry.3 = 0;
+                    if entry.0 == 0.0 {
+                        self.volume_by_price.remove(&tick);
+                    }
+                }
+            } else {
+                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+                entry.1 = qty;
+                entry.3 = 1;
+            }
+        }
+        self.recompute_max_volume();
+        // Update market price from best bid/ask
+        let best_bid = self.volume_by_price.iter()
+            .filter(|(_, (bv, _, _, _))| *bv > 0.0)
+            .map(|(t, _)| self.tick_to_price(*t))
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let best_ask = self.volume_by_price.iter()
+            .filter(|(_, (_, av, _, _))| *av > 0.0)
+            .map(|(t, _)| self.tick_to_price(*t))
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
+            self.market_price = (bid + ask) / 2.0;
+        }
+    }
+
+    /// Recompute max_volume from all visible levels.
+    fn recompute_max_volume(&mut self) {
+        self.max_volume = self.volume_by_price.values()
+            .map(|(bv, av, _, _)| bv.max(*av))
+            .fold(0.0f64, f64::max);
+    }
 }
 
 /// DOM panel configuration

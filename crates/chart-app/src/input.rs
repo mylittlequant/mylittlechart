@@ -9779,7 +9779,20 @@ impl ChartApp {
                             .unwrap_or_else(|| "BTCUSDT".to_string());
                         let item_opt = match kind_str {
                             "dom" => {
-                                let pid = self.panels_store.create_dom(symbol, 0.01);
+                                let pid = self.panels_store.create_dom(symbol.clone(), 0.01);
+                                // Subscribe to L2 depth for the active window's symbol.
+                                let exchange_str = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.exchange.clone())
+                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                                let eid = self.exchange_symbols
+                                    .keys()
+                                    .find(|e| e.as_str() == exchange_str)
+                                    .copied()
+                                    .unwrap_or(self.active_exchange);
+                                let at = self.panel_app.panel_grid.active_window()
+                                    .map(|w| crate::account_type_from_label(&w.account_type))
+                                    .unwrap_or(digdigdig3::AccountType::Spot);
+                                self.bridge.subscribe_depth(eid, &symbol, at);
                                 Some(sidebar_content::free_slot::FreeItem::Dom(pid))
                             }
                             "footprint" => {
@@ -9791,7 +9804,20 @@ impl ChartApp {
                                 Some(sidebar_content::free_slot::FreeItem::VolumeProfile(pid))
                             }
                             "liquidity_heatmap" => {
-                                let pid = self.panels_store.create_liquidity_heatmap(symbol, 0.01, 1000);
+                                let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), 0.01, 1000);
+                                // Subscribe to L2 depth for the active window's symbol.
+                                let exchange_str = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.exchange.clone())
+                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                                let eid = self.exchange_symbols
+                                    .keys()
+                                    .find(|e| e.as_str() == exchange_str)
+                                    .copied()
+                                    .unwrap_or(self.active_exchange);
+                                let at = self.panel_app.panel_grid.active_window()
+                                    .map(|w| crate::account_type_from_label(&w.account_type))
+                                    .unwrap_or(digdigdig3::AccountType::Spot);
+                                self.bridge.subscribe_depth(eid, &symbol, at);
                                 Some(sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid))
                             }
                             "big_trades" => {
@@ -9800,6 +9826,23 @@ impl ChartApp {
                             }
                             "l2_tape" => {
                                 let pid = self.panels_store.create_l2_tape();
+                                // Set symbol on the L2 tape state.
+                                if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                    state.symbol = symbol.clone();
+                                }
+                                // Subscribe to L2 depth for the active window's symbol.
+                                let exchange_str = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.exchange.clone())
+                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                                let eid = self.exchange_symbols
+                                    .keys()
+                                    .find(|e| e.as_str() == exchange_str)
+                                    .copied()
+                                    .unwrap_or(self.active_exchange);
+                                let at = self.panel_app.panel_grid.active_window()
+                                    .map(|w| crate::account_type_from_label(&w.account_type))
+                                    .unwrap_or(digdigdig3::AccountType::Spot);
+                                self.bridge.subscribe_depth(eid, &symbol, at);
                                 Some(sidebar_content::free_slot::FreeItem::L2Tape(pid))
                             }
                             "order_entry" => {

@@ -2441,7 +2441,7 @@ impl ChartApp {
                 LiveUpdate::BarUpdate { .. } => {
                     // BarUpdate is superseded by TradeUpdate — no-op.
                 }
-                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type } => {
+                LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker } => {
                     self.trade_count += 1;
                     had_trade_update = true;
                     // Track whether any window formed a new bar for this symbol.
@@ -2569,6 +2569,23 @@ impl ChartApp {
                         }
                     }
 
+                    // Fan-out trade to order-flow panels.
+                    for state in self.panels_store.footprint.values_mut() {
+                        if state.symbol == symbol {
+                            state.push_trade(price, quantity, is_buyer_maker, timestamp);
+                        }
+                    }
+                    for state in self.panels_store.volume_profile.values_mut() {
+                        if state.symbol == symbol {
+                            state.push_trade(price, quantity, is_buyer_maker);
+                        }
+                    }
+                    for state in self.panels_store.big_trades.values_mut() {
+                        if state.symbol == symbol {
+                            state.push_trade(price, quantity, is_buyer_maker, timestamp);
+                        }
+                    }
+
                     // Schedule indicator recalculation according to the current mode.
                     match self.indicator_manager.recalc_mode {
                         RecalcMode::PerTick => {
@@ -2659,6 +2676,41 @@ impl ChartApp {
                 }
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
+                }
+                LiveUpdate::OrderbookSnapshot { symbol, bids, asks, timestamp, .. } => {
+                    // Feed snapshot into all DOM panels that display this symbol.
+                    for state in self.panels_store.dom.values_mut() {
+                        if state.symbol == symbol {
+                            state.apply_snapshot(&bids, &asks);
+                        }
+                    }
+                    // Feed snapshot into L2 Tape panels (resets baseline).
+                    for state in self.panels_store.l2_tape.values_mut() {
+                        if state.symbol == symbol {
+                            state.apply_snapshot(&bids, &asks, timestamp);
+                        }
+                    }
+                    // Feed snapshot into Liquidity Heatmap panels (rate-limited sampling).
+                    for state in self.panels_store.liquidity_heatmap.values_mut() {
+                        if state.symbol == symbol {
+                            state.apply_snapshot(&bids, &asks, timestamp);
+                        }
+                    }
+                }
+                LiveUpdate::OrderbookDelta { symbol, bids, asks, timestamp, .. } => {
+                    // Feed incremental delta into all DOM panels that display this symbol.
+                    for state in self.panels_store.dom.values_mut() {
+                        if state.symbol == symbol {
+                            state.apply_delta(&bids, &asks);
+                        }
+                    }
+                    // Feed delta into L2 Tape panels (generates Add/Modify/Cancel events).
+                    for state in self.panels_store.l2_tape.values_mut() {
+                        if state.symbol == symbol {
+                            state.apply_delta(&bids, &asks, timestamp);
+                        }
+                    }
+                    // Heatmap only samples snapshots, not deltas — no action here.
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
