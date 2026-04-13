@@ -33,7 +33,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.479"
+version = "0.5.481"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -50,11 +50,3 @@ opt-level = 2
 
 # Local development overrides — use local source instead of crates.io.
 # CI strips this section before building (see .github/workflows/release.yml).
-[patch.crates-io]
-gate4agent = { path = "../gate4agent" }
-uzor = { path = "../uzor/uzor" }
-uzor-backend-vello-gpu = { path = "../uzor/uzor-backend-vello-gpu" }
-uzor-backend-vello-cpu = { path = "../uzor/uzor-backend-vello-cpu" }
-uzor-backend-vello-hybrid = { path = "../uzor/uzor-backend-vello-hybrid" }
-uzor-backend-tiny-skia = { path = "../uzor/uzor-backend-tiny-skia" }
-uzor-backend-wgpu-instanced = { path = "../uzor/uzor-backend-wgpu-instanced" }
