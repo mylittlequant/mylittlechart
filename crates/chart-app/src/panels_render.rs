@@ -41,22 +41,6 @@ pub struct PanelHeaderInfo {
     pub is_dom: bool,
 }
 
-/// Extract the lightweight `PanelHeaderHint` used by `sidebar-content` render.
-///
-/// Returns `None` for panels without a `SymbolSource` (PositionManager, TradeLog,
-/// RiskCalculator).
-pub fn panel_header_hint(
-    store: &TradingPanelsStore,
-    item: &FreeItem,
-) -> Option<sidebar_content::free_slot::PanelHeaderHint> {
-    let info = panel_header_info(store, item)?;
-    Some(sidebar_content::free_slot::PanelHeaderHint {
-        source_label: info.source_label,
-        source_color: info.source_color,
-        symbol: info.symbol,
-        is_dom: info.is_dom,
-    })
-}
 
 /// Extract header info for a given FreeItem from the store.
 pub fn panel_header_info(

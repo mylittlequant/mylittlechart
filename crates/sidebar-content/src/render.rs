@@ -223,7 +223,6 @@ pub fn render_right_sidebar(
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
-    panel_header_info_fn: &mut dyn FnMut(&crate::free_slot::FreeItem) -> Option<crate::free_slot::PanelHeaderHint>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -603,7 +602,6 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
                 free_item_renderer,
-                panel_header_info_fn,
             );
         }
 
@@ -3455,7 +3453,6 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
-    panel_header_info_fn: &mut dyn FnMut(&crate::free_slot::FreeItem) -> Option<crate::free_slot::PanelHeaderHint>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3463,8 +3460,173 @@ fn render_slot_panel(
 
     let pad = 8.0;
     let inner_x = rect.x + pad;
-    let inner_y = content_y + pad;
     let inner_w = (content_width - pad * 2.0).max(0.0);
+
+    // ── Slot control toolbar (28px) ──────────────────────────────────────────
+    {
+        use crate::state::AgentSpawnLayout;
+        let ctrl_h = 28.0_f64;
+        let btn_h  = 28.0_f64;
+        let gap    = 4.0_f64;
+        let icon_pad = 4.0_f64;
+        let toolbar_y = content_y + pad;
+        let mut cur_x = inner_x;
+
+        let has_focused = state.focused_free_leaf.map_or(false, |(si, _)| si == slot_idx);
+        let leaf_count = {
+            let mgr = state.slot_dockings[slot_idx].inner_mut();
+            mgr.tree().leaves().len()
+        };
+        let multi_leaf = leaf_count > 1;
+
+        // [+ New] spawn dropdown button
+        let new_id    = format!("slot:{slot_idx}:new");
+        let new_w     = 52.0_f64;
+        let new_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, new_w, btn_h);
+        let new_hov   = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&new_id));
+        ctx.set_fill_color(if new_hov { &theme.button_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(new_rect.x, new_rect.y, new_rect.width, new_rect.height, 3.0);
+        // "+" icon on the left, "New" label
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
+            new_rect.x + icon_pad, new_rect.y + icon_pad,
+            btn_h - icon_pad * 2.0, btn_h - icon_pad * 2.0,
+            if new_hov { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if new_hov { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("New", new_rect.x + btn_h, new_rect.y + btn_h / 2.0);
+        input_coordinator.register(new_id.as_str(), new_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((new_id, new_rect));
+        cur_x += new_w + gap;
+
+        // Right-side layout controls — align to right edge of inner area
+        // [H][V][R] + gap + [⊞][↺][×]
+        let split_w = 28.0_f64;
+        let btn_w   = 28.0_f64;
+        let right_w = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
+                    + gap * 2.0                       // separator gap
+                    + btn_w * 3.0 + gap * 2.0;        // expand+reset+close
+
+        // Only render right controls if there's room after the [+ New] button
+        if inner_x + inner_w - cur_x >= right_w - gap {
+            cur_x = inner_x + inner_w - right_w;
+
+            // [H] split horizontal
+            let sh_id   = format!("slot:{slot_idx}:split:h");
+            let is_h    = state.slot_spawn_layout == AgentSpawnLayout::SplitH;
+            let h_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
+            let h_hov   = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sh_id));
+            ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
+                h_rect.x + icon_pad, h_rect.y + icon_pad,
+                h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
+                if is_h { &theme.item_text_active } else { &theme.item_text_muted });
+            if !is_h {
+                input_coordinator.register(sh_id.as_str(), h_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sh_id, h_rect));
+            cur_x += split_w + 2.0;
+
+            // [V] split vertical
+            let sv_id  = format!("slot:{slot_idx}:split:v");
+            let is_v   = state.slot_spawn_layout == AgentSpawnLayout::SplitV;
+            let v_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
+            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sv_id));
+            ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
+                v_rect.x + icon_pad, v_rect.y + icon_pad,
+                v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
+                if is_v { &theme.item_text_active } else { &theme.item_text_muted });
+            if !is_v {
+                input_coordinator.register(sv_id.as_str(), v_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sv_id, v_rect));
+            cur_x += split_w + 2.0;
+
+            // [R] replace
+            let sr_id  = format!("slot:{slot_idx}:split:replace");
+            let is_r   = state.slot_spawn_layout == AgentSpawnLayout::Replace;
+            let r_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
+            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sr_id));
+            ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
+                r_rect.x + icon_pad, r_rect.y + icon_pad,
+                r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
+                if is_r { &theme.item_text_active } else { &theme.item_text_muted });
+            if !is_r {
+                input_coordinator.register(sr_id.as_str(), r_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sr_id, r_rect));
+            cur_x += split_w + gap * 2.0;
+
+            // [⊞/⊟] expand/collapse
+            let exp_id  = format!("slot:{slot_idx}:expand_toggle");
+            let any_hidden = has_focused && multi_leaf && {
+                let focused_lid = state.focused_free_leaf.map(|(_, lid)| lid);
+                focused_lid.map_or(false, |_lid| {
+                    state.slot_dockings[slot_idx].inner_mut()
+                        .tree().leaves().iter().any(|l| l.hidden)
+                })
+            };
+            let expand_en = has_focused && multi_leaf;
+            let exp_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&exp_id));
+            ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
+            {
+                let exp_icon = if any_hidden { uzor::render::icons::ui::ICON_COLLAPSE } else { uzor::render::icons::ui::ICON_EXPAND };
+                draw_svg_icon(ctx, exp_icon,
+                    exp_rect.x + icon_pad, exp_rect.y + icon_pad,
+                    exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
+                    if expand_en { &theme.item_text } else { &theme.item_text_muted });
+            }
+            if expand_en {
+                input_coordinator.register(exp_id.as_str(), exp_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((exp_id, exp_rect));
+            cur_x += btn_w + gap;
+
+            // [↺] reset sizes
+            let rst_id   = format!("slot:{slot_idx}:reset_sizes");
+            let reset_en = has_focused && multi_leaf;
+            let rst_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let rst_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&rst_id));
+            ctx.set_fill_color(if !reset_en { &theme.background } else if rst_hov { &theme.button_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(rst_rect.x, rst_rect.y, rst_rect.width, rst_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
+                rst_rect.x + icon_pad, rst_rect.y + icon_pad,
+                rst_rect.width - icon_pad * 2.0, rst_rect.height - icon_pad * 2.0,
+                if reset_en { &theme.item_text } else { &theme.item_text_muted });
+            if reset_en {
+                input_coordinator.register(rst_id.as_str(), rst_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((rst_id, rst_rect));
+            cur_x += btn_w + gap;
+
+            // [×] close pane
+            let cl_id   = format!("slot:{slot_idx}:close_pane");
+            let cl_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+            let cl_hov  = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&cl_id));
+            ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
+            ctx.fill_rounded_rect(cl_rect.x, cl_rect.y, cl_rect.width, cl_rect.height, 3.0);
+            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
+                cl_rect.x + icon_pad, cl_rect.y + icon_pad,
+                cl_rect.width - icon_pad * 2.0, cl_rect.height - icon_pad * 2.0,
+                if has_focused { &theme.danger } else { &theme.item_text_muted });
+            if has_focused {
+                input_coordinator.register(cl_id.as_str(), cl_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((cl_id, cl_rect));
+        }
+    }
+
+    // Docking grid area — shifted below the toolbar.
+    let ctrl_h_total = 28.0 + 4.0; // toolbar height + gap
+    let inner_y = content_y + pad + ctrl_h_total;
     let inner_h = (rect.height - (inner_y - rect.y) - pad).max(0.0);
 
     // Record the slot body rect for cross-container drag hit testing.
@@ -3645,86 +3807,6 @@ fn render_slot_panel(
         );
         input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_id, close_rect));
-
-        // --- Source-cycle pill + optional DOM zoom buttons ---
-        // Rendered to the left of the title text, using the header info hint.
-        if let Some(hint) = panel_header_info_fn(&item) {
-            // Source-cycle pill: narrow pill button showing "A"/"P"/"L".
-            let pill_w = 16.0_f32;
-            let pill_h = 12.0_f32;
-            let pill_x = header_x + 4.0;
-            let pill_y = header_y + (header_h - pill_h) / 2.0;
-            let source_cycle_id = format!("slot:{}:leaf:{}:source_cycle", slot_idx, leaf_id.0);
-            let pill_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&source_cycle_id));
-            ctx.set_fill_color(if pill_hov { "#4b5563" } else { hint.source_color });
-            ctx.fill_rounded_rect(pill_x as f64, pill_y as f64, pill_w as f64, pill_h as f64, 3.0);
-            ctx.set_font("9px sans-serif");
-            ctx.set_fill_color("#ffffff");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(
-                hint.source_label.chars().next().map(|c| c.to_string()).unwrap_or_default().as_str(),
-                (pill_x + pill_w / 2.0) as f64,
-                (pill_y + pill_h / 2.0) as f64,
-            );
-            let pill_rect = WidgetRect::new(pill_x as f64, pill_y as f64, pill_w as f64, pill_h as f64);
-            input_coordinator.register(source_cycle_id.as_str(), pill_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((source_cycle_id, pill_rect));
-
-            // DOM zoom buttons (only for DOM panels): [–] [•] [+] to the right of the pill.
-            if hint.is_dom {
-                let zoom_btn_w = 12.0_f32;
-                let zoom_btn_h = 12.0_f32;
-                let zoom_gap = 2.0_f32;
-                let zoom_start_x = pill_x + pill_w + zoom_gap + 2.0;
-                let zoom_y = header_y + (header_h - zoom_btn_h) / 2.0;
-
-                // Zoom-out [–]
-                let zoom_out_id = format!("slot:{}:leaf:{}:dom_zoom_out", slot_idx, leaf_id.0);
-                let zoom_out_x = zoom_start_x;
-                let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&zoom_out_id));
-                ctx.set_fill_color(if is_hov { "#374151" } else { "transparent" });
-                if is_hov {
-                    ctx.fill_rounded_rect(zoom_out_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64, 2.0);
-                }
-                ctx.set_font("10px sans-serif");
-                ctx.set_fill_color(if is_hov { "#e5e7eb" } else { "#8b949e" });
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("\u{2212}", (zoom_out_x + zoom_btn_w / 2.0) as f64, (zoom_y + zoom_btn_h / 2.0) as f64);
-                let zoom_out_rect = WidgetRect::new(zoom_out_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64);
-                input_coordinator.register(zoom_out_id.as_str(), zoom_out_rect, uzor::input::Sense::CLICK);
-                result.item_rects.push((zoom_out_id, zoom_out_rect));
-
-                // Center [•]
-                let zoom_center_id = format!("slot:{}:leaf:{}:dom_center", slot_idx, leaf_id.0);
-                let zoom_center_x = zoom_start_x + zoom_btn_w + zoom_gap;
-                let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&zoom_center_id));
-                ctx.set_fill_color(if is_hov { "#374151" } else { "transparent" });
-                if is_hov {
-                    ctx.fill_rounded_rect(zoom_center_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64, 2.0);
-                }
-                ctx.set_fill_color(if is_hov { "#e5e7eb" } else { "#8b949e" });
-                ctx.fill_text("\u{25cf}", (zoom_center_x + zoom_btn_w / 2.0) as f64, (zoom_y + zoom_btn_h / 2.0) as f64);
-                let zoom_center_rect = WidgetRect::new(zoom_center_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64);
-                input_coordinator.register(zoom_center_id.as_str(), zoom_center_rect, uzor::input::Sense::CLICK);
-                result.item_rects.push((zoom_center_id, zoom_center_rect));
-
-                // Zoom-in [+]
-                let zoom_in_id = format!("slot:{}:leaf:{}:dom_zoom_in", slot_idx, leaf_id.0);
-                let zoom_in_x = zoom_start_x + (zoom_btn_w + zoom_gap) * 2.0;
-                let is_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&zoom_in_id));
-                ctx.set_fill_color(if is_hov { "#374151" } else { "transparent" });
-                if is_hov {
-                    ctx.fill_rounded_rect(zoom_in_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64, 2.0);
-                }
-                ctx.set_fill_color(if is_hov { "#e5e7eb" } else { "#8b949e" });
-                ctx.fill_text("+", (zoom_in_x + zoom_btn_w / 2.0) as f64, (zoom_y + zoom_btn_h / 2.0) as f64);
-                let zoom_in_rect = WidgetRect::new(zoom_in_x as f64, zoom_y as f64, zoom_btn_w as f64, zoom_btn_h as f64);
-                input_coordinator.register(zoom_in_id.as_str(), zoom_in_rect, uzor::input::Sense::CLICK);
-                result.item_rects.push((zoom_in_id, zoom_in_rect));
-            }
-        }
 
         // Body rect: everything below the header.
         let body_y = r.y + LEAF_HEADER_H;

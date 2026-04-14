@@ -9948,6 +9948,116 @@ impl ChartApp {
             }
         }
 
+        // --- slot:{idx}:split:h / :split:v / :split:replace — spawn layout toggle ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, action)) = rest.split_once(':') {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if idx < 4 {
+                        match action {
+                            "split:h" => {
+                                self.sidebar_state.slot_spawn_layout =
+                                    sidebar_content::state::AgentSpawnLayout::SplitH;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "split:v" => {
+                                self.sidebar_state.slot_spawn_layout =
+                                    sidebar_content::state::AgentSpawnLayout::SplitV;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "split:replace" => {
+                                self.sidebar_state.slot_spawn_layout =
+                                    sidebar_content::state::AgentSpawnLayout::Replace;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "expand_toggle" => {
+                                let all_leaf_ids: Vec<uzor::panels::LeafId> = self
+                                    .sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .panel_rects()
+                                    .keys()
+                                    .copied()
+                                    .collect();
+                                let any_hidden = all_leaf_ids.iter().any(|&lid| {
+                                    self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(lid)
+                                        .map_or(false, |l| l.hidden)
+                                });
+                                if any_hidden {
+                                    // Show all leaves (collapse back to grid).
+                                    for lid in all_leaf_ids {
+                                        self.sidebar_state.slot_dockings[idx]
+                                            .inner_mut()
+                                            .tree_mut()
+                                            .show_leaf(lid);
+                                    }
+                                } else if let Some((focused_idx, focus)) =
+                                    self.sidebar_state.focused_free_leaf
+                                {
+                                    if focused_idx == idx {
+                                        // Hide all leaves except the focused one.
+                                        for lid in all_leaf_ids {
+                                            if lid != focus {
+                                                self.sidebar_state.slot_dockings[idx]
+                                                    .inner_mut()
+                                                    .tree_mut()
+                                                    .hide_leaf(lid);
+                                            }
+                                        }
+                                    }
+                                }
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "reset_sizes" => {
+                                self.sidebar_state.slot_dockings[idx]
+                                    .inner_mut()
+                                    .tree_mut()
+                                    .reset_proportions();
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "close_pane" => {
+                                if let Some((focused_idx, leaf_id)) =
+                                    self.sidebar_state.focused_free_leaf
+                                {
+                                    if focused_idx == idx {
+                                        // Retrieve the FreeItem before removing so we can
+                                        // clean up the panels store.
+                                        let item_opt = self.sidebar_state.slot_dockings[idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(leaf_id)
+                                            .and_then(|l| l.panels.get(l.active_tab).cloned());
+                                        self.sidebar_state.slot_dockings[idx]
+                                            .inner_mut()
+                                            .tree_mut()
+                                            .remove_leaf(leaf_id);
+                                        if let Some(item) = item_opt {
+                                            self.panels_store.remove(&item);
+                                        }
+                                        self.sidebar_state.focused_free_leaf = None;
+                                        eprintln!(
+                                            "[ChartApp] slot:{}:close_pane — removed leaf {:?}",
+                                            idx, leaf_id
+                                        );
+                                        self.sidebar_data_dirty = true;
+                                        self.autosave_snapshot();
+                                    }
+                                }
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         // --- slot:{idx}:leaf:{leaf_id}:focus — set focused free leaf ---
         if let Some(rest) = widget_id.strip_prefix("slot:") {
             // Try to parse "slot:{idx}:leaf:{leaf_id}:focus"

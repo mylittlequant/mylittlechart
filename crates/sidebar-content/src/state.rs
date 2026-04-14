@@ -395,6 +395,10 @@ pub struct SidebarState {
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
     pub slot_spawn_dropdown: Option<usize>,
 
+    /// Per-slot spawn layout preference (how a new panel is added). Shared
+    /// across all 4 slots (one setting for all free-slot containers).
+    pub slot_spawn_layout: AgentSpawnLayout,
+
     /// Which agent Chat leaf's sessions dropdown is currently open (`None` = all closed).
     ///
     /// Only one leaf can have its dropdown open at a time. Clicking the
@@ -737,6 +741,7 @@ impl Default for SidebarState {
             ],
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
+            slot_spawn_layout: AgentSpawnLayout::SplitH,
             hovered_free_leaf: None,
             agent_sessions_dropdown: None,
             agent_model_dropdown: None,
