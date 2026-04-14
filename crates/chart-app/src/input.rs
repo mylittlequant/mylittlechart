@@ -6395,7 +6395,7 @@ impl ChartApp {
                                     .and_then(|l| l.active_panel().cloned());
 
                                 use sidebar_content::free_slot::FreeItem;
-                                let scroll_step = -dy;
+                                let scroll_step = dy;
 
                                 match item_opt {
                                     Some(FreeItem::Dom(pid)) => {
