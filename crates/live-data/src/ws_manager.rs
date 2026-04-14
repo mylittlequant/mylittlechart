@@ -737,8 +737,8 @@ fn dispatch_event(
             // ticker events on the ticker stream.  Synthesize a price from the
             // mid-point of the best bid/ask.
             if state.stream_type == WsStreamType::Ticker {
-                let bid = ob.bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-                let ask = ob.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+                let bid = ob.bids.first().map(|l| l.price).unwrap_or(0.0);
+                let ask = ob.asks.first().map(|l| l.price).unwrap_or(0.0);
                 let mid = if bid > 0.0 && ask > 0.0 {
                     (bid + ask) / 2.0
                 } else {
@@ -772,24 +772,27 @@ fn dispatch_event(
                             exchange_id: state.exchange_id,
                             account_type: state.account_type,
                             symbol: sym.clone(),
-                            bids: ob.bids.clone(),
-                            asks: ob.asks.clone(),
+                            bids: ob.bids.iter().map(|l| (l.price, l.size)).collect(),
+                            asks: ob.asks.iter().map(|l| (l.price, l.size)).collect(),
                             timestamp: ob.timestamp,
                         });
                     }
                 }
             }
         }
-        StreamEvent::OrderbookDelta { bids, asks, timestamp } => {
+        StreamEvent::OrderbookDelta(delta) => {
+            let bids = &delta.bids;
+            let asks = &delta.asks;
+            let timestamp = delta.timestamp;
             if state.stream_type == WsStreamType::Ticker {
                 let best_bid = bids
                     .iter()
-                    .map(|(p, _)| *p)
+                    .map(|l| l.price)
                     .filter(|p| *p > 0.0)
                     .fold(0.0f64, f64::max);
                 let best_ask = asks
                     .iter()
-                    .map(|(p, _)| *p)
+                    .map(|l| l.price)
                     .filter(|p| *p > 0.0)
                     .fold(f64::MAX, f64::min);
                 let mid = if best_bid > 0.0 && best_ask < f64::MAX {
@@ -821,8 +824,8 @@ fn dispatch_event(
                             exchange_id: state.exchange_id,
                             account_type: state.account_type,
                             symbol: sym.clone(),
-                            bids: bids.clone(),
-                            asks: asks.clone(),
+                            bids: bids.iter().map(|l| (l.price, l.size)).collect(),
+                            asks: asks.iter().map(|l| (l.price, l.size)).collect(),
                             timestamp,
                         });
                     }
