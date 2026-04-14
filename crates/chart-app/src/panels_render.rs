@@ -2,14 +2,13 @@
 //!
 //! `render_free_item` is the single entry point: it receives a reference to
 //! the panel store and a `FreeItem`, looks up the matching state, and
-//! delegates to the appropriate renderer from `zengeld_panels::renderers`.
+//! delegates to the `TradingPanel::render()` trait method.
 //!
-//! All trading panel renderers are now wired.
+//! All 11 trading panels are wired through `get_panel()`.
 
 use sidebar_content::free_slot::FreeItem;
 use zengeld_chart::render::RenderContext;
 
-use zengeld_panels::renderers::panel_renderers_orderflow::render_trading_container;
 use zengeld_panels::trading::SymbolSource;
 
 use crate::panels_store::TradingPanelsStore;
@@ -114,21 +113,7 @@ pub fn render_free_item(
     h: f32,
     ctx: &mut dyn RenderContext,
 ) {
-    // Try new encapsulated rendering first (populated incrementally).
     if let Some(panel) = store.get_panel(item) {
         panel.render(ctx, x, y, w, h);
-        return;
-    }
-
-    match item {
-        FreeItem::TradingContainer(id) => {
-            if let Some(state) = store.trading_container.get(id) {
-                // `now_ms` is used only for animation; 0 is safe for a static render.
-                render_trading_container(ctx, x, y, w, h, state, 0);
-            }
-        }
-
-        // All other panels are handled by get_panel() early return above.
-        _ => {}
     }
 }

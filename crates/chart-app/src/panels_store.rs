@@ -191,7 +191,7 @@ impl TradingPanelsStore {
             FreeItem::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
-            _ => None,
+            FreeItem::TradingContainer(id) => self.trading_container.get(id).map(|s| s as &dyn TradingPanel),
         }
     }
 
@@ -208,7 +208,7 @@ impl TradingPanelsStore {
             FreeItem::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
-            _ => None,
+            FreeItem::TradingContainer(id) => self.trading_container.get_mut(id).map(|s| s as &mut dyn TradingPanel),
         }
     }
 
