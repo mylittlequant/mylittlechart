@@ -78,7 +78,7 @@ pub fn render_dom_panel(
     ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
 
     // === STEP 2: Calculate layout ===
-    let levels = state.visible_levels();
+    let levels = state.visible_levels_for_height(height);
     let row_height = DOM_ROW_HEIGHT;
 
     // Column layout: [Bid Volume Bar | Price | Ask Volume Bar]

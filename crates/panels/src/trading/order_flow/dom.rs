@@ -147,6 +147,60 @@ impl DomState {
         levels
     }
 
+    /// Returns visible price levels that fit within the given pixel height.
+    /// Center price is placed at the middle row. Row height is DOM_ROW_HEIGHT (20px).
+    pub fn visible_levels_for_height(&self, height: f32) -> Vec<DomLevel> {
+        let row_h = 20.0_f32; // DOM_ROW_HEIGHT
+        let visible_rows = ((height / row_h) as usize).max(1);
+        let half = visible_rows / 2;
+
+        let center_tick = self.price_to_tick(self.center_price);
+
+        // Best bid/ask for spread detection
+        let best_bid_tick = self.volume_by_price.iter()
+            .filter(|(_, (bid_vol, _, _, _))| *bid_vol > 0.0)
+            .map(|(tick, _)| *tick)
+            .max();
+        let best_ask_tick = self.volume_by_price.iter()
+            .filter(|(_, (_, ask_vol, _, _))| *ask_vol > 0.0)
+            .map(|(tick, _)| *tick)
+            .min();
+
+        let mut levels = Vec::with_capacity(visible_rows);
+
+        // DOM convention: higher prices at top, lower at bottom.
+        // Row 0 = highest price (center + half), row N = lowest (center - half).
+        for i in 0..visible_rows {
+            let offset = half as i64 - i as i64;
+            let tick = center_tick + offset;
+            let price = self.tick_to_price(tick);
+
+            let (bid_volume, ask_volume, bid_orders, ask_orders) =
+                self.volume_by_price.get(&tick).copied().unwrap_or((0.0, 0.0, 0, 0));
+
+            let is_spread = match (best_bid_tick, best_ask_tick) {
+                (Some(bid), Some(ask)) => tick > bid && tick < ask,
+                _ => false,
+            };
+
+            let has_user_order = self.user_orders.contains_key(&tick);
+
+            levels.push(DomLevel {
+                price,
+                bid_volume,
+                ask_volume,
+                bid_orders,
+                ask_orders,
+                is_bid: bid_volume > 0.0,
+                is_ask: ask_volume > 0.0,
+                is_spread,
+                has_user_order,
+            });
+        }
+
+        levels
+    }
+
     /// Convert price to tick index
     pub fn price_to_tick(&self, price: f64) -> i64 {
         (price / self.tick_size).round() as i64
