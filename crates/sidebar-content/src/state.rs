@@ -410,6 +410,10 @@ pub struct SidebarState {
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
     pub slot_spawn_dropdown: Option<usize>,
 
+    /// The screen-space rect of the [+] spawn button for each slot (set during render).
+    /// Used to anchor the spawn dropdown directly below the button.
+    pub slot_spawn_button_rect: [Option<uzor::types::WidgetRect>; 4],
+
     /// Per-slot spawn layout preference (how a new panel is added). Shared
     /// across all 4 slots (one setting for all free-slot containers).
     pub slot_spawn_layout: AgentSpawnLayout,
@@ -763,6 +767,7 @@ impl Default for SidebarState {
             ],
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
+            slot_spawn_button_rect: [None; 4],
             slot_spawn_layout: AgentSpawnLayout::SplitH,
             slot_source_mode: SlotSourceMode::Auto,
             hovered_free_leaf: None,

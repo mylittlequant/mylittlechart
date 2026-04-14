@@ -703,6 +703,52 @@ impl ChartApp {
             }
         }
 
+        // Double-click inside a free-slot leaf body → DOM center on market price.
+        {
+            use sidebar_content::state::RightSidebarPanel;
+            let slot_idx_opt = match self.sidebar_state.right_panel {
+                RightSidebarPanel::Slot1 => Some(0usize),
+                RightSidebarPanel::Slot2 => Some(1),
+                RightSidebarPanel::Slot3 => Some(2),
+                RightSidebarPanel::Slot4 => Some(3),
+                _ => None,
+            };
+            if let Some(idx) = slot_idx_opt {
+                // Check if double-click hit any leaf's focus_content rect
+                if let Some(ref sr) = self.last_sidebar_result {
+                    for (wid, wr) in &sr.item_rects {
+                        if wid.starts_with(&format!("slot:{}:leaf:", idx))
+                            && wid.ends_with(":focus_content")
+                            && x >= wr.x && x < wr.x + wr.width
+                            && y >= wr.y && y < wr.y + wr.height
+                        {
+                            // Extract leaf_id from widget id: "slot:{idx}:leaf:{leaf_id}:focus_content"
+                            let parts: Vec<&str> = wid.split(':').collect();
+                            if parts.len() >= 4 {
+                                if let Ok(raw) = parts[3].parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                            if state.market_price > 0.0 {
+                                                state.center_price = state.market_price;
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         let extended = self.build_extended_layout();
         let overlay_results_dc = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())

@@ -627,10 +627,11 @@ pub fn render_right_sidebar(
     if let Some(slot_idx) = panel.slot_index() {
         let slot_idx = slot_idx as usize;
         if sidebar_state.slot_spawn_dropdown == Some(slot_idx) {
+            let button_rect = sidebar_state.slot_spawn_button_rect[slot_idx];
             render_slot_spawn_dropdown(
                 ctx,
                 rect,
-                header_height,
+                button_rect,
                 slot_idx,
                 toolbar_theme,
                 input_coordinator,
@@ -797,7 +798,7 @@ fn render_watchlist_config_dropdown(
 fn render_slot_spawn_dropdown(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
-    header_height: f64,
+    button_rect: Option<uzor::types::WidgetRect>,
     slot_idx: usize,
     theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
@@ -822,9 +823,12 @@ fn render_slot_spawn_dropdown(
     let dropdown_w = 180.0;
     let dropdown_h = row_h * ITEMS.len() as f64 + pad_v * 2.0;
 
-    // Anchor: right-aligned inside the sidebar, just below the header.
-    let dropdown_x = rect.x + rect.width - dropdown_w - 4.0;
-    let dropdown_y = rect.y + header_height;
+    // Anchor: just below the [+] button if rect is known, otherwise fallback.
+    let (dropdown_x, dropdown_y) = if let Some(br) = button_rect {
+        (br.x, br.y + br.height + 2.0)
+    } else {
+        (rect.x + rect.width - dropdown_w - 4.0, rect.y + 40.0)
+    };
 
     // Background.
     ctx.set_fill_color(theme.dropdown_bg.as_str());
@@ -3474,6 +3478,7 @@ fn render_slot_panel(
             btn_h - icon_pad * 2.0, btn_h - icon_pad * 2.0,
             if new_hov { &theme.item_text } else { &theme.item_text_muted });
         input_coordinator.register(new_id.as_str(), new_rect, uzor::input::Sense::CLICK);
+        state.slot_spawn_button_rect[slot_idx] = Some(new_rect);
         result.item_rects.push((new_id, new_rect));
         cur_x += new_w + gap;
 

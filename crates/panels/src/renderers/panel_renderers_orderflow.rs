@@ -62,9 +62,7 @@ const USER_ORDER_MARKER: [f32; 4] = [1.0, 1.0, 0.0, 1.0];        // #ffff00ff (y
 // DOM Layout
 const DOM_ROW_HEIGHT: f32 = 20.0;
 const DOM_LEFT_PAD: f32 = 6.0;
-const DOM_PRICE_COL_WIDTH: f32 = 100.0;
-const DOM_VOLUME_COL_WIDTH: f32 = 120.0;
-const DOM_MAX_BAR_WIDTH: f32 = 60.0;
+const DOM_PRICE_COL_WIDTH: f32 = 70.0;
 
 /// Render DOM (Depth of Market) panel - price ladder with bid/ask volume bars
 pub fn render_dom_panel(
@@ -83,21 +81,19 @@ pub fn render_dom_panel(
     let levels = state.visible_levels();
     let row_height = DOM_ROW_HEIGHT;
 
-    // Column layout: [BUY | Bid Volume Bar | Price | Ask Volume Bar | SELL]
-    let buy_col_x = x + DOM_LEFT_PAD;
-    let buy_col_w = 50.0;
-
-    let bid_vol_col_x = buy_col_x + buy_col_w + 4.0;
-    let bid_vol_col_w = DOM_VOLUME_COL_WIDTH;
-
-    let price_col_x = bid_vol_col_x + bid_vol_col_w + 4.0;
+    // Column layout: [Bid Volume Bar | Price | Ask Volume Bar]
+    // Sizes are dynamic based on available width.
+    let pad = 4.0_f32;
     let price_col_w = DOM_PRICE_COL_WIDTH;
+    let avail = (width - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
+    let vol_col_w = avail / 2.0;
 
-    let ask_vol_col_x = price_col_x + price_col_w + 4.0;
-    let ask_vol_col_w = DOM_VOLUME_COL_WIDTH;
+    let bid_vol_col_x = x + DOM_LEFT_PAD;
+    let bid_vol_col_w = vol_col_w;
 
-    let sell_col_x = ask_vol_col_x + ask_vol_col_w + 4.0;
-    let sell_col_w = 50.0;
+    let price_col_x = bid_vol_col_x + bid_vol_col_w + pad;
+
+    let ask_vol_col_x = price_col_x + price_col_w + pad;
 
     // === STEP 3: Find best bid and best ask for highlighting ===
     let best_bid_price = levels.iter()
@@ -156,7 +152,7 @@ pub fn render_dom_panel(
 
         // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---
         if level.bid_volume > 0.0 {
-            let bar_width = state.bid_bar_width(level.bid_volume, DOM_MAX_BAR_WIDTH);
+            let bar_width = state.bid_bar_width(level.bid_volume, vol_col_w);
             let bar_x = bid_vol_col_x + bid_vol_col_w - bar_width;
             let bar_y = row_y + 2.0;
             let bar_h = row_height - 4.0;
@@ -187,7 +183,7 @@ pub fn render_dom_panel(
 
         // --- Step 4.3: Ask volume bar (left-aligned, grows rightward) ---
         if level.ask_volume > 0.0 {
-            let bar_width = state.ask_bar_width(level.ask_volume, DOM_MAX_BAR_WIDTH);
+            let bar_width = state.ask_bar_width(level.ask_volume, vol_col_w);
             let bar_x = ask_vol_col_x;
             let bar_y = row_y + 2.0;
             let bar_h = row_height - 4.0;
@@ -241,14 +237,11 @@ pub fn render_dom_panel(
         if level.has_user_order {
             ctx.set_fill_color(&rgba_to_hex(USER_ORDER_MARKER));
             ctx.set_font("10px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
 
-            // Buy marker (left side)
-            ctx.fill_text("▲", (buy_col_x + buy_col_w / 2.0) as f64, price_y as f64);
-
-            // Sell marker (right side)
-            ctx.fill_text("▼", (sell_col_x + sell_col_w / 2.0) as f64, price_y as f64);
+            // Order marker on the left edge of the bid volume column
+            ctx.fill_text("▲", (bid_vol_col_x) as f64, price_y as f64);
         }
     }
 
