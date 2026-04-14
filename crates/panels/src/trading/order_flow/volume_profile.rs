@@ -1,6 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// VolumeProfile panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VolumeProfileId(pub u64);
@@ -182,6 +185,135 @@ pub enum VolumeProfileType {
     Visible,   // Calculate over visible time range
     Session,   // Daily session profile
     Fixed,     // User-defined time range
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const PROFILE_BAR: [f32; 4] = [0.4, 0.6, 0.8, 0.7];
+const PROFILE_BAR_POC: [f32; 4] = [0.53, 0.73, 1.0, 1.0];
+const POC_LINE: [f32; 4] = [1.0, 0.87, 0.0, 1.0];
+const VAH_LINE: [f32; 4] = [0.53, 0.67, 1.0, 1.0];
+const VAL_LINE: [f32; 4] = [0.53, 0.67, 1.0, 1.0];
+const VALUE_AREA_SHADE: [f32; 4] = [0.16, 0.23, 0.29, 0.2];
+const VOLUME_PROFILE_BAR_HEIGHT: f32 = 4.0;
+
+impl TradingPanel for VolumeProfileState {
+    fn kind(&self) -> &'static str { "volume_profile" }
+    fn label(&self) -> &'static str { "Volume Profile" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        let config = VolumeProfileConfig::default();
+
+        ctx.set_fill_color(&rgba_to_hex([0.05, 0.05, 0.09, 1.0]));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let levels = self.visible_levels();
+        if levels.is_empty() {
+            return;
+        }
+
+        let num_levels = levels.len();
+        let bar_height = (h / num_levels as f32).min(VOLUME_PROFILE_BAR_HEIGHT * 2.0).max(VOLUME_PROFILE_BAR_HEIGHT / 2.0);
+
+        let vah_y = levels.iter()
+            .position(|l| (l.price - self.vah).abs() < self.tick_size * 0.5)
+            .map(|idx| y + idx as f32 * bar_height);
+        let val_y = levels.iter()
+            .position(|l| (l.price - self.val).abs() < self.tick_size * 0.5)
+            .map(|idx| y + idx as f32 * bar_height);
+
+        if let (Some(vah), Some(val)) = (vah_y, val_y) {
+            let shade_h = (val - vah).abs() as f64;
+            ctx.set_fill_color(&rgba_to_hex(VALUE_AREA_SHADE));
+            ctx.fill_rect(x as f64, vah as f64, w as f64, shade_h);
+        }
+
+        for (i, level) in levels.iter().enumerate() {
+            let bar_y = y + (i as f32 * bar_height);
+            let max_bar_pixels = w * config.max_bar_width;
+            let bar_w = self.bar_width(level.total_volume, max_bar_pixels);
+            let has_split = (level.buy_volume - level.sell_volume).abs() > 0.001;
+
+            if has_split {
+                let bid_w = self.bar_width(level.buy_volume, max_bar_pixels);
+                let ask_w = self.bar_width(level.sell_volume, max_bar_pixels);
+
+                let buy_color = if level.is_poc { [0.055, 0.796, 0.506, 0.9] } else { [0.055, 0.796, 0.506, 0.5] };
+                ctx.set_fill_color(&rgba_to_hex(buy_color));
+                ctx.fill_rect(x as f64, bar_y as f64, bid_w as f64, bar_height as f64);
+
+                let sell_color = if level.is_poc { [0.965, 0.275, 0.365, 0.9] } else { [0.965, 0.275, 0.365, 0.5] };
+                ctx.set_fill_color(&rgba_to_hex(sell_color));
+                ctx.fill_rect((x + bid_w) as f64, bar_y as f64, ask_w as f64, bar_height as f64);
+            } else {
+                let bar_color = if level.is_poc { PROFILE_BAR_POC } else { PROFILE_BAR };
+                ctx.set_fill_color(&rgba_to_hex(bar_color));
+                ctx.fill_rect(x as f64, bar_y as f64, bar_w as f64, bar_height as f64);
+            }
+
+            if level.is_poc {
+                ctx.set_fill_color(&rgba_to_hex(POC_LINE));
+                let line_y = bar_y + bar_height / 2.0 - 1.0;
+                ctx.fill_rect(x as f64, line_y as f64, (w * 0.7) as f64, 2.0);
+
+                if config.show_labels {
+                    ctx.set_font("10px sans-serif");
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.set_fill_color(&rgba_to_hex(POC_LINE));
+                    ctx.fill_text("POC", (x + w * 0.72) as f64, (bar_y + bar_height / 2.0) as f64);
+                }
+            }
+        }
+
+        if let Some(dom_center) = self.dom_center_price {
+            if let Some(idx) = levels.iter().position(|l| (l.price - dom_center).abs() < self.tick_size * 0.5) {
+                let center_y = y + idx as f32 * bar_height + bar_height / 2.0;
+                ctx.set_fill_color(&rgba_to_hex([1.0, 0.843, 0.0, 0.8]));
+                ctx.fill_rect(x as f64, center_y as f64, (w * 0.8) as f64, 2.0);
+
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_fill_color(&rgba_to_hex([1.0, 0.843, 0.0, 1.0]));
+                ctx.fill_text("MKT", (x + w * 0.82) as f64, center_y as f64);
+            }
+        }
+
+        if let Some(vah) = vah_y {
+            ctx.set_fill_color(&rgba_to_hex(VAH_LINE));
+            ctx.fill_rect(x as f64, vah as f64, (w * 0.6) as f64, 1.0);
+
+            if config.show_labels {
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.set_fill_color(&rgba_to_hex(VAH_LINE));
+                ctx.fill_text("VAH", (x + w * 0.62) as f64, vah as f64);
+            }
+        }
+
+        if let Some(val) = val_y {
+            ctx.set_fill_color(&rgba_to_hex(VAL_LINE));
+            ctx.fill_rect(x as f64, val as f64, (w * 0.6) as f64, 1.0);
+
+            if config.show_labels {
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.set_fill_color(&rgba_to_hex(VAL_LINE));
+                ctx.fill_text("VAL", (x + w * 0.62) as f64, val as f64);
+            }
+        }
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 /// VolumeProfile panel configuration

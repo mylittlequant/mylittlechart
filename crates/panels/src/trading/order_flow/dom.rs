@@ -2,6 +2,9 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// DOM panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DomId(pub u64);
@@ -401,4 +404,265 @@ impl DomPanel {
     pub fn type_id(&self) -> &'static str { "dom" }
     pub fn kind_label(&self) -> &'static str { "DOM" }
     pub fn min_size(&self) -> (f32, f32) { (200.0, 150.0) }
+}
+
+// ============================================================
+// DOM Colors (local copy — canonical source is panel_renderers_orderflow.rs)
+// ============================================================
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const BG_DEFAULT: [f32; 4] = [0.11, 0.11, 0.16, 1.0];
+const BG_BEST_BID: [f32; 4] = [0.04, 0.21, 0.13, 1.0];
+const BG_BEST_ASK: [f32; 4] = [0.23, 0.04, 0.04, 1.0];
+const BG_SPREAD: [f32; 4] = [0.08, 0.09, 0.12, 1.0];
+const BG_CURRENT_PRICE: [f32; 4] = [0.16, 0.16, 0.0, 1.0];
+const BG_HOVER: [f32; 4] = [0.16, 0.18, 0.25, 1.0];
+
+const TEXT_PRICE_DEFAULT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
+const TEXT_PRICE_BEST_BID: [f32; 4] = [0.0, 1.0, 0.53, 1.0];
+const TEXT_PRICE_BEST_ASK: [f32; 4] = [1.0, 0.27, 0.4, 1.0];
+const TEXT_PRICE_CURRENT: [f32; 4] = [1.0, 0.87, 0.0, 1.0];
+
+const TEXT_VOL_BID: [f32; 4] = [0.4, 0.8, 0.53, 1.0];
+const TEXT_VOL_ASK: [f32; 4] = [1.0, 0.4, 0.47, 1.0];
+
+const BAR_BID: [f32; 4] = [0.0, 0.67, 0.33, 1.0];
+const BAR_BID_BRIGHT: [f32; 4] = [0.0, 1.0, 0.53, 1.0];
+const BAR_ASK: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
+const BAR_ASK_BRIGHT: [f32; 4] = [1.0, 0.27, 0.4, 1.0];
+
+const USER_ORDER_MARKER: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
+
+const DOM_ROW_HEIGHT: f32 = 20.0;
+const DOM_LEFT_PAD: f32 = 6.0;
+const DOM_PRICE_COL_WIDTH: f32 = 70.0;
+
+// ============================================================
+// TradingPanel impl for DomState
+// ============================================================
+
+impl TradingPanel for DomState {
+    fn kind(&self) -> &'static str {
+        "dom"
+    }
+
+    fn label(&self) -> &'static str {
+        "DOM"
+    }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        // Background fill
+        ctx.set_fill_color(&rgba_to_hex(BG_DEFAULT));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        // === STEP 1: Calculate layout ===
+        let levels = self.visible_levels_for_height(h);
+        let row_height = DOM_ROW_HEIGHT;
+
+        // Column layout: [Bid Volume Bar | Price | Ask Volume Bar]
+        let pad = 4.0_f32;
+        let price_col_w = DOM_PRICE_COL_WIDTH;
+        let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
+        let vol_col_w = avail / 2.0;
+
+        let bid_vol_col_x = x + DOM_LEFT_PAD;
+        let bid_vol_col_w = vol_col_w;
+
+        let price_col_x = bid_vol_col_x + bid_vol_col_w + pad;
+
+        let ask_vol_col_x = price_col_x + price_col_w + pad;
+
+        // === STEP 3: Find best bid and best ask for highlighting ===
+        let best_bid_price = levels.iter()
+            .filter(|level| level.is_bid)
+            .map(|level| level.price)
+            .max_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let best_ask_price = levels.iter()
+            .filter(|level| level.is_ask)
+            .map(|level| level.price)
+            .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        // === STEP 4: Render each price level row ===
+        for (i, level) in levels.iter().enumerate() {
+            let row_y = y + (i as f32 * row_height);
+
+            // --- Step 4.1: Row background ---
+            let is_best_bid = best_bid_price.map_or(false, |p| (level.price - p).abs() < 0.001);
+            let is_best_ask = best_ask_price.map_or(false, |p| (level.price - p).abs() < 0.001);
+            let is_current_price = (level.price - self.market_price).abs() < self.tick_size * 0.5;
+
+            let bg_color = if is_current_price {
+                BG_CURRENT_PRICE
+            } else if is_best_bid {
+                BG_BEST_BID
+            } else if is_best_ask {
+                BG_BEST_ASK
+            } else if level.is_spread {
+                BG_SPREAD
+            } else {
+                BG_DEFAULT
+            };
+
+            ctx.set_fill_color(&rgba_to_hex(bg_color));
+            ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+
+            // --- Step 4.1b: Hover highlight overlay ---
+            let is_hovered = self.hovered_price
+                .map_or(false, |hp| (level.price - hp).abs() < self.tick_size * 0.5);
+
+            if is_hovered {
+                ctx.set_fill_color(&rgba_to_hex(BG_HOVER));
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+
+                let accent_color = if level.is_bid {
+                    BAR_BID_BRIGHT
+                } else if level.is_ask {
+                    BAR_ASK_BRIGHT
+                } else {
+                    [0.4, 0.5, 0.8, 1.0]
+                };
+                ctx.set_fill_color(&rgba_to_hex(accent_color));
+                ctx.fill_rect(x as f64, row_y as f64, 3.0, row_height as f64);
+            }
+
+            // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---
+            if level.bid_volume > 0.0 {
+                let bar_width = self.bid_bar_width(level.bid_volume, vol_col_w);
+                let bar_x = bid_vol_col_x + bid_vol_col_w - bar_width;
+                let bar_y = row_y + 2.0;
+                let bar_h = row_height - 4.0;
+
+                let intensity = (level.bid_volume / self.max_volume).clamp(0.0, 1.0) as f32;
+                let bar_color = [
+                    BAR_BID[0] * (1.0 - intensity) + BAR_BID_BRIGHT[0] * intensity,
+                    BAR_BID[1] * (1.0 - intensity) + BAR_BID_BRIGHT[1] * intensity,
+                    BAR_BID[2] * (1.0 - intensity) + BAR_BID_BRIGHT[2] * intensity,
+                    1.0,
+                ];
+
+                ctx.set_fill_color(&rgba_to_hex(bar_color));
+                ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+
+                ctx.set_fill_color(&rgba_to_hex(TEXT_VOL_BID));
+                ctx.set_font("10px monospace");
+                ctx.set_text_align(TextAlign::Right);
+                ctx.set_text_baseline(TextBaseline::Middle);
+
+                let text_x = bid_vol_col_x + bid_vol_col_w - 4.0;
+                let text_y = row_y + row_height / 2.0;
+                let vol_text = format!("{:.0}", level.bid_volume);
+                ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
+            }
+
+            // --- Step 4.3: Ask volume bar (left-aligned, grows rightward) ---
+            if level.ask_volume > 0.0 {
+                let bar_width = self.ask_bar_width(level.ask_volume, vol_col_w);
+                let bar_x = ask_vol_col_x;
+                let bar_y = row_y + 2.0;
+                let bar_h = row_height - 4.0;
+
+                let intensity = (level.ask_volume / self.max_volume).clamp(0.0, 1.0) as f32;
+                let bar_color = [
+                    BAR_ASK[0] * (1.0 - intensity) + BAR_ASK_BRIGHT[0] * intensity,
+                    BAR_ASK[1] * (1.0 - intensity) + BAR_ASK_BRIGHT[1] * intensity,
+                    BAR_ASK[2] * (1.0 - intensity) + BAR_ASK_BRIGHT[2] * intensity,
+                    1.0,
+                ];
+
+                ctx.set_fill_color(&rgba_to_hex(bar_color));
+                ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+
+                ctx.set_fill_color(&rgba_to_hex(TEXT_VOL_ASK));
+                ctx.set_font("10px monospace");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+
+                let text_x = ask_vol_col_x + 4.0;
+                let text_y = row_y + row_height / 2.0;
+                let vol_text = format!("{:.0}", level.ask_volume);
+                ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
+            }
+
+            // --- Step 4.4: Price text (centered in price column) ---
+            let price_text_color = if is_current_price {
+                TEXT_PRICE_CURRENT
+            } else if is_best_bid {
+                TEXT_PRICE_BEST_BID
+            } else if is_best_ask {
+                TEXT_PRICE_BEST_ASK
+            } else {
+                TEXT_PRICE_DEFAULT
+            };
+
+            ctx.set_fill_color(&rgba_to_hex(price_text_color));
+            ctx.set_font("11px monospace");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+
+            let price_x = price_col_x + price_col_w / 2.0;
+            let price_y = row_y + row_height / 2.0;
+            let price_text = format!("{:.2}", level.price);
+            ctx.fill_text(&price_text, price_x as f64, price_y as f64);
+
+            // --- Step 4.5: User order markers ---
+            if level.has_user_order {
+                ctx.set_fill_color(&rgba_to_hex(USER_ORDER_MARKER));
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("▲", bid_vol_col_x as f64, price_y as f64);
+            }
+        }
+
+        // === STEP 5: Render spread separator (horizontal line) ===
+        if let (Some(best_bid), Some(best_ask)) = (best_bid_price, best_ask_price) {
+            if let (Some(bid_idx), Some(_ask_idx)) = (
+                levels.iter().position(|l| (l.price - best_bid).abs() < 0.001),
+                levels.iter().position(|l| (l.price - best_ask).abs() < 0.001),
+            ) {
+                let spread_y = y + (bid_idx as f32 + 0.5) * row_height;
+                ctx.set_fill_color(&rgba_to_hex([0.4, 0.4, 0.5, 0.5]));
+                ctx.fill_rect(x as f64, spread_y as f64, w as f64, 1.0);
+            }
+        }
+
+        // === STEP 6: Flash animation for recent fills ===
+        let now = std::time::Instant::now();
+        for (price_tick, (_volume, timestamp)) in &self.recent_fills {
+            let elapsed_ms = now.duration_since(*timestamp).as_millis() as u64;
+            if elapsed_ms < 300 {
+                let price = self.tick_to_price(*price_tick);
+                if let Some(row_idx) = levels.iter().position(|l| (l.price - price).abs() < 0.001) {
+                    let flash_y = y + (row_idx as f32 * row_height);
+
+                    let alpha = if elapsed_ms < 100 {
+                        0.4
+                    } else {
+                        0.4 * (1.0 - (elapsed_ms - 100) as f32 / 200.0)
+                    };
+
+                    let level = &levels[row_idx];
+                    let flash_color = if level.is_bid {
+                        [0.0, 1.0, 0.4, alpha]
+                    } else {
+                        [1.0, 0.2, 0.3, alpha]
+                    };
+                    ctx.set_fill_color(&rgba_to_hex(flash_color));
+                    ctx.fill_rect(x as f64, flash_y as f64, w as f64, row_height as f64);
+                }
+            }
+        }
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        false
+    }
 }

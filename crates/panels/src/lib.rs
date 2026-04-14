@@ -10,6 +10,8 @@
 
 pub mod trading;
 pub mod renderers;
+pub mod panel_trait;
+pub mod panel_router;
 
 // Re-export RenderContext under the old `crate::render` path so the copied
 // renderer files can keep `use crate::render::{RenderContext, ...};` unchanged.

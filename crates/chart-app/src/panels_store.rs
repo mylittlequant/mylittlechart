@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sidebar_content::free_slot::PanelId;
 
+use zengeld_panels::panel_trait::TradingPanel;
 use zengeld_panels::trading::order_flow::{
     big_trades::BigTradesState,
     dom::DomState,
@@ -170,6 +171,45 @@ impl TradingPanelsStore {
             TradingContainerState::new(symbol, tick_size, market_price),
         );
         id
+    }
+
+    // -------------------------------------------------------------------------
+    // get_panel / get_panel_mut — trait-object access for migrated panels
+    // -------------------------------------------------------------------------
+
+    /// Get an immutable reference to a panel's `TradingPanel` impl, if migrated.
+    /// Returns `None` for panels not yet migrated to the trait.
+    pub fn get_panel(&self, item: &FreeItem) -> Option<&dyn TradingPanel> {
+        match item {
+            FreeItem::Dom(id) => self.dom.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::Footprint(id) => self.footprint.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::VolumeProfile(id) => self.volume_profile.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::BigTrades(id) => self.big_trades.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::L2Tape(id) => self.l2_tape.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::OrderEntry(id) => self.order_entry.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::RiskCalculator(id) => self.risk_calculator.get(id).map(|s| s as &dyn TradingPanel),
+            _ => None,
+        }
+    }
+
+    /// Get a mutable reference to a panel's `TradingPanel` impl, if migrated.
+    pub fn get_panel_mut(&mut self, item: &FreeItem) -> Option<&mut dyn TradingPanel> {
+        match item {
+            FreeItem::Dom(id) => self.dom.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::Footprint(id) => self.footprint.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::VolumeProfile(id) => self.volume_profile.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::BigTrades(id) => self.big_trades.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::L2Tape(id) => self.l2_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::OrderEntry(id) => self.order_entry.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::RiskCalculator(id) => self.risk_calculator.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            _ => None,
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -6,6 +6,9 @@
 use std::collections::{HashMap, VecDeque};
 use serde::{Serialize, Deserialize};
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// Types of L2 order book events
 #[derive(Clone, Debug, PartialEq)]
 pub enum L2EventType {
@@ -114,6 +117,150 @@ impl L2TapePanel {
     pub fn type_id(&self) -> &'static str { "l2_tape" }
     pub fn kind_label(&self) -> &'static str { "L2 Tape" }
     pub fn min_size(&self) -> (f32, f32) { (200.0, 150.0) }
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const L2_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const L2_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
+const L2_HEADER_BG: [f32; 4] = [0.075, 0.094, 0.118, 1.0];
+const L2_HEADER_TEXT: [f32; 4] = [0.5, 0.52, 0.57, 1.0];
+const L2_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
+const L2_SIDE_BID: [f32; 4] = [0.055, 0.796, 0.506, 1.0];
+const L2_SIDE_ASK: [f32; 4] = [0.965, 0.275, 0.365, 1.0];
+const L2_SYMBOL_TEXT: [f32; 4] = [0.4, 0.42, 0.47, 1.0];
+const L2_ROW_HEIGHT: f32 = 16.0;
+const L2_HEADER_HEIGHT: f32 = 16.0;
+const L2_LEFT_PAD: f32 = 6.0;
+
+impl TradingPanel for L2TapeState {
+    fn kind(&self) -> &'static str { "l2_tape" }
+    fn label(&self) -> &'static str { "L2 Tape" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        ctx.set_fill_color(&rgba_to_hex(L2_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let time_w  = (w * 0.28).max(70.0);
+        let type_w  = (w * 0.12).max(30.0);
+        let side_w  = (w * 0.12).max(28.0);
+        let price_w = (w * 0.24).max(60.0);
+
+        let col_time_x  = x + L2_LEFT_PAD;
+        let col_type_x  = col_time_x  + time_w;
+        let col_side_x  = col_type_x  + type_w;
+        let col_price_x = col_side_x  + side_w;
+        let col_qty_x   = col_price_x + price_w;
+
+        ctx.set_fill_color(&rgba_to_hex(L2_HEADER_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, L2_HEADER_HEIGHT as f64);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+
+        let header_text_y = (y + L2_HEADER_HEIGHT / 2.0) as f64;
+        ctx.fill_text("TIME",  col_time_x  as f64, header_text_y);
+        ctx.fill_text("TYPE",  col_type_x  as f64, header_text_y);
+        ctx.fill_text("SIDE",  col_side_x  as f64, header_text_y);
+        ctx.fill_text("PRICE", col_price_x as f64, header_text_y);
+        ctx.fill_text("QTY",   col_qty_x   as f64, header_text_y);
+
+        if !self.symbol.is_empty() {
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color(&rgba_to_hex(L2_SYMBOL_TEXT));
+            ctx.fill_text(&self.symbol, (x + w - 6.0) as f64, header_text_y);
+        }
+
+        let content_h = h - L2_HEADER_HEIGHT;
+        let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
+        if max_rows == 0 {
+            return;
+        }
+
+        let events = self.visible_events(max_rows);
+
+        for (row_idx, event) in events.iter().enumerate() {
+            let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
+            let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
+
+            let row_bg = if row_idx % 2 == 0 { L2_BG } else { L2_BG_ALT };
+            ctx.set_fill_color(&rgba_to_hex(row_bg));
+            ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
+
+            ctx.set_font("10px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+
+            let total_secs = (event.timestamp / 1000) % 86400;
+            let hours  = total_secs / 3600;
+            let mins   = (total_secs % 3600) / 60;
+            let secs   = total_secs % 60;
+            let millis = event.timestamp % 1000;
+            let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
+
+            ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+            ctx.fill_text(&time_str, col_time_x as f64, row_mid_y);
+
+            let type_color = self.event_color(event);
+            ctx.set_fill_color(&rgba_to_hex(type_color));
+            ctx.fill_text(L2TapeState::event_label(&event.event_type), col_type_x as f64, row_mid_y);
+
+            let side_color = match event.side {
+                L2Side::Bid => L2_SIDE_BID,
+                L2Side::Ask => L2_SIDE_ASK,
+            };
+            ctx.set_fill_color(&rgba_to_hex(side_color));
+            ctx.fill_text(L2TapeState::side_label(&event.side), col_side_x as f64, row_mid_y);
+
+            let decimals = if self.tick_size >= 1.0 {
+                0usize
+            } else if self.tick_size >= 0.1 {
+                1
+            } else if self.tick_size >= 0.01 {
+                2
+            } else if self.tick_size >= 0.001 {
+                3
+            } else {
+                4
+            };
+            let price_str = format!("{:.prec$}", event.price, prec = decimals);
+            ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+            ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
+
+            let qty_str = if event.quantity >= 1000.0 {
+                format!("{:.0}", event.quantity)
+            } else if event.quantity >= 1.0 {
+                format!("{:.2}", event.quantity)
+            } else {
+                format!("{:.4}", event.quantity)
+            };
+            ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
+        }
+
+        if events.is_empty() {
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+            ctx.fill_text(
+                "No events",
+                (x + w / 2.0) as f64,
+                (y + h / 2.0) as f64,
+            );
+        }
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 impl L2TapeState {

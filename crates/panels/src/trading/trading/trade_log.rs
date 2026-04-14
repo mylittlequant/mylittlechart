@@ -1,5 +1,8 @@
 use serde::{Serialize, Deserialize};
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// TradeLog panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TradeLogId(pub u64);
@@ -165,6 +168,154 @@ fn format_timestamp(ts: i64) -> String {
     let m = (secs % 3600) / 60;
     let s = secs % 60;
     format!("{:02}:{:02}:{:02}", h, m, s)
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const TL_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const TL_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
+const TL_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
+const TL_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
+const TL_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
+const TL_TEXT_GREY: [f32; 4] = [0.45, 0.48, 0.54, 1.0];
+const TL_BUY_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
+const TL_SELL_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+const TL_PNL_POS: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
+const TL_PNL_NEG: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
+const TL_HEADER_HEIGHT: f32 = 18.0;
+const TL_ROW_HEIGHT: f32 = 18.0;
+const TL_SUMMARY_HEIGHT: f32 = 20.0;
+const TL_LEFT_PAD: f32 = 6.0;
+
+impl TradingPanel for TradeLogState {
+    fn kind(&self) -> &'static str { "trade_log" }
+    fn label(&self) -> &'static str { "Trade Log" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        ctx.set_fill_color(&rgba_to_hex(TL_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let time_w   = (w * 0.20).max(64.0);
+        let symbol_w = (w * 0.20).max(58.0);
+        let side_w   = (w * 0.11).max(34.0);
+        let price_w  = (w * 0.20).max(60.0);
+        let qty_w    = (w * 0.16).max(48.0);
+
+        let col_time_x   = x + TL_LEFT_PAD;
+        let col_symbol_x = col_time_x   + time_w;
+        let col_side_x   = col_symbol_x + symbol_w;
+        let col_price_x  = col_side_x   + side_w;
+        let col_qty_x    = col_price_x  + price_w;
+        let col_fee_x    = col_qty_x    + qty_w;
+
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, TL_HEADER_HEIGHT as f64);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+
+        let header_text_y = (y + TL_HEADER_HEIGHT / 2.0) as f64;
+        ctx.fill_text("TIME",   col_time_x   as f64, header_text_y);
+        ctx.fill_text("SYMBOL", col_symbol_x as f64, header_text_y);
+        ctx.fill_text("SIDE",   col_side_x   as f64, header_text_y);
+        ctx.fill_text("PRICE",  col_price_x  as f64, header_text_y);
+        ctx.fill_text("QTY",    col_qty_x    as f64, header_text_y);
+        ctx.fill_text("FEE",    col_fee_x    as f64, header_text_y);
+
+        let content_h = h - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
+        let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
+        let trades = self.visible_trades(0, max_rows);
+
+        if trades.is_empty() {
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+            ctx.fill_text("No trades", (x + w / 2.0) as f64, (y + TL_HEADER_HEIGHT + content_h / 2.0) as f64);
+        } else {
+            for (i, trade) in trades.iter().enumerate() {
+                let row_y = y + TL_HEADER_HEIGHT + (i as f32 * TL_ROW_HEIGHT);
+
+                let row_bg = if i % 2 == 0 { TL_BG } else { TL_BG_ALT };
+                ctx.set_fill_color(&rgba_to_hex(row_bg));
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, TL_ROW_HEIGHT as f64);
+
+                let text_y = (row_y + TL_ROW_HEIGHT / 2.0) as f64;
+
+                ctx.set_font("10px monospace");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+
+                let secs = (trade.timestamp / 1000) % 86400;
+                let hh = secs / 3600;
+                let mm = (secs % 3600) / 60;
+                let ss = secs % 60;
+                let time_str = format!("{:02}:{:02}:{:02}", hh, mm, ss);
+                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+                ctx.fill_text(&time_str, col_time_x as f64, text_y);
+
+                let symbol = if trade.symbol.len() > 9 { &trade.symbol[..9] } else { trade.symbol.as_str() };
+                ctx.fill_text(symbol, col_symbol_x as f64, text_y);
+
+                let (side_str, side_color) = match trade.side {
+                    OrderSide::Buy  => ("BUY",  TL_BUY_TEXT),
+                    OrderSide::Sell => ("SELL", TL_SELL_TEXT),
+                };
+                ctx.set_fill_color(&rgba_to_hex(side_color));
+                ctx.fill_text(side_str, col_side_x as f64, text_y);
+
+                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+                let price_str = format!("{:.4}", trade.price);
+                ctx.fill_text(&price_str, col_price_x as f64, text_y);
+
+                let qty_str = format!("{:.4}", trade.quantity);
+                ctx.fill_text(&qty_str, col_qty_x as f64, text_y);
+
+                ctx.set_font("9px monospace");
+                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_GREY));
+                let fee_str = format!("{:.4}", trade.commission);
+                ctx.fill_text(&fee_str, col_fee_x as f64, text_y);
+
+                ctx.set_fill_color(&rgba_to_hex([0.15, 0.17, 0.22, 0.5]));
+                ctx.fill_rect(x as f64, (row_y + TL_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
+            }
+        }
+
+        let summary_y = y + h - TL_SUMMARY_HEIGHT;
+        ctx.set_fill_color(&rgba_to_hex([0.2, 0.22, 0.28, 0.8]));
+        ctx.fill_rect(x as f64, summary_y as f64, w as f64, 1.0);
+
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+        ctx.fill_rect(x as f64, (summary_y + 1.0) as f64, w as f64, (TL_SUMMARY_HEIGHT - 1.0) as f64);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+
+        let summary_text_y = (summary_y + TL_SUMMARY_HEIGHT / 2.0) as f64;
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.fill_text("Total PnL:", (x + TL_LEFT_PAD) as f64, summary_text_y);
+
+        let pnl_color = if self.total_pnl >= 0.0 { TL_PNL_POS } else { TL_PNL_NEG };
+        ctx.set_fill_color(&rgba_to_hex(pnl_color));
+        let pnl_str = format!("{:+.2}", self.total_pnl);
+        ctx.fill_text(&pnl_str, (x + TL_LEFT_PAD + 68.0) as f64, summary_text_y);
+
+        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.set_text_align(TextAlign::Right);
+        let count_str = format!("Trades: {}", self.trades.len());
+        ctx.fill_text(&count_str, (x + w - TL_LEFT_PAD) as f64, summary_text_y);
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 /// TradeLog panel configuration

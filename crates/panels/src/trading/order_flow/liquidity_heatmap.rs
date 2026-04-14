@@ -1,6 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// LiquidityHeatmap panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LiquidityHeatmapId(pub u64);
@@ -251,6 +254,71 @@ pub enum HeatmapSide {
     Bids,
     Asks,
     Both,
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const CURRENT_PRICE_LINE: [f32; 4] = [1.0, 0.87, 0.0, 1.0];
+
+impl TradingPanel for LiquidityHeatmapState {
+    fn kind(&self) -> &'static str { "liquidity_heatmap" }
+    fn label(&self) -> &'static str { "Liquidity Heatmap" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        let config = LiquidityHeatmapConfig::default();
+
+        ctx.set_fill_color(&rgba_to_hex([0.0, 0.0, 0.0, 1.0]));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let cells = self.visible_cells(w, h);
+
+        for (time_idx, price_tick, color) in cells {
+            let cell_x = x + self.time_to_x(time_idx, w);
+            let cell_y = y + self.price_to_y(price_tick, h);
+
+            ctx.set_fill_color(&rgba_to_hex(color));
+            ctx.fill_rect(
+                cell_x as f64,
+                cell_y as f64,
+                config.cell_width as f64,
+                config.cell_height as f64,
+            );
+        }
+
+        if config.show_current_book {
+            if let Some(snapshot) = self.snapshots.last() {
+                if let Some(&current_tick) = snapshot.depth_by_price.keys().next() {
+                    let current_y = self.price_to_y(current_tick, h);
+
+                    ctx.set_fill_color(&rgba_to_hex(CURRENT_PRICE_LINE));
+                    ctx.fill_rect(x as f64, current_y as f64, w as f64, 2.0);
+
+                    ctx.set_fill_color(&rgba_to_hex([0.0, 0.0, 0.0, 0.5]));
+                    ctx.fill_rect(x as f64, (current_y + 2.0) as f64, w as f64, 1.0);
+                }
+            }
+        }
+
+        ctx.set_font("9px sans-serif");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&rgba_to_hex([0.7, 0.7, 0.7, 1.0]));
+
+        let num_labels = 10;
+        for i in 0..num_labels {
+            let label_y = y + (i as f32 / num_labels as f32) * h;
+            let label_text = format!("{:.2}", 50000.0 + i as f64 * 10.0);
+            ctx.fill_text(&label_text, (x + w - 4.0) as f64, label_y as f64);
+        }
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 /// LiquidityHeatmap panel configuration

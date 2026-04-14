@@ -1,6 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// Footprint panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FootprintId(pub u64);
@@ -270,6 +273,98 @@ impl Default for FootprintConfig {
             show_imbalances: true,
         }
     }
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const CELL_TEXT_DEFAULT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
+const POC_MARKER: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const POC_BORDER: [f32; 4] = [1.0, 0.87, 0.0, 1.0];
+const CANDLE_BULLISH: [f32; 4] = [0.0, 0.67, 0.33, 1.0];
+const CELL_MIN_HEIGHT: f32 = 8.0;
+const CELL_MAX_HEIGHT: f32 = 30.0;
+
+impl TradingPanel for FootprintState {
+    fn kind(&self) -> &'static str { "footprint" }
+    fn label(&self) -> &'static str { "Footprint" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        let config = FootprintConfig::default();
+
+        ctx.set_fill_color(&rgba_to_hex([0.05, 0.05, 0.09, 1.0]));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let num_visible = (w / config.candle_width).floor() as usize;
+        let start_idx = (self.scroll_x / config.candle_width) as usize;
+        let end_idx = (start_idx + num_visible).min(self.footprints.len());
+
+        let candles = self.visible_candles(start_idx, end_idx);
+
+        for (candle_idx, candle) in candles.iter().enumerate() {
+            let candle_x = x + (candle_idx as f32 * config.candle_width);
+            let candle_w = config.candle_width;
+
+            let candle_color = CANDLE_BULLISH;
+            ctx.set_fill_color(&rgba_to_hex(candle_color));
+            ctx.fill_rect(candle_x as f64, y as f64, 2.0, h as f64);
+
+            let mut price_levels: Vec<(i64, f64, f64)> = candle.price_levels.clone();
+            price_levels.sort_by_key(|&(tick, _, _)| std::cmp::Reverse(tick));
+
+            let num_levels = price_levels.len();
+            if num_levels == 0 {
+                continue;
+            }
+
+            let cell_height = (h / num_levels as f32).clamp(CELL_MIN_HEIGHT, CELL_MAX_HEIGHT);
+
+            for (level_idx, &(price_tick, bid_vol, ask_vol)) in price_levels.iter().enumerate() {
+                let cell_y = y + (level_idx as f32 * cell_height);
+                let cell_w = candle_w - 4.0;
+                let cell_h = cell_height;
+
+                let cell_bg = self.cell_color(bid_vol, ask_vol);
+                ctx.set_fill_color(&rgba_to_hex(cell_bg));
+                ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, cell_w as f64, cell_h as f64);
+
+                ctx.set_fill_color(&rgba_to_hex([0.2, 0.2, 0.3, 0.5]));
+                ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, cell_w as f64, 0.5);
+
+                let cell_text = self.format_cell(bid_vol, ask_vol);
+
+                ctx.set_font("9px sans-serif");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_fill_color(&rgba_to_hex(CELL_TEXT_DEFAULT));
+
+                let text_x = candle_x + candle_w / 2.0;
+                let text_y = cell_y + cell_h / 2.0;
+                ctx.fill_text(&cell_text, text_x as f64, text_y as f64);
+
+                let price = price_tick as f64 * self.tick_size;
+                if (price - candle.poc).abs() < self.tick_size * 0.5 {
+                    ctx.set_fill_color(&rgba_to_hex(POC_MARKER));
+                    let marker_x = candle_x + candle_w - 6.0;
+                    let marker_y = cell_y + cell_h / 2.0 - 3.0;
+                    ctx.fill_rect(marker_x as f64, marker_y as f64, 6.0, 6.0);
+
+                    ctx.set_fill_color(&rgba_to_hex(POC_BORDER));
+                    ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, cell_w as f64, 1.0);
+                    ctx.fill_rect((candle_x + 2.0) as f64, (cell_y + cell_h - 1.0) as f64, cell_w as f64, 1.0);
+                    ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, 1.0, cell_h as f64);
+                    ctx.fill_rect((candle_x + candle_w - 3.0) as f64, cell_y as f64, 1.0, cell_h as f64);
+                }
+            }
+        }
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 /// Footprint panel wrapper (lightweight, lives in PanelKind)

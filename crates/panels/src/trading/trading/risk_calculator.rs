@@ -1,5 +1,8 @@
 use serde::{Serialize, Deserialize};
 
+use crate::panel_trait::TradingPanel;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
+
 /// RiskCalculator panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RiskCalculatorId(pub u64);
@@ -153,6 +156,141 @@ impl Default for RiskCalculatorState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn rgba_to_hex(rgba: [f32; 4]) -> String {
+    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
+    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
+    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
+    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
+}
+
+const RC_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
+const RC_TITLE_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
+const RC_LABEL: [f32; 4] = [0.533, 0.533, 0.533, 1.0];
+const RC_VALUE: [f32; 4] = [0.878, 0.878, 0.878, 1.0];
+const RC_RED: [f32; 4] = [0.871, 0.204, 0.267, 1.0];
+const RC_GREEN: [f32; 4] = [0.196, 0.804, 0.447, 1.0];
+const RC_GOLD: [f32; 4] = [1.0, 0.843, 0.0, 1.0];
+const RC_DIVIDER: [f32; 4] = [0.2, 0.22, 0.27, 1.0];
+const RC_TITLE_TEXT: [f32; 4] = [0.75, 0.78, 0.85, 1.0];
+const RC_ERROR: [f32; 4] = [0.9, 0.3, 0.3, 1.0];
+const RC_TITLE_HEIGHT: f32 = 20.0;
+const RC_ROW_HEIGHT: f32 = 20.0;
+const RC_LEFT_PAD: f32 = 8.0;
+const RC_LABEL_WIDTH: f32 = 105.0;
+
+impl TradingPanel for RiskCalculatorState {
+    fn kind(&self) -> &'static str { "risk_calculator" }
+    fn label(&self) -> &'static str { "Risk Calculator" }
+
+    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+        ctx.set_fill_color(&rgba_to_hex(RC_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        ctx.set_fill_color(&rgba_to_hex(RC_TITLE_BG));
+        ctx.fill_rect(x as f64, y as f64, w as f64, RC_TITLE_HEIGHT as f64);
+
+        ctx.set_fill_color(&rgba_to_hex(RC_TITLE_TEXT));
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Risk Calculator", (x + w / 2.0) as f64, (y + RC_TITLE_HEIGHT / 2.0) as f64);
+
+        let mut cursor_y = y + RC_TITLE_HEIGHT;
+
+        let input_rows: &[(&str, String)] = &[
+            ("Account Size:", format!("${:.2}", self.account_size)),
+            ("Risk %:", format!("{:.1}%", self.risk_percent)),
+            ("Entry Price:", format!("{:.4}", self.entry_price)),
+            ("Stop Loss:", format!("{:.4}", self.stop_loss_price)),
+            (
+                "Take Profit:",
+                self.take_profit_price
+                    .map(|tp| format!("{:.4}", tp))
+                    .unwrap_or_else(|| "\u{2014}".to_string()),
+            ),
+        ];
+
+        for (label, value) in input_rows {
+            let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
+
+            ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+            ctx.set_font("10px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
+
+            ctx.set_fill_color(&rgba_to_hex(RC_VALUE));
+            ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
+
+            cursor_y += RC_ROW_HEIGHT;
+        }
+
+        ctx.set_fill_color(&rgba_to_hex(RC_DIVIDER));
+        ctx.fill_rect((x + RC_LEFT_PAD) as f64, cursor_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, 1.0);
+        cursor_y += 6.0;
+
+        let rr_color = if let Some(rr) = self.risk_reward_ratio {
+            if rr >= 2.0 { RC_GOLD } else { RC_VALUE }
+        } else {
+            RC_VALUE
+        };
+
+        let leverage_str = self.leverage
+            .map(|lev| format!("{}x", lev))
+            .unwrap_or_else(|| "1x".to_string());
+
+        let computed_rows: &[(&str, String, [f32; 4])] = &[
+            ("Risk Amount:", self.format_output("risk_amount"), RC_RED),
+            ("Position Size:", self.format_output("position_size"), RC_VALUE),
+            ("Risk/Unit:", self.format_output("risk_per_unit"), RC_VALUE),
+            ("Potential Profit:", self.format_output("potential_profit"), RC_GREEN),
+            ("R:R Ratio:", self.format_output("risk_reward_ratio"), rr_color),
+            ("Leverage:", leverage_str, RC_VALUE),
+            ("Margin Req:", self.format_output("margin_required"), RC_VALUE),
+        ];
+
+        for (label, value, color) in computed_rows {
+            if cursor_y + RC_ROW_HEIGHT > y + h - 20.0 {
+                break;
+            }
+
+            let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
+
+            ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+            ctx.set_font("10px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
+
+            ctx.set_fill_color(&rgba_to_hex(*color));
+            ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
+
+            cursor_y += RC_ROW_HEIGHT;
+        }
+
+        if !self.errors.is_empty() {
+            cursor_y += 4.0;
+            ctx.set_fill_color(&rgba_to_hex(RC_ERROR));
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+
+            for error in &self.errors {
+                if cursor_y > y + h - RC_ROW_HEIGHT {
+                    break;
+                }
+                ctx.fill_text(error, (x + RC_LEFT_PAD) as f64, cursor_y as f64);
+                cursor_y += RC_ROW_HEIGHT;
+            }
+        }
+
+        let _ = cursor_y;
+    }
+
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
 }
 
 /// RiskCalculator panel configuration
