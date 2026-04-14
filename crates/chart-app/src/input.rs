@@ -10312,6 +10312,66 @@ impl ChartApp {
             }
         }
 
+        // --- slot:{idx}:leaf:{leaf_id}:am_toggle — toggle DOM auto_center ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":am_toggle") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+                            if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                    state.auto_center = !state.auto_center;
+                                    if state.auto_center && state.market_price > 0.0 {
+                                        state.center_price = state.market_price;
+                                    }
+                                    self.sidebar_data_dirty = true;
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:tick_size — cycle DOM tick_size ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":tick_size") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+                            if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                    const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
+                                    let cur = state.tick_size;
+                                    let next = TICKS.iter()
+                                        .find(|&&t| t > cur * 1.001)
+                                        .copied()
+                                        .unwrap_or(TICKS[0]);
+                                    state.tick_size = next;
+                                    state.volume_by_price.clear();
+                                    self.sidebar_data_dirty = true;
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         // --- slot:{idx}:leaf:{leaf_id}:source_cycle — cycle SymbolSource ---
         if let Some(rest) = widget_id.strip_prefix("slot:") {
             if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {

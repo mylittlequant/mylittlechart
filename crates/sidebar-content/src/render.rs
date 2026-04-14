@@ -224,6 +224,7 @@ pub fn render_right_sidebar(
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
+    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64)>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -584,6 +585,7 @@ pub fn render_right_sidebar(
                 input_coordinator,
                 free_item_renderer,
                 panel_source_label_fn,
+                panel_dom_info_fn,
             );
         }
 
@@ -3440,10 +3442,11 @@ fn render_slot_panel(
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
+    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64)>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
-    const LEAF_HEADER_H: f32 = 22.0;
+    const LEAF_HEADER_H: f32 = 24.0;
 
     let pad = 8.0;
     let inner_x = rect.x + pad;
@@ -3722,29 +3725,26 @@ fn render_slot_panel(
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
-        // ── Per-leaf header ──────────────────────────────────────────────────
+        // ── Per-leaf header (overlay-tab style) ─────────────────────────────
         let header_x = r.x;
         let header_y = r.y;
         let header_w = r.width;
         let header_h = LEAF_HEADER_H;
 
-        // Header background:
-        //   focused   → bright (keyboard focus)
-        //   hovered   → subtle highlight (mouse hover, not focused)
-        //   otherwise → dark baseline
         let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
         let is_hovered = hovered_free_leaf == Some((slot_idx, leaf_id));
-        let header_color = if is_focused {
-            theme.accent.as_str()
-        } else if is_hovered {
-            theme.item_bg_hover.as_str()
-        } else {
-            theme.background.as_str()
-        };
-        ctx.set_fill_color(header_color);
+
+        // Background: semi-transparent dark (like chart overlay tab)
+        ctx.set_fill_color(if is_hovered { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, header_h as f64);
 
-        // Header bottom separator.
+        // Left accent bar (2px wide, full height) — only when focused
+        if is_focused {
+            ctx.set_fill_color(&theme.accent);
+            ctx.fill_rect(header_x as f64, header_y as f64, 2.0, header_h as f64);
+        }
+
+        // Bottom separator line
         ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
@@ -3752,52 +3752,100 @@ fn render_slot_panel(
         ctx.line_to((header_x + header_w) as f64, (header_y + header_h) as f64);
         ctx.stroke();
 
-        // Panel title text.
+        // Text content — symbol key from source label, or fallback to panel title
+        let display_text = panel_source_label_fn(&item)
+            .map(|label| {
+                let parts: Vec<&str> = label.split(':').collect();
+                if parts.len() == 3 {
+                    format!("{} \u{00b7} {} \u{00b7} {}", parts[1], parts[0], parts[2])
+                } else {
+                    label
+                }
+            })
+            .unwrap_or_else(|| item.title().to_string());
+
+        let text_x = header_x + if is_focused { 6.0 } else { 4.0 };
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#c9d1d9");
+        ctx.set_fill_color(&theme.item_text);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            item.title(),
-            (header_x + 6.0) as f64,
-            (header_y + header_h / 2.0) as f64,
-        );
 
-        // Source binding label — shown right after the title in muted text.
-        if let Some(label) = panel_source_label_fn(&item) {
-            let title_approx_w = item.title().len() as f32 * 6.5 + 4.0;
-            ctx.set_font("9px sans-serif");
-            ctx.set_fill_color("#6e7681");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(
-                &label,
-                (header_x + 6.0 + title_approx_w) as f64,
-                (header_y + header_h / 2.0) as f64,
-            );
-        }
-
-        // Button layout (right-to-left from right edge):
-        //   [×] close
-        let btn_w = 14.0_f32;
-        let btn_h = 14.0_f32;
+        // === Right-side buttons (right to left) ===
+        let btn_h = 16.0_f32;
         let btn_y = header_y + (header_h - btn_h) / 2.0;
+        let mut right_x = header_x + header_w - 3.0;
 
-        // Close [×] button.
-        let close_x = header_x + header_w - btn_w - 3.0;
-        let close_y = btn_y;
+        // [×] close button
+        let close_w = 16.0_f32;
+        right_x -= close_w;
+        let close_x = right_x;
+        let close_id = format!("slot:{}:leaf:{}:close", slot_idx, leaf_id.0);
+        let close_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&close_id));
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#8b949e");
+        ctx.set_fill_color(if close_hov { &theme.item_text } else { "#8b949e" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(
-            "\u{00d7}", // ×
-            (close_x + btn_w / 2.0) as f64,
-            (close_y + btn_h / 2.0) as f64,
+            "\u{00d7}",
+            (close_x + close_w / 2.0) as f64,
+            (btn_y + btn_h / 2.0) as f64,
         );
+        let close_rect = WidgetRect::new(close_x as f64, btn_y as f64, close_w as f64, btn_h as f64);
+        input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((close_id, close_rect));
+        right_x -= 2.0;
 
-        // Register header focus widget (full header minus close button).
-        let buttons_total_w = btn_w + 3.0;
+        // DOM-specific: [A/M] toggle + tick_size label
+        if let Some((auto_center, tick_size)) = panel_dom_info_fn(&item) {
+            // Tick size label (e.g. "0.01")
+            let ts_text = format_tick_size(tick_size);
+            let ts_w = 36.0_f32;
+            right_x -= ts_w;
+            let ts_x = right_x;
+            let ts_id = format!("slot:{}:leaf:{}:tick_size", slot_idx, leaf_id.0);
+            let ts_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&ts_id));
+            ctx.set_font("9px monospace");
+            ctx.set_fill_color(if ts_hov { &theme.item_text } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &ts_text,
+                (ts_x + ts_w / 2.0) as f64,
+                (btn_y + btn_h / 2.0) as f64,
+            );
+            let ts_rect = WidgetRect::new(ts_x as f64, btn_y as f64, ts_w as f64, btn_h as f64);
+            input_coordinator.register(ts_id.as_str(), ts_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((ts_id, ts_rect));
+            right_x -= 2.0;
+
+            // [A] or [M] button
+            let am_w = 18.0_f32;
+            right_x -= am_w;
+            let am_x = right_x;
+            let am_label = if auto_center { "A" } else { "M" };
+            let am_id = format!("slot:{}:leaf:{}:am_toggle", slot_idx, leaf_id.0);
+            let am_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&am_id));
+            if am_hov || !auto_center {
+                ctx.set_fill_color(if am_hov { &theme.item_bg_hover } else { "#2a2a3e" });
+                ctx.fill_rounded_rect(am_x as f64, btn_y as f64, am_w as f64, btn_h as f64, 2.0);
+            }
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(if auto_center { &theme.item_text_muted } else { "#e0a060" });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                am_label,
+                (am_x + am_w / 2.0) as f64,
+                (btn_y + btn_h / 2.0) as f64,
+            );
+            let am_rect = WidgetRect::new(am_x as f64, btn_y as f64, am_w as f64, btn_h as f64);
+            input_coordinator.register(am_id.as_str(), am_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((am_id, am_rect));
+            right_x -= 2.0;
+        }
+
+        // Register header focus widget (full header minus right buttons).
+        let buttons_total_w = header_x + header_w - right_x;
         let focus_id = format!("slot:{}:leaf:{}:focus", slot_idx, leaf_id.0);
         let focus_rect = WidgetRect::new(
             header_x as f64,
@@ -3808,16 +3856,16 @@ fn render_slot_panel(
         input_coordinator.register(focus_id.as_str(), focus_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((focus_id, focus_rect));
 
-        // Register close button widget.
-        let close_id = format!("slot:{}:leaf:{}:close", slot_idx, leaf_id.0);
-        let close_rect = WidgetRect::new(
-            close_x as f64,
-            close_y as f64,
-            btn_w as f64,
-            btn_h as f64,
+        // Draw title text (after registering buttons so width is known).
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&theme.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            &display_text,
+            text_x as f64,
+            (header_y + header_h / 2.0) as f64,
         );
-        input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((close_id, close_rect));
 
         // Body rect: everything below the header.
         let body_y = r.y + LEAF_HEADER_H;
@@ -6330,5 +6378,20 @@ pub fn find_agent_tooltip(widget_id: &str) -> Option<&'static str> {
         "agent:reset_sizes" => Some("Reset pane sizes"),
         "agent:close_pane" => Some("Close focused pane"),
         _ => None,
+    }
+}
+
+/// Format tick_size for display in DOM leaf header.
+fn format_tick_size(ts: f64) -> String {
+    if ts >= 1.0 {
+        format!("{:.0}", ts)
+    } else if ts >= 0.1 {
+        format!("{:.1}", ts)
+    } else if ts >= 0.01 {
+        format!("{:.2}", ts)
+    } else if ts >= 0.001 {
+        format!("{:.3}", ts)
+    } else {
+        format!("{:.4}", ts)
     }
 }

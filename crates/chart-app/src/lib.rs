@@ -5941,6 +5941,13 @@ impl ChartApp {
                         SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
                     }
                 },
+                &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {
+                    use sidebar_content::free_slot::FreeItem;
+                    match item {
+                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size)),
+                        _ => None,
+                    }
+                },
             );
 
             Some(sidebar_result)
@@ -6409,6 +6416,13 @@ impl ChartApp {
                         Some(format!("{}:{}:{}", exchange, symbol, account_type))
                     }
                     SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
+                }
+            },
+            &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {
+                use sidebar_content::free_slot::FreeItem;
+                match item {
+                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size)),
+                    _ => None,
                 }
             },
         );

@@ -73,11 +73,7 @@ pub fn render_dom_panel(
     height: f32,
     state: &DomState,
 ) {
-    // === STEP 1: Draw background ===
-    ctx.set_fill_color(&rgba_to_hex(BG_DEFAULT));
-    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
-
-    // === STEP 2: Calculate layout ===
+    // === STEP 1: Calculate layout ===
     let levels = state.visible_levels_for_height(height);
     let row_height = DOM_ROW_HEIGHT;
 
@@ -286,30 +282,6 @@ pub fn render_dom_panel(
         }
     }
 
-    // === A/M mode indicator (top-right corner) ===
-    {
-        let label = if state.auto_center { "A" } else { "M" };
-        let badge_w = 18.0_f32;
-        let badge_h = 16.0_f32;
-        let badge_x = x + width - badge_w - 4.0;
-        let badge_y = y + 2.0;
-
-        // Background pill
-        let bg_color = if state.auto_center {
-            [0.15, 0.35, 0.55, 0.85]  // blue-ish for Auto
-        } else {
-            [0.45, 0.25, 0.15, 0.85]  // orange-ish for Manual
-        };
-        ctx.set_fill_color(&rgba_to_hex(bg_color));
-        ctx.fill_rounded_rect(badge_x as f64, badge_y as f64, badge_w as f64, badge_h as f64, 3.0);
-
-        // Letter
-        ctx.set_fill_color(&rgba_to_hex([1.0, 1.0, 1.0, 0.9]));
-        ctx.set_font("10px monospace");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, (badge_x + badge_w / 2.0) as f64, (badge_y + badge_h / 2.0) as f64);
-    }
 }
 
 // ==============================
