@@ -3782,7 +3782,7 @@ fn render_slot_panel(
         let close_id = format!("slot:{}:leaf:{}:close", slot_idx, leaf_id.0);
         let close_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&close_id));
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if close_hov { &theme.item_text } else { "#8b949e" });
+        ctx.set_fill_color(if close_hov { &theme.item_text } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(
@@ -3826,11 +3826,11 @@ fn render_slot_panel(
             let am_id = format!("slot:{}:leaf:{}:am_toggle", slot_idx, leaf_id.0);
             let am_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&am_id));
             if am_hov || !auto_center {
-                ctx.set_fill_color(if am_hov { &theme.item_bg_hover } else { "#2a2a3e" });
+                ctx.set_fill_color(if am_hov { &theme.item_bg_hover } else { &theme.button_bg });
                 ctx.fill_rounded_rect(am_x as f64, btn_y as f64, am_w as f64, btn_h as f64, 2.0);
             }
             ctx.set_font("10px monospace");
-            ctx.set_fill_color(if auto_center { &theme.item_text_muted } else { "#e0a060" });
+            ctx.set_fill_color(if auto_center { &theme.item_text_muted } else { &theme.warning });
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(

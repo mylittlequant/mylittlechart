@@ -1709,6 +1709,11 @@ impl ChartApp {
         // are spawned — PTY leaves show "Click Start" skeleton, Chat leaves
         // lazily resume via `--resume <chat_session_id>` on first interaction.
         if let Some(ws) = window_state {
+            log::info!(
+                "[agents-diag] apply_profile_state: layout_json={} persisted_leaves={}",
+                if ws.agents_tab_layout.is_some() { "Some" } else { "None" },
+                ws.agents_tab_leaves.len(),
+            );
             if let Some(layout_json) = &ws.agents_tab_layout {
                 match uzor::panels::serialize::LayoutSnapshot::from_json(layout_json) {
                     Ok(snap) => {
@@ -1795,14 +1800,20 @@ impl ChartApp {
                                     "[ChartApp] agents docking restored: {} leaves",
                                     self.sidebar_state.agent_leaves.len()
                                 );
+                                log::info!(
+                                    "[agents-diag] restore OK: {} leaves in agent_leaves",
+                                    self.sidebar_state.agent_leaves.len()
+                                );
                             }
                             Err(e) => {
                                 eprintln!("[ChartApp] agents restore_tree failed: {}", e);
+                                log::warn!("[agents-diag] restore_tree FAILED: {}", e);
                             }
                         }
                     }
                     Err(e) => {
                         eprintln!("[ChartApp] agents layout deserialize failed: {}", e);
+                        log::warn!("[agents-diag] layout deserialize FAILED: {}", e);
                     }
                 }
             }
@@ -7901,6 +7912,38 @@ impl ChartApp {
             zengeld_chart::InlineDockEdge::Top => "Top",
             zengeld_chart::InlineDockEdge::Free => "Free",
         };
+        let agents_tab_layout = {
+            let tree = self.sidebar_state.agent_docking.inner().tree();
+            uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "agents")
+                .to_json()
+                .ok()
+        };
+        let agents_tab_leaves: Vec<zengeld_chart::PersistedAgentLeaf> = self
+            .sidebar_state
+            .agent_leaves
+            .iter()
+            .map(|(leaf_id, desc)| zengeld_chart::PersistedAgentLeaf {
+                leaf_id: leaf_id.0,
+                cli: match desc.cli {
+                    gate4agent::AgentCli::Claude => zengeld_chart::PersistedAgentCli::Claude,
+                    gate4agent::AgentCli::Codex => zengeld_chart::PersistedAgentCli::Codex,
+                    gate4agent::AgentCli::Gemini => zengeld_chart::PersistedAgentCli::Gemini,
+                    gate4agent::AgentCli::OpenCode => zengeld_chart::PersistedAgentCli::OpenCode,
+                },
+                mode: match desc.mode {
+                    gate4agent::InstanceMode::Pty => zengeld_chart::PersistedInstanceMode::Pty,
+                    gate4agent::InstanceMode::Chat => zengeld_chart::PersistedInstanceMode::Chat,
+                },
+                workdir: desc.workdir.clone(),
+                chat_session_id: desc.chat_session_id.clone(),
+            })
+            .collect();
+        // Log agents state for diagnostics (appears in structured log).
+        log::info!(
+            "[agents-diag] build_window_state: agents_layout={} agents_leaves={}",
+            if agents_tab_layout.is_some() { "Some" } else { "None" },
+            agents_tab_leaves.len(),
+        );
         zengeld_chart::WindowState {
             window_id: self.window_id.clone(),
             open_tabs: self.panel_app.open_tabs.clone(),
@@ -7915,32 +7958,8 @@ impl ChartApp {
             inline_bar_x: Some(inline.x),
             inline_bar_y: Some(inline.y),
             inline_bar_dock: Some(inline_dock_str.to_string()),
-            agents_tab_layout: {
-                let tree = self.sidebar_state.agent_docking.inner().tree();
-                uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "agents")
-                    .to_json()
-                    .ok()
-            },
-            agents_tab_leaves: self
-                .sidebar_state
-                .agent_leaves
-                .iter()
-                .map(|(leaf_id, desc)| zengeld_chart::PersistedAgentLeaf {
-                    leaf_id: leaf_id.0,
-                    cli: match desc.cli {
-                        gate4agent::AgentCli::Claude => zengeld_chart::PersistedAgentCli::Claude,
-                        gate4agent::AgentCli::Codex => zengeld_chart::PersistedAgentCli::Codex,
-                        gate4agent::AgentCli::Gemini => zengeld_chart::PersistedAgentCli::Gemini,
-                        gate4agent::AgentCli::OpenCode => zengeld_chart::PersistedAgentCli::OpenCode,
-                    },
-                    mode: match desc.mode {
-                        gate4agent::InstanceMode::Pty => zengeld_chart::PersistedInstanceMode::Pty,
-                        gate4agent::InstanceMode::Chat => zengeld_chart::PersistedInstanceMode::Chat,
-                    },
-                    workdir: desc.workdir.clone(),
-                    chat_session_id: desc.chat_session_id.clone(),
-                })
-                .collect(),
+            agents_tab_layout,
+            agents_tab_leaves,
         }
     }
 
