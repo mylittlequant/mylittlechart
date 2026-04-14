@@ -47,6 +47,9 @@ pub enum SubPanelSlot {
 /// the same symbol, price axis, and tick size.
 #[derive(Clone, Debug)]
 pub struct TradingContainerState {
+    /// Symbol source binding (how to resolve which instrument to display)
+    pub source: crate::trading::SymbolSource,
+
     /// Symbol being traded
     pub symbol: String,
     /// Tick size for price grid
@@ -88,6 +91,7 @@ impl TradingContainerState {
         dom.center_price = market_price;
 
         Self {
+            source: crate::trading::SymbolSource::default(),
             symbol,
             tick_size,
             market_price,

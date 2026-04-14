@@ -83,6 +83,31 @@ pub struct PersistedFreeLeaf {
     pub kind: PersistedFreeItemKind,
 }
 
+/// Local mirror of `zengeld_panels::trading::SymbolSource`.
+///
+/// Kept here so the `chart` crate has no dependency on `zengeld-panels`.
+/// Old presets that do not have a `source` field deserialize with
+/// `SymbolSource::HyperFocus` via the `Default` impl.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PersistedSymbolSource {
+    HyperFocus,
+    Fixed {
+        symbol: String,
+        exchange: String,
+        account_type: String,
+    },
+    BoundToChart {
+        leaf_id: u64,
+    },
+}
+
+impl Default for PersistedSymbolSource {
+    fn default() -> Self {
+        Self::HyperFocus
+    }
+}
+
 /// Mirror of `sidebar_content::FreeItem` kept in the chart crate so the preset
 /// schema has no dependency on `sidebar-content`.
 ///
@@ -92,38 +117,46 @@ pub struct PersistedFreeLeaf {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PersistedFreeItemKind {
     Dom {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
         tick_size: f64,
         levels_displayed: usize,
         center_price: f64,
     },
     Footprint {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
         tick_size: f64,
     },
     VolumeProfile {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
         tick_size: f64,
     },
     LiquidityHeatmap {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
         tick_size: f64,
         snapshot_interval_ms: u64,
     },
     BigTrades {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
     },
     L2Tape {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
     },
     OrderEntry {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
     },
     PositionManager,
     TradeLog,
     RiskCalculator,
     TradingContainer {
-        symbol: String,
+        #[serde(default)]
+        source: PersistedSymbolSource,
         tick_size: f64,
         market_price: f64,
     },

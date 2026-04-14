@@ -48,6 +48,9 @@ pub struct L2Event {
 /// L2 Tape panel state
 #[derive(Clone, Debug)]
 pub struct L2TapeState {
+    /// Symbol source binding (how to resolve which instrument to display)
+    pub source: crate::trading::SymbolSource,
+
     /// Symbol being monitored
     pub symbol: String,
     /// Ring buffer of recent L2 events
@@ -116,6 +119,7 @@ impl L2TapePanel {
 impl L2TapeState {
     pub fn new() -> Self {
         Self {
+            source: crate::trading::SymbolSource::default(),
             symbol: String::new(),
             events: VecDeque::new(),
             max_events: 10000,

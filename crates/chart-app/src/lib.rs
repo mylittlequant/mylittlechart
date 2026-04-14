@@ -3626,6 +3626,62 @@ impl ChartApp {
         if current_leaf != self.last_active_leaf {
             self.last_active_leaf = current_leaf;
             self.sidebar_data_dirty = true;
+
+            // Propagate active chart symbol to all HyperFocus and BoundToChart trading panels.
+            //
+            // All reads from `panel_grid` are done upfront into owned values so that the
+            // subsequent mutable loops on `panels_store` don't conflict with any borrow on
+            // `self.panel_app`.
+            {
+                use zengeld_panels::trading::ResolvedSymbol;
+                use std::collections::HashMap;
+
+                let active_resolved: Option<ResolvedSymbol> =
+                    self.panel_app.panel_grid.active_window().map(|w| ResolvedSymbol {
+                        symbol: w.symbol.clone(),
+                        exchange: w.exchange.clone(),
+                        account_type: w.account_type.clone(),
+                    });
+
+                // Build leaf_id → ResolvedSymbol map upfront (immutable borrow only) so that
+                // the mutable `panels_store` loops below don't conflict with `panel_grid`.
+                // Collect leaf IDs first (plain u64 copies), then resolve each one via the
+                // dedicated helper so the logic lives in a single place.
+                let all_leaf_ids: Vec<u64> = self
+                    .panel_app
+                    .panel_grid
+                    .iter_windows()
+                    .map(|(leaf_id, _w)| leaf_id.0)
+                    .collect();
+                let leaf_symbols: HashMap<u64, ResolvedSymbol> = all_leaf_ids
+                    .into_iter()
+                    .filter_map(|lid| self.resolve_chart_leaf_symbol(lid).map(|r| (lid, r)))
+                    .collect();
+
+                let resolve_leaf = |leaf_id: u64| -> Option<ResolvedSymbol> {
+                    leaf_symbols.get(&leaf_id).cloned()
+                };
+
+                macro_rules! propagate {
+                    ($map:expr) => {
+                        for state in $map.values_mut() {
+                            if let Some(resolved) =
+                                state.source.resolve(active_resolved.as_ref(), &resolve_leaf)
+                            {
+                                state.symbol = resolved.symbol;
+                            }
+                        }
+                    };
+                }
+                propagate!(self.panels_store.dom);
+                propagate!(self.panels_store.footprint);
+                propagate!(self.panels_store.volume_profile);
+                propagate!(self.panels_store.liquidity_heatmap);
+                propagate!(self.panels_store.big_trades);
+                propagate!(self.panels_store.l2_tape);
+                propagate!(self.panels_store.order_entry);
+                propagate!(self.panels_store.trading_container);
+            }
         }
 
         // Populate sidebar data from chart state (guarded by dirty flag).
@@ -6406,6 +6462,28 @@ impl ChartApp {
     // Internal helpers
     // -------------------------------------------------------------------------
 
+    /// Resolve a chart leaf's instrument key for `BoundToChart` panels.
+    ///
+    /// Looks up the [`ChartWindow`](zengeld_chart::ChartWindow) that is
+    /// currently displayed in the leaf with the given raw id and returns a
+    /// [`ResolvedSymbol`](zengeld_panels::trading::ResolvedSymbol) built from
+    /// that window's `symbol`, `exchange`, and `account_type`.
+    ///
+    /// Returns `None` when no window is associated with the leaf (e.g. the leaf
+    /// id is stale or belongs to a non-chart panel).
+    pub(crate) fn resolve_chart_leaf_symbol(
+        &self,
+        leaf_id: u64,
+    ) -> Option<zengeld_panels::trading::ResolvedSymbol> {
+        let lid = zengeld_chart::LeafId(leaf_id);
+        let w = self.panel_app.panel_grid.window_for_leaf(lid)?;
+        Some(zengeld_panels::trading::ResolvedSymbol {
+            symbol: w.symbol.clone(),
+            exchange: w.exchange.clone(),
+            account_type: w.account_type.clone(),
+        })
+    }
+
     /// Synchronise `window.sub_panes` with the external `IndicatorManager`.
     ///
     /// `ChartWindow.indicator_source` is always `NullIndicatorSource`, so the
@@ -7822,6 +7900,15 @@ impl ChartApp {
             pending_sub_pane_above_main: std::mem::take(&mut self.pending_sub_pane_above_main),
             pending_sub_pane_order: std::mem::take(&mut self.pending_sub_pane_order),
             needs_initial_viewport_fit: self.needs_initial_viewport_fit,
+            slot_dockings: std::mem::replace(
+                &mut self.sidebar_state.slot_dockings,
+                std::array::from_fn(|_| sidebar_content::SlotDockingManager::new()),
+            ),
+            panels_store: std::mem::replace(
+                &mut self.panels_store,
+                crate::panels_store::TradingPanelsStore::new(),
+            ),
+            focused_free_leaf: self.sidebar_state.focused_free_leaf.take(),
         };
         self.live_preset_cache.insert(id.to_string(), state);
         eprintln!("[ChartApp] Parked preset '{}' into live cache ({} total cached)", id, self.live_preset_cache.len());
@@ -7841,6 +7928,9 @@ impl ChartApp {
         self.pending_sub_pane_above_main = state.pending_sub_pane_above_main;
         self.pending_sub_pane_order = state.pending_sub_pane_order;
         self.needs_initial_viewport_fit = state.needs_initial_viewport_fit;
+        self.sidebar_state.slot_dockings = state.slot_dockings;
+        self.panels_store = state.panels_store;
+        self.sidebar_state.focused_free_leaf = state.focused_free_leaf;
         self.sidebar_data_dirty = true;
         eprintln!("[ChartApp] Unpacked preset '{}' from live cache", id);
         true

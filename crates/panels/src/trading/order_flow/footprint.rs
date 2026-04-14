@@ -8,6 +8,9 @@ pub struct FootprintId(pub u64);
 /// Footprint panel state (heavy data)
 #[derive(Clone, Debug)]
 pub struct FootprintState {
+    /// Symbol source binding (how to resolve which instrument to display)
+    pub source: crate::trading::SymbolSource,
+
     pub symbol: String,
 
     /// Tick size for price grid
@@ -54,6 +57,7 @@ pub struct FootprintCandle {
 impl FootprintState {
     pub fn new(symbol: String, tick_size: f64) -> Self {
         Self {
+            source: crate::trading::SymbolSource::default(),
             symbol,
             tick_size,
             time_range: (0, 0),

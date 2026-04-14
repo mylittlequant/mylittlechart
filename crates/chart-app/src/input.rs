@@ -19883,52 +19883,106 @@ impl ChartApp {
                         self.panels_store.set_min_next_id(max_panel_id);
                     }
 
+                    // Helper: convert PersistedSymbolSource → SymbolSource.
+                    let convert_source = |src: &zengeld_chart::preset::preset::PersistedSymbolSource| -> zengeld_panels::trading::SymbolSource {
+                        match src {
+                            zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => zengeld_panels::trading::SymbolSource::HyperFocus,
+                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, exchange, account_type } => zengeld_panels::trading::SymbolSource::Fixed {
+                                symbol: symbol.clone(),
+                                exchange: exchange.clone(),
+                                account_type: account_type.clone(),
+                            },
+                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { leaf_id } => zengeld_panels::trading::SymbolSource::BoundToChart {
+                                leaf_id: *leaf_id,
+                            },
+                        }
+                    };
+
                     for i in 0..4 {
                         // Pre-insert state into the store keyed by the saved panel_id.
                         for pl in &preset.slot_leaves[i] {
                             let pid = sidebar_content::free_slot::PanelId(pl.panel_id);
                             use zengeld_chart::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { symbol, tick_size, levels_displayed, center_price } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
-                                        let mut s = zengeld_panels::trading::order_flow::dom::DomState::new(symbol.clone(), *tick_size);
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::order_flow::dom::DomState::new(symbol, *tick_size);
                                         s.levels_displayed = *levels_displayed;
                                         s.center_price = *center_price;
+                                        s.source = convert_source(source);
                                         self.panels_store.dom.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::Footprint { symbol, tick_size } => {
+                                PersistedFreeItemKind::Footprint { source, tick_size } => {
                                     if !self.panels_store.footprint.contains_key(&pid) {
-                                        self.panels_store.footprint.insert(pid, zengeld_panels::trading::order_flow::footprint::FootprintState::new(symbol.clone(), *tick_size));
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::order_flow::footprint::FootprintState::new(symbol, *tick_size);
+                                        s.source = convert_source(source);
+                                        self.panels_store.footprint.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::VolumeProfile { symbol, tick_size } => {
+                                PersistedFreeItemKind::VolumeProfile { source, tick_size } => {
                                     if !self.panels_store.volume_profile.contains_key(&pid) {
-                                        self.panels_store.volume_profile.insert(pid, zengeld_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol.clone(), *tick_size));
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol, *tick_size);
+                                        s.source = convert_source(source);
+                                        self.panels_store.volume_profile.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::LiquidityHeatmap { symbol, tick_size, snapshot_interval_ms } => {
+                                PersistedFreeItemKind::LiquidityHeatmap { source, tick_size, snapshot_interval_ms } => {
                                     if !self.panels_store.liquidity_heatmap.contains_key(&pid) {
-                                        self.panels_store.liquidity_heatmap.insert(pid, zengeld_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol.clone(), *tick_size, *snapshot_interval_ms));
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol, *tick_size, *snapshot_interval_ms);
+                                        s.source = convert_source(source);
+                                        self.panels_store.liquidity_heatmap.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::BigTrades { symbol } => {
+                                PersistedFreeItemKind::BigTrades { source } => {
                                     if !self.panels_store.big_trades.contains_key(&pid) {
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
                                         let mut s = zengeld_panels::trading::order_flow::big_trades::BigTradesState::new();
-                                        s.symbol = symbol.clone();
+                                        s.symbol = symbol;
+                                        s.source = convert_source(source);
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::L2Tape { symbol } => {
+                                PersistedFreeItemKind::L2Tape { source } => {
                                     if !self.panels_store.l2_tape.contains_key(&pid) {
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
                                         let mut s = zengeld_panels::trading::order_flow::l2_tape::L2TapeState::new();
-                                        s.symbol = symbol.clone();
+                                        s.symbol = symbol;
+                                        s.source = convert_source(source);
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::OrderEntry { symbol } => {
+                                PersistedFreeItemKind::OrderEntry { source } => {
                                     if !self.panels_store.order_entry.contains_key(&pid) {
-                                        self.panels_store.order_entry.insert(pid, zengeld_panels::trading::trading::order_entry::OrderEntryState::new(symbol.clone()));
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::trading::order_entry::OrderEntryState::new(symbol);
+                                        s.source = convert_source(source);
+                                        self.panels_store.order_entry.insert(pid, s);
                                     }
                                 }
                                 PersistedFreeItemKind::PositionManager => {
@@ -19946,9 +20000,15 @@ impl ChartApp {
                                         self.panels_store.risk_calculator.insert(pid, zengeld_panels::trading::trading::risk_calculator::RiskCalculatorState::new());
                                     }
                                 }
-                                PersistedFreeItemKind::TradingContainer { symbol, tick_size, market_price } => {
+                                PersistedFreeItemKind::TradingContainer { source, tick_size, market_price } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
-                                        self.panels_store.trading_container.insert(pid, zengeld_panels::trading::trading::trading_container::TradingContainerState::new(symbol.clone(), *tick_size, *market_price));
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::trading::trading_container::TradingContainerState::new(symbol, *tick_size, *market_price);
+                                        s.source = convert_source(source);
+                                        self.panels_store.trading_container.insert(pid, s);
                                     }
                                 }
                             }
@@ -20007,6 +20067,65 @@ impl ChartApp {
                             None => sidebar_content::SlotDockingManager::new(),
                         };
                         self.sidebar_state.slot_dockings[i] = mgr;
+                    }
+
+                    // Subscribe depth for restored panels that require L2 data
+                    // (DOM, L2Tape, LiquidityHeatmap).  For Fixed sources we use the
+                    // stored exchange string; for HyperFocus/BoundToChart we fall back
+                    // to the active exchange and Spot account type.
+                    {
+                        // Build a deduplicated list of (exchange_id, symbol, account_type)
+                        // tuples that need depth subscriptions.
+                        let mut depth_subs: Vec<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = Vec::new();
+
+                        let resolve_eid = |exchange_str: &str| -> digdigdig3::ExchangeId {
+                            self.exchange_symbols
+                                .keys()
+                                .find(|e| e.as_str() == exchange_str)
+                                .copied()
+                                .unwrap_or(self.active_exchange)
+                        };
+
+                        for state in self.panels_store.dom.values() {
+                            if state.symbol.is_empty() { continue; }
+                            let (eid, at) = match &state.source {
+                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
+                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
+                                }
+                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            };
+                            depth_subs.push((eid, state.symbol.clone(), at));
+                        }
+
+                        for state in self.panels_store.l2_tape.values() {
+                            if state.symbol.is_empty() { continue; }
+                            let (eid, at) = match &state.source {
+                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
+                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
+                                }
+                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            };
+                            depth_subs.push((eid, state.symbol.clone(), at));
+                        }
+
+                        for state in self.panels_store.liquidity_heatmap.values() {
+                            if state.symbol.is_empty() { continue; }
+                            let (eid, at) = match &state.source {
+                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
+                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
+                                }
+                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            };
+                            depth_subs.push((eid, state.symbol.clone(), at));
+                        }
+
+                        // Deduplicate before subscribing.
+                        let mut seen: std::collections::HashSet<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = std::collections::HashSet::new();
+                        for (eid, sym, at) in depth_subs {
+                            if seen.insert((eid, sym.clone(), at)) {
+                                self.bridge.subscribe_depth(eid, &sym, at);
+                            }
+                        }
                     }
 
                     self.sidebar_data_dirty = true;
@@ -20762,8 +20881,17 @@ impl ChartApp {
                     let kind = match item {
                         FreeItem::Dom(id) => {
                             let state = self.panels_store.dom.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::Dom {
-                                symbol: state.symbol.clone(),
+                                source,
                                 tick_size: state.tick_size,
                                 levels_displayed: state.levels_displayed,
                                 center_price: state.center_price,
@@ -20771,42 +20899,96 @@ impl ChartApp {
                         }
                         FreeItem::Footprint(id) => {
                             let state = self.panels_store.footprint.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::Footprint {
-                                symbol: state.symbol.clone(),
+                                source,
                                 tick_size: state.tick_size,
                             }
                         }
                         FreeItem::VolumeProfile(id) => {
                             let state = self.panels_store.volume_profile.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::VolumeProfile {
-                                symbol: state.symbol.clone(),
+                                source,
                                 tick_size: state.tick_size,
                             }
                         }
                         FreeItem::LiquidityHeatmap(id) => {
                             let state = self.panels_store.liquidity_heatmap.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::LiquidityHeatmap {
-                                symbol: state.symbol.clone(),
+                                source,
                                 tick_size: state.tick_size,
                                 snapshot_interval_ms: state.snapshot_interval_ms,
                             }
                         }
                         FreeItem::BigTrades(id) => {
                             let state = self.panels_store.big_trades.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::BigTrades {
-                                symbol: state.symbol.clone(),
+                                source,
                             }
                         }
                         FreeItem::L2Tape(id) => {
                             let state = self.panels_store.l2_tape.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::L2Tape {
-                                symbol: state.symbol.clone(),
+                                source,
                             }
                         }
                         FreeItem::OrderEntry(id) => {
                             let state = self.panels_store.order_entry.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::OrderEntry {
-                                symbol: state.symbol.clone(),
+                                source,
                             }
                         }
                         FreeItem::PositionManager(_) => PersistedFreeItemKind::PositionManager,
@@ -20814,8 +20996,17 @@ impl ChartApp {
                         FreeItem::RiskCalculator(_) => PersistedFreeItemKind::RiskCalculator,
                         FreeItem::TradingContainer(id) => {
                             let state = self.panels_store.trading_container.get(id)?;
+                            let source = if state.symbol.is_empty() {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                            } else {
+                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                    symbol: state.symbol.clone(),
+                                    exchange: String::new(),
+                                    account_type: String::new(),
+                                }
+                            };
                             PersistedFreeItemKind::TradingContainer {
-                                symbol: state.symbol.clone(),
+                                source,
                                 tick_size: state.tick_size,
                                 market_price: state.market_price,
                             }

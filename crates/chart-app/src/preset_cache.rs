@@ -21,4 +21,7 @@ pub struct LivePresetState {
     pub pending_sub_pane_above_main: HashMap<u64, HashSet<u64>>,
     pub pending_sub_pane_order: HashMap<u64, Vec<u64>>,
     pub needs_initial_viewport_fit: bool,
+    pub slot_dockings: [sidebar_content::SlotDockingManager; 4],
+    pub panels_store: crate::panels_store::TradingPanelsStore,
+    pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
 }

@@ -1,5 +1,8 @@
 pub mod order_flow;
+pub mod symbol_source;
 pub mod trading;
+
+pub use symbol_source::{ResolvedSymbol, SymbolSource};
 
 // Re-export for convenience
 pub use order_flow::dom;

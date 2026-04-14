@@ -21,6 +21,9 @@ pub enum OrderEntryElement {
 /// OrderEntry panel state (heavy data)
 #[derive(Clone, Debug)]
 pub struct OrderEntryState {
+    /// Symbol source binding (how to resolve which instrument to display)
+    pub source: crate::trading::SymbolSource,
+
     pub symbol: String,
 
     /// Order parameters
@@ -71,6 +74,7 @@ pub struct OrderEntryState {
 impl OrderEntryState {
     pub fn new(symbol: String) -> Self {
         Self {
+            source: crate::trading::SymbolSource::default(),
             symbol,
             side: OrderSide::Buy,
             order_type: OrderType::Limit,
