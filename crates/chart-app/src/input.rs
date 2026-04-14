@@ -9872,6 +9872,7 @@ impl ChartApp {
                             self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
                             self.sidebar_state.slot_spawn_dropdown = None;
                             self.sidebar_data_dirty = true;
+                            self.autosave_snapshot();
                         }
                     }
                 }
