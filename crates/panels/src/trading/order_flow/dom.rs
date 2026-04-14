@@ -42,6 +42,10 @@ pub struct DomState {
 
     /// Recently filled volume per price (for flash animation)
     pub recent_fills: HashMap<i64, (f64, Instant)>, // volume, timestamp
+
+    /// Auto-center mode: when true, center_price tracks market_price every update.
+    /// Wheel scroll or drag switches to Manual. Double-click restores Auto.
+    pub auto_center: bool,
 }
 
 /// Helper struct for rendering: represents one price level in the DOM
@@ -82,6 +86,7 @@ impl DomState {
             user_orders: HashMap::new(),
             hovered_price: None,
             recent_fills: HashMap::new(),
+            auto_center: true,
         }
     }
 
@@ -213,7 +218,7 @@ impl DomState {
         let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
         if best_bid > 0.0 && best_ask > 0.0 {
             self.market_price = (best_bid + best_ask) / 2.0;
-            if self.center_price == 0.0 {
+            if self.center_price == 0.0 || self.auto_center {
                 self.center_price = self.market_price;
             }
         }
@@ -266,8 +271,7 @@ impl DomState {
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
             self.market_price = (bid + ask) / 2.0;
-            // Initialize center_price on first delta (Binance never sends snapshot).
-            if self.center_price == 0.0 {
+            if self.center_price == 0.0 || self.auto_center {
                 self.center_price = self.market_price;
             }
         }

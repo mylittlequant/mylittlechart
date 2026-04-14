@@ -734,10 +734,9 @@ impl ChartApp {
                                         .and_then(|l| l.active_panel().cloned());
                                     if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
                                         if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                            if state.market_price > 0.0 {
-                                                state.center_price = state.market_price;
-                                                self.sidebar_data_dirty = true;
-                                            }
+                                            state.auto_center = true;
+                                            state.center_price = state.market_price;
+                                            self.sidebar_data_dirty = true;
                                         }
                                     }
                                 }
@@ -1301,6 +1300,38 @@ impl ChartApp {
                                     self.slot_sep_drag = Some((slot_idx, sep_idx, start_pos, total_size));
                                     self.ui_drag_active = true;
                                     return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── DOM panel drag-to-scroll initiation ─────────────────────────────
+        // When drag starts over a `slot:{idx}:leaf:{leaf_id}:focus_content`
+        // widget that hosts a DOM panel, record state for smooth price scroll.
+        if self.slot_dom_drag.is_none() {
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered_wid {
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((slot_str, leaf_rest)) = rest.split_once(":leaf:") {
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus_content") {
+                            if let (Ok(slot_idx), Ok(raw)) =
+                                (slot_str.parse::<usize>(), leaf_id_str.parse::<u64>())
+                            {
+                                if slot_idx < 4 {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                        self.slot_dom_drag = Some((slot_idx, leaf_id, pid, y, 20.0));
+                                        self.ui_drag_active = true;
+                                        return false;
+                                    }
                                 }
                             }
                         }
@@ -2693,6 +2724,22 @@ impl ChartApp {
             return;
         }
 
+        // ── DOM drag scroll ──────────────────────────────────────────────────
+        if let Some((_, _, pid, ref mut last_y, row_h)) = self.slot_dom_drag {
+            let delta_y = y - *last_y;
+            if delta_y.abs() > 1.0 {
+                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                    // Drag up = show higher prices (increase center), drag down = lower
+                    let ticks_moved = -delta_y / row_h;
+                    state.center_price += ticks_moved * state.tick_size;
+                    state.auto_center = false;
+                    self.sidebar_data_dirty = true;
+                }
+                *last_y = y;
+            }
+            return;
+        }
+
         // ── Free-slot separator resize drag ─────────────────────────────────
         if let Some((slot_idx, sep_idx, start_pos, _total_size)) = self.slot_sep_drag {
             let (is_vertical, content_width, content_height) = {
@@ -3673,6 +3720,12 @@ impl ChartApp {
         if self.slot_sep_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             self.autosave_snapshot();
+            return;
+        }
+
+        // ── End DOM drag scroll ───────────────────────────────────────────────
+        if self.slot_dom_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
             return;
         }
 
@@ -6361,6 +6414,7 @@ impl ChartApp {
                                             } else {
                                                 // Normal scroll: move center price up/down the ladder.
                                                 // Each step moves center by (levels_displayed * 0.1) ticks.
+                                                state.auto_center = false;
                                                 let delta = scroll_step * state.tick_size * (state.levels_displayed as f64) * 0.1;
                                                 state.center_price += delta;
                                             }

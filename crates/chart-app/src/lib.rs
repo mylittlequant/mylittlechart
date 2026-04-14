@@ -576,6 +576,11 @@ pub struct ChartApp {
     ///
     /// `(slot_index, separator_index, start_mouse_pos, total_available_size)`.
     pub(crate) slot_sep_drag: Option<(usize, usize, f64, f32)>,
+
+    /// Active DOM drag-to-scroll.
+    ///
+    /// `(slot_index, leaf_id, dom_panel_id, last_y, row_height)`.
+    pub(crate) slot_dom_drag: Option<(usize, uzor::panels::LeafId, sidebar_content::free_slot::PanelId, f64, f64)>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -911,6 +916,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
+            slot_dom_drag: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1195,6 +1201,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
+            slot_dom_drag: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1375,6 +1382,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
+            slot_dom_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
