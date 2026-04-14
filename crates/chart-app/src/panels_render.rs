@@ -109,7 +109,7 @@ pub fn panel_theme_from_runtime(rt: &zengeld_chart::theme::RuntimeTheme) -> zeng
     let t = &rt.trading;
     zengeld_panels::panel_theme::PanelTheme {
         // Common — mapped from RuntimeTheme base colors
-        panel_bg:      t.panel_bg.clone(),
+        panel_bg:      rt.colors.toolbar_bg.clone(),
         row_bg_alt:    t.row_bg_alt.clone(),
         header_bg:     t.header_bg.clone(),
         separator:     rt.colors.divider.clone(),
