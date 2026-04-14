@@ -5450,10 +5450,11 @@ impl ChartApp {
     ///
     /// - Horizontal scroll (`dx`) pans the chart.
     /// - Vertical scroll (`dy`) zooms the chart (pinch-to-zoom equivalent).
+    /// - `ctrl`: whether the Ctrl modifier is held (used for DOM tick_size zoom).
     ///
     /// When a modal is open, scroll is routed to the modal's scroll state
     /// instead of the chart canvas.
-    pub fn on_scroll(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
+    pub fn on_scroll(&mut self, x: f64, y: f64, dx: f64, dy: f64, ctrl: bool) {
         // Route scroll to open modal content instead of blocking entirely.
         if self.input_coordinator.borrow_mut().is_blocked_by_modal(x, y) {
             // Normalise dy: wheel delta is typically negative when scrolling down
@@ -6300,10 +6301,23 @@ impl ChartApp {
                                 match item_opt {
                                     Some(FreeItem::Dom(pid)) => {
                                         if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                            // Scroll through price levels: each step moves center by
-                                            // (levels_displayed * 0.1) ticks.
-                                            let delta = scroll_step * state.tick_size * (state.levels_displayed as f64) * 0.1;
-                                            state.center_price += delta;
+                                            if ctrl {
+                                                // Ctrl+scroll: zoom tick_size (depth aggregation).
+                                                // Scroll up (scroll_step > 0) → multiply by 10 (zoom out).
+                                                // Scroll down (scroll_step < 0) → divide by 10 (zoom in).
+                                                if scroll_step > 0.0 {
+                                                    state.tick_size = (state.tick_size * 10.0).clamp(0.0001, 100.0);
+                                                } else if scroll_step < 0.0 {
+                                                    state.tick_size = (state.tick_size / 10.0).clamp(0.0001, 100.0);
+                                                }
+                                                // Clear accumulated volume so it repopulates at the new granularity.
+                                                state.volume_by_price.clear();
+                                            } else {
+                                                // Normal scroll: move center price up/down the ladder.
+                                                // Each step moves center by (levels_displayed * 0.1) ticks.
+                                                let delta = scroll_step * state.tick_size * (state.levels_displayed as f64) * 0.1;
+                                                state.center_price += delta;
+                                            }
                                         }
                                     }
                                     Some(FreeItem::BigTrades(pid)) => {

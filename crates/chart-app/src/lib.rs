@@ -5927,7 +5927,9 @@ impl ChartApp {
                     };
                     match source? {
                         SymbolSource::HyperFocus => None,
-                        SymbolSource::Fixed { symbol, .. } => Some(symbol.clone()),
+                        SymbolSource::Fixed { symbol, exchange, account_type } => {
+                            Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                        }
                         SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
                     }
                 },
@@ -6395,7 +6397,9 @@ impl ChartApp {
                 };
                 match source? {
                     SymbolSource::HyperFocus => None,
-                    SymbolSource::Fixed { symbol, .. } => Some(symbol.clone()),
+                    SymbolSource::Fixed { symbol, exchange, account_type } => {
+                        Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                    }
                     SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
                 }
             },

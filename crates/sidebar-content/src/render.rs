@@ -414,27 +414,7 @@ pub fn render_right_sidebar(
 
     }
 
-    // Slot panels: add [+] button in the header to spawn a new trading panel.
-    if let Some(slot_idx) = panel.slot_index() {
-        let slot_idx = slot_idx as usize;
-        let add_size = 16.0;
-        let add_x = close_x - add_size - 8.0;
-        let add_y = rect.y + (header_height - add_size) / 2.0;
-        let spawn_id = format!("slot:{}:new", slot_idx);
-        let spawn_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&spawn_id));
-        if spawn_hov {
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(add_x - close_pad, add_y - close_pad, add_size + close_pad * 2.0, add_size + close_pad * 2.0, 4.0);
-        }
-        let spawn_color = if spawn_hov { "#58a6ff" } else { &toolbar_theme.item_text_muted };
-        draw_svg_icon(ctx, Icon::Plus.svg(), add_x, add_y, add_size, add_size, spawn_color);
-        input_coordinator.register(
-            spawn_id.as_str(),
-            WidgetRect::new(add_x, add_y, add_size, add_size),
-            uzor::input::Sense::CLICK,
-        );
-        result.item_rects.push((spawn_id, WidgetRect::new(add_x, add_y, add_size, add_size)));
-    }
+
 
     // Header bottom border.
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -3482,23 +3462,17 @@ fn render_slot_panel(
         };
         let multi_leaf = leaf_count > 1;
 
-        // [+ New] spawn dropdown button
+        // [+] spawn dropdown button — icon only
         let new_id    = format!("slot:{slot_idx}:new");
-        let new_w     = 52.0_f64;
+        let new_w     = 28.0_f64;
         let new_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, new_w, btn_h);
         let new_hov   = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&new_id));
         ctx.set_fill_color(if new_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(new_rect.x, new_rect.y, new_rect.width, new_rect.height, 3.0);
-        // "+" icon on the left, "New" label
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
             new_rect.x + icon_pad, new_rect.y + icon_pad,
             btn_h - icon_pad * 2.0, btn_h - icon_pad * 2.0,
             if new_hov { &theme.item_text } else { &theme.item_text_muted });
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if new_hov { &theme.item_text } else { &theme.item_text_muted });
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("New", new_rect.x + btn_h, new_rect.y + btn_h / 2.0);
         input_coordinator.register(new_id.as_str(), new_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((new_id, new_rect));
         cur_x += new_w + gap;

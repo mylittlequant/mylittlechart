@@ -8095,7 +8095,7 @@ impl ApplicationHandler for App<'_> {
                 // Only scroll in the chart area; apply y-offset.
                 let chart_y = y - chrome::CHROME_HEIGHT;
                 if chart_y >= 0.0 {
-                    pw.chart.on_scroll(x, chart_y, dx, dy);
+                    pw.chart.on_scroll(x, chart_y, dx, dy, pw.modifiers.control_key());
                     // Scrolling inside the sidebar changes the visible content —
                     // always mark it dirty so the new scroll offset is rendered.
                     pw.sidebar_dirty_scene = true;
