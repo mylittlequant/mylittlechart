@@ -131,23 +131,6 @@ fn format_timestamp(ts: i64) -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const BT_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const BT_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
-const BT_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
-const BT_TEXT_DEFAULT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
-const BT_BUY_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
-const BT_SELL_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
-const BT_BAR_BUY: [f32; 4] = [0.0, 0.67, 0.33, 0.18];
-const BT_BAR_SELL: [f32; 4] = [0.8, 0.1, 0.15, 0.18];
-const BT_SYMBOL_TEXT: [f32; 4] = [0.4, 0.45, 0.55, 1.0];
 const BT_HEADER_HEIGHT: f32 = 18.0;
 const BT_ROW_HEIGHT: f32 = 20.0;
 const BT_LEFT_PAD: f32 = 6.0;
@@ -156,8 +139,16 @@ impl TradingPanel for BigTradesState {
     fn kind(&self) -> &'static str { "big_trades" }
     fn label(&self) -> &'static str { "Big Trades" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(BT_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         let time_col_x = x + BT_LEFT_PAD;
@@ -170,10 +161,10 @@ impl TradingPanel for BigTradesState {
         let size_col_w = 70.0_f32;
         let notional_col_x = size_col_x + size_col_w + 4.0;
 
-        ctx.set_fill_color(&rgba_to_hex(BT_HEADER_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, BT_HEADER_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(BT_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -196,10 +187,10 @@ impl TradingPanel for BigTradesState {
 
             let bar_width = self.size_bar_width(trade, bar_max_width);
             let bar_color = match trade.side {
-                TradeSide::Buy => BT_BAR_BUY,
-                TradeSide::Sell => BT_BAR_SELL,
+                TradeSide::Buy => &theme.buy,
+                TradeSide::Sell => &theme.sell,
             };
-            ctx.set_fill_color(&rgba_to_hex(bar_color));
+            ctx.set_fill_color(bar_color);
             ctx.fill_rect(x as f64, row_y as f64, bar_width as f64, BT_ROW_HEIGHT as f64);
 
             let text_y = (row_y + BT_ROW_HEIGHT / 2.0) as f64;
@@ -212,21 +203,21 @@ impl TradingPanel for BigTradesState {
                 format!("{:02}:{:02}:{:02}", hh, mm, ss)
             };
 
-            ctx.set_fill_color(&rgba_to_hex(BT_TEXT_DEFAULT));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&time_str, time_col_x as f64, text_y);
 
             let (side_str, side_color) = match trade.side {
-                TradeSide::Buy => ("BUY", BT_BUY_TEXT),
-                TradeSide::Sell => ("SELL", BT_SELL_TEXT),
+                TradeSide::Buy => ("BUY", &theme.buy),
+                TradeSide::Sell => ("SELL", &theme.sell),
             };
-            ctx.set_fill_color(&rgba_to_hex(side_color));
+            ctx.set_fill_color(side_color);
             ctx.fill_text(side_str, side_col_x as f64, text_y);
 
             let price_str = format!("{:.4}", trade.price);
-            ctx.set_fill_color(&rgba_to_hex(BT_TEXT_DEFAULT));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&price_str, price_col_x as f64, text_y);
 
             let size_str = format!("{:.4}", trade.quantity);
@@ -236,12 +227,12 @@ impl TradingPanel for BigTradesState {
             let notional_str = format!("{:.2}", notional);
             ctx.fill_text(&notional_str, notional_col_x as f64, text_y);
 
-            ctx.set_fill_color(&rgba_to_hex([0.15, 0.17, 0.22, 0.6]));
+            ctx.set_fill_color(&theme.separator);
             ctx.fill_rect(x as f64, (row_y + BT_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
         }
 
         if !self.symbol.is_empty() {
-            ctx.set_fill_color(&rgba_to_hex(BT_SYMBOL_TEXT));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);

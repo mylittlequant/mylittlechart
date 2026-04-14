@@ -170,24 +170,6 @@ fn format_timestamp(ts: i64) -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const TL_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const TL_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
-const TL_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
-const TL_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
-const TL_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
-const TL_TEXT_GREY: [f32; 4] = [0.45, 0.48, 0.54, 1.0];
-const TL_BUY_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
-const TL_SELL_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
-const TL_PNL_POS: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
-const TL_PNL_NEG: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
 const TL_HEADER_HEIGHT: f32 = 18.0;
 const TL_ROW_HEIGHT: f32 = 18.0;
 const TL_SUMMARY_HEIGHT: f32 = 20.0;
@@ -197,8 +179,16 @@ impl TradingPanel for TradeLogState {
     fn kind(&self) -> &'static str { "trade_log" }
     fn label(&self) -> &'static str { "Trade Log" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(TL_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         let time_w   = (w * 0.20).max(64.0);
@@ -214,13 +204,13 @@ impl TradingPanel for TradeLogState {
         let col_qty_x    = col_price_x  + price_w;
         let col_fee_x    = col_qty_x    + qty_w;
 
-        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, TL_HEADER_HEIGHT as f64);
 
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
 
         let header_text_y = (y + TL_HEADER_HEIGHT / 2.0) as f64;
         ctx.fill_text("TIME",   col_time_x   as f64, header_text_y);
@@ -238,14 +228,14 @@ impl TradingPanel for TradeLogState {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+            ctx.set_fill_color(&theme.text_header);
             ctx.fill_text("No trades", (x + w / 2.0) as f64, (y + TL_HEADER_HEIGHT + content_h / 2.0) as f64);
         } else {
             for (i, trade) in trades.iter().enumerate() {
                 let row_y = y + TL_HEADER_HEIGHT + (i as f32 * TL_ROW_HEIGHT);
 
-                let row_bg = if i % 2 == 0 { TL_BG } else { TL_BG_ALT };
-                ctx.set_fill_color(&rgba_to_hex(row_bg));
+                let row_bg = if i % 2 == 0 { &theme.panel_bg } else { &theme.tl_row_bg_alt };
+                ctx.set_fill_color(row_bg);
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, TL_ROW_HEIGHT as f64);
 
                 let text_y = (row_y + TL_ROW_HEIGHT / 2.0) as f64;
@@ -259,20 +249,20 @@ impl TradingPanel for TradeLogState {
                 let mm = (secs % 3600) / 60;
                 let ss = secs % 60;
                 let time_str = format!("{:02}:{:02}:{:02}", hh, mm, ss);
-                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+                ctx.set_fill_color(&theme.text_primary);
                 ctx.fill_text(&time_str, col_time_x as f64, text_y);
 
                 let symbol = if trade.symbol.len() > 9 { &trade.symbol[..9] } else { trade.symbol.as_str() };
                 ctx.fill_text(symbol, col_symbol_x as f64, text_y);
 
                 let (side_str, side_color) = match trade.side {
-                    OrderSide::Buy  => ("BUY",  TL_BUY_TEXT),
-                    OrderSide::Sell => ("SELL", TL_SELL_TEXT),
+                    OrderSide::Buy  => ("BUY",  &theme.tl_profit),
+                    OrderSide::Sell => ("SELL", &theme.tl_loss),
                 };
-                ctx.set_fill_color(&rgba_to_hex(side_color));
+                ctx.set_fill_color(side_color);
                 ctx.fill_text(side_str, col_side_x as f64, text_y);
 
-                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_WHITE));
+                ctx.set_fill_color(&theme.text_primary);
                 let price_str = format!("{:.4}", trade.price);
                 ctx.fill_text(&price_str, col_price_x as f64, text_y);
 
@@ -280,20 +270,20 @@ impl TradingPanel for TradeLogState {
                 ctx.fill_text(&qty_str, col_qty_x as f64, text_y);
 
                 ctx.set_font("9px monospace");
-                ctx.set_fill_color(&rgba_to_hex(TL_TEXT_GREY));
+                ctx.set_fill_color(&theme.text_muted);
                 let fee_str = format!("{:.4}", trade.commission);
                 ctx.fill_text(&fee_str, col_fee_x as f64, text_y);
 
-                ctx.set_fill_color(&rgba_to_hex([0.15, 0.17, 0.22, 0.5]));
+                ctx.set_fill_color(&theme.separator);
                 ctx.fill_rect(x as f64, (row_y + TL_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
             }
         }
 
         let summary_y = y + h - TL_SUMMARY_HEIGHT;
-        ctx.set_fill_color(&rgba_to_hex([0.2, 0.22, 0.28, 0.8]));
+        ctx.set_fill_color(&theme.separator);
         ctx.fill_rect(x as f64, summary_y as f64, w as f64, 1.0);
 
-        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, (summary_y + 1.0) as f64, w as f64, (TL_SUMMARY_HEIGHT - 1.0) as f64);
 
         ctx.set_font("10px monospace");
@@ -301,15 +291,15 @@ impl TradingPanel for TradeLogState {
         ctx.set_text_baseline(TextBaseline::Middle);
 
         let summary_text_y = (summary_y + TL_SUMMARY_HEIGHT / 2.0) as f64;
-        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
         ctx.fill_text("Total PnL:", (x + TL_LEFT_PAD) as f64, summary_text_y);
 
-        let pnl_color = if self.total_pnl >= 0.0 { TL_PNL_POS } else { TL_PNL_NEG };
-        ctx.set_fill_color(&rgba_to_hex(pnl_color));
+        let pnl_color = if self.total_pnl >= 0.0 { &theme.tl_profit } else { &theme.tl_loss };
+        ctx.set_fill_color(pnl_color);
         let pnl_str = format!("{:+.2}", self.total_pnl);
         ctx.fill_text(&pnl_str, (x + TL_LEFT_PAD + 68.0) as f64, summary_text_y);
 
-        ctx.set_fill_color(&rgba_to_hex(TL_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
         ctx.set_text_align(TextAlign::Right);
         let count_str = format!("Trades: {}", self.trades.len());
         ctx.fill_text(&count_str, (x + w - TL_LEFT_PAD) as f64, summary_text_y);

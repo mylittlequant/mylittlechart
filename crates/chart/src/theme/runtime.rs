@@ -30,6 +30,9 @@ pub struct RuntimeTheme {
     /// Style parameters (opacity, blur, effects)
     #[serde(default)]
     pub style_params: StyleParams,
+    /// Trading panel colors — panel-specific overrides not present in base colors
+    #[serde(default)]
+    pub trading: RuntimeTradingColors,
 }
 
 /// UI element colors (toolbars, buttons, dropdowns, etc.)
@@ -242,6 +245,153 @@ pub struct RuntimeEffects {
     pub hover_scale: f64,
 }
 
+/// Trading panel colors (DOM, Footprint, Order Entry, etc.)
+///
+/// Fields that are not present in serialized themes fall back to `Default`
+/// via `#[serde(default)]` on the `RuntimeTheme.trading` field.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeTradingColors {
+    // DOM
+    pub dom_spread_bg: String,
+    pub dom_best_bid_bg: String,
+    pub dom_best_ask_bg: String,
+    pub dom_user_order: String,
+
+    // Footprint
+    pub fp_cell_text: String,
+    pub fp_poc_marker: String,
+    pub fp_poc_border: String,
+    pub fp_bullish: String,
+
+    // Volume Profile
+    pub vp_bar: String,
+    pub vp_bar_poc: String,
+    pub vp_poc_line: String,
+    pub vp_vah_line: String,
+    pub vp_val_line: String,
+    pub vp_value_area: String,
+
+    // Liquidity Heatmap
+    pub heatmap_price_line: String,
+
+    // Order Entry
+    pub oe_tab_active: String,
+    pub oe_tab_inactive: String,
+    pub oe_input_bg: String,
+    pub oe_input_border: String,
+    pub oe_buy_button: String,
+    pub oe_sell_button: String,
+    pub oe_buy_button_text: String,
+    pub oe_sell_button_text: String,
+
+    // Position Manager
+    pub pm_pnl_positive: String,
+    pub pm_pnl_negative: String,
+    pub pm_pnl_neutral: String,
+    pub pm_long: String,
+    pub pm_short: String,
+    pub pm_liquidation: String,
+    pub pm_summary_bg: String,
+
+    // Trade Log
+    pub tl_row_bg_alt: String,
+    pub tl_profit: String,
+    pub tl_loss: String,
+
+    // Risk Calculator
+    pub rc_risk: String,
+    pub rc_profit: String,
+    pub rc_good_rr: String,
+    pub rc_input_bg: String,
+
+    // Trading Container
+    pub tc_bg: String,
+    pub tc_inner_bg: String,
+    pub tc_separator: String,
+
+    // Common panel colors
+    pub panel_bg: String,
+    pub row_bg_alt: String,
+    pub header_bg: String,
+    pub hover: String,
+    pub selected: String,
+    pub buy_bright: String,
+    pub sell_bright: String,
+}
+
+impl Default for RuntimeTradingColors {
+    fn default() -> Self {
+        Self {
+            // DOM
+            dom_spread_bg:    "#14141eff".to_string(),
+            dom_best_bid_bg:  "#0a3520ff".to_string(),
+            dom_best_ask_bg:  "#3a100aff".to_string(),
+            dom_user_order:   "#58a6ffff".to_string(),
+
+            // Footprint
+            fp_cell_text:  "#e0e0e0ff".to_string(),
+            fp_poc_marker: "#ffde00ff".to_string(),
+            fp_poc_border: "#b8860bff".to_string(),
+            fp_bullish:    "#2ea043ff".to_string(),
+
+            // Volume Profile
+            vp_bar:        "#6699cc80".to_string(),
+            vp_bar_poc:    "#88bbffff".to_string(),
+            vp_poc_line:   "#ffde00ff".to_string(),
+            vp_vah_line:   "#da363380".to_string(),
+            vp_val_line:   "#2ea04380".to_string(),
+            vp_value_area: "#58a6ff20".to_string(),
+
+            // Liquidity Heatmap
+            heatmap_price_line: "#ffde00ff".to_string(),
+
+            // Order Entry
+            oe_tab_active:      "#58a6ffff".to_string(),
+            oe_tab_inactive:    "#21262dff".to_string(),
+            oe_input_bg:        "#0d1117ff".to_string(),
+            oe_input_border:    "#30363dff".to_string(),
+            oe_buy_button:      "#2ea043ff".to_string(),
+            oe_sell_button:     "#cc2233ff".to_string(),
+            oe_buy_button_text: "#ffffffff".to_string(),
+            oe_sell_button_text:"#ffffffff".to_string(),
+
+            // Position Manager
+            pm_pnl_positive: "#3fb950ff".to_string(),
+            pm_pnl_negative: "#f85149ff".to_string(),
+            pm_pnl_neutral:  "#8b949eff".to_string(),
+            pm_long:         "#2ea043ff".to_string(),
+            pm_short:        "#cc2233ff".to_string(),
+            pm_liquidation:  "#f0883eff".to_string(),
+            pm_summary_bg:   "#161b22ff".to_string(),
+
+            // Trade Log
+            tl_row_bg_alt: "#161b22ff".to_string(),
+            tl_profit:     "#3fb950ff".to_string(),
+            tl_loss:       "#f85149ff".to_string(),
+
+            // Risk Calculator
+            rc_risk:     "#cc2233ff".to_string(),
+            rc_profit:   "#2ea043ff".to_string(),
+            rc_good_rr:  "#ffde00ff".to_string(),
+            rc_input_bg: "#0d1117ff".to_string(),
+
+            // Trading Container
+            tc_bg:        "#0a0a0fff".to_string(),
+            tc_inner_bg:  "#1c1c29ff".to_string(),
+            tc_separator: "#33333fff".to_string(),
+
+            // Common panel colors
+            panel_bg:   "#0d1117ff".to_string(),
+            row_bg_alt: "#10151bff".to_string(),
+            header_bg:  "#161b22ff".to_string(),
+            hover:      "#2a2f40ff".to_string(),
+            selected:   "#1e2538ff".to_string(),
+            buy_bright: "#00ff87ff".to_string(),
+            sell_bright:"#ff4466ff".to_string(),
+        }
+    }
+}
+
 // =============================================================================
 // Conversions from UITheme (static) to RuntimeTheme (dynamic)
 // =============================================================================
@@ -378,6 +528,7 @@ impl From<&UITheme> for RuntimeTheme {
             // Default to Solid style
             style: UIStyle::default(),
             style_params: StyleParams::default(),
+            trading: RuntimeTradingColors::default(),
         }
     }
 }

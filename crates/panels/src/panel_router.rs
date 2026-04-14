@@ -3,6 +3,7 @@
 //! These are thin utilities called by `chart-app`. During the incremental
 //! migration, callers fall through to old code when panels return `None`.
 
+use crate::panel_theme::PanelTheme;
 use crate::panel_trait::TradingPanel;
 use crate::render::RenderContext;
 
@@ -16,8 +17,9 @@ pub fn try_render(
     y: f32,
     w: f32,
     h: f32,
+    theme: &PanelTheme,
 ) -> bool {
-    panel.render(ctx, x, y, w, h);
+    panel.render(ctx, x, y, w, h, theme);
     true
 }
 

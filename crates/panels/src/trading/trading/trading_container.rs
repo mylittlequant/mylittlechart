@@ -11,14 +11,6 @@ use crate::trading::order_flow::volume_profile::VolumeProfileState;
 use crate::trading::order_flow::big_trades::BigTradesState;
 use crate::trading::order_flow::l2_tape::L2TapeState;
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
 /// Trading Container panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TradingContainerId(pub u64);
@@ -160,9 +152,17 @@ impl TradingPanel for TradingContainerState {
     fn kind(&self) -> &'static str { "trading_container" }
     fn label(&self) -> &'static str { "Trading" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
         // Background
-        ctx.set_fill_color(&rgba_to_hex([0.04, 0.04, 0.06, 1.0]));
+        ctx.set_fill_color(&theme.tc_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         // Calculate layout rects
@@ -170,27 +170,27 @@ impl TradingPanel for TradingContainerState {
 
         // Render DOM area
         let (dx, dy, dw, dh) = rects.dom;
-        ctx.set_fill_color(&rgba_to_hex([0.11, 0.11, 0.16, 1.0]));
+        ctx.set_fill_color(&theme.tc_inner_bg);
         ctx.fill_rect(dx, dy, dw, dh);
 
         // Render left sub-panel
         if let Some((lx, ly, lw, lh)) = rects.left {
-            Self::render_sub_panel(ctx, lx, ly, lw, lh, &self.left_panel, self);
-            ctx.set_fill_color(&rgba_to_hex([0.2, 0.2, 0.25, 1.0]));
+            Self::render_sub_panel(ctx, lx, ly, lw, lh, &self.left_panel, self, theme);
+            ctx.set_fill_color(&theme.tc_separator);
             ctx.fill_rect(lx + lw - 1.0, ly, 1.0, lh);
         }
 
         // Render right sub-panel
         if let Some((rx, ry, rw, rh)) = rects.right {
-            Self::render_sub_panel(ctx, rx, ry, rw, rh, &self.right_panel, self);
-            ctx.set_fill_color(&rgba_to_hex([0.2, 0.2, 0.25, 1.0]));
+            Self::render_sub_panel(ctx, rx, ry, rw, rh, &self.right_panel, self, theme);
+            ctx.set_fill_color(&theme.tc_separator);
             ctx.fill_rect(rx, ry, 1.0, rh);
         }
 
         // Render bottom sub-panel
         if let Some((bx, by, bw, bh)) = rects.bottom {
-            Self::render_sub_panel(ctx, bx, by, bw, bh, &self.bottom_panel, self);
-            ctx.set_fill_color(&rgba_to_hex([0.2, 0.2, 0.25, 1.0]));
+            Self::render_sub_panel(ctx, bx, by, bw, bh, &self.bottom_panel, self, theme);
+            ctx.set_fill_color(&theme.tc_separator);
             ctx.fill_rect(bx, by, bw, 1.0);
         }
     }
@@ -204,27 +204,28 @@ impl TradingContainerState {
         x: f64, y: f64, w: f64, h: f64,
         slot: &SubPanelSlot,
         state: &TradingContainerState,
+        theme: &crate::panel_theme::PanelTheme,
     ) {
         match slot {
             SubPanelSlot::None => {}
             SubPanelSlot::Footprint => {
                 if let Some(ref fp) = state.footprint {
-                    fp.render(ctx, x as f32, y as f32, w as f32, h as f32);
+                    fp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
                 }
             }
             SubPanelSlot::VolumeProfile => {
                 if let Some(ref vp) = state.volume_profile {
-                    vp.render(ctx, x as f32, y as f32, w as f32, h as f32);
+                    vp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
                 }
             }
             SubPanelSlot::BigTrades => {
                 if let Some(ref bt) = state.big_trades {
-                    bt.render(ctx, x as f32, y as f32, w as f32, h as f32);
+                    bt.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
                 }
             }
             SubPanelSlot::L2Tape => {
                 if let Some(ref tape) = state.l2_tape {
-                    tape.render(ctx, x as f32, y as f32, w as f32, h as f32);
+                    tape.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
                 }
             }
         }

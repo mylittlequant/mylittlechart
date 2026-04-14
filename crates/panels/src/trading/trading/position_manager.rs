@@ -191,27 +191,6 @@ pub enum RiskLevel {
     High,
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const PM_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const PM_HEADER_BG: [f32; 4] = [0.071, 0.086, 0.110, 1.0];
-const PM_HEADER_TEXT: [f32; 4] = [0.5, 0.55, 0.65, 1.0];
-const PM_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
-const PM_LONG_TEXT: [f32; 4] = [0.2, 0.85, 0.4, 1.0];
-const PM_SHORT_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
-const PM_PNL_POS: [f32; 4] = [0.2, 0.8, 0.3, 1.0];
-const PM_PNL_NEG: [f32; 4] = [0.9, 0.2, 0.2, 1.0];
-const PM_PNL_NEUTRAL: [f32; 4] = [0.6, 0.6, 0.7, 1.0];
-const PM_LIQ_TEXT: [f32; 4] = [1.0, 0.87, 0.2, 1.0];
-const PM_SELECTED_BG: [f32; 4] = [0.12, 0.16, 0.22, 1.0];
-const PM_SUMMARY_BG: [f32; 4] = [0.063, 0.078, 0.102, 1.0];
-const PM_SEPARATOR: [f32; 4] = [0.15, 0.17, 0.22, 0.6];
 const PM_HEADER_HEIGHT: f32 = 20.0;
 const PM_ROW_HEIGHT: f32 = 20.0;
 const PM_SUMMARY_HEIGHT: f32 = 20.0;
@@ -221,8 +200,16 @@ impl TradingPanel for PositionManagerState {
     fn kind(&self) -> &'static str { "position_manager" }
     fn label(&self) -> &'static str { "Positions" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(PM_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         let sym_w   = (w * 0.14).max(52.0);
@@ -242,13 +229,13 @@ impl TradingPanel for PositionManagerState {
         let col_liq_x   = col_pnl_x  + pnl_w;
         let col_lev_x   = col_liq_x  + liq_w;
 
-        ctx.set_fill_color(&rgba_to_hex(PM_HEADER_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, PM_HEADER_HEIGHT as f64);
 
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
 
         let header_mid_y = (y + PM_HEADER_HEIGHT / 2.0) as f64;
         ctx.fill_text("SYMBOL", col_sym_x   as f64, header_mid_y);
@@ -264,7 +251,7 @@ impl TradingPanel for PositionManagerState {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+            ctx.set_fill_color(&theme.text_header);
             ctx.fill_text("No open positions", (x + w / 2.0) as f64, (y + h / 2.0) as f64);
             return;
         }
@@ -278,26 +265,26 @@ impl TradingPanel for PositionManagerState {
             let row_mid_y = (row_y + PM_ROW_HEIGHT / 2.0) as f64;
 
             let is_selected = self.selected == Some(row_idx);
-            let row_bg = if is_selected { PM_SELECTED_BG } else { PM_BG };
-            ctx.set_fill_color(&rgba_to_hex(row_bg));
+            let row_bg = if is_selected { &theme.selected } else { &theme.panel_bg };
+            ctx.set_fill_color(row_bg);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, PM_ROW_HEIGHT as f64);
 
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
 
-            ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&pos.symbol, col_sym_x as f64, row_mid_y);
 
             let (side_text, side_color) = match pos.side {
-                PositionSide::Long  => ("LONG",  PM_LONG_TEXT),
-                PositionSide::Short => ("SHORT", PM_SHORT_TEXT),
+                PositionSide::Long  => ("LONG",  &theme.pm_long),
+                PositionSide::Short => ("SHORT", &theme.pm_short),
             };
-            ctx.set_fill_color(&rgba_to_hex(side_color));
+            ctx.set_fill_color(side_color);
             ctx.fill_text(side_text, col_side_x as f64, row_mid_y);
 
             let qty_str = format!("{:.4}", pos.quantity);
-            ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
 
             let entry_str = format!("{:.4}", pos.entry_price);
@@ -306,47 +293,47 @@ impl TradingPanel for PositionManagerState {
             let mark_str = format!("{:.4}", pos.mark_price);
             ctx.fill_text(&mark_str, col_mark_x as f64, row_mid_y);
 
-            let pnl_color = if pos.unrealized_pnl > 0.0 { PM_PNL_POS }
-                else if pos.unrealized_pnl < 0.0 { PM_PNL_NEG }
-                else { PM_PNL_NEUTRAL };
+            let pnl_color = if pos.unrealized_pnl > 0.0 { &theme.pm_pnl_positive }
+                else if pos.unrealized_pnl < 0.0 { &theme.pm_pnl_negative }
+                else { &theme.pm_pnl_neutral };
             let pnl_str = format!("{:+.2}", pos.unrealized_pnl);
-            ctx.set_fill_color(&rgba_to_hex(pnl_color));
+            ctx.set_fill_color(pnl_color);
             ctx.fill_text(&pnl_str, col_pnl_x as f64, row_mid_y);
 
             let liq_str = pos.liquidation_price
                 .map(|p| format!("{:.4}", p))
                 .unwrap_or_else(|| "--".to_string());
-            ctx.set_fill_color(&rgba_to_hex(PM_LIQ_TEXT));
+            ctx.set_fill_color(&theme.pm_liquidation);
             ctx.fill_text(&liq_str, col_liq_x as f64, row_mid_y);
 
             let lev_str = format!("{}x", pos.leverage);
-            ctx.set_fill_color(&rgba_to_hex(PM_TEXT_WHITE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&lev_str, col_lev_x as f64, row_mid_y);
 
-            ctx.set_fill_color(&rgba_to_hex(PM_SEPARATOR));
+            ctx.set_fill_color(&theme.separator);
             ctx.fill_rect(x as f64, (row_y + PM_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
         }
 
         let summary_y = y + h - PM_SUMMARY_HEIGHT;
-        ctx.set_fill_color(&rgba_to_hex(PM_SUMMARY_BG));
+        ctx.set_fill_color(&theme.pm_summary_bg);
         ctx.fill_rect(x as f64, summary_y as f64, w as f64, PM_SUMMARY_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex([0.2, 0.23, 0.30, 1.0]));
+        ctx.set_fill_color(&theme.separator);
         ctx.fill_rect(x as f64, summary_y as f64, w as f64, 1.0);
 
         let summary_mid_y = (summary_y + PM_SUMMARY_HEIGHT / 2.0) as f64;
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&rgba_to_hex(PM_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
         ctx.fill_text("Total PnL:", (x + PM_LEFT_PAD) as f64, summary_mid_y);
 
         let total_pnl = self.total_unrealized_pnl;
-        let total_color = if total_pnl > 0.0 { PM_PNL_POS }
-            else if total_pnl < 0.0 { PM_PNL_NEG }
-            else { PM_PNL_NEUTRAL };
+        let total_color = if total_pnl > 0.0 { &theme.pm_pnl_positive }
+            else if total_pnl < 0.0 { &theme.pm_pnl_negative }
+            else { &theme.pm_pnl_neutral };
         let total_str = format!("{:+.2}", total_pnl);
-        ctx.set_fill_color(&rgba_to_hex(total_color));
+        ctx.set_fill_color(total_color);
         ctx.fill_text(&total_str, (x + PM_LEFT_PAD + 70.0) as f64, summary_mid_y);
     }
 

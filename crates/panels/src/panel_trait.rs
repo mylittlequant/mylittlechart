@@ -29,6 +29,7 @@ pub trait TradingPanel {
         y: f32,
         w: f32,
         h: f32,
+        theme: &crate::panel_theme::PanelTheme,
     );
 
     /// Handle a click on a widget belonging to this panel.

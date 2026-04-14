@@ -119,22 +119,6 @@ impl L2TapePanel {
     pub fn min_size(&self) -> (f32, f32) { (200.0, 150.0) }
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const L2_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const L2_BG_ALT: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
-const L2_HEADER_BG: [f32; 4] = [0.075, 0.094, 0.118, 1.0];
-const L2_HEADER_TEXT: [f32; 4] = [0.5, 0.52, 0.57, 1.0];
-const L2_TEXT_WHITE: [f32; 4] = [0.88, 0.88, 0.90, 1.0];
-const L2_SIDE_BID: [f32; 4] = [0.055, 0.796, 0.506, 1.0];
-const L2_SIDE_ASK: [f32; 4] = [0.965, 0.275, 0.365, 1.0];
-const L2_SYMBOL_TEXT: [f32; 4] = [0.4, 0.42, 0.47, 1.0];
 const L2_ROW_HEIGHT: f32 = 16.0;
 const L2_HEADER_HEIGHT: f32 = 16.0;
 const L2_LEFT_PAD: f32 = 6.0;
@@ -143,8 +127,16 @@ impl TradingPanel for L2TapeState {
     fn kind(&self) -> &'static str { "l2_tape" }
     fn label(&self) -> &'static str { "L2 Tape" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(L2_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         let time_w  = (w * 0.28).max(70.0);
@@ -158,13 +150,13 @@ impl TradingPanel for L2TapeState {
         let col_price_x = col_side_x  + side_w;
         let col_qty_x   = col_price_x + price_w;
 
-        ctx.set_fill_color(&rgba_to_hex(L2_HEADER_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, L2_HEADER_HEIGHT as f64);
 
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+        ctx.set_fill_color(&theme.text_header);
 
         let header_text_y = (y + L2_HEADER_HEIGHT / 2.0) as f64;
         ctx.fill_text("TIME",  col_time_x  as f64, header_text_y);
@@ -177,7 +169,7 @@ impl TradingPanel for L2TapeState {
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color(&rgba_to_hex(L2_SYMBOL_TEXT));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.fill_text(&self.symbol, (x + w - 6.0) as f64, header_text_y);
         }
 
@@ -193,8 +185,8 @@ impl TradingPanel for L2TapeState {
             let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
             let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
 
-            let row_bg = if row_idx % 2 == 0 { L2_BG } else { L2_BG_ALT };
-            ctx.set_fill_color(&rgba_to_hex(row_bg));
+            let row_bg = if row_idx % 2 == 0 { &theme.panel_bg } else { &theme.row_bg_alt };
+            ctx.set_fill_color(row_bg);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
 
             ctx.set_font("10px monospace");
@@ -208,18 +200,26 @@ impl TradingPanel for L2TapeState {
             let millis = event.timestamp % 1000;
             let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
 
-            ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&time_str, col_time_x as f64, row_mid_y);
 
+            // event_color returns f32 rgba — convert to hex inline
             let type_color = self.event_color(event);
-            ctx.set_fill_color(&rgba_to_hex(type_color));
+            let type_hex = format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                (type_color[0].clamp(0.0, 1.0) * 255.0) as u8,
+                (type_color[1].clamp(0.0, 1.0) * 255.0) as u8,
+                (type_color[2].clamp(0.0, 1.0) * 255.0) as u8,
+                (type_color[3].clamp(0.0, 1.0) * 255.0) as u8,
+            );
+            ctx.set_fill_color(&type_hex);
             ctx.fill_text(L2TapeState::event_label(&event.event_type), col_type_x as f64, row_mid_y);
 
             let side_color = match event.side {
-                L2Side::Bid => L2_SIDE_BID,
-                L2Side::Ask => L2_SIDE_ASK,
+                L2Side::Bid => &theme.buy,
+                L2Side::Ask => &theme.sell,
             };
-            ctx.set_fill_color(&rgba_to_hex(side_color));
+            ctx.set_fill_color(side_color);
             ctx.fill_text(L2TapeState::side_label(&event.side), col_side_x as f64, row_mid_y);
 
             let decimals = if self.tick_size >= 1.0 {
@@ -234,7 +234,7 @@ impl TradingPanel for L2TapeState {
                 4
             };
             let price_str = format!("{:.prec$}", event.price, prec = decimals);
-            ctx.set_fill_color(&rgba_to_hex(L2_TEXT_WHITE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
 
             let qty_str = if event.quantity >= 1000.0 {
@@ -251,7 +251,7 @@ impl TradingPanel for L2TapeState {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color(&rgba_to_hex(L2_HEADER_TEXT));
+            ctx.set_fill_color(&theme.text_header);
             ctx.fill_text(
                 "No events",
                 (x + w / 2.0) as f64,

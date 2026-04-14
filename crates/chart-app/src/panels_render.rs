@@ -9,6 +9,7 @@
 use sidebar_content::free_slot::FreeItem;
 use zengeld_chart::render::RenderContext;
 
+use zengeld_panels::panel_theme::PanelTheme;
 use zengeld_panels::trading::SymbolSource;
 
 use crate::panels_store::TradingPanelsStore;
@@ -100,6 +101,85 @@ pub fn panel_header_info(
     }
 }
 
+/// Build a `PanelTheme` from the active `RuntimeTheme`.
+///
+/// Common semantic colors (success, danger, warning, text, accent) are pulled
+/// from the runtime theme. Panel-specific colors come from `rt.trading`.
+pub fn panel_theme_from_runtime(rt: &zengeld_chart::theme::RuntimeTheme) -> zengeld_panels::panel_theme::PanelTheme {
+    let t = &rt.trading;
+    zengeld_panels::panel_theme::PanelTheme {
+        // Common — mapped from RuntimeTheme base colors
+        panel_bg:      t.panel_bg.clone(),
+        row_bg_alt:    t.row_bg_alt.clone(),
+        header_bg:     t.header_bg.clone(),
+        separator:     rt.colors.divider.clone(),
+
+        text_primary:  rt.colors.text_primary.clone(),
+        text_muted:    rt.colors.text_muted.clone(),
+        text_header:   rt.colors.text_secondary.clone(),
+
+        buy:           rt.colors.success.clone(),
+        buy_bright:    t.buy_bright.clone(),
+        sell:          rt.colors.danger.clone(),
+        sell_bright:   t.sell_bright.clone(),
+
+        current_price: rt.colors.warning.clone(),
+        hover:         t.hover.clone(),
+        selected:      t.selected.clone(),
+        accent:        rt.colors.accent.clone(),
+
+        // Panel-specific — direct from trading.*
+        dom_spread_bg:    t.dom_spread_bg.clone(),
+        dom_best_bid_bg:  t.dom_best_bid_bg.clone(),
+        dom_best_ask_bg:  t.dom_best_ask_bg.clone(),
+        dom_user_order:   t.dom_user_order.clone(),
+
+        fp_cell_text:  t.fp_cell_text.clone(),
+        fp_poc_marker: t.fp_poc_marker.clone(),
+        fp_poc_border: t.fp_poc_border.clone(),
+        fp_bullish:    t.fp_bullish.clone(),
+
+        vp_bar:        t.vp_bar.clone(),
+        vp_bar_poc:    t.vp_bar_poc.clone(),
+        vp_poc_line:   t.vp_poc_line.clone(),
+        vp_vah_line:   t.vp_vah_line.clone(),
+        vp_val_line:   t.vp_val_line.clone(),
+        vp_value_area: t.vp_value_area.clone(),
+
+        heatmap_price_line: t.heatmap_price_line.clone(),
+
+        oe_tab_active:       t.oe_tab_active.clone(),
+        oe_tab_inactive:     t.oe_tab_inactive.clone(),
+        oe_input_bg:         t.oe_input_bg.clone(),
+        oe_input_border:     t.oe_input_border.clone(),
+        oe_buy_button:       t.oe_buy_button.clone(),
+        oe_sell_button:      t.oe_sell_button.clone(),
+        oe_buy_button_text:  t.oe_buy_button_text.clone(),
+        oe_sell_button_text: t.oe_sell_button_text.clone(),
+
+        pm_pnl_positive: t.pm_pnl_positive.clone(),
+        pm_pnl_negative: t.pm_pnl_negative.clone(),
+        pm_pnl_neutral:  t.pm_pnl_neutral.clone(),
+        pm_long:         t.pm_long.clone(),
+        pm_short:        t.pm_short.clone(),
+        pm_liquidation:  t.pm_liquidation.clone(),
+        pm_summary_bg:   t.pm_summary_bg.clone(),
+
+        tl_row_bg_alt: t.tl_row_bg_alt.clone(),
+        tl_profit:     t.tl_profit.clone(),
+        tl_loss:       t.tl_loss.clone(),
+
+        rc_risk:     t.rc_risk.clone(),
+        rc_profit:   t.rc_profit.clone(),
+        rc_good_rr:  t.rc_good_rr.clone(),
+        rc_input_bg: t.rc_input_bg.clone(),
+
+        tc_bg:        t.tc_bg.clone(),
+        tc_inner_bg:  t.tc_inner_bg.clone(),
+        tc_separator: t.tc_separator.clone(),
+    }
+}
+
 /// Render the content of a `FreeItem` leaf into `(x, y, w, h)`.
 ///
 /// If the item's state is missing from the store (e.g. the panel was removed
@@ -112,8 +192,9 @@ pub fn render_free_item(
     w: f32,
     h: f32,
     ctx: &mut dyn RenderContext,
+    theme: &PanelTheme,
 ) {
     if let Some(panel) = store.get_panel(item) {
-        panel.render(ctx, x, y, w, h);
+        panel.render(ctx, x, y, w, h, theme);
     }
 }

@@ -158,24 +158,6 @@ impl Default for RiskCalculatorState {
     }
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const RC_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const RC_TITLE_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
-const RC_LABEL: [f32; 4] = [0.533, 0.533, 0.533, 1.0];
-const RC_VALUE: [f32; 4] = [0.878, 0.878, 0.878, 1.0];
-const RC_RED: [f32; 4] = [0.871, 0.204, 0.267, 1.0];
-const RC_GREEN: [f32; 4] = [0.196, 0.804, 0.447, 1.0];
-const RC_GOLD: [f32; 4] = [1.0, 0.843, 0.0, 1.0];
-const RC_DIVIDER: [f32; 4] = [0.2, 0.22, 0.27, 1.0];
-const RC_TITLE_TEXT: [f32; 4] = [0.75, 0.78, 0.85, 1.0];
-const RC_ERROR: [f32; 4] = [0.9, 0.3, 0.3, 1.0];
 const RC_TITLE_HEIGHT: f32 = 20.0;
 const RC_ROW_HEIGHT: f32 = 20.0;
 const RC_LEFT_PAD: f32 = 8.0;
@@ -185,14 +167,22 @@ impl TradingPanel for RiskCalculatorState {
     fn kind(&self) -> &'static str { "risk_calculator" }
     fn label(&self) -> &'static str { "Risk Calculator" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(RC_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(RC_TITLE_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, RC_TITLE_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(RC_TITLE_TEXT));
+        ctx.set_fill_color(&theme.text_header);
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -216,56 +206,59 @@ impl TradingPanel for RiskCalculatorState {
         for (label, value) in input_rows {
             let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
 
-            ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
 
-            ctx.set_fill_color(&rgba_to_hex(RC_VALUE));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
 
             cursor_y += RC_ROW_HEIGHT;
         }
 
-        ctx.set_fill_color(&rgba_to_hex(RC_DIVIDER));
+        ctx.set_fill_color(&theme.separator);
         ctx.fill_rect((x + RC_LEFT_PAD) as f64, cursor_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, 1.0);
         cursor_y += 6.0;
 
-        let rr_color = if let Some(rr) = self.risk_reward_ratio {
-            if rr >= 2.0 { RC_GOLD } else { RC_VALUE }
-        } else {
-            RC_VALUE
-        };
+        let good_rr = self.risk_reward_ratio.map_or(false, |rr| rr >= 2.0);
 
         let leverage_str = self.leverage
             .map(|lev| format!("{}x", lev))
             .unwrap_or_else(|| "1x".to_string());
 
-        let computed_rows: &[(&str, String, [f32; 4])] = &[
-            ("Risk Amount:", self.format_output("risk_amount"), RC_RED),
-            ("Position Size:", self.format_output("position_size"), RC_VALUE),
-            ("Risk/Unit:", self.format_output("risk_per_unit"), RC_VALUE),
-            ("Potential Profit:", self.format_output("potential_profit"), RC_GREEN),
-            ("R:R Ratio:", self.format_output("risk_reward_ratio"), rr_color),
-            ("Leverage:", leverage_str, RC_VALUE),
-            ("Margin Req:", self.format_output("margin_required"), RC_VALUE),
+        // (label, value, use_color_key) — color_key: "risk", "profit", "good_rr", "default"
+        let computed_rows: &[(&str, String, &str)] = &[
+            ("Risk Amount:", self.format_output("risk_amount"), "risk"),
+            ("Position Size:", self.format_output("position_size"), "default"),
+            ("Risk/Unit:", self.format_output("risk_per_unit"), "default"),
+            ("Potential Profit:", self.format_output("potential_profit"), "profit"),
+            ("R:R Ratio:", self.format_output("risk_reward_ratio"), if good_rr { "good_rr" } else { "default" }),
+            ("Leverage:", leverage_str, "default"),
+            ("Margin Req:", self.format_output("margin_required"), "default"),
         ];
 
-        for (label, value, color) in computed_rows {
+        for (label, value, color_key) in computed_rows {
             if cursor_y + RC_ROW_HEIGHT > y + h - 20.0 {
                 break;
             }
 
             let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
 
-            ctx.set_fill_color(&rgba_to_hex(RC_LABEL));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
 
-            ctx.set_fill_color(&rgba_to_hex(*color));
+            let value_color = match *color_key {
+                "risk"    => &theme.rc_risk,
+                "profit"  => &theme.rc_profit,
+                "good_rr" => &theme.rc_good_rr,
+                _         => &theme.text_primary,
+            };
+            ctx.set_fill_color(value_color);
             ctx.fill_text(value, (x + RC_LEFT_PAD + RC_LABEL_WIDTH) as f64, row_mid_y);
 
             cursor_y += RC_ROW_HEIGHT;
@@ -273,7 +266,7 @@ impl TradingPanel for RiskCalculatorState {
 
         if !self.errors.is_empty() {
             cursor_y += 4.0;
-            ctx.set_fill_color(&rgba_to_hex(RC_ERROR));
+            ctx.set_fill_color(&theme.sell_bright);
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);

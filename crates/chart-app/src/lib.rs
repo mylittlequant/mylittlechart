@@ -5914,6 +5914,7 @@ impl ChartApp {
 
             let sidebar_rect = LayoutRect::new(sidebar_x, sidebar_y, sidebar_w, sidebar_h);
             let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
+            let panel_theme = panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
 
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
@@ -5926,7 +5927,7 @@ impl ChartApp {
                 &sidebar_toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
                 &mut |item, rect, ctx| {
-                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
+                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme);
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                     use sidebar_content::free_slot::FreeItem;
@@ -6391,6 +6392,7 @@ impl ChartApp {
 
         let sidebar_rect = LayoutRect::new(sidebar_x, sidebar_y, sidebar_w, sidebar_h);
         let sidebar_toolbar_theme = self.panel_app.toolbar_theme_for_render();
+        let panel_theme = panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
 
         // Provide current agent state to sidebar for the Agents panel.
         // Snapshot each registered leaf instance.
@@ -6413,7 +6415,7 @@ impl ChartApp {
             &sidebar_toolbar_theme,
             &mut self.input_coordinator.borrow_mut(),
             &mut |item, rect, ctx| {
-                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
+                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme);
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;

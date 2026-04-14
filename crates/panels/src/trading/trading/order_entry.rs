@@ -295,34 +295,6 @@ pub enum TimeInForce {
     FOK, // Fill or Kill
 }
 
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const OE_BG: [f32; 4] = [0.051, 0.067, 0.090, 1.0];
-const OE_FIELD_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
-const OE_TITLE_BG: [f32; 4] = [0.063, 0.082, 0.106, 1.0];
-const OE_TITLE_TEXT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
-const OE_SYMBOL_TEXT: [f32; 4] = [0.5, 0.53, 0.60, 1.0];
-const OE_LABEL_TEXT: [f32; 4] = [0.55, 0.58, 0.65, 1.0];
-const OE_VALUE_TEXT: [f32; 4] = [0.92, 0.92, 0.92, 1.0];
-const OE_ERROR_TEXT: [f32; 4] = [0.95, 0.27, 0.36, 1.0];
-const OE_BUY_ACTIVE: [f32; 4] = [0.0, 0.667, 0.333, 1.0];
-const OE_BUY_TEXT: [f32; 4] = [0.0, 1.0, 0.533, 1.0];
-const OE_BUY_INACTIVE: [f32; 4] = [0.0, 0.20, 0.13, 1.0];
-const OE_SELL_ACTIVE: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
-const OE_SELL_TEXT: [f32; 4] = [1.0, 0.267, 0.4, 1.0];
-const OE_SELL_INACTIVE: [f32; 4] = [0.22, 0.04, 0.08, 1.0];
-const OE_TAB_ACTIVE_BG: [f32; 4] = [0.14, 0.18, 0.26, 1.0];
-const OE_TAB_INACTIVE_BG: [f32; 4] = [0.071, 0.090, 0.118, 1.0];
-const OE_TAB_TEXT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
-const OE_SUBMIT_BUY: [f32; 4] = [0.0, 0.667, 0.333, 1.0];
-const OE_SUBMIT_SELL: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
-const OE_SUBMIT_TEXT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const OE_TITLE_HEIGHT: f32 = 22.0;
 const OE_TOGGLE_HEIGHT: f32 = 28.0;
 const OE_TAB_HEIGHT: f32 = 22.0;
@@ -335,23 +307,31 @@ impl TradingPanel for OrderEntryState {
     fn kind(&self) -> &'static str { "order_entry" }
     fn label(&self) -> &'static str { "Order Entry" }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
-        ctx.set_fill_color(&rgba_to_hex(OE_BG));
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         let mut cursor_y = y;
 
-        ctx.set_fill_color(&rgba_to_hex(OE_TITLE_BG));
+        ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_TITLE_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(OE_TITLE_TEXT));
+        ctx.set_fill_color(&theme.text_primary);
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Order Entry", (x + OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
 
         if !self.symbol.is_empty() {
-            ctx.set_fill_color(&rgba_to_hex(OE_SYMBOL_TEXT));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Right);
             ctx.fill_text(&self.symbol, (x + w - OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
@@ -360,21 +340,21 @@ impl TradingPanel for OrderEntryState {
         cursor_y += OE_TITLE_HEIGHT;
 
         let half_w = w / 2.0;
-        let buy_bg = if self.side == OrderSide::Buy { OE_BUY_ACTIVE } else { OE_BUY_INACTIVE };
-        ctx.set_fill_color(&rgba_to_hex(buy_bg));
+        let buy_bg = if self.side == OrderSide::Buy { &theme.oe_buy_button } else { &theme.oe_tab_inactive };
+        ctx.set_fill_color(buy_bg);
         ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(OE_BUY_TEXT));
+        ctx.set_fill_color(&theme.oe_buy_button_text);
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("BUY", (x + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
 
-        let sell_bg = if self.side == OrderSide::Sell { OE_SELL_ACTIVE } else { OE_SELL_INACTIVE };
-        ctx.set_fill_color(&rgba_to_hex(sell_bg));
+        let sell_bg = if self.side == OrderSide::Sell { &theme.oe_sell_button } else { &theme.oe_tab_inactive };
+        ctx.set_fill_color(sell_bg);
         ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
 
-        ctx.set_fill_color(&rgba_to_hex(OE_SELL_TEXT));
+        ctx.set_fill_color(&theme.oe_sell_button_text);
         ctx.fill_text("SELL", (x + half_w + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
 
         cursor_y += OE_TOGGLE_HEIGHT;
@@ -391,27 +371,27 @@ impl TradingPanel for OrderEntryState {
             let tab_x = x + i as f32 * tab_w;
             let is_active = self.order_type == *ot;
 
-            let tab_bg = if is_active { OE_TAB_ACTIVE_BG } else { OE_TAB_INACTIVE_BG };
-            ctx.set_fill_color(&rgba_to_hex(tab_bg));
+            let tab_bg = if is_active { &theme.oe_tab_active } else { &theme.oe_tab_inactive };
+            ctx.set_fill_color(tab_bg);
             ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64);
 
             if is_active {
                 let accent = match self.side {
-                    OrderSide::Buy => OE_BUY_ACTIVE,
-                    OrderSide::Sell => OE_SELL_ACTIVE,
+                    OrderSide::Buy => &theme.oe_buy_button,
+                    OrderSide::Sell => &theme.oe_sell_button,
                 };
-                ctx.set_fill_color(&rgba_to_hex(accent));
+                ctx.set_fill_color(accent);
                 ctx.fill_rect(tab_x as f64, (cursor_y + OE_TAB_HEIGHT - 2.0) as f64, tab_w as f64, 2.0);
             }
 
-            ctx.set_fill_color(&rgba_to_hex(OE_TAB_TEXT));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, (tab_x + tab_w / 2.0) as f64, (cursor_y + OE_TAB_HEIGHT / 2.0) as f64);
 
             if i + 1 < tabs.len() {
-                ctx.set_fill_color(&rgba_to_hex([0.15, 0.18, 0.24, 1.0]));
+                ctx.set_fill_color(&theme.separator);
                 ctx.fill_rect((tab_x + tab_w - 1.0) as f64, cursor_y as f64, 1.0, OE_TAB_HEIGHT as f64);
             }
         }
@@ -421,19 +401,19 @@ impl TradingPanel for OrderEntryState {
         let field_value_right = x + w - OE_PAD;
 
         let draw_field = |ctx: &mut dyn RenderContext, row_y: f32, label: &str, value: &str| {
-            ctx.set_fill_color(&rgba_to_hex(OE_FIELD_BG));
+            ctx.set_fill_color(&theme.oe_input_bg);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
 
-            ctx.set_fill_color(&rgba_to_hex([0.12, 0.15, 0.20, 1.0]));
+            ctx.set_fill_color(&theme.oe_input_border);
             ctx.fill_rect(x as f64, (row_y + OE_FIELD_HEIGHT - 1.0) as f64, w as f64, 1.0);
 
-            ctx.set_fill_color(&rgba_to_hex(OE_LABEL_TEXT));
+            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
 
-            ctx.set_fill_color(&rgba_to_hex(OE_VALUE_TEXT));
+            ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Right);
             ctx.fill_text(value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
@@ -485,17 +465,12 @@ impl TradingPanel for OrderEntryState {
         if remaining >= OE_SUBMIT_HEIGHT {
             let submit_y = cursor_y + (remaining - OE_SUBMIT_HEIGHT).max(0.0);
 
-            let base_color = match self.side {
-                OrderSide::Buy => OE_SUBMIT_BUY,
-                OrderSide::Sell => OE_SUBMIT_SELL,
-            };
-            let submit_color = if self.submitting {
-                [base_color[0] * 0.6, base_color[1] * 0.6, base_color[2] * 0.6, 1.0]
-            } else {
-                base_color
+            let submit_color = match self.side {
+                OrderSide::Buy => &theme.oe_buy_button,
+                OrderSide::Sell => &theme.oe_sell_button,
             };
 
-            ctx.set_fill_color(&rgba_to_hex(submit_color));
+            ctx.set_fill_color(submit_color);
             ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64);
 
             let submit_label = if self.submitting {
@@ -507,7 +482,11 @@ impl TradingPanel for OrderEntryState {
                 }
             };
 
-            ctx.set_fill_color(&rgba_to_hex(OE_SUBMIT_TEXT));
+            let submit_text_color = match self.side {
+                OrderSide::Buy => &theme.oe_buy_button_text,
+                OrderSide::Sell => &theme.oe_sell_button_text,
+            };
+            ctx.set_fill_color(submit_text_color);
             ctx.set_font("13px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
@@ -520,7 +499,7 @@ impl TradingPanel for OrderEntryState {
             if cursor_y + OE_ERROR_HEIGHT > y + h {
                 break;
             }
-            ctx.set_fill_color(&rgba_to_hex(OE_ERROR_TEXT));
+            ctx.set_fill_color(&theme.sell_bright);
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);

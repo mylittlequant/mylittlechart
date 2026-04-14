@@ -407,38 +407,8 @@ impl DomPanel {
 }
 
 // ============================================================
-// DOM Colors (local copy — canonical source is panel_renderers_orderflow.rs)
+// DOM layout constants
 // ============================================================
-
-fn rgba_to_hex(rgba: [f32; 4]) -> String {
-    let r = (rgba[0].clamp(0.0, 1.0) * 255.0) as u8;
-    let g = (rgba[1].clamp(0.0, 1.0) * 255.0) as u8;
-    let b = (rgba[2].clamp(0.0, 1.0) * 255.0) as u8;
-    let a = (rgba[3].clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", r, g, b, a)
-}
-
-const BG_DEFAULT: [f32; 4] = [0.11, 0.11, 0.16, 1.0];
-const BG_BEST_BID: [f32; 4] = [0.04, 0.21, 0.13, 1.0];
-const BG_BEST_ASK: [f32; 4] = [0.23, 0.04, 0.04, 1.0];
-const BG_SPREAD: [f32; 4] = [0.08, 0.09, 0.12, 1.0];
-const BG_CURRENT_PRICE: [f32; 4] = [0.16, 0.16, 0.0, 1.0];
-const BG_HOVER: [f32; 4] = [0.16, 0.18, 0.25, 1.0];
-
-const TEXT_PRICE_DEFAULT: [f32; 4] = [0.88, 0.88, 0.88, 1.0];
-const TEXT_PRICE_BEST_BID: [f32; 4] = [0.0, 1.0, 0.53, 1.0];
-const TEXT_PRICE_BEST_ASK: [f32; 4] = [1.0, 0.27, 0.4, 1.0];
-const TEXT_PRICE_CURRENT: [f32; 4] = [1.0, 0.87, 0.0, 1.0];
-
-const TEXT_VOL_BID: [f32; 4] = [0.4, 0.8, 0.53, 1.0];
-const TEXT_VOL_ASK: [f32; 4] = [1.0, 0.4, 0.47, 1.0];
-
-const BAR_BID: [f32; 4] = [0.0, 0.67, 0.33, 1.0];
-const BAR_BID_BRIGHT: [f32; 4] = [0.0, 1.0, 0.53, 1.0];
-const BAR_ASK: [f32; 4] = [0.8, 0.0, 0.2, 1.0];
-const BAR_ASK_BRIGHT: [f32; 4] = [1.0, 0.27, 0.4, 1.0];
-
-const USER_ORDER_MARKER: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 
 const DOM_ROW_HEIGHT: f32 = 20.0;
 const DOM_LEFT_PAD: f32 = 6.0;
@@ -457,9 +427,17 @@ impl TradingPanel for DomState {
         "DOM"
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, x: f32, y: f32, w: f32, h: f32) {
+    fn render(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
         // Background fill
-        ctx.set_fill_color(&rgba_to_hex(BG_DEFAULT));
+        ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         // === STEP 1: Calculate layout ===
@@ -500,18 +478,18 @@ impl TradingPanel for DomState {
             let is_current_price = (level.price - self.market_price).abs() < self.tick_size * 0.5;
 
             let bg_color = if is_current_price {
-                BG_CURRENT_PRICE
+                &theme.current_price
             } else if is_best_bid {
-                BG_BEST_BID
+                &theme.dom_best_bid_bg
             } else if is_best_ask {
-                BG_BEST_ASK
+                &theme.dom_best_ask_bg
             } else if level.is_spread {
-                BG_SPREAD
+                &theme.dom_spread_bg
             } else {
-                BG_DEFAULT
+                &theme.panel_bg
             };
 
-            ctx.set_fill_color(&rgba_to_hex(bg_color));
+            ctx.set_fill_color(bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
 
             // --- Step 4.1b: Hover highlight overlay ---
@@ -519,17 +497,17 @@ impl TradingPanel for DomState {
                 .map_or(false, |hp| (level.price - hp).abs() < self.tick_size * 0.5);
 
             if is_hovered {
-                ctx.set_fill_color(&rgba_to_hex(BG_HOVER));
+                ctx.set_fill_color(&theme.hover);
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
 
-                let accent_color = if level.is_bid {
-                    BAR_BID_BRIGHT
+                let accent = if level.is_bid {
+                    &theme.buy_bright
                 } else if level.is_ask {
-                    BAR_ASK_BRIGHT
+                    &theme.sell_bright
                 } else {
-                    [0.4, 0.5, 0.8, 1.0]
+                    &theme.accent
                 };
-                ctx.set_fill_color(&rgba_to_hex(accent_color));
+                ctx.set_fill_color(accent);
                 ctx.fill_rect(x as f64, row_y as f64, 3.0, row_height as f64);
             }
 
@@ -540,18 +518,11 @@ impl TradingPanel for DomState {
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                let intensity = (level.bid_volume / self.max_volume).clamp(0.0, 1.0) as f32;
-                let bar_color = [
-                    BAR_BID[0] * (1.0 - intensity) + BAR_BID_BRIGHT[0] * intensity,
-                    BAR_BID[1] * (1.0 - intensity) + BAR_BID_BRIGHT[1] * intensity,
-                    BAR_BID[2] * (1.0 - intensity) + BAR_BID_BRIGHT[2] * intensity,
-                    1.0,
-                ];
-
-                ctx.set_fill_color(&rgba_to_hex(bar_color));
+                // Use buy color for bid bars
+                ctx.set_fill_color(&theme.buy);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
-                ctx.set_fill_color(&rgba_to_hex(TEXT_VOL_BID));
+                ctx.set_fill_color(&theme.buy);
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Right);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -569,18 +540,10 @@ impl TradingPanel for DomState {
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                let intensity = (level.ask_volume / self.max_volume).clamp(0.0, 1.0) as f32;
-                let bar_color = [
-                    BAR_ASK[0] * (1.0 - intensity) + BAR_ASK_BRIGHT[0] * intensity,
-                    BAR_ASK[1] * (1.0 - intensity) + BAR_ASK_BRIGHT[1] * intensity,
-                    BAR_ASK[2] * (1.0 - intensity) + BAR_ASK_BRIGHT[2] * intensity,
-                    1.0,
-                ];
-
-                ctx.set_fill_color(&rgba_to_hex(bar_color));
+                ctx.set_fill_color(&theme.sell);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
-                ctx.set_fill_color(&rgba_to_hex(TEXT_VOL_ASK));
+                ctx.set_fill_color(&theme.sell);
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -593,16 +556,16 @@ impl TradingPanel for DomState {
 
             // --- Step 4.4: Price text (centered in price column) ---
             let price_text_color = if is_current_price {
-                TEXT_PRICE_CURRENT
+                &theme.current_price
             } else if is_best_bid {
-                TEXT_PRICE_BEST_BID
+                &theme.buy_bright
             } else if is_best_ask {
-                TEXT_PRICE_BEST_ASK
+                &theme.sell_bright
             } else {
-                TEXT_PRICE_DEFAULT
+                &theme.text_primary
             };
 
-            ctx.set_fill_color(&rgba_to_hex(price_text_color));
+            ctx.set_fill_color(price_text_color);
             ctx.set_font("11px monospace");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
@@ -614,7 +577,7 @@ impl TradingPanel for DomState {
 
             // --- Step 4.5: User order markers ---
             if level.has_user_order {
-                ctx.set_fill_color(&rgba_to_hex(USER_ORDER_MARKER));
+                ctx.set_fill_color(&theme.dom_user_order);
                 ctx.set_font("10px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -629,7 +592,7 @@ impl TradingPanel for DomState {
                 levels.iter().position(|l| (l.price - best_ask).abs() < 0.001),
             ) {
                 let spread_y = y + (bid_idx as f32 + 0.5) * row_height;
-                ctx.set_fill_color(&rgba_to_hex([0.4, 0.4, 0.5, 0.5]));
+                ctx.set_fill_color(&theme.separator);
                 ctx.fill_rect(x as f64, spread_y as f64, w as f64, 1.0);
             }
         }
@@ -642,20 +605,13 @@ impl TradingPanel for DomState {
                 let price = self.tick_to_price(*price_tick);
                 if let Some(row_idx) = levels.iter().position(|l| (l.price - price).abs() < 0.001) {
                     let flash_y = y + (row_idx as f32 * row_height);
-
-                    let alpha = if elapsed_ms < 100 {
-                        0.4
-                    } else {
-                        0.4 * (1.0 - (elapsed_ms - 100) as f32 / 200.0)
-                    };
-
                     let level = &levels[row_idx];
                     let flash_color = if level.is_bid {
-                        [0.0, 1.0, 0.4, alpha]
+                        &theme.buy_bright
                     } else {
-                        [1.0, 0.2, 0.3, alpha]
+                        &theme.sell_bright
                     };
-                    ctx.set_fill_color(&rgba_to_hex(flash_color));
+                    ctx.set_fill_color(flash_color);
                     ctx.fill_rect(x as f64, flash_y as f64, w as f64, row_height as f64);
                 }
             }
