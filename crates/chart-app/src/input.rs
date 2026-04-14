@@ -9861,7 +9861,6 @@ impl ChartApp {
                                     .map(|w| crate::account_type_from_label(&w.account_type))
                                     .unwrap_or(digdigdig3::AccountType::Spot);
                                 self.bridge.subscribe_depth(eid, &symbol, at);
-                                eprintln!("[DEPTH] Subscribed depth for DOM panel: symbol='{}', exchange='{:?}'", symbol, eid);
                                 Some(sidebar_content::free_slot::FreeItem::Dom(pid))
                             }
                             "footprint" => {
@@ -9973,6 +9972,24 @@ impl ChartApp {
                             "split:replace" => {
                                 self.sidebar_state.slot_spawn_layout =
                                     sidebar_content::state::AgentSpawnLayout::Replace;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "source:auto" => {
+                                self.sidebar_state.slot_source_mode =
+                                    sidebar_content::state::SlotSourceMode::Auto;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "source:pinned" => {
+                                self.sidebar_state.slot_source_mode =
+                                    sidebar_content::state::SlotSourceMode::Pinned;
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
+                            "source:linked" => {
+                                self.sidebar_state.slot_source_mode =
+                                    sidebar_content::state::SlotSourceMode::Linked;
                                 self.sidebar_data_dirty = true;
                                 return;
                             }

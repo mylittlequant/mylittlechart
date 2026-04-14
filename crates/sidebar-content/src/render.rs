@@ -3500,6 +3500,61 @@ fn render_slot_panel(
         result.item_rects.push((new_id, new_rect));
         cur_x += new_w + gap;
 
+        // [A][P][L] source mode buttons — right after [+ New]
+        {
+            use crate::state::SlotSourceMode;
+            let apl_w = 28.0_f64;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+
+            // [A] Auto
+            let sa_id  = format!("slot:{slot_idx}:source:auto");
+            let is_a   = state.slot_source_mode == SlotSourceMode::Auto;
+            let a_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+            let a_hov  = !is_a && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sa_id));
+            ctx.set_fill_color(if is_a { &theme.accent } else if a_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(a_rect.x, a_rect.y, a_rect.width, a_rect.height, 3.0);
+            ctx.set_fill_color(if is_a { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.fill_text("A", a_rect.x + a_rect.width / 2.0, a_rect.y + a_rect.height / 2.0);
+            if !is_a {
+                input_coordinator.register(sa_id.as_str(), a_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sa_id, a_rect));
+            cur_x += apl_w + 2.0;
+
+            // [P] Pinned
+            let sp_id  = format!("slot:{slot_idx}:source:pinned");
+            let is_p   = state.slot_source_mode == SlotSourceMode::Pinned;
+            let p_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+            let p_hov  = !is_p && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sp_id));
+            ctx.set_fill_color(if is_p { &theme.accent } else if p_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(p_rect.x, p_rect.y, p_rect.width, p_rect.height, 3.0);
+            ctx.set_fill_color(if is_p { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.fill_text("P", p_rect.x + p_rect.width / 2.0, p_rect.y + p_rect.height / 2.0);
+            if !is_p {
+                input_coordinator.register(sp_id.as_str(), p_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sp_id, p_rect));
+            cur_x += apl_w + 2.0;
+
+            // [L] Linked
+            let sl_id  = format!("slot:{slot_idx}:source:linked");
+            let is_l   = state.slot_source_mode == SlotSourceMode::Linked;
+            let l_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+            let l_hov  = !is_l && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sl_id));
+            ctx.set_fill_color(if is_l { &theme.accent } else if l_hov { &theme.item_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(l_rect.x, l_rect.y, l_rect.width, l_rect.height, 3.0);
+            ctx.set_fill_color(if is_l { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.fill_text("L", l_rect.x + l_rect.width / 2.0, l_rect.y + l_rect.height / 2.0);
+            if !is_l {
+                input_coordinator.register(sl_id.as_str(), l_rect, uzor::input::Sense::CLICK);
+            }
+            result.item_rects.push((sl_id, l_rect));
+            cur_x += apl_w + gap;
+        }
+
         // Right-side layout controls — align to right edge of inner area
         // [H][V][R] + gap + [⊞][↺][×]
         let split_w = 28.0_f64;
@@ -3727,8 +3782,7 @@ fn render_slot_panel(
         );
 
         // Button layout (right-to-left from right edge):
-        //   [×] close  |  [H] split-h  |  [V] split-v
-        let btn_gap = 2.0_f32;
+        //   [×] close
         let btn_w = 14.0_f32;
         let btn_h = 14.0_f32;
         let btn_y = header_y + (header_h - btn_h) / 2.0;
@@ -3746,47 +3800,8 @@ fn render_slot_panel(
             (close_y + btn_h / 2.0) as f64,
         );
 
-        // Split-H [H] button — to the left of close.
-        let split_h_x = close_x - btn_gap - btn_w;
-        let split_h_id = format!("slot:{}:leaf:{}:split_h", slot_idx, leaf_id.0);
-        let is_split_h_hov = input_coordinator.is_hovered(
-            &uzor::types::WidgetId::new(&split_h_id),
-        );
-        ctx.set_font("9px sans-serif");
-        ctx.set_fill_color(if is_split_h_hov { "#58a6ff" } else { "#8b949e" });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            "H",
-            (split_h_x + btn_w / 2.0) as f64,
-            (btn_y + btn_h / 2.0) as f64,
-        );
-
-        // Split-V [V] button — to the left of split-h.
-        let split_v_x = split_h_x - btn_gap - btn_w;
-        let split_v_id = format!("slot:{}:leaf:{}:split_v", slot_idx, leaf_id.0);
-        let is_split_v_hov = input_coordinator.is_hovered(
-            &uzor::types::WidgetId::new(&split_v_id),
-        );
-        ctx.set_fill_color(if is_split_v_hov { "#58a6ff" } else { "#8b949e" });
-        ctx.fill_text(
-            "V",
-            (split_v_x + btn_w / 2.0) as f64,
-            (btn_y + btn_h / 2.0) as f64,
-        );
-
-        // Register split-v widget.
-        let split_v_rect = WidgetRect::new(split_v_x as f64, btn_y as f64, btn_w as f64, btn_h as f64);
-        input_coordinator.register(split_v_id.as_str(), split_v_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((split_v_id, split_v_rect));
-
-        // Register split-h widget.
-        let split_h_rect = WidgetRect::new(split_h_x as f64, btn_y as f64, btn_w as f64, btn_h as f64);
-        input_coordinator.register(split_h_id.as_str(), split_h_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((split_h_id, split_h_rect));
-
-        // Register header focus widget (full header minus all right-side buttons).
-        let buttons_total_w = (btn_w + btn_gap) * 2.0 + btn_w + 3.0;
+        // Register header focus widget (full header minus close button).
+        let buttons_total_w = btn_w + 3.0;
         let focus_id = format!("slot:{}:leaf:{}:focus", slot_idx, leaf_id.0);
         let focus_rect = WidgetRect::new(
             header_x as f64,

@@ -2678,7 +2678,6 @@ impl ChartApp {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
                 LiveUpdate::OrderbookSnapshot { symbol, bids, asks, timestamp, .. } => {
-                    eprintln!("[DEPTH] Snapshot for '{}': {} bids, {} asks", symbol, bids.len(), asks.len());
                     // Feed snapshot into all DOM panels that display this symbol.
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol {
@@ -2699,15 +2698,6 @@ impl ChartApp {
                     }
                 }
                 LiveUpdate::OrderbookDelta { symbol, bids, asks, timestamp, .. } => {
-                    static DELTA_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                    let count = DELTA_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if count % 100 == 0 {
-                        eprintln!("[DEPTH] Delta #{} for '{}': {} bids, {} asks | DOM panels: {}, matching: {}",
-                            count, symbol, bids.len(), asks.len(),
-                            self.panels_store.dom.len(),
-                            self.panels_store.dom.values().filter(|s| s.symbol == symbol).count(),
-                        );
-                    }
                     // Feed incremental delta into all DOM panels that display this symbol.
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol {

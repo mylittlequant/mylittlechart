@@ -26,6 +26,21 @@ pub enum AgentSpawnLayout {
 }
 
 // =============================================================================
+// SlotSourceMode
+// =============================================================================
+
+/// Controls what data source a free slot panel tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotSourceMode {
+    /// Automatically follows the active chart symbol/timeframe.
+    Auto,
+    /// Pinned to a specific symbol/timeframe set by the user.
+    Pinned,
+    /// Linked to the chart — mirrors the chart's current selection.
+    Linked,
+}
+
+// =============================================================================
 // MetricsSnapshot
 // =============================================================================
 
@@ -399,6 +414,13 @@ pub struct SidebarState {
     /// across all 4 slots (one setting for all free-slot containers).
     pub slot_spawn_layout: AgentSpawnLayout,
 
+    /// Data source mode for free slot panels.
+    ///
+    /// Controls whether the slot follows the active chart automatically (`Auto`),
+    /// is pinned to a fixed symbol/timeframe (`Pinned`), or mirrors the chart
+    /// selection in real time (`Linked`).
+    pub slot_source_mode: SlotSourceMode,
+
     /// Which agent Chat leaf's sessions dropdown is currently open (`None` = all closed).
     ///
     /// Only one leaf can have its dropdown open at a time. Clicking the
@@ -742,6 +764,7 @@ impl Default for SidebarState {
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
             slot_spawn_layout: AgentSpawnLayout::SplitH,
+            slot_source_mode: SlotSourceMode::Auto,
             hovered_free_leaf: None,
             agent_sessions_dropdown: None,
             agent_model_dropdown: None,
