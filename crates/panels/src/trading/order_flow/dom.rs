@@ -266,6 +266,10 @@ impl DomState {
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
             self.market_price = (bid + ask) / 2.0;
+            // Initialize center_price on first delta (Binance never sends snapshot).
+            if self.center_price == 0.0 {
+                self.center_price = self.market_price;
+            }
         }
     }
 

@@ -9861,6 +9861,7 @@ impl ChartApp {
                                     .map(|w| crate::account_type_from_label(&w.account_type))
                                     .unwrap_or(digdigdig3::AccountType::Spot);
                                 self.bridge.subscribe_depth(eid, &symbol, at);
+                                eprintln!("[DEPTH] Subscribed depth for DOM panel: symbol='{}', exchange='{:?}'", symbol, eid);
                                 Some(sidebar_content::free_slot::FreeItem::Dom(pid))
                             }
                             "footprint" => {
@@ -9890,6 +9891,9 @@ impl ChartApp {
                             }
                             "big_trades" => {
                                 let pid = self.panels_store.create_big_trades();
+                                if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                                    state.symbol = symbol.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::BigTrades(pid))
                             }
                             "l2_tape" => {
