@@ -2729,8 +2729,8 @@ impl ChartApp {
             let delta_y = y - *last_y;
             if delta_y.abs() > 1.0 {
                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                    // Drag up = show higher prices (increase center), drag down = lower
-                    let ticks_moved = -delta_y / row_h;
+                    // Drag down = content follows mouse down = higher prices at center
+                    let ticks_moved = delta_y / row_h;
                     state.center_price += ticks_moved * state.tick_size;
                     state.auto_center = false;
                     self.sidebar_data_dirty = true;
@@ -6412,10 +6412,10 @@ impl ChartApp {
                                                 // Clear accumulated volume so it repopulates at the new granularity.
                                                 state.volume_by_price.clear();
                                             } else {
-                                                // Normal scroll: move center price up/down the ladder.
-                                                // Each step moves center by (levels_displayed * 0.1) ticks.
+                                                // Normal scroll: move center price 1 tick per notch.
                                                 state.auto_center = false;
-                                                let delta = scroll_step * state.tick_size * (state.levels_displayed as f64) * 0.1;
+                                                let lines = (scroll_step / 20.0).round(); // normalize: 1 notch = ±20.0 → ±1 line
+                                                let delta = lines * state.tick_size;
                                                 state.center_price += delta;
                                             }
                                         }

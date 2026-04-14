@@ -5920,25 +5920,35 @@ impl ChartApp {
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                     use sidebar_content::free_slot::FreeItem;
                     use zengeld_panels::trading::SymbolSource;
-                    let source: Option<&SymbolSource> = match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| &s.source),
-                        FreeItem::Footprint(id) => panels_store.footprint.get(id).map(|s| &s.source),
-                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id).map(|s| &s.source),
-                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id).map(|s| &s.source),
-                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| &s.source),
-                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| &s.source),
-                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id).map(|s| &s.source),
-                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id).map(|s| &s.source),
+                    fn label_from_source_and_symbol(source: &SymbolSource, symbol: &str) -> Option<String> {
+                        match source {
+                            SymbolSource::Fixed { symbol, exchange, account_type } => {
+                                Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                            }
+                            SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
+                            SymbolSource::HyperFocus => Some(format!("binance:{}:spot", symbol)),
+                        }
+                    }
+                    match item {
+                        FreeItem::Dom(id) => panels_store.dom.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                            .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_) => None,
-                    };
-                    match source? {
-                        SymbolSource::HyperFocus => None,
-                        SymbolSource::Fixed { symbol, exchange, account_type } => {
-                            Some(format!("{}:{}:{}", exchange, symbol, account_type))
-                        }
-                        SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
                     }
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {
@@ -6397,25 +6407,35 @@ impl ChartApp {
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;
                 use zengeld_panels::trading::SymbolSource;
-                let source: Option<&SymbolSource> = match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| &s.source),
-                    FreeItem::Footprint(id) => panels_store.footprint.get(id).map(|s| &s.source),
-                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id).map(|s| &s.source),
-                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id).map(|s| &s.source),
-                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| &s.source),
-                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| &s.source),
-                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id).map(|s| &s.source),
-                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id).map(|s| &s.source),
+                fn label_from_source_and_symbol(source: &SymbolSource, symbol: &str) -> Option<String> {
+                    match source {
+                        SymbolSource::Fixed { symbol, exchange, account_type } => {
+                            Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                        }
+                        SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
+                        SymbolSource::HyperFocus => Some(format!("binance:{}:spot", symbol)),
+                    }
+                }
+                match item {
+                    FreeItem::Dom(id) => panels_store.dom.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_) => None,
-                };
-                match source? {
-                    SymbolSource::HyperFocus => None,
-                    SymbolSource::Fixed { symbol, exchange, account_type } => {
-                        Some(format!("{}:{}:{}", exchange, symbol, account_type))
-                    }
-                    SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
                 }
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {

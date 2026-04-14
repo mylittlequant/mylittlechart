@@ -37,7 +37,7 @@ fn rgba_to_hex(rgba: [f32; 4]) -> String {
 // ===========================
 
 // DOM Colors
-const BG_DEFAULT: [f32; 4] = [0.05, 0.05, 0.09, 1.0];           // #0d1117ff
+const BG_DEFAULT: [f32; 4] = [0.11, 0.11, 0.16, 1.0];            // #1c1c28ff — match theme bg
 const BG_BEST_BID: [f32; 4] = [0.04, 0.21, 0.13, 1.0];          // #0a3622ff
 const BG_BEST_ASK: [f32; 4] = [0.23, 0.04, 0.04, 1.0];          // #3a0a0aff
 const BG_SPREAD: [f32; 4] = [0.08, 0.09, 0.12, 1.0];            // #15181fff
@@ -73,6 +73,10 @@ pub fn render_dom_panel(
     height: f32,
     state: &DomState,
 ) {
+    // Background fill — use standard theme bg color for DOM body area
+    ctx.set_fill_color(&rgba_to_hex(BG_DEFAULT));
+    ctx.fill_rect(x as f64, y as f64, width as f64, height as f64);
+
     // === STEP 1: Calculate layout ===
     let levels = state.visible_levels_for_height(height);
     let row_height = DOM_ROW_HEIGHT;
