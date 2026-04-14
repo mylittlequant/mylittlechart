@@ -5909,6 +5909,28 @@ impl ChartApp {
                 &mut |item, rect, ctx| {
                     panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
                 },
+                &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
+                    use sidebar_content::free_slot::FreeItem;
+                    use zengeld_panels::trading::SymbolSource;
+                    let source: Option<&SymbolSource> = match item {
+                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| &s.source),
+                        FreeItem::Footprint(id) => panels_store.footprint.get(id).map(|s| &s.source),
+                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id).map(|s| &s.source),
+                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id).map(|s| &s.source),
+                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| &s.source),
+                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| &s.source),
+                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id).map(|s| &s.source),
+                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id).map(|s| &s.source),
+                        FreeItem::PositionManager(_)
+                        | FreeItem::TradeLog(_)
+                        | FreeItem::RiskCalculator(_) => None,
+                    };
+                    match source? {
+                        SymbolSource::HyperFocus => None,
+                        SymbolSource::Fixed { symbol, .. } => Some(symbol.clone()),
+                        SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
+                    }
+                },
             );
 
             Some(sidebar_result)
@@ -6354,6 +6376,28 @@ impl ChartApp {
             &mut self.input_coordinator.borrow_mut(),
             &mut |item, rect, ctx| {
                 panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
+            },
+            &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
+                use sidebar_content::free_slot::FreeItem;
+                use zengeld_panels::trading::SymbolSource;
+                let source: Option<&SymbolSource> = match item {
+                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| &s.source),
+                    FreeItem::Footprint(id) => panels_store.footprint.get(id).map(|s| &s.source),
+                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id).map(|s| &s.source),
+                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id).map(|s| &s.source),
+                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| &s.source),
+                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| &s.source),
+                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id).map(|s| &s.source),
+                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id).map(|s| &s.source),
+                    FreeItem::PositionManager(_)
+                    | FreeItem::TradeLog(_)
+                    | FreeItem::RiskCalculator(_) => None,
+                };
+                match source? {
+                    SymbolSource::HyperFocus => None,
+                    SymbolSource::Fixed { symbol, .. } => Some(symbol.clone()),
+                    SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
+                }
             },
         );
 

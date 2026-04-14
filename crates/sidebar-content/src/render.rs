@@ -223,6 +223,7 @@ pub fn render_right_sidebar(
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
+    panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -602,6 +603,7 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
                 free_item_renderer,
+                panel_source_label_fn,
             );
         }
 
@@ -3453,6 +3455,7 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
+    panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3780,6 +3783,20 @@ fn render_slot_panel(
             (header_x + 6.0) as f64,
             (header_y + header_h / 2.0) as f64,
         );
+
+        // Source binding label — shown right after the title in muted text.
+        if let Some(label) = panel_source_label_fn(&item) {
+            let title_approx_w = item.title().len() as f32 * 6.5 + 4.0;
+            ctx.set_font("9px sans-serif");
+            ctx.set_fill_color("#6e7681");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &label,
+                (header_x + 6.0 + title_approx_w) as f64,
+                (header_y + header_h / 2.0) as f64,
+            );
+        }
 
         // Button layout (right-to-left from right edge):
         //   [×] close

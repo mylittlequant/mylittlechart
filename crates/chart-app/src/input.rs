@@ -9842,82 +9842,108 @@ impl ChartApp {
             if let Some((idx_str, kind_str)) = rest.split_once(":spawn:") {
                 if let Ok(idx) = idx_str.parse::<usize>() {
                     if idx < 4 {
-                        let symbol = self.panel_app.panel_grid.active_window()
-                            .map(|w| w.symbol.clone())
+                        use zengeld_panels::trading::SymbolSource;
+                        use sidebar_content::state::SlotSourceMode;
+
+                        // Build SymbolSource from the toolbar's current source mode.
+                        let source = match self.sidebar_state.slot_source_mode {
+                            SlotSourceMode::Auto => SymbolSource::HyperFocus,
+                            SlotSourceMode::Pinned => {
+                                let sym = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.symbol.clone())
+                                    .unwrap_or_else(|| "BTCUSDT".to_string());
+                                let exch = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.exchange.clone())
+                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                                let at = self.panel_app.panel_grid.active_window()
+                                    .map(|w| w.account_type.clone())
+                                    .unwrap_or_else(|| "spot".to_string());
+                                SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
+                            }
+                            SlotSourceMode::Linked => {
+                                let leaf_id = self.panel_app.panel_grid.docking().active_leaf()
+                                    .map(|lid| lid.0)
+                                    .unwrap_or(0);
+                                SymbolSource::BoundToChart { leaf_id }
+                            }
+                        };
+
+                        // Resolve immediately to get the concrete symbol for initial setup.
+                        let active_resolved = self.panel_app.panel_grid.active_window().map(|w| {
+                            zengeld_panels::trading::ResolvedSymbol {
+                                symbol: w.symbol.clone(),
+                                exchange: w.exchange.clone(),
+                                account_type: w.account_type.clone(),
+                            }
+                        });
+                        let resolve_leaf = |lid: u64| -> Option<zengeld_panels::trading::ResolvedSymbol> {
+                            let leaf = zengeld_chart::LeafId(lid);
+                            self.panel_app.panel_grid.window_for_leaf(leaf).map(|w| {
+                                zengeld_panels::trading::ResolvedSymbol {
+                                    symbol: w.symbol.clone(),
+                                    exchange: w.exchange.clone(),
+                                    account_type: w.account_type.clone(),
+                                }
+                            })
+                        };
+                        let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
+                        let symbol = resolved.as_ref().map(|r| r.symbol.clone())
                             .unwrap_or_else(|| "BTCUSDT".to_string());
+                        let exchange_str = resolved.as_ref().map(|r| r.exchange.clone())
+                            .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                        let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
+                            .unwrap_or_else(|| "spot".to_string());
+
                         let item_opt = match kind_str {
                             "dom" => {
                                 let pid = self.panels_store.create_dom(symbol.clone(), 0.01);
-                                // Subscribe to L2 depth for the active window's symbol.
-                                let exchange_str = self.panel_app.panel_grid.active_window()
-                                    .map(|w| w.exchange.clone())
-                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let eid = self.exchange_symbols
-                                    .keys()
-                                    .find(|e| e.as_str() == exchange_str)
-                                    .copied()
-                                    .unwrap_or(self.active_exchange);
-                                let at = self.panel_app.panel_grid.active_window()
-                                    .map(|w| crate::account_type_from_label(&w.account_type))
-                                    .unwrap_or(digdigdig3::AccountType::Spot);
-                                self.bridge.subscribe_depth(eid, &symbol, at);
+                                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::Dom(pid))
                             }
                             "footprint" => {
-                                let pid = self.panels_store.create_footprint(symbol, 0.01);
+                                let pid = self.panels_store.create_footprint(symbol.clone(), 0.01);
+                                if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::Footprint(pid))
                             }
                             "volume_profile" => {
-                                let pid = self.panels_store.create_volume_profile(symbol, 0.01);
+                                let pid = self.panels_store.create_volume_profile(symbol.clone(), 0.01);
+                                if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::VolumeProfile(pid))
                             }
                             "liquidity_heatmap" => {
                                 let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), 0.01, 1000);
-                                // Subscribe to L2 depth for the active window's symbol.
-                                let exchange_str = self.panel_app.panel_grid.active_window()
-                                    .map(|w| w.exchange.clone())
-                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let eid = self.exchange_symbols
-                                    .keys()
-                                    .find(|e| e.as_str() == exchange_str)
-                                    .copied()
-                                    .unwrap_or(self.active_exchange);
-                                let at = self.panel_app.panel_grid.active_window()
-                                    .map(|w| crate::account_type_from_label(&w.account_type))
-                                    .unwrap_or(digdigdig3::AccountType::Spot);
-                                self.bridge.subscribe_depth(eid, &symbol, at);
+                                if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid))
                             }
                             "big_trades" => {
                                 let pid = self.panels_store.create_big_trades();
                                 if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                     state.symbol = symbol.clone();
+                                    state.source = source.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::BigTrades(pid))
                             }
                             "l2_tape" => {
                                 let pid = self.panels_store.create_l2_tape();
-                                // Set symbol on the L2 tape state.
                                 if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();
+                                    state.source = source.clone();
                                 }
-                                // Subscribe to L2 depth for the active window's symbol.
-                                let exchange_str = self.panel_app.panel_grid.active_window()
-                                    .map(|w| w.exchange.clone())
-                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let eid = self.exchange_symbols
-                                    .keys()
-                                    .find(|e| e.as_str() == exchange_str)
-                                    .copied()
-                                    .unwrap_or(self.active_exchange);
-                                let at = self.panel_app.panel_grid.active_window()
-                                    .map(|w| crate::account_type_from_label(&w.account_type))
-                                    .unwrap_or(digdigdig3::AccountType::Spot);
-                                self.bridge.subscribe_depth(eid, &symbol, at);
                                 Some(sidebar_content::free_slot::FreeItem::L2Tape(pid))
                             }
                             "order_entry" => {
-                                let pid = self.panels_store.create_order_entry(symbol);
+                                let pid = self.panels_store.create_order_entry(symbol.clone());
+                                if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::OrderEntry(pid))
                             }
                             "position_manager" => {
@@ -9933,11 +9959,26 @@ impl ChartApp {
                                 Some(sidebar_content::free_slot::FreeItem::RiskCalculator(pid))
                             }
                             "trading_container" => {
-                                let pid = self.panels_store.create_trading_container(symbol, 0.01, 0.0);
+                                let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
+                                if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                                    state.source = source.clone();
+                                }
                                 Some(sidebar_content::free_slot::FreeItem::TradingContainer(pid))
                             }
                             _ => None,
                         };
+
+                        // Subscribe depth for panels that need orderbook data.
+                        let needs_depth = matches!(kind_str, "dom" | "l2_tape" | "liquidity_heatmap");
+                        if needs_depth {
+                            let eid = self.exchange_symbols
+                                .keys()
+                                .find(|e| e.as_str() == exchange_str)
+                                .copied()
+                                .unwrap_or(self.active_exchange);
+                            let at = crate::account_type_from_label(&account_type_str);
+                            self.bridge.subscribe_depth(eid, &symbol, at);
+                        }
                         if let Some(item) = item_opt {
                             eprintln!("[ChartApp] slot:{}:spawn:{} — spawned panel", idx, kind_str);
                             self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
