@@ -81,6 +81,27 @@ impl FreeItem {
     }
 }
 
+// =============================================================================
+// PanelHeaderHint
+// =============================================================================
+
+/// Lightweight info needed to render a free-slot leaf header bar.
+///
+/// Provided by `chart-app` via the `panel_header_info_fn` callback so that
+/// `sidebar-content` can render the source pill, symbol label, and DOM zoom
+/// buttons without depending on `zengeld-panels` types.
+#[derive(Clone, Debug)]
+pub struct PanelHeaderHint {
+    /// Display label for the SymbolSource mode ("Auto", "Pinned", "Linked").
+    pub source_label: &'static str,
+    /// CSS hex color for the source pill background.
+    pub source_color: &'static str,
+    /// Resolved symbol string (e.g. "BTCUSDT").
+    pub symbol: String,
+    /// Whether this panel is a DOM (shows zoom-in/out/center buttons).
+    pub is_dom: bool,
+}
+
 impl uzor::panels::DockPanel for FreeItem {
     fn title(&self) -> &str {
         match self {

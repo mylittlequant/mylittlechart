@@ -6255,6 +6255,74 @@ impl ChartApp {
                         return;
                     }
 
+                    // Slot panels (Slot1..Slot4): route wheel to the hovered leaf body.
+                    {
+                        use sidebar_content::state::RightSidebarPanel;
+                        let slot_idx_opt = match self.sidebar_state.right_panel {
+                            RightSidebarPanel::Slot1 => Some(0usize),
+                            RightSidebarPanel::Slot2 => Some(1),
+                            RightSidebarPanel::Slot3 => Some(2),
+                            RightSidebarPanel::Slot4 => Some(3),
+                            _ => None,
+                        };
+
+                        if let Some(slot_idx) = slot_idx_opt {
+                            // Hit-test all `slot:{idx}:leaf:{lid}:focus_content` rects.
+                            let hovered_slot_leaf = sidebar_result.item_rects.iter()
+                                .filter_map(|(wid, wrect)| {
+                                    let rest = wid.strip_prefix("slot:")?;
+                                    let (idx_str, leaf_rest) = rest.split_once(":leaf:")?;
+                                    let leaf_id_str = leaf_rest.strip_suffix(":focus_content")?;
+                                    let panel_idx: usize = idx_str.parse().ok()?;
+                                    if panel_idx != slot_idx { return None; }
+                                    let raw: u64 = leaf_id_str.parse().ok()?;
+                                    if x >= wrect.x && x < wrect.x + wrect.width
+                                        && y >= wrect.y && y < wrect.y + wrect.height
+                                    {
+                                        Some((uzor::panels::LeafId(raw), wrect.height))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .next();
+
+                            if let Some((hover_leaf_id, _rect_h)) = hovered_slot_leaf {
+                                // Look up the active FreeItem for this leaf.
+                                let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(hover_leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+
+                                use sidebar_content::free_slot::FreeItem;
+                                let scroll_step = -dy;
+
+                                match item_opt {
+                                    Some(FreeItem::Dom(pid)) => {
+                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                            // Scroll through price levels: each step moves center by
+                                            // (levels_displayed * 0.1) ticks.
+                                            let delta = scroll_step * state.tick_size * (state.levels_displayed as f64) * 0.1;
+                                            state.center_price += delta;
+                                        }
+                                    }
+                                    Some(FreeItem::BigTrades(pid)) => {
+                                        if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                                            state.scroll_offset = (state.scroll_offset + scroll_step * 30.0).max(0.0);
+                                        }
+                                    }
+                                    Some(FreeItem::L2Tape(pid)) => {
+                                        if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                            state.scroll_offset = (state.scroll_offset + scroll_step * 30.0).max(0.0);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                return;
+                            }
+                        }
+                    }
+
                     // Scroll down (dy > 0) increases offset; scroll up (dy < 0) decreases it.
                     let content_h = sidebar_result.content_height;
                     let viewport_h = sidebar_result.content_rect.height;
@@ -9953,6 +10021,156 @@ impl ChartApp {
                             }
                         }
                         return;
+                    }
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:source_cycle — cycle SymbolSource ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if idx < self.sidebar_state.slot_dockings.len() {
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":source_cycle") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                // Resolve the active FreeItem for this leaf.
+                                let item_opt = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(item) = item_opt {
+                                    // Get current source and compute next state.
+                                    // HyperFocus → Fixed (pin to active chart symbol)
+                                    // Fixed → HyperFocus
+                                    // BoundToChart → HyperFocus
+                                    use zengeld_panels::trading::SymbolSource;
+                                    use sidebar_content::free_slot::FreeItem;
+
+                                    // Read the current source from the panel state.
+                                    let current_source = match &item {
+                                        FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
+                                        FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
+                                        FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
+                                        FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
+                                        FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
+                                        FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                        FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
+                                    };
+
+                                    let new_source = match current_source {
+                                        Some(SymbolSource::HyperFocus) => {
+                                            // Pin to current active chart symbol/exchange/account_type.
+                                            let symbol = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.symbol.clone())
+                                                .unwrap_or_default();
+                                            let exchange = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.exchange.clone())
+                                                .unwrap_or_default();
+                                            let account_type = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.account_type.clone())
+                                                .unwrap_or_default();
+                                            Some(SymbolSource::Fixed { symbol, exchange, account_type })
+                                        }
+                                        Some(SymbolSource::Fixed { .. }) | Some(SymbolSource::BoundToChart { .. }) => {
+                                            Some(SymbolSource::HyperFocus)
+                                        }
+                                        None => None,
+                                    };
+
+                                    if let Some(src) = new_source {
+                                        match &item {
+                                            FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
+                                            FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
+                                            FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
+                                            FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
+                                            FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
+                                            FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
+                                            FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                            FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                            FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                        }
+                                        eprintln!("[ChartApp] slot:{}:leaf:{}:source_cycle", idx, raw);
+                                        self.sidebar_data_dirty = true;
+                                        self.autosave_snapshot();
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
+                        // --- slot:{idx}:leaf:{leaf_id}:dom_zoom_in ---
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":dom_zoom_in") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                let item_opt = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.levels_displayed = (state.levels_displayed + 5).min(100);
+                                        eprintln!("[ChartApp] slot:{}:leaf:{}:dom_zoom_in → {}", idx, raw, state.levels_displayed);
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
+                        // --- slot:{idx}:leaf:{leaf_id}:dom_zoom_out ---
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":dom_zoom_out") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                let item_opt = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.levels_displayed = state.levels_displayed.saturating_sub(5).max(5);
+                                        eprintln!("[ChartApp] slot:{}:leaf:{}:dom_zoom_out → {}", idx, raw, state.levels_displayed);
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
+                        // --- slot:{idx}:leaf:{leaf_id}:dom_center ---
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":dom_center") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                let item_opt = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.center_price = state.market_price;
+                                        eprintln!("[ChartApp] slot:{}:leaf:{}:dom_center → {:.2}", idx, raw, state.center_price);
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                            }
+                            return;
+                        }
+
+                        // --- slot:{idx}:leaf:{leaf_id}:focus_content — click inside panel body ---
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus_content") {
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                self.sidebar_state.focused_free_leaf = Some((idx, leaf_id));
+                                self.sidebar_data_dirty = true;
+                            }
+                            return;
+                        }
                     }
                 }
             }

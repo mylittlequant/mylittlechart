@@ -5909,6 +5909,7 @@ impl ChartApp {
                 &mut |item, rect, ctx| {
                     panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
                 },
+                &mut |item| panels_render::panel_header_hint(panels_store, item),
             );
 
             Some(sidebar_result)
@@ -6355,6 +6356,7 @@ impl ChartApp {
             &mut |item, rect, ctx| {
                 panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx);
             },
+            &mut |item| panels_render::panel_header_hint(panels_store, item),
         );
 
         // Persist agent terminal rect for hover-focus.

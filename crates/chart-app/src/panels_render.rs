@@ -7,7 +7,6 @@
 //! All trading panel renderers are now wired.
 
 use sidebar_content::free_slot::FreeItem;
-use uzor::render::{TextAlign, TextBaseline};
 use zengeld_chart::render::RenderContext;
 
 use zengeld_panels::renderers::panel_renderers_orderflow::{
@@ -30,6 +29,109 @@ use zengeld_panels::trading::SymbolSource;
 
 use crate::panels_store::TradingPanelsStore;
 
+/// Info extracted from panel state for rendering the panel header bar.
+pub struct PanelHeaderInfo {
+    /// Display label for the SymbolSource mode.
+    pub source_label: &'static str,
+    /// Background color for the source pill.
+    pub source_color: &'static str,
+    /// Resolved symbol (e.g. "SOLUSDT").
+    pub symbol: String,
+    /// Whether this panel is a DOM (shows zoom/center controls).
+    pub is_dom: bool,
+}
+
+/// Extract the lightweight `PanelHeaderHint` used by `sidebar-content` render.
+///
+/// Returns `None` for panels without a `SymbolSource` (PositionManager, TradeLog,
+/// RiskCalculator).
+pub fn panel_header_hint(
+    store: &TradingPanelsStore,
+    item: &FreeItem,
+) -> Option<sidebar_content::free_slot::PanelHeaderHint> {
+    let info = panel_header_info(store, item)?;
+    Some(sidebar_content::free_slot::PanelHeaderHint {
+        source_label: info.source_label,
+        source_color: info.source_color,
+        symbol: info.symbol,
+        is_dom: info.is_dom,
+    })
+}
+
+/// Extract header info for a given FreeItem from the store.
+pub fn panel_header_info(
+    store: &TradingPanelsStore,
+    item: &FreeItem,
+) -> Option<PanelHeaderInfo> {
+    fn source_label(s: &SymbolSource) -> &'static str {
+        match s {
+            SymbolSource::HyperFocus => "Auto",
+            SymbolSource::Fixed { .. } => "Pinned",
+            SymbolSource::BoundToChart { .. } => "Linked",
+        }
+    }
+    fn source_color(s: &SymbolSource) -> &'static str {
+        match s {
+            SymbolSource::HyperFocus => "#374151",
+            SymbolSource::Fixed { .. } => "#2563eb",
+            SymbolSource::BoundToChart { .. } => "#16a34a",
+        }
+    }
+
+    match item {
+        FreeItem::Dom(id) => store.dom.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: true,
+        }),
+        FreeItem::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::VolumeProfile(id) => store.volume_profile.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::LiquidityHeatmap(id) => store.liquidity_heatmap.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::BigTrades(id) => store.big_trades.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::L2Tape(id) => store.l2_tape.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::OrderEntry(id) => store.order_entry.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        FreeItem::TradingContainer(id) => store.trading_container.get(id).map(|s| PanelHeaderInfo {
+            source_label: source_label(&s.source),
+            source_color: source_color(&s.source),
+            symbol: s.symbol.clone(),
+            is_dom: false,
+        }),
+        // Panels without SymbolSource
+        FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
+    }
+}
+
 /// Render the content of a `FreeItem` leaf into `(x, y, w, h)`.
 ///
 /// If the item's state is missing from the store (e.g. the panel was removed
@@ -47,7 +149,6 @@ pub fn render_free_item(
         FreeItem::Dom(id) => {
             if let Some(state) = store.dom.get(id) {
                 render_dom_panel(ctx, x, y, w, h, state);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
@@ -55,7 +156,6 @@ pub fn render_free_item(
             if let Some(state) = store.footprint.get(id) {
                 let config = FootprintConfig::default();
                 render_footprint_panel(ctx, x, y, w, h, state, &config);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
@@ -63,7 +163,6 @@ pub fn render_free_item(
             if let Some(state) = store.volume_profile.get(id) {
                 let config = VolumeProfileConfig::default();
                 render_volume_profile_panel(ctx, x, y, w, h, state, &config);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
@@ -71,7 +170,6 @@ pub fn render_free_item(
             if let Some(state) = store.liquidity_heatmap.get(id) {
                 let config = LiquidityHeatmapConfig::default();
                 render_liquidity_heatmap_panel(ctx, x, y, w, h, state, &config);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
@@ -79,28 +177,24 @@ pub fn render_free_item(
             if let Some(state) = store.trading_container.get(id) {
                 // `now_ms` is used only for animation; 0 is safe for a static render.
                 render_trading_container(ctx, x, y, w, h, state, 0);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
         FreeItem::L2Tape(id) => {
             if let Some(state) = store.l2_tape.get(id) {
                 render_l2_tape_panel(ctx, x, y, w, h, state);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
         FreeItem::BigTrades(id) => {
             if let Some(state) = store.big_trades.get(id) {
                 render_big_trades_panel(ctx, x, y, w, h, state);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
         FreeItem::OrderEntry(id) => {
             if let Some(state) = store.order_entry.get(id) {
                 render_order_entry_panel(ctx, x, y, w, h, state);
-                render_source_badge(ctx, &state.source, x, y, w);
             }
         }
 
@@ -123,44 +217,3 @@ pub fn render_free_item(
         }
     }
 }
-
-/// Draw a small source-mode badge in the top-right corner of a panel.
-///
-/// - `HyperFocus` (Auto/default) — no badge rendered, avoids visual noise.
-/// - `Fixed` (Pinned) — blue pill with "P".
-/// - `BoundToChart` (Linked) — green pill with "L".
-///
-/// The badge is a 14×14 rounded rectangle, 3 px from the top-right corner.
-fn render_source_badge(
-    ctx: &mut dyn RenderContext,
-    source: &SymbolSource,
-    x: f32,
-    y: f32,
-    w: f32,
-) {
-    let (label, bg) = match source {
-        SymbolSource::HyperFocus => return,
-        SymbolSource::Fixed { .. } => ("P", "#2563eb"),
-        SymbolSource::BoundToChart { .. } => ("L", "#16a34a"),
-    };
-
-    const BADGE_W: f64 = 14.0;
-    const BADGE_H: f64 = 14.0;
-    const MARGIN: f64 = 3.0;
-    const RADIUS: f64 = 3.0;
-
-    let bx = f64::from(x) + f64::from(w) - BADGE_W - MARGIN;
-    let by = f64::from(y) + MARGIN;
-
-    // Background pill
-    ctx.set_fill_color(bg);
-    ctx.fill_rounded_rect(bx, by, BADGE_W, BADGE_H, RADIUS);
-
-    // Label text — centered inside the pill
-    ctx.set_fill_color("#ffffff");
-    ctx.set_font("bold 9px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, bx + BADGE_W / 2.0, by + BADGE_H / 2.0);
-}
-
