@@ -23230,8 +23230,11 @@ impl ChartApp {
         visible: bool,
         pane_index: Option<usize>,
     ) {
-        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+        let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let group_id = source_chart_id
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+
+        let should_sync = group_id
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_crosshair)
             .unwrap_or(true);
@@ -23241,6 +23244,8 @@ impl ChartApp {
             Some(c) => c,
             None => return,
         };
+
+        // Propagate crosshair to peer chart windows in the same color-tag group.
         let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
             .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
             .map(|(&lid, _)| lid)
@@ -23248,6 +23253,25 @@ impl ChartApp {
         for leaf_id in sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.set_crosshair_from_timestamp(timestamp, price, visible, pane_index);
+            }
+        }
+
+        // Propagate crosshair price to L2 panels (DOM, LiquidityHeatmap, L2Tape)
+        // that belong to the same sync group.
+        if let Some(gid) = group_id {
+            let panel_ids = self.panel_app.tag_manager.panel_members(gid);
+            let crosshair_price = if visible { Some(price) } else { None };
+            for pid in panel_ids {
+                let panel_id = sidebar_content::free_slot::PanelId(pid);
+                if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
             }
         }
     }

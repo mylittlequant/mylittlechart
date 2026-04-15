@@ -47,6 +47,10 @@ pub struct LiquidityHeatmapState {
     pub last_snapshot_ms: i64,
     /// Maximum snapshots to retain (rolling window)
     pub max_snapshots: usize,
+
+    /// Crosshair price synced from a linked chart window.
+    /// When set, a subtle highlight line is drawn at the corresponding price row.
+    pub crosshair_price: Option<f64>,
 }
 
 impl LiquidityHeatmapState {
@@ -66,6 +70,7 @@ impl LiquidityHeatmapState {
             side: HeatmapSide::Both,
             last_snapshot_ms: 0,
             max_snapshots: 1000,
+            crosshair_price: None,
         }
     }
 

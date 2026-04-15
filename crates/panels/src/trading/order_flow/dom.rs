@@ -56,6 +56,10 @@ pub struct DomState {
     /// Minimum volume filter — levels with total volume below this are dimmed.
     /// 0.0 means no filter (all levels drawn at full opacity).
     pub min_volume_filter: f64,
+
+    /// Crosshair price synced from a linked chart window.
+    /// When set, a subtle highlight line is drawn across the corresponding row.
+    pub crosshair_price: Option<f64>,
 }
 
 /// Helper struct for rendering: represents one price level in the DOM
@@ -99,6 +103,7 @@ impl DomState {
             recent_fills: HashMap::new(),
             auto_center: true,
             min_volume_filter: 0.0,
+            crosshair_price: None,
         }
     }
 
@@ -539,6 +544,20 @@ impl TradingPanel for DomState {
                 };
                 ctx.set_fill_color(accent);
                 ctx.fill_rect(x as f64, row_y as f64, 3.0, row_height as f64);
+            }
+
+            // --- Step 4.1c: Crosshair highlight (synced from linked chart) ---
+            let is_crosshair = self.crosshair_price
+                .map_or(false, |cp| (level.price - cp).abs() < self.tick_size * 0.5);
+
+            if is_crosshair && !is_hovered {
+                // Semi-transparent white overlay — subtle, distinct from hover
+                ctx.set_fill_color("#ffffff26");
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+                // Thin 1px accent line at the vertical center of the row
+                ctx.set_fill_color("#ffffff80");
+                let line_y = (row_y + row_height / 2.0 - 0.5) as f64;
+                ctx.fill_rect(x as f64, line_y, w as f64, 1.0);
             }
 
             // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---

@@ -85,6 +85,9 @@ pub struct L2TapeState {
     pub previous_book: HashMap<i64, (f64, f64)>,  // tick -> (bid_qty, ask_qty)
     /// Tick size for price-to-tick conversion
     pub tick_size: f64,
+    /// Crosshair price synced from a linked chart window.
+    /// When set, events at this price level are highlighted.
+    pub crosshair_price: Option<f64>,
 }
 
 /// Spoofing alert data
@@ -285,6 +288,7 @@ impl L2TapeState {
             spoof_alerts: VecDeque::new(),
             previous_book: HashMap::new(),
             tick_size: 0.01,
+            crosshair_price: None,
         }
     }
 
