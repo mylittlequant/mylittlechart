@@ -6019,7 +6019,9 @@ impl ChartApp {
         };
 
         // 8a. Render color picker popups AFTER the sidebar so they draw on top of it.
-        {
+        // Panel-targeting sync color grid is skipped here — it is rendered in
+        // render_panel_overlay_popups() after the sidebar scene is composited.
+        if !self.panel_app.sync_color_grid.target_is_panel() {
             let cp_result = self.panel_app.render_color_picker_popups(
                 ctx,
                 &modal_layout,
@@ -6037,94 +6039,8 @@ impl ChartApp {
             }
         }
 
-        // 8a-2. Render panel sync menu popup if open.
-        if let Some(ref sync_menu) = self.panel_sync_menu_open {
-            use zengeld_chart::tag_manager::SyncMemberId;
-            use uzor::{Rect, input::Sense};
-            use zengeld_chart::ui::z_order::ZLayer;
-
-            let panel_id = sync_menu.panel_id;
-            let member = SyncMemberId::Panel(panel_id);
-            let flags = self.panel_app.tag_manager
-                .group_for_member(member)
-                .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| (g.effective_sync_symbol(member), g.effective_sync_crosshair(member)))
-                .unwrap_or((false, false));
-
-            let (ox, oy) = sync_menu.origin;
-            let popup_w = 150.0_f64;
-            let row_h = 24.0_f64;
-            let padding = 6.0_f64;
-            let popup_h = padding * 2.0 + row_h * 2.0;
-
-            // Clamp to window.
-            let ox = ox.min(self.width as f64 - popup_w - 4.0).max(4.0);
-            let oy = oy.min(self.height as f64 - popup_h - 4.0).max(4.0);
-
-            // Background.
-            ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-            ctx.fill_rounded_rect(ox, oy, popup_w, popup_h, 6.0);
-
-            // Row 1: Sync Symbol.
-            let r1y = oy + padding;
-            let sym_checked = flags.0;
-            let sym_text_color = if sym_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-            ctx.set_fill_color(sym_text_color);
-            ctx.set_font("11px sans-serif");
-            let sym_mark = if sym_checked { "☑" } else { "☐" };
-            ctx.fill_text(
-                &format!("{} Sync Symbol", sym_mark),
-                ox + padding,
-                r1y + row_h / 2.0,
-            );
-
-            // Row 2: Sync Crosshair.
-            let r2y = r1y + row_h;
-            let xhair_checked = flags.1;
-            let xhair_text_color = if xhair_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-            ctx.set_fill_color(xhair_text_color);
-            ctx.set_font("11px sans-serif");
-            let xhair_mark = if xhair_checked { "☑" } else { "☐" };
-            ctx.fill_text(
-                &format!("{} Sync Crosshair", xhair_mark),
-                ox + padding,
-                r2y + row_h / 2.0,
-            );
-
-            // Register hit zones.
-            let layer_id = ZLayer::ColorPicker.push_named(
-                &mut self.input_coordinator.borrow_mut(),
-                "panel_sync_menu",
-            );
-            // Full backdrop to catch outside clicks.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:outside",
-                Rect { x: 0.0, y: 0.0, width: self.width as f64, height: self.height as f64 },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Popup background (absorbs inside clicks to prevent backdrop dismissal).
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:bg",
-                Rect { x: ox, y: oy, width: popup_w, height: popup_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Row 1 — symbol toggle.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:symbol",
-                Rect { x: ox, y: r1y, width: popup_w, height: row_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Row 2 — crosshair toggle.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:crosshair",
-                Rect { x: ox, y: r2y, width: popup_w, height: row_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-        }
+        // 8a-2. Panel sync menu popup is rendered in render_panel_overlay_popups()
+        // after scene compositing so it appears above the sidebar scene.
 
         // 8b. Render watchlist modal if open (above sidebar, below context menu).
         let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = if self.watchlist_modal.is_open() {
@@ -6681,6 +6597,133 @@ impl ChartApp {
         }
 
         self.last_sidebar_result = Some(sidebar_result);
+    }
+
+    /// Render panel-specific overlay popups that must appear above the sidebar.
+    ///
+    /// Renders the sync color grid popup when it targets a trading panel and the
+    /// panel sync menu popup (gear icon dropdown on panel headers).  Both popups
+    /// are skipped in `render_to_scene` and rendered here instead so that they
+    /// are composited after the sidebar scene and are never covered by it.
+    ///
+    /// Does NOT call `input_coordinator.begin_frame()` / `end_frame()` — that
+    /// is the responsibility of the enclosing `render()` call (same contract as
+    /// `render_toolbar_only` and `render_sidebar_only`).
+    pub fn render_panel_overlay_popups(&self, ctx: &mut dyn RenderContext) {
+        let toolbar_theme = self.panel_app.toolbar_theme_for_render();
+        let w = self.width as f64;
+        let h = self.height as f64;
+
+        // Panel-targeting sync color grid popup.
+        if self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel() {
+            use zengeld_chart::ChartModalLayout;
+            let modal_layout = ChartModalLayout {
+                prim_screen_w: w,
+                prim_screen_h: h,
+                prim_modal_y: 60.0,
+                ind_screen_w: w,
+                ind_screen_h: h,
+                chart_x: 0.0,
+                chart_y: 0.0,
+                content_w: w,
+                content_h: h,
+            };
+            self.panel_app.render_color_picker_popups(
+                ctx,
+                &modal_layout,
+                &toolbar_theme,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+        }
+
+        // Panel sync menu popup (gear icon dropdown on trading panel headers).
+        if let Some(ref sync_menu) = self.panel_sync_menu_open {
+            use zengeld_chart::tag_manager::SyncMemberId;
+            use uzor::{Rect, input::Sense};
+            use zengeld_chart::ui::z_order::ZLayer;
+
+            let panel_id = sync_menu.panel_id;
+            let member = SyncMemberId::Panel(panel_id);
+            let flags = self.panel_app.tag_manager
+                .group_for_member(member)
+                .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                .map(|g| (g.effective_sync_symbol(member), g.effective_sync_crosshair(member)))
+                .unwrap_or((false, false));
+
+            let (ox, oy) = sync_menu.origin;
+            let popup_w = 150.0_f64;
+            let row_h = 24.0_f64;
+            let padding = 6.0_f64;
+            let popup_h = padding * 2.0 + row_h * 2.0;
+
+            // Clamp to window.
+            let ox = ox.min(w - popup_w - 4.0).max(4.0);
+            let oy = oy.min(h - popup_h - 4.0).max(4.0);
+
+            // Background.
+            ctx.set_fill_color(&toolbar_theme.dropdown_bg);
+            ctx.fill_rounded_rect(ox, oy, popup_w, popup_h, 6.0);
+
+            // Row 1: Sync Symbol.
+            let r1y = oy + padding;
+            let sym_checked = flags.0;
+            let sym_text_color = if sym_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+            ctx.set_fill_color(sym_text_color);
+            ctx.set_font("11px sans-serif");
+            let sym_mark = if sym_checked { "\u{2611}" } else { "\u{2610}" };
+            ctx.fill_text(
+                &format!("{} Sync Symbol", sym_mark),
+                ox + padding,
+                r1y + row_h / 2.0,
+            );
+
+            // Row 2: Sync Crosshair.
+            let r2y = r1y + row_h;
+            let xhair_checked = flags.1;
+            let xhair_text_color = if xhair_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+            ctx.set_fill_color(xhair_text_color);
+            ctx.set_font("11px sans-serif");
+            let xhair_mark = if xhair_checked { "\u{2611}" } else { "\u{2610}" };
+            ctx.fill_text(
+                &format!("{} Sync Crosshair", xhair_mark),
+                ox + padding,
+                r2y + row_h / 2.0,
+            );
+
+            // Register hit zones.
+            let layer_id = ZLayer::ColorPicker.push_named(
+                &mut self.input_coordinator.borrow_mut(),
+                "panel_sync_menu",
+            );
+            // Full backdrop to catch outside clicks.
+            self.input_coordinator.borrow_mut().register_on_layer(
+                "panel_sync_menu:outside",
+                Rect { x: 0.0, y: 0.0, width: w, height: h },
+                Sense::CLICK,
+                &layer_id,
+            );
+            // Popup background (absorbs inside clicks to prevent backdrop dismissal).
+            self.input_coordinator.borrow_mut().register_on_layer(
+                "panel_sync_menu:bg",
+                Rect { x: ox, y: oy, width: popup_w, height: popup_h },
+                Sense::CLICK,
+                &layer_id,
+            );
+            // Row 1 — symbol toggle.
+            self.input_coordinator.borrow_mut().register_on_layer(
+                "panel_sync_menu:symbol",
+                Rect { x: ox, y: r1y, width: popup_w, height: row_h },
+                Sense::CLICK,
+                &layer_id,
+            );
+            // Row 2 — crosshair toggle.
+            self.input_coordinator.borrow_mut().register_on_layer(
+                "panel_sync_menu:crosshair",
+                Rect { x: ox, y: r2y, width: popup_w, height: row_h },
+                Sense::CLICK,
+                &layer_id,
+            );
+        }
     }
 
     // -------------------------------------------------------------------------

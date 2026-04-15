@@ -969,6 +969,22 @@ fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert_delivery::
         // Composite cached toolbar on top of chart content.
         pw.scene.append(&pw.toolbar_scene, None);
 
+        // Panel overlay popups — drawn after sidebar and toolbar so they appear
+        // on top of both.  These include the sync color grid (panel target) and
+        // the panel sync menu (gear-icon dropdown on panel headers).
+        {
+            let mut popup_scene = vello::Scene::new();
+            let mut popup_ctx = VelloGpuRenderContext::new(
+                &mut popup_scene,
+                0.0,
+                chrome::CHROME_HEIGHT,
+                None,
+                None,
+            );
+            pw.chart.render_panel_overlay_popups(&mut popup_ctx);
+            pw.scene.append(&popup_scene, None);
+        }
+
         // Render chrome context menu overlay
         if pw.chrome_state.context_menu.open {
             let mut overlay_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
