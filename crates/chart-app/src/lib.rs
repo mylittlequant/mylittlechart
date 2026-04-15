@@ -3687,6 +3687,23 @@ impl ChartApp {
                     leaf_symbols.get(&leaf_id).cloned()
                 };
 
+                // Snapshot depth-subscribed panels BEFORE propagate so we can detect
+                // symbol/exchange/account_type changes and resubscribe the WS depth stream.
+                // Each entry: (old_symbol, old_exchange, old_account_type).
+                type DepthSnapshot = (String, String, String);
+                let depth_snapshot_before: Vec<DepthSnapshot> = self
+                    .panels_store
+                    .dom
+                    .values()
+                    .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                    .chain(self.panels_store.l2_tape.values().map(|s| {
+                        (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                    }))
+                    .chain(self.panels_store.liquidity_heatmap.values().map(|s| {
+                        (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                    }))
+                    .collect();
+
                 macro_rules! propagate {
                     ($map:expr) => {
                         for state in $map.values_mut() {
@@ -3708,6 +3725,52 @@ impl ChartApp {
                 propagate!(self.panels_store.l2_tape);
                 propagate!(self.panels_store.order_entry);
                 propagate!(self.panels_store.trading_container);
+
+                // Snapshot AFTER propagate and diff against before-snapshot.
+                let depth_snapshot_after: Vec<DepthSnapshot> = self
+                    .panels_store
+                    .dom
+                    .values()
+                    .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                    .chain(self.panels_store.l2_tape.values().map(|s| {
+                        (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                    }))
+                    .chain(self.panels_store.liquidity_heatmap.values().map(|s| {
+                        (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                    }))
+                    .collect();
+
+                // Collect deduplicated unsubscribe/subscribe actions.
+                use std::collections::HashSet;
+                let mut to_unsub: HashSet<(String, String, String)> = HashSet::new();
+                let mut to_sub: HashSet<(String, String, String)> = HashSet::new();
+
+                for (old, new) in depth_snapshot_before.iter().zip(depth_snapshot_after.iter()) {
+                    if old != new {
+                        if !old.0.is_empty() {
+                            to_unsub.insert(old.clone());
+                        }
+                        if !new.0.is_empty() {
+                            to_sub.insert(new.clone());
+                        }
+                    }
+                }
+
+                // Apply depth subscription changes. We read `active_exchange` once to avoid
+                // repeated field accesses; ExchangeId::from_str is infallible with a fallback.
+                let fallback_exchange = self.active_exchange;
+                for (sym, exch_str, at_str) in &to_unsub {
+                    let eid = digdigdig3::ExchangeId::from_str(exch_str)
+                        .unwrap_or(fallback_exchange);
+                    let at = crate::account_type_from_label(at_str);
+                    self.bridge.unsubscribe_depth(eid, sym, at);
+                }
+                for (sym, exch_str, at_str) in &to_sub {
+                    let eid = digdigdig3::ExchangeId::from_str(exch_str)
+                        .unwrap_or(fallback_exchange);
+                    let at = crate::account_type_from_label(at_str);
+                    self.bridge.subscribe_depth(eid, sym, at);
+                }
             }
         }
 
