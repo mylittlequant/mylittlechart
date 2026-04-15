@@ -14,7 +14,6 @@ use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_curs
 use zengeld_chart::ToolbarTheme;
 use zengeld_chart::state::command::ObjectCategory;
 use zengeld_chart::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
-use zengeld_chart::layout::panel_overlay::LEAF_TAB_HEIGHT;
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
@@ -3480,8 +3479,8 @@ fn render_slot_panel(
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
-    // Two-level header: Level 2 control strip (24px) + Level 1 overlay tab (24px).
-    const LEAF_HEADER_H: f32 = (LEAF_TAB_HEIGHT * 2.0) as f32;
+    // Two-level header: Level 2 control strip (28px) only; overlay tab floats on top of content.
+    const LEAF_HEADER_H: f32 = 28.0;
 
     let pad = 8.0;
     let inner_x = rect.x + pad;
@@ -3760,14 +3759,13 @@ fn render_slot_panel(
         ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
         // ── Two-level per-leaf header ────────────────────────────────────────
-        // Level 2 (top, y = header_y):          panel control strip (24px)
-        // Level 1 (bottom, y = header_y + 24):  overlay tab via render_leaf_tab (24px)
+        // Level 2 (top, y = header_y):  panel control strip (28px)
+        // Level 1 (overlay):            overlay tab floats on top of content at y = header_y + 28
         let header_x = r.x;
         let header_y = r.y;
         let header_w = r.width;
-        let header_h = LEAF_HEADER_H;
 
-        let ctrl_strip_h = LEAF_TAB_HEIGHT as f32; // 24px
+        let ctrl_strip_h = LEAF_HEADER_H; // 28px
         let overlay_tab_y = header_y + ctrl_strip_h;
 
         let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
@@ -3786,7 +3784,7 @@ fn render_slot_panel(
         ctx.stroke();
 
         // Buttons in control strip, right-to-left.
-        let btn_h = 16.0_f32;
+        let btn_h = 20.0_f32;
         let btn_y = header_y + (ctrl_strip_h - btn_h) / 2.0;
         let mut right_x = header_x + header_w - 3.0;
 
@@ -3912,7 +3910,20 @@ fn render_slot_panel(
         input_coordinator.register(focus_id.as_str(), focus_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((focus_id, focus_rect));
 
-        // ── Level 1: Overlay tab (bottom row) via render_leaf_tab ─────────────
+        // Body rect: starts right below the control strip; overlay tab floats on top.
+        let body_y = r.y + ctrl_strip_h;
+        let body_h = (r.height - ctrl_strip_h).max(0.0);
+
+        // Register body focus_content widget (for scroll routing and click-to-focus).
+        let focus_content_id = format!("slot:{}:leaf:{}:focus_content", slot_idx, leaf_id.0);
+        let focus_content_rect = WidgetRect::new(r.x as f64, body_y as f64, r.width as f64, body_h as f64);
+        input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((focus_content_id, focus_content_rect));
+
+        // Delegate actual panel content to the caller-supplied renderer.
+        free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx);
+
+        // ── Level 1: Overlay tab — painted AFTER content so it floats on top ──
         // Determine hover zone from stored per-leaf hover state.
         let overlay_hover_zone = state
             .free_leaf_overlay_hover
@@ -3942,29 +3953,8 @@ fn render_slot_panel(
             theme,
         );
 
-        // Bottom separator under the overlay tab.
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(header_x as f64, (header_y + header_h) as f64);
-        ctx.line_to((header_x + header_w) as f64, (header_y + header_h) as f64);
-        ctx.stroke();
-
         // Store hit zones for chart-app click dispatch.
         result.panel_overlay_zones.push((leaf_id, hit_zones));
-
-        // Body rect: everything below the header.
-        let body_y = r.y + LEAF_HEADER_H;
-        let body_h = (r.height - LEAF_HEADER_H).max(0.0);
-
-        // Register body focus_content widget (for scroll routing and click-to-focus).
-        let focus_content_id = format!("slot:{}:leaf:{}:focus_content", slot_idx, leaf_id.0);
-        let focus_content_rect = WidgetRect::new(r.x as f64, body_y as f64, r.width as f64, body_h as f64);
-        input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK);
-        result.item_rects.push((focus_content_id, focus_content_rect));
-
-        // Delegate actual panel content to the caller-supplied renderer.
-        free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx);
     }
 
     // Draw slot separators and register their hit zones.
