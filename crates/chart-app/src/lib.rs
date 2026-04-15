@@ -3652,62 +3652,24 @@ impl ChartApp {
             self.last_active_leaf = current_leaf;
             self.sidebar_data_dirty = true;
 
-            // Propagate active chart symbol to all HyperFocus and BoundToChart trading panels.
-            //
-            // All reads from `panel_grid` are done upfront into owned values so that the
-            // subsequent mutable loops on `panels_store` don't conflict with any borrow on
-            // `self.panel_app`.
+            // When the active chart changes, reassign all Synced panels to the new
+            // chart's group and apply the group's instrument key to their states.
+            if let Some(new_active_group) = self.panel_app.panel_grid
+                .active_chart_id()
+                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             {
-                use zengeld_panels::trading::ResolvedSymbol;
-                use std::collections::HashMap;
-
-                let active_resolved: Option<ResolvedSymbol> =
-                    self.panel_app.panel_grid.active_window().map(|w| ResolvedSymbol {
-                        symbol: w.symbol.clone(),
-                        exchange: w.exchange.clone(),
-                        account_type: w.account_type.clone(),
-                    });
-
-                // Build leaf_id → ResolvedSymbol map upfront (immutable borrow only) so that
-                // the mutable `panels_store` loops below don't conflict with `panel_grid`.
-                // Collect leaf IDs first (plain u64 copies), then resolve each one via the
-                // dedicated helper so the logic lives in a single place.
-                let all_leaf_ids: Vec<u64> = self
-                    .panel_app
-                    .panel_grid
-                    .iter_windows()
-                    .map(|(leaf_id, _w)| leaf_id.0)
-                    .collect();
-                let leaf_symbols: HashMap<u64, ResolvedSymbol> = all_leaf_ids
-                    .into_iter()
-                    .filter_map(|lid| self.resolve_chart_leaf_symbol(lid).map(|r| (lid, r)))
-                    .collect();
-
-                let resolve_leaf = |leaf_id: u64| -> Option<ResolvedSymbol> {
-                    leaf_symbols.get(&leaf_id).cloned()
-                };
-
-                macro_rules! propagate {
-                    ($map:expr) => {
-                        for state in $map.values_mut() {
-                            if let Some(resolved) =
-                                state.source.resolve(active_resolved.as_ref(), &resolve_leaf)
-                            {
-                                state.symbol = resolved.symbol;
-                                state.exchange = resolved.exchange;
-                                state.account_type = resolved.account_type;
-                            }
-                        }
-                    };
+                // Update the group's exchange/account_type from the new active window so that
+                // the group carries the full instrument key (symbol already tracked by TagManager).
+                if let Some(w) = self.panel_app.panel_grid.active_window() {
+                    let exch = w.exchange.clone();
+                    let at = w.account_type.clone();
+                    if let Some(g) = self.panel_app.tag_manager.group_mut(new_active_group) {
+                        g.exchange = exch;
+                        g.account_type = at;
+                    }
                 }
-                propagate!(self.panels_store.dom);
-                propagate!(self.panels_store.footprint);
-                propagate!(self.panels_store.volume_profile);
-                propagate!(self.panels_store.liquidity_heatmap);
-                propagate!(self.panels_store.big_trades);
-                propagate!(self.panels_store.l2_tape);
-                propagate!(self.panels_store.order_entry);
-                propagate!(self.panels_store.trading_container);
+                self.panel_app.tag_manager.reassign_synced_panels(new_active_group);
+                self.apply_key_to_panels_in_group(new_active_group);
             }
         }
 
@@ -5940,7 +5902,8 @@ impl ChartApp {
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                     use sidebar_content::free_slot::FreeItem;
                     use zengeld_panels::trading::SymbolSource;
-                    fn label_from_state(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
+                    // For account-bound panels that still carry SymbolSource.
+                    fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
                         match source {
                             SymbolSource::Fixed { symbol, exchange, account_type } => {
                                 Some(format!("{}:{}:{}", exchange, symbol, account_type))
@@ -5949,23 +5912,28 @@ impl ChartApp {
                             SymbolSource::HyperFocus => Some(format!("{}:{}:{}", exchange, symbol, account_type)),
                         }
                     }
+                    // Market-data panels: always format directly from stored fields (no SymbolSource).
+                    fn label_from_fields(symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
+                        if symbol.is_empty() { return None; }
+                        Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                    }
                     match item {
                         FreeItem::Dom(id) => panels_store.dom.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::Footprint(id) => panels_store.footprint.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
-                            .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                            .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::PositionManager(_)
                         | FreeItem::TradeLog(_)
                         | FreeItem::RiskCalculator(_) => None,
@@ -6428,7 +6396,8 @@ impl ChartApp {
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;
                 use zengeld_panels::trading::SymbolSource;
-                fn label_from_state(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
+                // Account-bound panels still use SymbolSource for display labels.
+                fn label_from_source(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
                     match source {
                         SymbolSource::Fixed { symbol, exchange, account_type } => {
                             Some(format!("{}:{}:{}", exchange, symbol, account_type))
@@ -6437,23 +6406,28 @@ impl ChartApp {
                         SymbolSource::HyperFocus => Some(format!("{}:{}:{}", exchange, symbol, account_type)),
                     }
                 }
+                // Market-data panels: label directly from stored fields (no SymbolSource).
+                fn label_from_fields(symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
+                    if symbol.is_empty() { return None; }
+                    Some(format!("{}:{}:{}", exchange, symbol, account_type))
+                }
                 match item {
                     FreeItem::Dom(id) => panels_store.dom.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::Footprint(id) => panels_store.footprint.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
-                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
+                        .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_) => None,
@@ -6573,26 +6547,61 @@ impl ChartApp {
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /// Resolve a chart leaf's instrument key for `BoundToChart` panels.
+    /// Apply the group's current instrument key (symbol / exchange / account_type)
+    /// to all panel members of the given sync group.
     ///
-    /// Looks up the [`ChartWindow`](zengeld_chart::ChartWindow) that is
-    /// currently displayed in the leaf with the given raw id and returns a
-    /// [`ResolvedSymbol`](zengeld_panels::trading::ResolvedSymbol) built from
-    /// that window's `symbol`, `exchange`, and `account_type`.
-    ///
-    /// Returns `None` when no window is associated with the leaf (e.g. the leaf
-    /// id is stale or belongs to a non-chart panel).
-    pub(crate) fn resolve_chart_leaf_symbol(
-        &self,
-        leaf_id: u64,
-    ) -> Option<zengeld_panels::trading::ResolvedSymbol> {
-        let lid = zengeld_chart::LeafId(leaf_id);
-        let w = self.panel_app.panel_grid.window_for_leaf(lid)?;
-        Some(zengeld_panels::trading::ResolvedSymbol {
-            symbol: w.symbol.clone(),
-            exchange: w.exchange.clone(),
-            account_type: w.account_type.clone(),
-        })
+    /// Called when the active chart changes (after `reassign_synced_panels`) and
+    /// when a chart changes its symbol (from `propagate_symbol_to_sync_group`).
+    pub(crate) fn apply_key_to_panels_in_group(
+        &mut self,
+        group_id: zengeld_chart::tag_manager::SyncGroupId,
+    ) {
+        let (symbol, exchange, account_type, panel_ids) = {
+            let group = match self.panel_app.tag_manager.group(group_id) {
+                Some(g) => g,
+                None => return,
+            };
+            (
+                group.symbol.clone(),
+                group.exchange.clone(),
+                group.account_type.clone(),
+                self.panel_app.tag_manager.panel_members(group_id),
+            )
+        };
+
+        for pid in panel_ids {
+            let panel_id = sidebar_content::free_slot::PanelId(pid);
+            if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.volume_profile.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+            if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+            }
+        }
     }
 
     /// Synchronise `window.sub_panes` with the external `IndicatorManager`.

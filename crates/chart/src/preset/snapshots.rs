@@ -18,7 +18,7 @@ use crate::drawing::DrawingManager;
 use crate::state::chart_window::ChartWindow;
 use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
-use crate::tag_manager::{IndicatorGroupConfig, SyncFlags, SyncGroup};
+use crate::tag_manager::{IndicatorGroupConfig, SyncFlags, SyncGroup, SyncMemberId};
 use crate::{CompareOverlay, CrosshairOptions, GridOptions, Legend, PriceScale, Tooltip, Viewport, Watermark};
 
 // =============================================================================
@@ -358,6 +358,27 @@ pub struct IndicatorSnapshot {
 // SyncGroupSnapshot
 // =============================================================================
 
+// =============================================================================
+// MemberOverrideSnapshot
+// =============================================================================
+
+/// Serializable snapshot of a per-member sync flag override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberOverrideSnapshot {
+    /// Member kind: `0` = Chart, `1` = Panel.
+    pub kind: u8,
+    /// Raw member id.
+    pub id: u64,
+    /// Override for symbol synchronisation. `None` = use group default.
+    pub sync_symbol: Option<bool>,
+    /// Override for crosshair synchronisation. `None` = use group default.
+    pub sync_crosshair: Option<bool>,
+}
+
+// =============================================================================
+// SyncGroupSnapshot
+// =============================================================================
+
 /// Serializable snapshot of a [`SyncGroup`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncGroupSnapshot {
@@ -367,14 +388,29 @@ pub struct SyncGroupSnapshot {
     pub color: [f32; 4],
     /// Shared symbol for the group.
     pub symbol: String,
+    /// Exchange name (e.g. `"binance"`). Old presets default to empty string.
+    #[serde(default)]
+    pub exchange: String,
+    /// Account type (e.g. `"S"`). Old presets default to empty string.
+    #[serde(default)]
+    pub account_type: String,
     /// Shared timeframe for the group.
     pub timeframe: Timeframe,
     /// Which properties are synchronised across member windows.
     pub sync_flags: SyncFlags,
     /// Shared indicator configurations propagated to all member windows.
     pub indicator_configs: Vec<IndicatorGroupConfig>,
-    /// Member window IDs.
+    /// Chart member window IDs (backward compat — only chart ids).
     pub members: Vec<u64>,
+    /// Panel member IDs. Absent in old presets → empty vec via `serde(default)`.
+    #[serde(default)]
+    pub panel_members: Vec<u64>,
+    /// Per-member flag overrides. Absent in old presets → empty vec.
+    #[serde(default)]
+    pub member_overrides: Vec<MemberOverrideSnapshot>,
+    /// Panel IDs that are in Synced state. Absent in old presets → empty vec.
+    #[serde(default)]
+    pub synced_panel_ids: Vec<u64>,
     /// Shared drawing primitives owned by this group.
     pub primitives: Vec<PrimitiveSnapshot>,
     /// Undo/redo command history for this sync group.
@@ -394,16 +430,47 @@ impl SyncGroupSnapshot {
             .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
             .collect();
 
-        let members = group.members.iter().map(|id| id.0).collect();
+        // Separate chart and panel members
+        let mut members: Vec<u64> = Vec::new();
+        let mut panel_members: Vec<u64> = Vec::new();
+        for member in &group.members {
+            match member {
+                SyncMemberId::Chart(id) => members.push(*id),
+                SyncMemberId::Panel(id) => panel_members.push(*id),
+            }
+        }
+
+        // Serialize per-member overrides
+        let member_overrides: Vec<MemberOverrideSnapshot> = group
+            .member_overrides
+            .iter()
+            .map(|(member, ovr)| {
+                let (kind, id) = match member {
+                    SyncMemberId::Chart(id) => (0u8, *id),
+                    SyncMemberId::Panel(id) => (1u8, *id),
+                };
+                MemberOverrideSnapshot {
+                    kind,
+                    id,
+                    sync_symbol: ovr.sync_symbol,
+                    sync_crosshair: ovr.sync_crosshair,
+                }
+            })
+            .collect();
 
         Self {
             id: group.id.0,
             color: group.color,
             symbol: group.symbol.clone(),
+            exchange: group.exchange.clone(),
+            account_type: group.account_type.clone(),
             timeframe: group.timeframe.clone(),
             sync_flags: group.sync_flags.clone(),
             indicator_configs: group.indicator_configs.clone(),
             members,
+            panel_members,
+            member_overrides,
+            synced_panel_ids: Vec::new(), // populated by TagManager on save
             primitives,
             command_history: Some(group.command_history.clone()),
             auto_created: group.auto_created,

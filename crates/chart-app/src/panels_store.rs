@@ -329,3 +329,4 @@ impl Default for TradingPanelsStore {
         Self::new()
     }
 }
+

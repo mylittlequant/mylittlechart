@@ -6915,9 +6915,10 @@ impl ApplicationHandler for App<'_> {
                         .unwrap_or(false);
                     if sync_symbol_on {
                         let peer_ids: Vec<zengeld_chart::ChartId> = pw.chart.panel_app.tag_manager
-                            .group(group_id)
-                            .map(|g| g.members.iter().copied().filter(|&m| m != active_cid).collect())
-                            .unwrap_or_default();
+                            .chart_members(group_id)
+                            .into_iter()
+                            .filter(|&m| m != active_cid)
+                            .collect();
                         for peer_id in peer_ids {
                             if let Some(peer_window) = pw.chart.panel_app.panel_grid.windows_mut().get_mut(&peer_id) {
                                 if peer_window.symbol == symbol

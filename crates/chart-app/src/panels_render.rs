@@ -51,50 +51,52 @@ pub fn panel_header_info(
         }
     }
 
+    // Market-data panels are synced via TagManager — they have no SymbolSource field.
+    // Use a fixed "Synced" label for all of them.
     match item {
         FreeItem::Dom(id) => store.dom.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),
             is_dom: true,
         }),
         FreeItem::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::VolumeProfile(id) => store.volume_profile.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::LiquidityHeatmap(id) => store.liquidity_heatmap.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::BigTrades(id) => store.big_trades.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::L2Tape(id) => store.l2_tape.get(id).map(|s| PanelHeaderInfo {
-            source_label: source_label(&s.source),
-            source_color: source_color(&s.source),
+            source_label: "Synced",
+            source_color: "#374151",
             symbol: s.symbol.clone(),
             exchange: s.exchange.clone(),
             account_type: s.account_type.clone(),

@@ -12,9 +12,6 @@ pub struct DomId(pub u64);
 /// DOM panel state (heavy data)
 #[derive(Clone, Debug)]
 pub struct DomState {
-    /// Symbol source binding (how to resolve which instrument to display)
-    pub source: crate::trading::SymbolSource,
-
     /// Current symbol being displayed
     pub symbol: String,
 
@@ -88,7 +85,6 @@ pub struct DomSyncData {
 impl DomState {
     pub fn new(symbol: String, tick_size: f64) -> Self {
         Self {
-            source: crate::trading::SymbolSource::default(),
             symbol,
             exchange: String::new(),
             account_type: String::new(),

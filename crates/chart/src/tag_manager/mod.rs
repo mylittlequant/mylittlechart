@@ -3,6 +3,9 @@
 //! Manages `SyncGroup`s that bind multiple `ChartWindow`s together so they
 //! share primitives, indicator configs, symbol, timeframe, and crosshair state.
 
+pub mod member_id;
+pub use member_id::{MemberSyncOverride, SyncMemberId};
+
 use serde::{Deserialize, Serialize};
 
 use crate::state::chart_window::ChartId;
@@ -86,7 +89,7 @@ pub struct IndicatorGroupConfig {
 // SyncGroup
 // =============================================================================
 
-/// A group of chart windows that synchronize shared state.
+/// A group of chart windows and trading panels that synchronize shared state.
 pub struct SyncGroup {
     pub id: SyncGroupId,
     /// Display color used in the UI to identify this group.
@@ -96,13 +99,20 @@ pub struct SyncGroup {
     pub primitives: Vec<Box<dyn crate::drawing::primitives_v2::Primitive>>,
     pub indicator_configs: Vec<IndicatorGroupConfig>,
     pub symbol: String,
+    /// Exchange name (e.g. `"binance"`).
+    pub exchange: String,
+    /// Account type short label (e.g. `"S"` for Spot, `"F"` for Futures).
+    pub account_type: String,
     pub timeframe: Timeframe,
 
     /// Which properties are synchronized.
     pub sync_flags: SyncFlags,
 
-    /// The set of `ChartId`s that belong to this group.
-    pub members: std::collections::HashSet<ChartId>,
+    /// All members of this group: charts AND trading panels.
+    pub members: std::collections::HashSet<SyncMemberId>,
+
+    /// Per-member flag overrides. Absent = use group defaults.
+    pub member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride>,
 
     /// Shared undo/redo history for operations that affect all members
     /// (primitives, indicator configs). Window-local operations (viewport,
@@ -115,6 +125,26 @@ pub struct SyncGroup {
     pub auto_created: bool,
 }
 
+impl SyncGroup {
+    /// Effective `sync_symbol` for a specific member.
+    ///
+    /// The per-member override (if present) wins over the group-level flag.
+    pub fn effective_sync_symbol(&self, member: SyncMemberId) -> bool {
+        self.member_overrides
+            .get(&member)
+            .and_then(|o| o.sync_symbol)
+            .unwrap_or(self.sync_flags.sync_symbol)
+    }
+
+    /// Effective `sync_crosshair` for a specific member.
+    pub fn effective_sync_crosshair(&self, member: SyncMemberId) -> bool {
+        self.member_overrides
+            .get(&member)
+            .and_then(|o| o.sync_crosshair)
+            .unwrap_or(self.sync_flags.sync_crosshair)
+    }
+}
+
 impl Clone for SyncGroup {
     fn clone(&self) -> Self {
         Self {
@@ -123,9 +153,12 @@ impl Clone for SyncGroup {
             primitives: self.primitives.iter().map(|p| p.clone_box()).collect(),
             indicator_configs: self.indicator_configs.clone(),
             symbol: self.symbol.clone(),
+            exchange: self.exchange.clone(),
+            account_type: self.account_type.clone(),
             timeframe: self.timeframe.clone(),
             sync_flags: self.sync_flags.clone(),
             members: self.members.clone(),
+            member_overrides: self.member_overrides.clone(),
             command_history: CommandHistory::new(250),
             auto_created: self.auto_created,
         }
@@ -140,6 +173,8 @@ impl std::fmt::Debug for SyncGroup {
             .field("primitives_count", &self.primitives.len())
             .field("indicator_configs", &self.indicator_configs)
             .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("account_type", &self.account_type)
             .field("timeframe", &self.timeframe)
             .field("sync_flags", &self.sync_flags)
             .field("members", &self.members)
@@ -155,7 +190,8 @@ impl std::fmt::Debug for SyncGroup {
 /// Errors returned by `TagManager` operations.
 #[derive(Debug)]
 pub enum TagManagerError {
-    WindowNotInGroup(ChartId),
+    /// The given member is not registered in any sync group.
+    MemberNotInGroup(SyncMemberId),
     GroupNotFound(SyncGroupId),
     PrimitiveNotFound(u64),
 }
@@ -163,7 +199,7 @@ pub enum TagManagerError {
 impl std::fmt::Display for TagManagerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::WindowNotInGroup(id) => write!(f, "window {:?} is not in any sync group", id),
+            Self::MemberNotInGroup(id) => write!(f, "member {:?} is not in any sync group", id),
             Self::GroupNotFound(id) => write!(f, "group {:?} does not exist", id),
             Self::PrimitiveNotFound(id) => write!(f, "primitive {} not found in group", id),
         }
@@ -176,11 +212,18 @@ impl std::error::Error for TagManagerError {}
 // TagManager
 // =============================================================================
 
-/// Manages synchronization groups that bind multiple chart windows together.
+/// Manages synchronization groups that bind multiple chart windows and panels.
 pub struct TagManager {
     groups: std::collections::HashMap<SyncGroupId, SyncGroup>,
-    window_to_group: std::collections::HashMap<ChartId, SyncGroupId>,
+    /// Reverse index: member → group.
+    member_to_group: std::collections::HashMap<SyncMemberId, SyncGroupId>,
     next_indicator_config_id: u64,
+    /// The group that the currently-active chart belongs to.
+    /// Updated whenever the active chart changes.
+    pub active_chart_group: Option<SyncGroupId>,
+    /// Panel members currently in Synced state.
+    /// Their group membership is dynamic — reassigned when the active chart changes.
+    synced_panels: std::collections::HashSet<SyncMemberId>,
 }
 
 impl TagManager {
@@ -188,8 +231,10 @@ impl TagManager {
     pub fn new() -> Self {
         Self {
             groups: std::collections::HashMap::new(),
-            window_to_group: std::collections::HashMap::new(),
+            member_to_group: std::collections::HashMap::new(),
             next_indicator_config_id: 1,
+            active_chart_group: None,
+            synced_panels: std::collections::HashSet::new(),
         }
     }
 
@@ -213,9 +258,12 @@ impl TagManager {
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             timeframe,
             sync_flags: SyncFlags::default(),
             members: std::collections::HashSet::new(),
+            member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             auto_created: false,
         };
@@ -237,6 +285,8 @@ impl TagManager {
             primitives: Vec::new(),
             indicator_configs: Vec::new(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             timeframe,
             sync_flags: SyncFlags {
                 sync_crosshair: false,
@@ -247,6 +297,7 @@ impl TagManager {
                 sync_indicators: false,
             },
             members: std::collections::HashSet::new(),
+            member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             auto_created: true,
         };
@@ -254,11 +305,11 @@ impl TagManager {
         id
     }
 
-    /// Remove a sync group and unmap all its member windows.
+    /// Remove a sync group and unmap all its members.
     pub fn remove_group(&mut self, id: SyncGroupId) {
         if let Some(group) = self.groups.remove(&id) {
-            for chart_id in &group.members {
-                self.window_to_group.remove(chart_id);
+            for member_id in &group.members {
+                self.member_to_group.remove(member_id);
             }
         }
     }
@@ -284,37 +335,37 @@ impl TagManager {
     }
 
     // =========================================================================
-    // Membership
+    // Membership — generic API
     // =========================================================================
 
-    /// Connect a chart window to a sync group.
+    /// Connect any sync member to a sync group.
     ///
-    /// If the window is already in another group it is disconnected first.
+    /// If the member is already in another group it is disconnected first.
     pub fn connect(
         &mut self,
-        chart_id: ChartId,
+        member: SyncMemberId,
         group_id: SyncGroupId,
     ) -> Result<(), TagManagerError> {
         // Disconnect from current group first (ignore if not in any group)
-        self.disconnect(chart_id);
+        self.disconnect(member);
 
         let group = self
             .groups
             .get_mut(&group_id)
             .ok_or(TagManagerError::GroupNotFound(group_id))?;
-        group.members.insert(chart_id);
-        self.window_to_group.insert(chart_id, group_id);
+        group.members.insert(member);
+        self.member_to_group.insert(member, group_id);
         Ok(())
     }
 
-    /// Disconnect a chart window from its current sync group.
+    /// Disconnect a member from its current sync group.
     ///
-    /// Returns the group id the window was removed from, or `None` if the
-    /// window was not in any group.
-    pub fn disconnect(&mut self, chart_id: ChartId) -> Option<SyncGroupId> {
-        if let Some(group_id) = self.window_to_group.remove(&chart_id) {
+    /// Returns the group id the member was removed from, or `None` if not
+    /// in any group.
+    pub fn disconnect(&mut self, member: SyncMemberId) -> Option<SyncGroupId> {
+        if let Some(group_id) = self.member_to_group.remove(&member) {
             if let Some(group) = self.groups.get_mut(&group_id) {
-                group.members.remove(&chart_id);
+                group.members.remove(&member);
             }
             Some(group_id)
         } else {
@@ -322,33 +373,128 @@ impl TagManager {
         }
     }
 
-    /// Return the sync group that contains the given window, if any.
-    pub fn group_for_window(&self, chart_id: ChartId) -> Option<SyncGroupId> {
-        self.window_to_group.get(&chart_id).copied()
+    /// Return the sync group that contains the given member, if any.
+    pub fn group_for_member(&self, member: SyncMemberId) -> Option<SyncGroupId> {
+        self.member_to_group.get(&member).copied()
     }
 
-    /// Return the set of all member `ChartId`s in a group, or `None` if the
-    /// group does not exist.
+    // =========================================================================
+    // Membership — chart forwarding helpers (backward compat)
+    // =========================================================================
+
+    /// Connect a chart window to a sync group.
+    ///
+    /// Wraps `connect(SyncMemberId::Chart(...))` — all existing chart
+    /// call sites compile unchanged.
+    pub fn connect_chart(
+        &mut self,
+        chart_id: ChartId,
+        group_id: SyncGroupId,
+    ) -> Result<(), TagManagerError> {
+        self.connect(SyncMemberId::Chart(chart_id.0), group_id)
+    }
+
+    /// Disconnect a chart window from its current sync group.
+    pub fn disconnect_chart(&mut self, chart_id: ChartId) -> Option<SyncGroupId> {
+        self.disconnect(SyncMemberId::Chart(chart_id.0))
+    }
+
+    /// Return the sync group that contains the given chart window, if any.
+    pub fn group_for_window(&self, chart_id: ChartId) -> Option<SyncGroupId> {
+        self.group_for_member(SyncMemberId::Chart(chart_id.0))
+    }
+
+    // =========================================================================
+    // Membership — query helpers
+    // =========================================================================
+
+    /// Return all chart members of a group as `ChartId` values.
+    pub fn chart_members(&self, group_id: SyncGroupId) -> Vec<ChartId> {
+        self.groups
+            .get(&group_id)
+            .map(|g| {
+                g.members
+                    .iter()
+                    .filter_map(|m| m.as_chart().map(ChartId))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Return all panel member IDs of a group.
+    pub fn panel_members(&self, group_id: SyncGroupId) -> Vec<u64> {
+        self.groups
+            .get(&group_id)
+            .map(|g| g.members.iter().filter_map(|m| m.as_panel()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Return the set of all member `SyncMemberId`s in a group, or `None` if
+    /// the group does not exist.
     pub fn members(
         &self,
         group_id: SyncGroupId,
-    ) -> Option<&std::collections::HashSet<ChartId>> {
+    ) -> Option<&std::collections::HashSet<SyncMemberId>> {
         self.groups.get(&group_id).map(|g| &g.members)
     }
 
-    /// Return all peer windows of the given window (every member except itself).
+    /// Return all peer chart windows of the given chart (every chart member except itself).
     pub fn peers(&self, chart_id: ChartId) -> Vec<ChartId> {
-        if let Some(&group_id) = self.window_to_group.get(&chart_id) {
+        let member = SyncMemberId::Chart(chart_id.0);
+        if let Some(&group_id) = self.member_to_group.get(&member) {
             if let Some(group) = self.groups.get(&group_id) {
                 return group
                     .members
                     .iter()
-                    .filter(|&&id| id != chart_id)
-                    .copied()
+                    .filter_map(|m| m.as_chart().map(ChartId))
+                    .filter(|&id| id != chart_id)
                     .collect();
             }
         }
         Vec::new()
+    }
+
+    // =========================================================================
+    // Synced panels — panel tracking
+    // =========================================================================
+
+    /// Put a panel in Synced state: register in `synced_panels` and connect to
+    /// the given group.
+    pub fn set_synced(&mut self, panel: SyncMemberId, group_id: SyncGroupId) {
+        self.synced_panels.insert(panel);
+        let _ = self.connect(panel, group_id);
+    }
+
+    /// Put a panel in auto-created group state: remove from `synced_panels`
+    /// and connect to its own private auto-created group.
+    pub fn set_auto_group(&mut self, panel: SyncMemberId, private_group_id: SyncGroupId) {
+        self.synced_panels.remove(&panel);
+        let _ = self.connect(panel, private_group_id);
+    }
+
+    /// Returns `true` if the panel is currently in Synced state.
+    pub fn is_synced(&self, panel: SyncMemberId) -> bool {
+        self.synced_panels.contains(&panel)
+    }
+
+    /// Remove a member from `synced_panels` without affecting group membership.
+    ///
+    /// Call this when permanently removing a panel (e.g. user closes the panel).
+    /// Pair with `disconnect` to fully deregister a panel from the tag system.
+    pub fn synced_panels_remove(&mut self, member: SyncMemberId) {
+        self.synced_panels.remove(&member);
+    }
+
+    /// Called when the active chart changes.
+    ///
+    /// Moves all Synced panels to the new group so they follow the active chart.
+    pub fn reassign_synced_panels(&mut self, new_group_id: SyncGroupId) {
+        let panels: Vec<SyncMemberId> = self.synced_panels.iter().copied().collect();
+        for member in panels {
+            self.disconnect(member);
+            let _ = self.connect(member, new_group_id);
+        }
+        self.active_chart_group = Some(new_group_id);
     }
 
     // =========================================================================
@@ -360,7 +506,8 @@ impl TagManager {
         &self,
         chart_id: ChartId,
     ) -> Option<&[Box<dyn crate::drawing::primitives_v2::Primitive>]> {
-        let group_id = self.window_to_group.get(&chart_id)?;
+        let member = SyncMemberId::Chart(chart_id.0);
+        let group_id = self.member_to_group.get(&member)?;
         let group = self.groups.get(group_id)?;
         Some(&group.primitives)
     }
@@ -371,11 +518,12 @@ impl TagManager {
         chart_id: ChartId,
         prim: Box<dyn crate::drawing::primitives_v2::Primitive>,
     ) -> Result<(), TagManagerError> {
+        let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
-            .window_to_group
-            .get(&chart_id)
+            .member_to_group
+            .get(&member)
             .copied()
-            .ok_or(TagManagerError::WindowNotInGroup(chart_id))?;
+            .ok_or(TagManagerError::MemberNotInGroup(member))?;
         let group = self
             .groups
             .get_mut(&group_id)
@@ -390,11 +538,12 @@ impl TagManager {
         chart_id: ChartId,
         prim_id: u64,
     ) -> Result<(), TagManagerError> {
+        let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
-            .window_to_group
-            .get(&chart_id)
+            .member_to_group
+            .get(&member)
             .copied()
-            .ok_or(TagManagerError::WindowNotInGroup(chart_id))?;
+            .ok_or(TagManagerError::MemberNotInGroup(member))?;
         let group = self
             .groups
             .get_mut(&group_id)
@@ -422,11 +571,12 @@ impl TagManager {
         pane: u32,
         symbol: &str,
     ) -> Result<u64, TagManagerError> {
+        let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
-            .window_to_group
-            .get(&chart_id)
+            .member_to_group
+            .get(&member)
             .copied()
-            .ok_or(TagManagerError::WindowNotInGroup(chart_id))?;
+            .ok_or(TagManagerError::MemberNotInGroup(member))?;
         let group = self
             .groups
             .get_mut(&group_id)
@@ -451,11 +601,12 @@ impl TagManager {
         chart_id: ChartId,
         config_id: u64,
     ) -> Result<(), TagManagerError> {
+        let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
-            .window_to_group
-            .get(&chart_id)
+            .member_to_group
+            .get(&member)
             .copied()
-            .ok_or(TagManagerError::WindowNotInGroup(chart_id))?;
+            .ok_or(TagManagerError::MemberNotInGroup(member))?;
         let group = self
             .groups
             .get_mut(&group_id)
@@ -469,13 +620,14 @@ impl TagManager {
         &self,
         chart_id: ChartId,
     ) -> Option<&[IndicatorGroupConfig]> {
-        let group_id = self.window_to_group.get(&chart_id)?;
+        let member = SyncMemberId::Chart(chart_id.0);
+        let group_id = self.member_to_group.get(&member)?;
         let group = self.groups.get(group_id)?;
         Some(&group.indicator_configs)
     }
 
     // =========================================================================
-    // Symbol / Timeframe
+    // Symbol / Timeframe / Instrument
     // =========================================================================
 
     /// Update the symbol for the sync group that contains the given window.
@@ -483,7 +635,8 @@ impl TagManager {
     /// Returns a reference to the updated group, or `None` if the window is
     /// not in any group.
     pub fn set_symbol(&mut self, chart_id: ChartId, symbol: String) -> Option<&SyncGroup> {
-        let group_id = self.window_to_group.get(&chart_id).copied()?;
+        let member = SyncMemberId::Chart(chart_id.0);
+        let group_id = self.member_to_group.get(&member).copied()?;
         let group = self.groups.get_mut(&group_id)?;
         group.symbol = symbol;
         Some(group)
@@ -491,9 +644,27 @@ impl TagManager {
 
     /// Update the timeframe for the sync group that contains the given window.
     pub fn set_timeframe(&mut self, chart_id: ChartId, tf: Timeframe) -> Option<&SyncGroup> {
-        let group_id = self.window_to_group.get(&chart_id).copied()?;
+        let member = SyncMemberId::Chart(chart_id.0);
+        let group_id = self.member_to_group.get(&member).copied()?;
         let group = self.groups.get_mut(&group_id)?;
         group.timeframe = tf;
+        Some(group)
+    }
+
+    /// Update symbol, exchange, and account_type for the sync group that
+    /// contains the given member.
+    pub fn set_instrument(
+        &mut self,
+        member: SyncMemberId,
+        symbol: String,
+        exchange: String,
+        account_type: String,
+    ) -> Option<&SyncGroup> {
+        let group_id = self.member_to_group.get(&member).copied()?;
+        let group = self.groups.get_mut(&group_id)?;
+        group.symbol = symbol;
+        group.exchange = exchange;
+        group.account_type = account_type;
         Some(group)
     }
 
@@ -552,26 +723,28 @@ impl TagManager {
     // Preset restore helpers
     // =========================================================================
 
-    /// Remove all sync groups and reset the window-to-group index.
+    /// Remove all sync groups and reset the member-to-group index.
     ///
     /// Used during preset restore to start from a clean slate before
     /// re-inserting groups reconstructed from snapshots.
     pub fn clear(&mut self) {
         self.groups.clear();
-        self.window_to_group.clear();
+        self.member_to_group.clear();
         self.next_indicator_config_id = 1;
+        self.active_chart_group = None;
+        self.synced_panels.clear();
     }
 
     /// Insert a fully-constructed [`SyncGroup`] using its own id.
     ///
     /// No new id is generated. If a group with the same id already exists it
     /// is silently replaced. After inserting, also rebuilds the
-    /// `window_to_group` reverse-index for all members already recorded on
+    /// `member_to_group` reverse-index for all members already recorded on
     /// the group.
     pub fn insert_group_raw(&mut self, group: SyncGroup) {
         let group_id = group.id;
-        for &chart_id in &group.members {
-            self.window_to_group.insert(chart_id, group_id);
+        for &member_id in &group.members {
+            self.member_to_group.insert(member_id, group_id);
         }
         self.groups.insert(group_id, group);
     }
@@ -584,13 +757,33 @@ impl TagManager {
     pub fn group_from_snapshot(
         snap: &crate::preset::snapshots::SyncGroupSnapshot,
     ) -> SyncGroup {
-        use crate::state::chart_window::ChartId;
+        // Restore chart members (backward compat — stored as bare u64)
+        let mut members = std::collections::HashSet::new();
+        for &raw in &snap.members {
+            members.insert(SyncMemberId::Chart(raw));
+        }
+        // Restore panel members (new field — defaults to empty in old presets)
+        for &raw in &snap.panel_members {
+            members.insert(SyncMemberId::Panel(raw));
+        }
 
-        let members = snap
-            .members
+        // Restore per-member overrides
+        let member_overrides: std::collections::HashMap<SyncMemberId, MemberSyncOverride> = snap
+            .member_overrides
             .iter()
-            .map(|&raw| ChartId(raw))
-            .collect::<std::collections::HashSet<ChartId>>();
+            .map(|o| {
+                let member = if o.kind == 0 {
+                    SyncMemberId::Chart(o.id)
+                } else {
+                    SyncMemberId::Panel(o.id)
+                };
+                let override_val = MemberSyncOverride {
+                    sync_symbol: o.sync_symbol,
+                    sync_crosshair: o.sync_crosshair,
+                };
+                (member, override_val)
+            })
+            .collect();
 
         SyncGroup {
             id: SyncGroupId(snap.id),
@@ -598,9 +791,12 @@ impl TagManager {
             primitives: Vec::new(),
             indicator_configs: snap.indicator_configs.clone(),
             symbol: snap.symbol.clone(),
+            exchange: snap.exchange.clone(),
+            account_type: snap.account_type.clone(),
             timeframe: snap.timeframe.clone(),
             sync_flags: snap.sync_flags.clone(),
             members,
+            member_overrides,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
             auto_created: snap.auto_created,
         }

@@ -11,9 +11,6 @@ pub struct LiquidityHeatmapId(pub u64);
 /// LiquidityHeatmap panel state (heavy data)
 #[derive(Clone, Debug)]
 pub struct LiquidityHeatmapState {
-    /// Symbol source binding (how to resolve which instrument to display)
-    pub source: crate::trading::SymbolSource,
-
     pub symbol: String,
 
     /// Exchange identifier string (e.g. "binance")
@@ -55,7 +52,6 @@ pub struct LiquidityHeatmapState {
 impl LiquidityHeatmapState {
     pub fn new(symbol: String, tick_size: f64, snapshot_interval_ms: u64) -> Self {
         Self {
-            source: crate::trading::SymbolSource::default(),
             symbol,
             exchange: String::new(),
             account_type: String::new(),

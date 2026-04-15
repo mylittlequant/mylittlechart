@@ -11,9 +11,6 @@ pub struct BigTradesId(pub u64);
 /// BigTrades panel state (heavy data)
 #[derive(Clone, Debug)]
 pub struct BigTradesState {
-    /// Symbol source binding (how to resolve which instrument to display)
-    pub source: crate::trading::SymbolSource,
-
     /// Symbol being monitored
     pub symbol: String,
 
@@ -55,7 +52,6 @@ pub enum TradeSide {
 impl BigTradesState {
     pub fn new() -> Self {
         Self {
-            source: crate::trading::SymbolSource::default(),
             symbol: String::new(),
             exchange: String::new(),
             account_type: String::new(),

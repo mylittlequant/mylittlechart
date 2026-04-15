@@ -10012,7 +10012,6 @@ impl ChartApp {
                             "dom" => {
                                 let pid = self.panels_store.create_dom(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10021,7 +10020,6 @@ impl ChartApp {
                             "footprint" => {
                                 let pid = self.panels_store.create_footprint(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10030,7 +10028,6 @@ impl ChartApp {
                             "volume_profile" => {
                                 let pid = self.panels_store.create_volume_profile(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10039,7 +10036,6 @@ impl ChartApp {
                             "liquidity_heatmap" => {
                                 let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), 0.01, 1000);
                                 if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10049,7 +10045,6 @@ impl ChartApp {
                                 let pid = self.panels_store.create_big_trades();
                                 if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                     state.symbol = symbol.clone();
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10059,7 +10054,6 @@ impl ChartApp {
                                 let pid = self.panels_store.create_l2_tape();
                                 if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();
-                                    state.source = source.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10109,6 +10103,30 @@ impl ChartApp {
                             let at = crate::account_type_from_label(&account_type_str);
                             self.bridge.subscribe_depth(eid, &symbol, at);
                         }
+
+                        // Register market-data panels in TagManager as Synced members.
+                        // order_entry / trading_container are account-bound, not market-data.
+                        let is_market_data = matches!(
+                            kind_str,
+                            "dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
+                                | "big_trades" | "l2_tape"
+                        );
+                        if is_market_data {
+                            if let Some(ref item) = item_opt {
+                                let pid = sidebar_content::free_slot::PanelId(item.panel_id().0);
+                                let member = zengeld_chart::tag_manager::SyncMemberId::Panel(pid.0);
+                                let group_id = self.panel_app.tag_manager.active_chart_group
+                                    .or_else(|| {
+                                        self.panel_app.panel_grid
+                                            .active_chart_id()
+                                            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                    });
+                                if let Some(gid) = group_id {
+                                    self.panel_app.tag_manager.set_synced(member, gid);
+                                }
+                            }
+                        }
+
                         if let Some(item) = item_opt {
                             eprintln!("[ChartApp] slot:{}:spawn:{} — spawned panel", idx, kind_str);
                             self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
@@ -10161,16 +10179,12 @@ impl ChartApp {
                                             use zengeld_panels::trading::SymbolSource;
                                             use sidebar_content::free_slot::FreeItem;
                                             let src = SymbolSource::HyperFocus;
+                                            // Market-data panels (dom, footprint, etc.) no longer use
+                                            // SymbolSource; they are tracked via TagManager.
                                             match &item {
-                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
-                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
-                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
-                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
-                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
-                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
                                                 FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                                 FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
-                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                                _ => {}
                                             }
                                             self.autosave_snapshot();
                                         }
@@ -10204,16 +10218,12 @@ impl ChartApp {
                                                 .map(|w| w.account_type.clone())
                                                 .unwrap_or_default();
                                             let src = SymbolSource::Fixed { symbol, exchange, account_type };
+                                            // Market-data panels (dom, footprint, etc.) no longer use
+                                            // SymbolSource; they are tracked via TagManager.
                                             match &item {
-                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
-                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
-                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
-                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
-                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
-                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
                                                 FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                                 FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
-                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                                _ => {}
                                             }
                                             self.autosave_snapshot();
                                         }
@@ -10240,16 +10250,12 @@ impl ChartApp {
                                                 .map(|lid| lid.0)
                                                 .unwrap_or(0);
                                             let src = SymbolSource::BoundToChart { leaf_id };
+                                            // Market-data panels (dom, footprint, etc.) no longer use
+                                            // SymbolSource; they are tracked via TagManager.
                                             match &item {
-                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
-                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
-                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
-                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
-                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
-                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
                                                 FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                                 FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
-                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                                _ => {}
                                             }
                                             self.autosave_snapshot();
                                         }
@@ -10324,6 +10330,10 @@ impl ChartApp {
                                             .tree_mut()
                                             .remove_leaf(leaf_id);
                                         if let Some(item) = item_opt {
+                                            // Deregister from TagManager before removing state.
+                                            let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                            self.panel_app.tag_manager.disconnect(member);
+                                            self.panel_app.tag_manager.synced_panels_remove(member);
                                             self.panels_store.remove(&item);
                                         }
                                         self.sidebar_state.focused_free_leaf = None;
@@ -10363,13 +10373,15 @@ impl ChartApp {
                                 use zengeld_panels::trading::SymbolSource;
                                 use sidebar_content::free_slot::FreeItem;
                                 use sidebar_content::state::SlotSourceMode;
+                                // Market-data panels no longer carry SymbolSource; their mode is
+                                // always reflected as Auto (synced via TagManager).
                                 let source = match &item {
-                                    FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
-                                    FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
-                                    FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
-                                    FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
-                                    FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
-                                    FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                    FreeItem::Dom(_)
+                                    | FreeItem::Footprint(_)
+                                    | FreeItem::VolumeProfile(_)
+                                    | FreeItem::LiquidityHeatmap(_)
+                                    | FreeItem::BigTrades(_)
+                                    | FreeItem::L2Tape(_) => Some(SymbolSource::HyperFocus),
                                     FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                     FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                     FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -10399,6 +10411,10 @@ impl ChartApp {
                                 .and_then(|l| l.panels.get(l.active_tab).cloned());
                             self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().remove_leaf(leaf_id);
                             if let Some(item) = item_opt {
+                                // Deregister from TagManager before removing state.
+                                let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
+                                self.panel_app.tag_manager.disconnect(member);
+                                self.panel_app.tag_manager.synced_panels_remove(member);
                                 self.panels_store.remove(&item);
                             }
                             if self.sidebar_state.focused_free_leaf == Some((idx, leaf_id)) {
@@ -10567,14 +10583,16 @@ impl ChartApp {
                                     use zengeld_panels::trading::SymbolSource;
                                     use sidebar_content::free_slot::FreeItem;
 
-                                    // Read the current source from the panel state.
+                                    // Read the current source from account-bound panel states.
+                                    // Market-data panels (dom, footprint, etc.) no longer carry
+                                    // SymbolSource — they are managed via TagManager.
                                     let current_source = match &item {
-                                        FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
-                                        FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
-                                        FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
-                                        FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
-                                        FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
-                                        FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                        FreeItem::Dom(_)
+                                        | FreeItem::Footprint(_)
+                                        | FreeItem::VolumeProfile(_)
+                                        | FreeItem::LiquidityHeatmap(_)
+                                        | FreeItem::BigTrades(_)
+                                        | FreeItem::L2Tape(_) => None,
                                         FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -10602,15 +10620,9 @@ impl ChartApp {
 
                                     if let Some(src) = new_source {
                                         match &item {
-                                            FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
-                                            FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
-                                            FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
-                                            FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
-                                            FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
-                                            FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
                                             FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
                                             FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
-                                            FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                            _ => {}
                                         }
                                         eprintln!("[ChartApp] slot:{}:leaf:{}:source_cycle", idx, raw);
                                         self.sidebar_data_dirty = true;
@@ -10696,13 +10708,15 @@ impl ChartApp {
                                     use zengeld_panels::trading::SymbolSource;
                                     use sidebar_content::free_slot::FreeItem;
                                     use sidebar_content::state::SlotSourceMode;
+                                    // Market-data panels no longer carry SymbolSource; they always
+                                    // show as Auto (synced via TagManager).
                                     let source = match &item {
-                                        FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
-                                        FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
-                                        FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
-                                        FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
-                                        FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
-                                        FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                        FreeItem::Dom(_)
+                                        | FreeItem::Footprint(_)
+                                        | FreeItem::VolumeProfile(_)
+                                        | FreeItem::LiquidityHeatmap(_)
+                                        | FreeItem::BigTrades(_)
+                                        | FreeItem::L2Tape(_) => Some(SymbolSource::HyperFocus),
                                         FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -17353,7 +17367,7 @@ impl ChartApp {
             .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
-            .map(|g| g.members.iter().map(|cid| cid.0).collect())
+            .map(|g| g.members.iter().filter_map(|m| m.as_chart()).collect())
             .unwrap_or_default();
 
         // Remove at most ONE indicator_config with this type_id from the group.
@@ -20512,7 +20526,7 @@ impl ChartApp {
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
-                            let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+                            let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                                 window.group_id = Some(group_id);
                             }
@@ -20690,7 +20704,7 @@ impl ChartApp {
                                         let mut s = zengeld_panels::trading::order_flow::dom::DomState::new(symbol, *tick_size);
                                         s.levels_displayed = *levels_displayed;
                                         s.center_price = *center_price;
-                                        s.source = convert_source(source);
+                                        // Market-data panels no longer carry SymbolSource; TagManager tracks their group.
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20705,7 +20719,6 @@ impl ChartApp {
                                             zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::footprint::FootprintState::new(symbol, *tick_size);
-                                        s.source = convert_source(source);
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20720,7 +20733,6 @@ impl ChartApp {
                                             zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol, *tick_size);
-                                        s.source = convert_source(source);
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20735,7 +20747,6 @@ impl ChartApp {
                                             zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol, *tick_size, *snapshot_interval_ms);
-                                        s.source = convert_source(source);
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20751,7 +20762,6 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::big_trades::BigTradesState::new();
                                         s.symbol = symbol;
-                                        s.source = convert_source(source);
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20767,7 +20777,6 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::l2_tape::L2TapeState::new();
                                         s.symbol = symbol;
-                                        s.source = convert_source(source);
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
@@ -20893,33 +20902,46 @@ impl ChartApp {
 
                         for state in self.panels_store.dom.values() {
                             if state.symbol.is_empty() { continue; }
-                            let (eid, at) = match &state.source {
-                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
-                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
-                                }
-                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            // Market-data panels store exchange/account_type directly now.
+                            let eid = if state.exchange.is_empty() {
+                                self.active_exchange
+                            } else {
+                                resolve_eid(&state.exchange)
+                            };
+                            let at = if state.account_type.is_empty() {
+                                digdigdig3::AccountType::Spot
+                            } else {
+                                crate::account_type_from_label(&state.account_type)
                             };
                             depth_subs.push((eid, state.symbol.clone(), at));
                         }
 
                         for state in self.panels_store.l2_tape.values() {
                             if state.symbol.is_empty() { continue; }
-                            let (eid, at) = match &state.source {
-                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
-                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
-                                }
-                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            let eid = if state.exchange.is_empty() {
+                                self.active_exchange
+                            } else {
+                                resolve_eid(&state.exchange)
+                            };
+                            let at = if state.account_type.is_empty() {
+                                digdigdig3::AccountType::Spot
+                            } else {
+                                crate::account_type_from_label(&state.account_type)
                             };
                             depth_subs.push((eid, state.symbol.clone(), at));
                         }
 
                         for state in self.panels_store.liquidity_heatmap.values() {
                             if state.symbol.is_empty() { continue; }
-                            let (eid, at) = match &state.source {
-                                zengeld_panels::trading::SymbolSource::Fixed { exchange, account_type, .. } => {
-                                    (resolve_eid(exchange), crate::account_type_from_label(account_type))
-                                }
-                                _ => (self.active_exchange, digdigdig3::AccountType::Spot),
+                            let eid = if state.exchange.is_empty() {
+                                self.active_exchange
+                            } else {
+                                resolve_eid(&state.exchange)
+                            };
+                            let at = if state.account_type.is_empty() {
+                                digdigdig3::AccountType::Spot
+                            } else {
+                                crate::account_type_from_label(&state.account_type)
                             };
                             depth_subs.push((eid, state.symbol.clone(), at));
                         }
@@ -21554,7 +21576,7 @@ impl ChartApp {
                         zengeld_chart::state::Timeframe::h1(),
                     ));
                 let group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-                let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+                let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
                     window.group_id = Some(group_id);
                 }
@@ -21696,10 +21718,26 @@ impl ChartApp {
                     let panel_id = item.panel_id().0;
                     use sidebar_content::free_slot::FreeItem;
                     use zengeld_chart::preset::preset::PersistedFreeItemKind;
+                    // Helper: derive a PersistedSymbolSource from a panel's exchange/symbol/account_type
+                    // fields (market-data panels no longer carry a SymbolSource field).
+                    let persist_source_from_fields = |symbol: &str, exchange: &str, account_type: &str|
+                        -> zengeld_chart::preset::preset::PersistedSymbolSource
+                    {
+                        if exchange.is_empty() {
+                            zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
+                        } else {
+                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                                symbol: symbol.to_string(),
+                                exchange: exchange.to_string(),
+                                account_type: account_type.to_string(),
+                            }
+                        }
+                    };
+
                     let kind = match item {
                         FreeItem::Dom(id) => {
                             let state = self.panels_store.dom.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::Dom {
                                 source,
                                 tick_size: state.tick_size,
@@ -21709,7 +21747,7 @@ impl ChartApp {
                         }
                         FreeItem::Footprint(id) => {
                             let state = self.panels_store.footprint.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::Footprint {
                                 source,
                                 tick_size: state.tick_size,
@@ -21717,7 +21755,7 @@ impl ChartApp {
                         }
                         FreeItem::VolumeProfile(id) => {
                             let state = self.panels_store.volume_profile.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::VolumeProfile {
                                 source,
                                 tick_size: state.tick_size,
@@ -21725,7 +21763,7 @@ impl ChartApp {
                         }
                         FreeItem::LiquidityHeatmap(id) => {
                             let state = self.panels_store.liquidity_heatmap.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::LiquidityHeatmap {
                                 source,
                                 tick_size: state.tick_size,
@@ -21734,14 +21772,14 @@ impl ChartApp {
                         }
                         FreeItem::BigTrades(id) => {
                             let state = self.panels_store.big_trades.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::BigTrades {
                                 source,
                             }
                         }
                         FreeItem::L2Tape(id) => {
                             let state = self.panels_store.l2_tape.get(id)?;
-                            let source = persist_source(&state.source);
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::L2Tape {
                                 source,
                             }
@@ -22192,7 +22230,7 @@ impl ChartApp {
 
         // 1b. Disconnect from TagManager group.
         if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
-            if let Some(old_group_id) = self.panel_app.tag_manager.disconnect(chart_id) {
+            if let Some(old_group_id) = self.panel_app.tag_manager.disconnect_chart(chart_id) {
                 eprintln!(
                     "[TagManager] Disconnected chart {:?} from group {:?}",
                     chart_id, old_group_id
@@ -22271,7 +22309,7 @@ impl ChartApp {
                 .unwrap_or_else(|| ("BTCUSDT".to_string(), zengeld_chart::state::Timeframe::h1()));
             // Auto groups get transparent color — never occupy palette slots
             let new_group_id = self.panel_app.tag_manager.create_group_auto([0.0, 0.0, 0.0, 0.0], symbol, timeframe);
-            let _ = self.panel_app.tag_manager.connect(chart_id, new_group_id);
+            let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.group_id = Some(new_group_id);
             }
@@ -22314,7 +22352,7 @@ impl ChartApp {
                     ));
                 self.panel_app.tag_manager.create_group(color, symbol, tf)
             });
-            let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+            let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
             eprintln!(
                 "[TagManager] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
@@ -22473,7 +22511,7 @@ impl ChartApp {
                     if let Some(new_cid) = self.panel_app.panel_grid.chart_id_for_leaf(mother_leaf) {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
-                            let _ = self.panel_app.tag_manager.connect(new_cid, old_gid);
+                            let _ = self.panel_app.tag_manager.connect_chart(new_cid, old_gid);
                             eprintln!("[TagManager] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
@@ -22504,7 +22542,7 @@ impl ChartApp {
                     timeframe,
                 );
                 if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(leaf_id) {
-                    let _ = self.panel_app.tag_manager.connect(chart_id, gid);
+                    let _ = self.panel_app.tag_manager.connect_chart(chart_id, gid);
                 }
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                     window.group_id = Some(gid);
@@ -22531,7 +22569,7 @@ impl ChartApp {
 
             // Disconnect the old chart from its group (leaf destroyed by split).
             if let (Some(old_cid), Some(old_gid)) = (pre_split_chart_id, pre_split_group_id) {
-                let _ = self.panel_app.tag_manager.disconnect(old_cid);
+                let _ = self.panel_app.tag_manager.disconnect_chart(old_cid);
                 eprintln!("[TagManager] Disconnected destroyed chart {:?} from group {:?}", old_cid, old_gid);
                 // Bug C fix: remove the old group if it became empty and was auto-created.
                 if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
@@ -22596,7 +22634,7 @@ impl ChartApp {
                 })
                 .collect();
             for &(_, chart_id) in &leaf_chart_ids {
-                let _ = self.panel_app.tag_manager.connect(chart_id, group_id);
+                let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
             }
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
@@ -22866,14 +22904,34 @@ impl ChartApp {
             );
         }
 
-        // Also update the TagManager group's canonical symbol so the group
+        // Also update the TagManager group's canonical instrument so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf) {
-            self.panel_app.tag_manager.set_symbol(chart_id, symbol.to_string());
+            // Collect exchange + account_type from the source window before TagManager borrow.
+            let (source_exchange, source_account_type) =
+                self.panel_app.panel_grid.window_for_leaf(source_leaf)
+                    .map(|w| (w.exchange.clone(), w.account_type.clone()))
+                    .unwrap_or_default();
+
+            let group_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
+                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+
+            let member = zengeld_chart::tag_manager::SyncMemberId::Chart(chart_id.0);
+            self.panel_app.tag_manager.set_instrument(
+                member,
+                symbol.to_string(),
+                source_exchange,
+                source_account_type,
+            );
             eprintln!(
                 "[TagManager] Updated group symbol to '{}' via chart {:?}",
                 symbol, chart_id
             );
+
+            // Propagate the new key to all panel members of the same group.
+            if let Some(gid) = group_id {
+                self.apply_key_to_panels_in_group(gid);
+            }
         }
     }
 
@@ -23307,7 +23365,7 @@ impl ChartApp {
             Some(gid) => gid,
             None => return,
         };
-        let _ = self.panel_app.tag_manager.disconnect(chart_id);
+        let _ = self.panel_app.tag_manager.disconnect_chart(chart_id);
         // Remove the old group if it is now empty and was auto-created.
         if let Some(g) = self.panel_app.tag_manager.group(old_gid) {
             if g.auto_created && g.members.is_empty() {
@@ -23448,17 +23506,14 @@ impl ChartApp {
         // Collect peer chart_ids and their symbols (excluding source).
         let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
         let peer_info: Vec<(zengeld_chart::ChartId, String)> = self.panel_app.tag_manager
-            .members(group_id)
-            .map(|members| {
-                members.iter()
-                    .filter(|&&cid| Some(cid) != source_chart_id)
-                    .filter_map(|&cid| {
-                        self.panel_app.panel_grid.windows().get(&cid)
-                            .map(|w| (cid, w.symbol.clone()))
-                    })
-                    .collect()
+            .chart_members(group_id)
+            .into_iter()
+            .filter(|&cid| Some(cid) != source_chart_id)
+            .filter_map(|cid| {
+                self.panel_app.panel_grid.windows().get(&cid)
+                    .map(|w| (cid, w.symbol.clone()))
             })
-            .unwrap_or_default();
+            .collect();
 
         for (peer_cid, peer_symbol) in peer_info {
             if let Some(new_id) = self.indicator_manager.create_instance(type_id, &peer_symbol) {
