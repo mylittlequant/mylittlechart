@@ -6700,12 +6700,29 @@ impl ChartApp {
         // so panels that receive orderbook data start getting the new symbol's stream.
         let mut needs_depth_sub = false;
 
+        // Collect old depth subscriptions that differ from the new symbol so we
+        // can unsubscribe them after updating panel state.  Each entry is
+        // (exchange_string, symbol_string, account_type_string).
+        let mut old_depth_subs: Vec<(String, String, String)> = Vec::new();
+
         for pid in &panel_ids {
             let panel_id = sidebar_content::free_slot::PanelId(*pid);
             if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
+                // Capture old sub key before overwriting if symbol actually changes.
+                if s.symbol != symbol && !s.symbol.is_empty() {
+                    old_depth_subs.push((s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+                }
+                let symbol_changed = s.symbol != symbol;
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                // Clear stale orderbook data so the panel doesn't flicker between
+                // the old and new symbol's levels.
+                if symbol_changed {
+                    s.volume_by_price.clear();
+                    s.max_volume = 0.0;
+                    s.recent_fills.clear();
+                }
                 needs_depth_sub = true;
             }
             if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
@@ -6719,9 +6736,17 @@ impl ChartApp {
                 s.account_type = account_type.clone();
             }
             if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(&panel_id) {
+                if s.symbol != symbol && !s.symbol.is_empty() {
+                    old_depth_subs.push((s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+                }
+                let symbol_changed = s.symbol != symbol;
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                if symbol_changed {
+                    s.snapshots.clear();
+                    s.max_depth = 0.0;
+                }
                 needs_depth_sub = true;
             }
             if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
@@ -6730,11 +6755,43 @@ impl ChartApp {
                 s.account_type = account_type.clone();
             }
             if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
+                if s.symbol != symbol && !s.symbol.is_empty() {
+                    old_depth_subs.push((s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+                }
+                let symbol_changed = s.symbol != symbol;
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                if symbol_changed {
+                    s.events.clear();
+                    s.previous_book.clear();
+                    s.spoof_alerts.clear();
+                }
                 needs_depth_sub = true;
             }
+        }
+
+        // Unsubscribe old depth streams that are no longer needed.  We deduplicate
+        // so that multiple panels sharing the same old (exchange, symbol) only send
+        // one RemoveSymbol command.
+        old_depth_subs.sort_unstable();
+        old_depth_subs.dedup();
+        for (old_exch, old_sym, old_at_label) in &old_depth_subs {
+            // Skip if this old key is the same as the new key — nothing to remove.
+            if old_sym == &symbol && old_exch == &exchange && old_at_label == &account_type {
+                continue;
+            }
+            let old_eid = self.exchange_symbols
+                .keys()
+                .find(|e| e.as_str() == old_exch.as_str())
+                .copied()
+                .unwrap_or(self.active_exchange);
+            let old_at = crate::account_type_from_label(old_at_label);
+            self.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
+            eprintln!(
+                "[TagManager] unsubscribed depth for panel group {} ← {} @ {} ({})",
+                group_id.0, old_sym, old_exch, old_at_label
+            );
         }
 
         // If any panel needs orderbook data for the new symbol, subscribe the depth
