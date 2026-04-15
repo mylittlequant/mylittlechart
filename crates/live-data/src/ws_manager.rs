@@ -688,7 +688,9 @@ pub(crate) fn make_sub_request(
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        WsStreamType::Depth => SubscriptionRequest::orderbook(sym),
+        // Binance partial-depth stream supports only 5, 10, 20 levels (@depth{N}@{ms}).
+        // 20 is the max for partial snapshots; diff-stream stitching would be needed for more.
+        WsStreamType::Depth => SubscriptionRequest::orderbook(sym).with_depth(20),
         // Private streams don't use per-symbol subscription requests.
         // This arm exists for exhaustiveness only; the private actor bypasses
         // this function entirely.

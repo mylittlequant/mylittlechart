@@ -477,9 +477,7 @@ impl TradingPanel for DomState {
             let is_best_ask = best_ask_price.map_or(false, |p| (level.price - p).abs() < 0.001);
             let is_current_price = (level.price - self.market_price).abs() < self.tick_size * 0.5;
 
-            let bg_color = if is_current_price {
-                &theme.current_price
-            } else if is_best_bid {
+            let bg_color = if is_best_bid {
                 &theme.dom_best_bid_bg
             } else if is_best_ask {
                 &theme.dom_best_ask_bg
@@ -491,6 +489,17 @@ impl TradingPanel for DomState {
 
             ctx.set_fill_color(bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+
+            // Current price row: semi-transparent gold background (~30% opacity)
+            if is_current_price {
+                let cp_bg = if theme.current_price.len() >= 7 {
+                    format!("{}50", &theme.current_price[..7])
+                } else {
+                    theme.current_price.clone()
+                };
+                ctx.set_fill_color(&cp_bg);
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+            }
 
             // --- Step 4.1b: Hover highlight overlay ---
             let is_hovered = self.hovered_price
@@ -522,7 +531,6 @@ impl TradingPanel for DomState {
                 ctx.set_fill_color(&theme.buy);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
-                ctx.set_fill_color(&theme.buy);
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Right);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -530,6 +538,13 @@ impl TradingPanel for DomState {
                 let text_x = bid_vol_col_x + bid_vol_col_w - 4.0;
                 let text_y = row_y + row_height / 2.0;
                 let vol_text = format!("{:.0}", level.bid_volume);
+                let text_w = ctx.measure_text(&vol_text);
+                let bid_text_color = if bar_width as f64 >= text_w {
+                    &theme.text_primary
+                } else {
+                    &theme.buy
+                };
+                ctx.set_fill_color(bid_text_color);
                 ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
             }
 
@@ -543,7 +558,6 @@ impl TradingPanel for DomState {
                 ctx.set_fill_color(&theme.sell);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
-                ctx.set_fill_color(&theme.sell);
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -551,12 +565,19 @@ impl TradingPanel for DomState {
                 let text_x = ask_vol_col_x + 4.0;
                 let text_y = row_y + row_height / 2.0;
                 let vol_text = format!("{:.0}", level.ask_volume);
+                let text_w = ctx.measure_text(&vol_text);
+                let ask_text_color = if bar_width as f64 >= text_w {
+                    &theme.text_primary
+                } else {
+                    &theme.sell
+                };
+                ctx.set_fill_color(ask_text_color);
                 ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
             }
 
             // --- Step 4.4: Price text (centered in price column) ---
             let price_text_color = if is_current_price {
-                &theme.current_price
+                &theme.text_primary
             } else if is_best_bid {
                 &theme.buy_bright
             } else if is_best_ask {
