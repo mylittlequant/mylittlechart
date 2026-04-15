@@ -142,19 +142,6 @@ struct MiniTickerData {
 }
 
 // =============================================================================
-// PanelSyncMenuState
-// =============================================================================
-
-/// State for the per-panel sync-flags dropdown popup (Sync Symbol / Sync Crosshair toggles).
-#[derive(Clone, Debug)]
-pub struct PanelSyncMenuState {
-    /// Raw panel id (`SyncMemberId::Panel` inner value).
-    pub panel_id: u64,
-    /// Screen position where the popup should open (top-left corner).
-    pub origin: (f64, f64),
-}
-
-// =============================================================================
 // ChartApp
 // =============================================================================
 
@@ -595,11 +582,6 @@ pub struct ChartApp {
     /// `(slot_index, leaf_id, dom_panel_id, last_y, row_height)`.
     pub(crate) slot_dom_drag: Option<(usize, uzor::panels::LeafId, sidebar_content::free_slot::PanelId, f64, f64)>,
 
-    /// Open state for the panel sync-flags dropdown popup.
-    ///
-    /// `Some` when the sync-menu is visible for a trading panel header.
-    /// Cleared by an outside click or a second click on the same gear button.
-    pub panel_sync_menu_open: Option<PanelSyncMenuState>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -936,7 +918,6 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            panel_sync_menu_open: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1222,7 +1203,6 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            panel_sync_menu_open: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1404,7 +1384,6 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            panel_sync_menu_open: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -6039,9 +6018,6 @@ impl ChartApp {
             }
         }
 
-        // 8a-2. Panel sync menu popup is rendered in render_panel_overlay_popups()
-        // after scene compositing so it appears above the sidebar scene.
-
         // 8b. Render watchlist modal if open (above sidebar, below context menu).
         let out_last_watchlist_modal_result: Option<zengeld_chart::layout::modals::watchlist_modal::WatchlistModalResult> = if self.watchlist_modal.is_open() {
             // Build WatchlistEntry items from sidebar_state.watchlist_items.
@@ -6601,10 +6577,9 @@ impl ChartApp {
 
     /// Render panel-specific overlay popups that must appear above the sidebar.
     ///
-    /// Renders the sync color grid popup when it targets a trading panel and the
-    /// panel sync menu popup (gear icon dropdown on panel headers).  Both popups
-    /// are skipped in `render_to_scene` and rendered here instead so that they
-    /// are composited after the sidebar scene and are never covered by it.
+    /// Renders the sync color grid popup when it targets a trading panel.
+    /// Skipped in `render_to_scene` and rendered here instead so that it is
+    /// composited after the sidebar scene and is never covered by it.
     ///
     /// Does NOT call `input_coordinator.begin_frame()` / `end_frame()` — that
     /// is the responsibility of the enclosing `render()` call (same contract as
@@ -6636,94 +6611,6 @@ impl ChartApp {
             );
         }
 
-        // Panel sync menu popup (gear icon dropdown on trading panel headers).
-        if let Some(ref sync_menu) = self.panel_sync_menu_open {
-            use zengeld_chart::tag_manager::SyncMemberId;
-            use uzor::{Rect, input::Sense};
-            use zengeld_chart::ui::z_order::ZLayer;
-
-            let panel_id = sync_menu.panel_id;
-            let member = SyncMemberId::Panel(panel_id);
-            let flags = self.panel_app.tag_manager
-                .group_for_member(member)
-                .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                .map(|g| (g.effective_sync_symbol(member), g.effective_sync_crosshair(member)))
-                .unwrap_or((false, false));
-
-            let (ox, oy) = sync_menu.origin;
-            let popup_w = 150.0_f64;
-            let row_h = 24.0_f64;
-            let padding = 6.0_f64;
-            let popup_h = padding * 2.0 + row_h * 2.0;
-
-            // Clamp to window.
-            let ox = ox.min(w - popup_w - 4.0).max(4.0);
-            let oy = oy.min(h - popup_h - 4.0).max(4.0);
-
-            // Background.
-            ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-            ctx.fill_rounded_rect(ox, oy, popup_w, popup_h, 6.0);
-
-            // Row 1: Sync Symbol.
-            let r1y = oy + padding;
-            let sym_checked = flags.0;
-            let sym_text_color = if sym_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-            ctx.set_fill_color(sym_text_color);
-            ctx.set_font("11px sans-serif");
-            let sym_mark = if sym_checked { "\u{2611}" } else { "\u{2610}" };
-            ctx.fill_text(
-                &format!("{} Sync Symbol", sym_mark),
-                ox + padding,
-                r1y + row_h / 2.0,
-            );
-
-            // Row 2: Sync Crosshair.
-            let r2y = r1y + row_h;
-            let xhair_checked = flags.1;
-            let xhair_text_color = if xhair_checked { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-            ctx.set_fill_color(xhair_text_color);
-            ctx.set_font("11px sans-serif");
-            let xhair_mark = if xhair_checked { "\u{2611}" } else { "\u{2610}" };
-            ctx.fill_text(
-                &format!("{} Sync Crosshair", xhair_mark),
-                ox + padding,
-                r2y + row_h / 2.0,
-            );
-
-            // Register hit zones.
-            let layer_id = ZLayer::ColorPicker.push_named(
-                &mut self.input_coordinator.borrow_mut(),
-                "panel_sync_menu",
-            );
-            // Full backdrop to catch outside clicks.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:outside",
-                Rect { x: 0.0, y: 0.0, width: w, height: h },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Popup background (absorbs inside clicks to prevent backdrop dismissal).
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:bg",
-                Rect { x: ox, y: oy, width: popup_w, height: popup_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Row 1 — symbol toggle.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:symbol",
-                Rect { x: ox, y: r1y, width: popup_w, height: row_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-            // Row 2 — crosshair toggle.
-            self.input_coordinator.borrow_mut().register_on_layer(
-                "panel_sync_menu:crosshair",
-                Rect { x: ox, y: r2y, width: popup_w, height: row_h },
-                Sense::CLICK,
-                &layer_id,
-            );
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -6809,12 +6696,17 @@ impl ChartApp {
             )
         };
 
-        for pid in panel_ids {
-            let panel_id = sidebar_content::free_slot::PanelId(pid);
+        // Track which (exchange, symbol, account_type) combos need depth subscription
+        // so panels that receive orderbook data start getting the new symbol's stream.
+        let mut needs_depth_sub = false;
+
+        for pid in &panel_ids {
+            let panel_id = sidebar_content::free_slot::PanelId(*pid);
             if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                needs_depth_sub = true;
             }
             if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
                 s.symbol = symbol.clone();
@@ -6830,6 +6722,7 @@ impl ChartApp {
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                needs_depth_sub = true;
             }
             if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
                 s.symbol = symbol.clone();
@@ -6840,7 +6733,24 @@ impl ChartApp {
                 s.symbol = symbol.clone();
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
+                needs_depth_sub = true;
             }
+        }
+
+        // If any panel needs orderbook data for the new symbol, subscribe the depth
+        // WebSocket stream so live updates start arriving for it.
+        if needs_depth_sub && !symbol.is_empty() {
+            let eid = self.exchange_symbols
+                .keys()
+                .find(|e| e.as_str() == exchange)
+                .copied()
+                .unwrap_or(self.active_exchange);
+            let at = crate::account_type_from_label(&account_type);
+            self.bridge.subscribe_depth(eid, &symbol, at);
+            eprintln!(
+                "[TagManager] subscribed depth for panel group {} → {} @ {} ({})",
+                group_id.0, symbol, exchange, account_type
+            );
         }
     }
 

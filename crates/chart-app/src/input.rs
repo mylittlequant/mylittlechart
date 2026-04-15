@@ -72,7 +72,6 @@ pub enum KeyPress {
 }
 
 use crate::ChartApp;
-use crate::PanelSyncMenuState;
 use zengeld_chart::{
     ChartInputAction,
     ChartOutputAction,
@@ -302,16 +301,9 @@ impl ChartApp {
                     return;
                 }
                 if point_in_rect(x, y, zones.dots_rect) {
-                    // Toggle panel sync menu.
-                    if self.panel_sync_menu_open.as_ref().map(|s| s.panel_id) == Some(*panel_id) {
-                        self.panel_sync_menu_open = None;
-                    } else {
-                        self.panel_sync_menu_open = Some(PanelSyncMenuState {
-                            panel_id: *panel_id,
-                            origin: (zones.dots_rect[0], zones.dots_rect[1] + zones.dots_rect[3]),
-                        });
-                    }
-                    eprintln!("[ChartApp] panel overlay: sync menu toggled for panel {}", panel_id);
+                    // Open the TagsNTabs modal (same as chart tab gear clicks).
+                    self.panel_app.open_tags_tabs();
+                    eprintln!("[ChartApp] panel overlay: opened TagsNTabs for panel {}", panel_id);
                     return;
                 }
             }
@@ -11845,12 +11837,6 @@ impl ChartApp {
             return;
         }
 
-        // === Panel sync menu popup clicks ===
-        if widget_id.starts_with("panel_sync_menu:") {
-            self.handle_panel_sync_menu_click(widget_id);
-            return;
-        }
-
         // === Preset name input modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("preset_name_input:") {
             match rest {
@@ -16559,61 +16545,6 @@ impl ChartApp {
 
         // Unknown sub-id — absorb
         let _ = (x, y);
-    }
-
-    /// Handle clicks on widgets registered with the "panel_sync_menu:" prefix.
-    fn handle_panel_sync_menu_click(&mut self, widget_id: &str) {
-        use zengeld_chart::tag_manager::SyncMemberId;
-
-        if widget_id == "panel_sync_menu:outside" {
-            self.panel_sync_menu_open = None;
-            return;
-        }
-
-        // Background absorbs clicks inside the popup without closing it.
-        if widget_id == "panel_sync_menu:bg" {
-            return;
-        }
-
-        if widget_id == "panel_sync_menu:symbol" {
-            if let Some(ref state) = self.panel_sync_menu_open.clone() {
-                let pid = state.panel_id;
-                let member = SyncMemberId::Panel(pid);
-                if let Some(gid) = self.panel_app.tag_manager.group_for_member(member) {
-                    let current = self.panel_app.tag_manager.group(gid)
-                        .map(|g| g.effective_sync_symbol(member))
-                        .unwrap_or(false);
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
-                        let entry = group.member_overrides.entry(member).or_default();
-                        entry.sync_symbol = Some(!current);
-                    }
-                    eprintln!("[ChartApp] panel {} sync_symbol → {}", pid, !current);
-                    self.sidebar_data_dirty = true;
-                    self.autosave_snapshot();
-                }
-            }
-            return;
-        }
-
-        if widget_id == "panel_sync_menu:crosshair" {
-            if let Some(ref state) = self.panel_sync_menu_open.clone() {
-                let pid = state.panel_id;
-                let member = SyncMemberId::Panel(pid);
-                if let Some(gid) = self.panel_app.tag_manager.group_for_member(member) {
-                    let current = self.panel_app.tag_manager.group(gid)
-                        .map(|g| g.effective_sync_crosshair(member))
-                        .unwrap_or(false);
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
-                        let entry = group.member_overrides.entry(member).or_default();
-                        entry.sync_crosshair = Some(!current);
-                    }
-                    eprintln!("[ChartApp] panel {} sync_crosshair → {}", pid, !current);
-                    self.sidebar_data_dirty = true;
-                    self.autosave_snapshot();
-                }
-            }
-            return;
-        }
     }
 
     /// Apply the current color picker color to the selected primitive by field name.
