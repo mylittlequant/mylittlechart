@@ -10133,18 +10133,112 @@ impl ChartApp {
                             "source:auto" => {
                                 self.sidebar_state.slot_source_mode =
                                     sidebar_content::state::SlotSourceMode::Auto;
+                                // If a panel in this slot is focused, update its source too.
+                                if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
+                                    if focused_idx == idx {
+                                        let item_opt = self.sidebar_state.slot_dockings[idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(focused_leaf)
+                                            .and_then(|l| l.active_panel().cloned());
+                                        if let Some(item) = item_opt {
+                                            use zengeld_panels::trading::SymbolSource;
+                                            use sidebar_content::free_slot::FreeItem;
+                                            let src = SymbolSource::HyperFocus;
+                                            match &item {
+                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
+                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
+                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
+                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
+                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
+                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
+                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                            }
+                                            self.autosave_snapshot();
+                                        }
+                                    }
+                                }
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
                             "source:pinned" => {
                                 self.sidebar_state.slot_source_mode =
                                     sidebar_content::state::SlotSourceMode::Pinned;
+                                // If a panel in this slot is focused, update its source too.
+                                if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
+                                    if focused_idx == idx {
+                                        let item_opt = self.sidebar_state.slot_dockings[idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(focused_leaf)
+                                            .and_then(|l| l.active_panel().cloned());
+                                        if let Some(item) = item_opt {
+                                            use zengeld_panels::trading::SymbolSource;
+                                            use sidebar_content::free_slot::FreeItem;
+                                            // Pin to current active chart symbol/exchange/account_type.
+                                            let symbol = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.symbol.clone())
+                                                .unwrap_or_default();
+                                            let exchange = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.exchange.clone())
+                                                .unwrap_or_default();
+                                            let account_type = self.panel_app.panel_grid.active_window()
+                                                .map(|w| w.account_type.clone())
+                                                .unwrap_or_default();
+                                            let src = SymbolSource::Fixed { symbol, exchange, account_type };
+                                            match &item {
+                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
+                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
+                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
+                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
+                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
+                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
+                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                            }
+                                            self.autosave_snapshot();
+                                        }
+                                    }
+                                }
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
                             "source:linked" => {
                                 self.sidebar_state.slot_source_mode =
                                     sidebar_content::state::SlotSourceMode::Linked;
+                                // If a panel in this slot is focused, update its source too.
+                                if let Some((focused_idx, focused_leaf)) = self.sidebar_state.focused_free_leaf {
+                                    if focused_idx == idx {
+                                        let item_opt = self.sidebar_state.slot_dockings[idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(focused_leaf)
+                                            .and_then(|l| l.active_panel().cloned());
+                                        if let Some(item) = item_opt {
+                                            use zengeld_panels::trading::SymbolSource;
+                                            use sidebar_content::free_slot::FreeItem;
+                                            let leaf_id = self.panel_app.panel_grid.docking().active_leaf()
+                                                .map(|lid| lid.0)
+                                                .unwrap_or(0);
+                                            let src = SymbolSource::BoundToChart { leaf_id };
+                                            match &item {
+                                                FreeItem::Dom(id) => { if let Some(s) = self.panels_store.dom.get_mut(id) { s.source = src; } }
+                                                FreeItem::Footprint(id) => { if let Some(s) = self.panels_store.footprint.get_mut(id) { s.source = src; } }
+                                                FreeItem::VolumeProfile(id) => { if let Some(s) = self.panels_store.volume_profile.get_mut(id) { s.source = src; } }
+                                                FreeItem::LiquidityHeatmap(id) => { if let Some(s) = self.panels_store.liquidity_heatmap.get_mut(id) { s.source = src; } }
+                                                FreeItem::BigTrades(id) => { if let Some(s) = self.panels_store.big_trades.get_mut(id) { s.source = src; } }
+                                                FreeItem::L2Tape(id) => { if let Some(s) = self.panels_store.l2_tape.get_mut(id) { s.source = src; } }
+                                                FreeItem::OrderEntry(id) => { if let Some(s) = self.panels_store.order_entry.get_mut(id) { s.source = src; } }
+                                                FreeItem::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
+                                                FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => {}
+                                            }
+                                            self.autosave_snapshot();
+                                        }
+                                    }
+                                }
                                 self.sidebar_data_dirty = true;
                                 return;
                             }
@@ -10243,6 +10337,35 @@ impl ChartApp {
                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                             let leaf_id = uzor::panels::LeafId(raw);
                             self.sidebar_state.focused_free_leaf = Some((idx, leaf_id));
+                            // Sync slot_source_mode to reflect the focused panel's current source.
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+                            if let Some(item) = item_opt {
+                                use zengeld_panels::trading::SymbolSource;
+                                use sidebar_content::free_slot::FreeItem;
+                                use sidebar_content::state::SlotSourceMode;
+                                let source = match &item {
+                                    FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
+                                    FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
+                                    FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
+                                    FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
+                                    FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
+                                    FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                    FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                    FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                    FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
+                                };
+                                if let Some(src) = source {
+                                    self.sidebar_state.slot_source_mode = match src {
+                                        SymbolSource::HyperFocus => SlotSourceMode::Auto,
+                                        SymbolSource::Fixed { .. } => SlotSourceMode::Pinned,
+                                        SymbolSource::BoundToChart { .. } => SlotSourceMode::Linked,
+                                    };
+                                }
+                            }
                             self.sidebar_data_dirty = true;
                         }
                         return;
@@ -10330,6 +10453,40 @@ impl ChartApp {
                                     if state.auto_center && state.market_price > 0.0 {
                                         state.center_price = state.market_price;
                                     }
+                                    self.sidebar_data_dirty = true;
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:vol_filter — cycle DOM volume filter presets ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":vol_filter") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+                            if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
+                                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                    let next = match state.min_volume_filter {
+                                        v if v < 0.5  => 1.0,
+                                        v if v < 1.5  => 5.0,
+                                        v if v < 5.5  => 10.0,
+                                        v if v < 10.5 => 25.0,
+                                        v if v < 25.5 => 50.0,
+                                        _             => 0.0,
+                                    };
+                                    state.min_volume_filter = next;
+                                    eprintln!("[ChartApp] slot:{}:leaf:{}:vol_filter → {}", idx, raw, next);
                                     self.sidebar_data_dirty = true;
                                 }
                             }
@@ -10513,6 +10670,35 @@ impl ChartApp {
                             if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                 let leaf_id = uzor::panels::LeafId(raw);
                                 self.sidebar_state.focused_free_leaf = Some((idx, leaf_id));
+                                // Sync slot_source_mode to reflect the focused panel's current source.
+                                let item_opt = self.sidebar_state.slot_dockings[idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(item) = item_opt {
+                                    use zengeld_panels::trading::SymbolSource;
+                                    use sidebar_content::free_slot::FreeItem;
+                                    use sidebar_content::state::SlotSourceMode;
+                                    let source = match &item {
+                                        FreeItem::Dom(id) => self.panels_store.dom.get(id).map(|s| s.source.clone()),
+                                        FreeItem::Footprint(id) => self.panels_store.footprint.get(id).map(|s| s.source.clone()),
+                                        FreeItem::VolumeProfile(id) => self.panels_store.volume_profile.get(id).map(|s| s.source.clone()),
+                                        FreeItem::LiquidityHeatmap(id) => self.panels_store.liquidity_heatmap.get(id).map(|s| s.source.clone()),
+                                        FreeItem::BigTrades(id) => self.panels_store.big_trades.get(id).map(|s| s.source.clone()),
+                                        FreeItem::L2Tape(id) => self.panels_store.l2_tape.get(id).map(|s| s.source.clone()),
+                                        FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
+                                        FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
+                                        FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
+                                    };
+                                    if let Some(src) = source {
+                                        self.sidebar_state.slot_source_mode = match src {
+                                            SymbolSource::HyperFocus => SlotSourceMode::Auto,
+                                            SymbolSource::Fixed { .. } => SlotSourceMode::Pinned,
+                                            SymbolSource::BoundToChart { .. } => SlotSourceMode::Linked,
+                                        };
+                                    }
+                                }
                                 self.sidebar_data_dirty = true;
                             }
                             return;

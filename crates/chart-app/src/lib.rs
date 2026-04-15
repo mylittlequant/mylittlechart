@@ -2589,18 +2589,20 @@ impl ChartApp {
                     }
 
                     // Fan-out trade to order-flow panels.
+                    let ex_str = exchange_id.as_str();
+                    let at_str = account_type.short_label();
                     for state in self.panels_store.footprint.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.push_trade(price, quantity, is_buyer_maker, timestamp);
                         }
                     }
                     for state in self.panels_store.volume_profile.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.push_trade(price, quantity, is_buyer_maker);
                         }
                     }
                     for state in self.panels_store.big_trades.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.push_trade(price, quantity, is_buyer_maker, timestamp);
                         }
                     }
@@ -2696,36 +2698,40 @@ impl ChartApp {
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
-                LiveUpdate::OrderbookSnapshot { symbol, bids, asks, timestamp, .. } => {
-                    // Feed snapshot into all DOM panels that display this symbol.
+                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids, asks, timestamp } => {
+                    let ex_str = exchange_id.as_str();
+                    let at_str = account_type.short_label();
+                    // Feed snapshot into all DOM panels that display this (symbol, exchange, account_type).
                     for state in self.panels_store.dom.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_snapshot(&bids, &asks);
                         }
                     }
                     // Feed snapshot into L2 Tape panels (resets baseline).
                     for state in self.panels_store.l2_tape.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_snapshot(&bids, &asks, timestamp);
                         }
                     }
                     // Feed snapshot into Liquidity Heatmap panels (rate-limited sampling).
                     for state in self.panels_store.liquidity_heatmap.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_snapshot(&bids, &asks, timestamp);
                         }
                     }
                 }
-                LiveUpdate::OrderbookDelta { symbol, bids, asks, timestamp, .. } => {
-                    // Feed incremental delta into all DOM panels that display this symbol.
+                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids, asks, timestamp } => {
+                    let ex_str = exchange_id.as_str();
+                    let at_str = account_type.short_label();
+                    // Feed incremental delta into all DOM panels that display this (symbol, exchange, account_type).
                     for state in self.panels_store.dom.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_delta(&bids, &asks);
                         }
                     }
                     // Feed delta into L2 Tape panels (generates Add/Modify/Cancel events).
                     for state in self.panels_store.l2_tape.values_mut() {
-                        if state.symbol == symbol {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_delta(&bids, &asks, timestamp);
                         }
                     }
@@ -5963,10 +5969,10 @@ impl ChartApp {
                         | FreeItem::RiskCalculator(_) => None,
                     }
                 },
-                &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {
+                &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
                     use sidebar_content::free_slot::FreeItem;
                     match item {
-                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size)),
+                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
                         _ => None,
                     }
                 },
@@ -6451,10 +6457,10 @@ impl ChartApp {
                     | FreeItem::RiskCalculator(_) => None,
                 }
             },
-            &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64)> {
+            &|item: &sidebar_content::free_slot::FreeItem| -> Option<(bool, f64, f64)> {
                 use sidebar_content::free_slot::FreeItem;
                 match item {
-                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size)),
+                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
                     _ => None,
                 }
             },

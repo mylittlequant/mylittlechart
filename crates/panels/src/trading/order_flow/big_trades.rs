@@ -16,6 +16,12 @@ pub struct BigTradesState {
 
     /// Symbol being monitored
     pub symbol: String,
+
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
     /// Ring buffer of large trades
     pub big_trades: VecDeque<PublicTrade>,
     /// Threshold for "big" trade
@@ -51,6 +57,8 @@ impl BigTradesState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol: String::new(),
+            exchange: String::new(),
+            account_type: String::new(),
             big_trades: VecDeque::new(),
             size_threshold: 0.0,
             notional_threshold: None,

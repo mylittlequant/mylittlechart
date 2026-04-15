@@ -22,6 +22,10 @@ pub struct PanelHeaderInfo {
     pub source_color: &'static str,
     /// Resolved symbol (e.g. "SOLUSDT").
     pub symbol: String,
+    /// Exchange identifier string (e.g. "binance").
+    pub exchange: String,
+    /// Account type short label (e.g. "S", "F", "FI").
+    pub account_type: String,
     /// Whether this panel is a DOM (shows zoom/center controls).
     pub is_dom: bool,
 }
@@ -52,48 +56,64 @@ pub fn panel_header_info(
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: true,
         }),
         FreeItem::Footprint(id) => store.footprint.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::VolumeProfile(id) => store.volume_profile.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::LiquidityHeatmap(id) => store.liquidity_heatmap.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::BigTrades(id) => store.big_trades.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::L2Tape(id) => store.l2_tape.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::OrderEntry(id) => store.order_entry.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         FreeItem::TradingContainer(id) => store.trading_container.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),
             symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
             is_dom: false,
         }),
         // Panels without SymbolSource

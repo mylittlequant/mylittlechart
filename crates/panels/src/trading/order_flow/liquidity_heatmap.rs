@@ -16,6 +16,12 @@ pub struct LiquidityHeatmapState {
 
     pub symbol: String,
 
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
+
     /// Time range displayed (scrollable)
     pub start_time: i64,
     pub end_time: i64,
@@ -51,6 +57,8 @@ impl LiquidityHeatmapState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             start_time: 0,
             end_time: 0,
             snapshots: Vec::new(),

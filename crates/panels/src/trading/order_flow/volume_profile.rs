@@ -16,6 +16,12 @@ pub struct VolumeProfileState {
 
     pub symbol: String,
 
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
+
     /// Time range for profile calculation
     pub start_time: i64,
     pub end_time: i64,
@@ -68,6 +74,8 @@ impl VolumeProfileState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             start_time: 0,
             end_time: 0,
             volume_by_price: HashMap::new(),

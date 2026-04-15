@@ -56,6 +56,12 @@ pub struct L2TapeState {
 
     /// Symbol being monitored
     pub symbol: String,
+
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
     /// Ring buffer of recent L2 events
     pub events: VecDeque<L2Event>,
     /// Maximum events to keep in buffer
@@ -268,6 +274,8 @@ impl L2TapeState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol: String::new(),
+            exchange: String::new(),
+            account_type: String::new(),
             events: VecDeque::new(),
             max_events: 10000,
             auto_scroll: true,

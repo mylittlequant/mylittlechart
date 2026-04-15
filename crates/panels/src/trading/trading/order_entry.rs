@@ -29,6 +29,12 @@ pub struct OrderEntryState {
 
     pub symbol: String,
 
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
+
     /// Order parameters
     pub side: OrderSide,         // Buy or Sell
     pub order_type: OrderType,   // Limit, Market, StopLimit, StopMarket
@@ -79,6 +85,8 @@ impl OrderEntryState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             side: OrderSide::Buy,
             order_type: OrderType::Limit,
             price: None,

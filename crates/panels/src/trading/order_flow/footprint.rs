@@ -16,6 +16,12 @@ pub struct FootprintState {
 
     pub symbol: String,
 
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
+
     /// Tick size for price grid
     pub tick_size: f64,
 
@@ -62,6 +68,8 @@ impl FootprintState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             tick_size,
             time_range: (0, 0),
             scroll_x: 0.0,

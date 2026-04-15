@@ -54,6 +54,12 @@ pub struct TradingContainerState {
 
     /// Symbol being traded
     pub symbol: String,
+
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
     /// Tick size for price grid
     pub tick_size: f64,
     /// Market price (from exchange)
@@ -95,6 +101,8 @@ impl TradingContainerState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             tick_size,
             market_price,
             center_price: market_price,

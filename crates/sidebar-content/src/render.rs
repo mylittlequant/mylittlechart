@@ -224,7 +224,7 @@ pub fn render_right_sidebar(
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
-    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64)>,
+    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -3442,7 +3442,7 @@ fn render_slot_panel(
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
-    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64)>,
+    panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3795,8 +3795,8 @@ fn render_slot_panel(
         result.item_rects.push((close_id, close_rect));
         right_x -= 2.0;
 
-        // DOM-specific: [A/M] toggle + tick_size label
-        if let Some((auto_center, tick_size)) = panel_dom_info_fn(&item) {
+        // DOM-specific: [A/M] toggle + tick_size label + [F] volume filter button
+        if let Some((auto_center, tick_size, min_volume_filter)) = panel_dom_info_fn(&item) {
             // Tick size label (e.g. "0.01")
             let ts_text = format_tick_size(tick_size);
             let ts_w = 36.0_f32;
@@ -3841,6 +3841,36 @@ fn render_slot_panel(
             let am_rect = WidgetRect::new(am_x as f64, btn_y as f64, am_w as f64, btn_h as f64);
             input_coordinator.register(am_id.as_str(), am_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((am_id, am_rect));
+            right_x -= 2.0;
+
+            // [F] or [F:{value}] volume filter button
+            let filter_active = min_volume_filter > 0.0;
+            let f_label = if filter_active {
+                format!("F:{:.0}", min_volume_filter)
+            } else {
+                "F".to_string()
+            };
+            let f_w = if filter_active { 32.0_f32 } else { 18.0_f32 };
+            right_x -= f_w;
+            let f_x = right_x;
+            let f_id = format!("slot:{}:leaf:{}:vol_filter", slot_idx, leaf_id.0);
+            let f_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&f_id));
+            if f_hov || filter_active {
+                ctx.set_fill_color(if f_hov { &theme.item_bg_hover } else { &theme.button_bg });
+                ctx.fill_rounded_rect(f_x as f64, btn_y as f64, f_w as f64, btn_h as f64, 2.0);
+            }
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(if filter_active { &theme.warning } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &f_label,
+                (f_x + f_w / 2.0) as f64,
+                (btn_y + btn_h / 2.0) as f64,
+            );
+            let f_rect = WidgetRect::new(f_x as f64, btn_y as f64, f_w as f64, btn_h as f64);
+            input_coordinator.register(f_id.as_str(), f_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((f_id, f_rect));
             right_x -= 2.0;
         }
 

@@ -18,6 +18,12 @@ pub struct DomState {
     /// Current symbol being displayed
     pub symbol: String,
 
+    /// Exchange identifier string (e.g. "binance")
+    pub exchange: String,
+
+    /// Account type short label (e.g. "S", "F", "FI")
+    pub account_type: String,
+
     /// Current market price (last trade or mid-price)
     pub market_price: f64,
 
@@ -49,6 +55,10 @@ pub struct DomState {
     /// Auto-center mode: when true, center_price tracks market_price every update.
     /// Wheel scroll or drag switches to Manual. Double-click restores Auto.
     pub auto_center: bool,
+
+    /// Minimum volume filter — levels with total volume below this are dimmed.
+    /// 0.0 means no filter (all levels drawn at full opacity).
+    pub min_volume_filter: f64,
 }
 
 /// Helper struct for rendering: represents one price level in the DOM
@@ -80,6 +90,8 @@ impl DomState {
         Self {
             source: crate::trading::SymbolSource::default(),
             symbol,
+            exchange: String::new(),
+            account_type: String::new(),
             market_price: 0.0,
             center_price: 0.0,
             levels_displayed: 20,
@@ -90,6 +102,7 @@ impl DomState {
             hovered_price: None,
             recent_fills: HashMap::new(),
             auto_center: true,
+            min_volume_filter: 0.0,
         }
     }
 
@@ -335,8 +348,13 @@ impl DomState {
     }
 
     /// Recompute max_volume from all visible levels.
+    ///
+    /// Levels whose total volume is below `min_volume_filter` are excluded from
+    /// the max so that filtered-out noise does not compress the bar scale.
     fn recompute_max_volume(&mut self) {
+        let filter = self.min_volume_filter;
         self.max_volume = self.volume_by_price.values()
+            .filter(|(bv, av, _, _)| filter <= 0.0 || (bv + av) >= filter)
             .map(|(bv, av, _, _)| bv.max(*av))
             .fold(0.0f64, f64::max);
     }
@@ -477,6 +495,13 @@ impl TradingPanel for DomState {
             let is_best_ask = best_ask_price.map_or(false, |p| (level.price - p).abs() < 0.001);
             let is_current_price = (level.price - self.market_price).abs() < self.tick_size * 0.5;
 
+            // Volume filter: dim levels whose combined volume is below the threshold.
+            // Current-price row is never dimmed so the price marker stays visible.
+            let total_volume = level.bid_volume + level.ask_volume;
+            let is_filtered = self.min_volume_filter > 0.0
+                && total_volume < self.min_volume_filter
+                && !is_current_price;
+
             let bg_color = if is_best_bid {
                 &theme.dom_best_bid_bg
             } else if is_best_ask {
@@ -521,7 +546,7 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---
-            if level.bid_volume > 0.0 {
+            if level.bid_volume > 0.0 && !is_filtered {
                 let bar_width = self.bid_bar_width(level.bid_volume, vol_col_w);
                 let bar_x = bid_vol_col_x + bid_vol_col_w - bar_width;
                 let bar_y = row_y + 2.0;
@@ -549,7 +574,7 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.3: Ask volume bar (left-aligned, grows rightward) ---
-            if level.ask_volume > 0.0 {
+            if level.ask_volume > 0.0 && !is_filtered {
                 let bar_width = self.ask_bar_width(level.ask_volume, vol_col_w);
                 let bar_x = ask_vol_col_x;
                 let bar_y = row_y + 2.0;
@@ -576,7 +601,9 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.4: Price text (centered in price column) ---
-            let price_text_color = if is_current_price {
+            let price_text_color = if is_filtered {
+                &theme.text_muted
+            } else if is_current_price {
                 &theme.text_primary
             } else if is_best_bid {
                 &theme.buy_bright
