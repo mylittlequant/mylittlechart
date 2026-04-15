@@ -185,8 +185,15 @@ impl DepthStitcher {
     /// last request (rate-limit guard).
     pub(crate) fn needs_snapshot(&self) -> bool {
         let phase_needs = matches!(self.phase, StitchPhase::AwaitingSnapshot | StitchPhase::Resyncing);
-        phase_needs
-            && !self.snapshot_requested
+        if !phase_needs {
+            return false;
+        }
+        // If a snapshot was requested but hasn't arrived within 5 seconds,
+        // reset the flag so we retry (connector may not have been in pool yet).
+        if self.snapshot_requested && self.last_snapshot_time.elapsed() >= std::time::Duration::from_secs(5) {
+            return true; // will be re-marked by caller
+        }
+        !self.snapshot_requested
             && self.last_snapshot_time.elapsed() >= MIN_SNAPSHOT_INTERVAL
     }
 

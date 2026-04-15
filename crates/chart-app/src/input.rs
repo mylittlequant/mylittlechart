@@ -20649,6 +20649,17 @@ impl ChartApp {
                         self.panels_store.set_min_next_id(max_panel_id);
                     }
 
+                    // Helper: normalize legacy account_type strings (e.g. "spot") to short labels ("S").
+                    let normalize_account_type = |at: &str| -> String {
+                        match at.to_lowercase().as_str() {
+                            "spot" => "S".to_string(),
+                            "margin" => "M".to_string(),
+                            "futures" | "futurescross" => "F".to_string(),
+                            "futuresiso" | "futuresisolated" => "FI".to_string(),
+                            _ => at.to_string(),
+                        }
+                    };
+
                     // Helper: convert PersistedSymbolSource → SymbolSource.
                     let convert_source = |src: &zengeld_chart::preset::preset::PersistedSymbolSource| -> zengeld_panels::trading::SymbolSource {
                         match src {
@@ -20656,7 +20667,7 @@ impl ChartApp {
                             zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, exchange, account_type } => zengeld_panels::trading::SymbolSource::Fixed {
                                 symbol: symbol.clone(),
                                 exchange: exchange.clone(),
-                                account_type: account_type.clone(),
+                                account_type: normalize_account_type(account_type),
                             },
                             zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { leaf_id } => zengeld_panels::trading::SymbolSource::BoundToChart {
                                 leaf_id: *leaf_id,
@@ -20680,6 +20691,10 @@ impl ChartApp {
                                         s.levels_displayed = *levels_displayed;
                                         s.center_price = *center_price;
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.dom.insert(pid, s);
                                     }
                                 }
@@ -20691,6 +20706,10 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::footprint::FootprintState::new(symbol, *tick_size);
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.footprint.insert(pid, s);
                                     }
                                 }
@@ -20702,6 +20721,10 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::volume_profile::VolumeProfileState::new(symbol, *tick_size);
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.volume_profile.insert(pid, s);
                                     }
                                 }
@@ -20713,6 +20736,10 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::order_flow::liquidity_heatmap::LiquidityHeatmapState::new(symbol, *tick_size, *snapshot_interval_ms);
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
                                     }
                                 }
@@ -20725,6 +20752,10 @@ impl ChartApp {
                                         let mut s = zengeld_panels::trading::order_flow::big_trades::BigTradesState::new();
                                         s.symbol = symbol;
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
                                 }
@@ -20737,6 +20768,10 @@ impl ChartApp {
                                         let mut s = zengeld_panels::trading::order_flow::l2_tape::L2TapeState::new();
                                         s.symbol = symbol;
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
                                 }
@@ -20748,6 +20783,10 @@ impl ChartApp {
                                         };
                                         let mut s = zengeld_panels::trading::trading::order_entry::OrderEntryState::new(symbol);
                                         s.source = convert_source(source);
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
                                         self.panels_store.order_entry.insert(pid, s);
                                     }
                                 }
