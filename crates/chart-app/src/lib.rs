@@ -5987,6 +5987,30 @@ impl ChartApp {
                         sync_crosshair: group.effective_sync_crosshair(member),
                     })
                 },
+                &|item: &sidebar_content::free_slot::FreeItem| -> Option<(String, String, String)> {
+                    use sidebar_content::free_slot::FreeItem;
+                    match item {
+                        FreeItem::Dom(id) => panels_store.dom.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::PositionManager(_)
+                        | FreeItem::TradeLog(_)
+                        | FreeItem::RiskCalculator(_) => None,
+                    }
+                },
             );
 
             Some(sidebar_result)
@@ -6588,6 +6612,30 @@ impl ChartApp {
                     sync_symbol: group.effective_sync_symbol(member),
                     sync_crosshair: group.effective_sync_crosshair(member),
                 })
+            },
+            &|item: &sidebar_content::free_slot::FreeItem| -> Option<(String, String, String)> {
+                use sidebar_content::free_slot::FreeItem;
+                match item {
+                    FreeItem::Dom(id) => panels_store.dom.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::Footprint(id) => panels_store.footprint.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::PositionManager(_)
+                    | FreeItem::TradeLog(_)
+                    | FreeItem::RiskCalculator(_) => None,
+                }
             },
         );
 

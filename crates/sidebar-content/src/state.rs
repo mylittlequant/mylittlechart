@@ -463,6 +463,14 @@ pub struct SidebarState {
     /// `(slot_idx 0..4, leaf_id)` — updated on every `on_mouse_move`, reset to `None` each frame.
     /// Does NOT drive keyboard focus — that uses `focused_free_leaf` which is set only on click.
     pub hovered_free_leaf: Option<(usize, uzor::panels::LeafId)>,
+
+    /// Per-leaf hover zone for the overlay tab (Level 1 header) of free-slot leaves.
+    ///
+    /// Key: `(slot_idx, leaf_id)`. Value: which zone within the overlay tab is currently hovered.
+    /// Updated by `chart-app` on every `CursorMoved` event using the hit zones returned from
+    /// `RightSidebarResult::panel_overlay_zones`.  Drives the gear icon visibility in
+    /// `render_leaf_tab`.
+    pub free_leaf_overlay_hover: std::collections::HashMap<(usize, uzor::panels::LeafId), zengeld_chart::LeafTabHoverZone>,
 }
 
 /// A host-side PTY text selection in cell coordinates.
@@ -771,6 +779,7 @@ impl Default for SidebarState {
             slot_spawn_layout: AgentSpawnLayout::SplitH,
             slot_source_mode: SlotSourceMode::Auto,
             hovered_free_leaf: None,
+            free_leaf_overlay_hover: std::collections::HashMap::new(),
             agent_sessions_dropdown: None,
             agent_model_dropdown: None,
             agent_perm_dropdown: None,

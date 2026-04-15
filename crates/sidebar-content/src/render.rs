@@ -13,6 +13,8 @@ use zengeld_chart::ui::widgets::types::{WidgetState, WidgetTheme};
 use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
 use zengeld_chart::ToolbarTheme;
 use zengeld_chart::state::command::ObjectCategory;
+use zengeld_chart::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
+use zengeld_chart::layout::panel_overlay::LEAF_TAB_HEIGHT;
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
@@ -153,6 +155,15 @@ pub struct RightSidebarResult {
     /// initiated on any visible leaf, not only the focused one.
     pub agent_leaf_scrollbar_rects: std::collections::HashMap<uzor::panels::LeafId, (Option<WidgetRect>, Option<WidgetRect>)>,
 
+    /// Hit zones for the overlay tab (Level 1 header) of each free-slot leaf.
+    ///
+    /// Each entry is `(leaf_id, zones)` where `zones` contains the tab, color-tag,
+    /// and gear-menu rects in absolute screen coordinates.  Populated during
+    /// `render_slot_panel` for every visible leaf.  Used by `chart-app` to
+    /// dispatch clicks on the color-tag and gear-menu using the same mechanism
+    /// as chart leaf overlay tabs.
+    pub panel_overlay_zones: Vec<(uzor::panels::LeafId, LeafTabHitZones)>,
+
     /// Bounding rect of the currently-rendered free-slot body (inner padded area).
     ///
     /// Set only when a `Slot1..Slot4` panel is rendered.  Used by `chart-app`
@@ -241,6 +252,7 @@ pub fn render_right_sidebar(
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
     panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
+    panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -600,10 +612,11 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
                 free_item_renderer,
-                panel_source_label_fn,
+                panel_source_label_fn,  // kept for API compat; currently unused in slot rendering
                 panel_dom_info_fn,
                 panel_color_tag_fn,
-                panel_sync_flags_fn,
+                panel_sync_flags_fn,    // kept for API compat; currently unused in slot rendering
+                panel_overlay_info_fn,
             );
         }
 
@@ -3459,14 +3472,16 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
-    panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
+    _panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
-    panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
+    _panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
+    panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
-    const LEAF_HEADER_H: f32 = 24.0;
+    // Two-level header: Level 2 control strip (24px) + Level 1 overlay tab (24px).
+    const LEAF_HEADER_H: f32 = (LEAF_TAB_HEIGHT * 2.0) as f32;
 
     let pad = 8.0;
     let inner_x = rect.x + pad;
@@ -3735,7 +3750,6 @@ fn render_slot_panel(
     }
 
     let focused_free_leaf = state.focused_free_leaf;
-    let hovered_free_leaf = state.hovered_free_leaf;
 
     for (leaf_id, item, r) in leaves {
         // Draw border/background frame for the leaf.
@@ -3745,57 +3759,38 @@ fn render_slot_panel(
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
-        // ── Per-leaf header (overlay-tab style) ─────────────────────────────
+        // ── Two-level per-leaf header ────────────────────────────────────────
+        // Level 2 (top, y = header_y):          panel control strip (24px)
+        // Level 1 (bottom, y = header_y + 24):  overlay tab via render_leaf_tab (24px)
         let header_x = r.x;
         let header_y = r.y;
         let header_w = r.width;
         let header_h = LEAF_HEADER_H;
 
+        let ctrl_strip_h = LEAF_TAB_HEIGHT as f32; // 24px
+        let overlay_tab_y = header_y + ctrl_strip_h;
+
         let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
-        let is_hovered = hovered_free_leaf == Some((slot_idx, leaf_id));
 
-        // Background: semi-transparent dark (like chart overlay tab)
-        ctx.set_fill_color(if is_hovered { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, header_h as f64);
+        // ── Level 2: Panel control strip (top row) ────────────────────────────
+        // Background: same panel header color.
+        ctx.set_fill_color(&theme.background);
+        ctx.fill_rect(header_x as f64, header_y as f64, header_w as f64, ctrl_strip_h as f64);
 
-        // Left accent bar (2px wide, full height) — only when focused
-        if is_focused {
-            ctx.set_fill_color(&theme.accent);
-            ctx.fill_rect(header_x as f64, header_y as f64, 2.0, header_h as f64);
-        }
-
-        // Bottom separator line
+        // Bottom separator between control strip and overlay tab.
         ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
-        ctx.move_to(header_x as f64, (header_y + header_h) as f64);
-        ctx.line_to((header_x + header_w) as f64, (header_y + header_h) as f64);
+        ctx.move_to(header_x as f64, (header_y + ctrl_strip_h) as f64);
+        ctx.line_to((header_x + header_w) as f64, (header_y + ctrl_strip_h) as f64);
         ctx.stroke();
 
-        // Text content — symbol key from source label, or fallback to panel title
-        let display_text = panel_source_label_fn(&item)
-            .map(|label| {
-                let parts: Vec<&str> = label.split(':').collect();
-                if parts.len() == 3 {
-                    format!("{} \u{00b7} {} \u{00b7} {}", parts[1], parts[0], parts[2])
-                } else {
-                    label
-                }
-            })
-            .unwrap_or_else(|| item.title().to_string());
-
-        let text_x = header_x + if is_focused { 6.0 } else { 4.0 };
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&theme.item_text);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-
-        // === Right-side buttons (right to left) ===
+        // Buttons in control strip, right-to-left.
         let btn_h = 16.0_f32;
-        let btn_y = header_y + (header_h - btn_h) / 2.0;
+        let btn_y = header_y + (ctrl_strip_h - btn_h) / 2.0;
         let mut right_x = header_x + header_w - 3.0;
 
-        // [×] close button
+        // [×] close button (rightmost)
         let close_w = 16.0_f32;
         right_x -= close_w;
         let close_x = right_x;
@@ -3814,82 +3809,6 @@ fn render_slot_panel(
         input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_id, close_rect));
         right_x -= 2.0;
-
-        // [◆] color-tag square — 14px, always shown, dim when untagged
-        {
-            let tag_w = 14.0_f32;
-            right_x -= tag_w;
-            let tag_x = right_x;
-            let tag_id = format!("slot:{}:leaf:{}:color_tag", slot_idx, leaf_id.0);
-            let tag_color_opt = panel_color_tag_fn(&item);
-            let tag_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&tag_id));
-            // Draw the swatch background
-            let fill_hex: String = match tag_color_opt {
-                Some(c) => {
-                    let r = (c[0].clamp(0.0, 1.0) * 255.0).round() as u8;
-                    let g = (c[1].clamp(0.0, 1.0) * 255.0).round() as u8;
-                    let b = (c[2].clamp(0.0, 1.0) * 255.0).round() as u8;
-                    format!("#{:02x}{:02x}{:02x}", r, g, b)
-                }
-                None => "#ffffff22".to_string(),
-            };
-            if tag_hov {
-                ctx.set_fill_color(&theme.item_bg_hover);
-                ctx.fill_rounded_rect(
-                    (tag_x - 1.0) as f64,
-                    (btn_y - 1.0) as f64,
-                    (tag_w + 2.0) as f64,
-                    (btn_h + 2.0) as f64,
-                    3.0,
-                );
-            }
-            ctx.set_fill_color(&fill_hex);
-            ctx.fill_rounded_rect(
-                tag_x as f64,
-                (btn_y + 1.0) as f64,
-                tag_w as f64,
-                (btn_h - 2.0) as f64,
-                2.0,
-            );
-            let tag_rect = WidgetRect::new(tag_x as f64, btn_y as f64, tag_w as f64, btn_h as f64);
-            input_coordinator.register(tag_id.as_str(), tag_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((tag_id, tag_rect));
-            right_x -= 2.0;
-        }
-
-        // [⚙] sync-menu button — 14px, dim when no sync active, bright when any sync on
-        {
-            let sync_btn_w = 14.0_f32;
-            right_x -= sync_btn_w;
-            let sync_btn_x = right_x;
-            let sync_id = format!("slot:{}:leaf:{}:sync_menu", slot_idx, leaf_id.0);
-            let sync_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sync_id));
-            let flags_opt = panel_sync_flags_fn(&item);
-            let any_sync = flags_opt.map(|f| f.sync_symbol || f.sync_crosshair).unwrap_or(false);
-            if sync_hov {
-                ctx.set_fill_color(&theme.item_bg_hover);
-                ctx.fill_rounded_rect(
-                    sync_btn_x as f64,
-                    btn_y as f64,
-                    sync_btn_w as f64,
-                    btn_h as f64,
-                    2.0,
-                );
-            }
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(if any_sync { &theme.accent } else { &theme.item_text_muted });
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(
-                "\u{2699}",
-                (sync_btn_x + sync_btn_w / 2.0) as f64,
-                (btn_y + btn_h / 2.0) as f64,
-            );
-            let sync_rect = WidgetRect::new(sync_btn_x as f64, btn_y as f64, sync_btn_w as f64, btn_h as f64);
-            input_coordinator.register(sync_id.as_str(), sync_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((sync_id, sync_rect));
-            right_x -= 2.0;
-        }
 
         // DOM-specific: [A/M] toggle + tick_size label + [F] volume filter button
         if let Some((auto_center, tick_size, min_volume_filter)) = panel_dom_info_fn(&item) {
@@ -3970,28 +3889,69 @@ fn render_slot_panel(
             right_x -= 2.0;
         }
 
-        // Register header focus widget (full header minus right buttons).
-        let buttons_total_w = header_x + header_w - right_x;
+        // Panel type label on the left of the control strip (e.g. "DOM", "Footprint").
+        let panel_type_label = item.title();
+        let type_label_x = header_x as f64 + 6.0;
+        let buttons_used_w = (header_x + header_w - 3.0) as f64 - right_x as f64;
+        let type_label_max_w = ((header_w as f64) - buttons_used_w - 8.0).max(0.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let type_label_text = truncate_to_width(ctx, panel_type_label, type_label_max_w);
+        ctx.fill_text(&type_label_text, type_label_x, (btn_y + btn_h / 2.0) as f64);
+
+        // Register control strip focus widget (left portion, for click-to-focus).
         let focus_id = format!("slot:{}:leaf:{}:focus", slot_idx, leaf_id.0);
         let focus_rect = WidgetRect::new(
             header_x as f64,
             header_y as f64,
-            (header_w - buttons_total_w).max(0.0) as f64,
-            header_h as f64,
+            (header_w as f64 - buttons_used_w).max(0.0),
+            ctrl_strip_h as f64,
         );
         input_coordinator.register(focus_id.as_str(), focus_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((focus_id, focus_rect));
 
-        // Draw title text (after registering buttons so width is known).
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&theme.item_text);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            &display_text,
-            text_x as f64,
-            (header_y + header_h / 2.0) as f64,
+        // ── Level 1: Overlay tab (bottom row) via render_leaf_tab ─────────────
+        // Determine hover zone from stored per-leaf hover state.
+        let overlay_hover_zone = state
+            .free_leaf_overlay_hover
+            .get(&(slot_idx, leaf_id))
+            .copied()
+            .unwrap_or(LeafTabHoverZone::None);
+
+        // Resolve symbol/exchange/account_type from the structured overlay info closure.
+        let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
+            .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+
+        // Color tag from the tag-manager closure.
+        let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
+
+        let hit_zones = render_leaf_tab(
+            ctx,
+            header_x as f64,
+            overlay_tab_y as f64,
+            header_w as f64,
+            &symbol,
+            "",            // L2 panels have no timeframe
+            &exchange,
+            &account_type,
+            is_focused,
+            overlay_hover_zone,
+            color_tag,
+            theme,
         );
+
+        // Bottom separator under the overlay tab.
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(header_x as f64, (header_y + header_h) as f64);
+        ctx.line_to((header_x + header_w) as f64, (header_y + header_h) as f64);
+        ctx.stroke();
+
+        // Store hit zones for chart-app click dispatch.
+        result.panel_overlay_zones.push((leaf_id, hit_zones));
 
         // Body rect: everything below the header.
         let body_y = r.y + LEAF_HEADER_H;
