@@ -21675,6 +21675,19 @@ impl ChartApp {
                 .ok();
 
             // Collect persisted leaf descriptors.
+            let persist_source = |source: &zengeld_panels::trading::SymbolSource| -> zengeld_chart::preset::preset::PersistedSymbolSource {
+                match source {
+                    zengeld_panels::trading::SymbolSource::HyperFocus => zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus,
+                    zengeld_panels::trading::SymbolSource::Fixed { symbol, exchange, account_type } => zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
+                        symbol: symbol.clone(),
+                        exchange: exchange.clone(),
+                        account_type: account_type.clone(),
+                    },
+                    zengeld_panels::trading::SymbolSource::BoundToChart { leaf_id } => zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart {
+                        leaf_id: *leaf_id,
+                    },
+                }
+            };
             let leaves_desc: Vec<zengeld_chart::preset::preset::PersistedFreeLeaf> = tree
                 .leaves()
                 .into_iter()
@@ -21686,15 +21699,7 @@ impl ChartApp {
                     let kind = match item {
                         FreeItem::Dom(id) => {
                             let state = self.panels_store.dom.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::Dom {
                                 source,
                                 tick_size: state.tick_size,
@@ -21704,15 +21709,7 @@ impl ChartApp {
                         }
                         FreeItem::Footprint(id) => {
                             let state = self.panels_store.footprint.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::Footprint {
                                 source,
                                 tick_size: state.tick_size,
@@ -21720,15 +21717,7 @@ impl ChartApp {
                         }
                         FreeItem::VolumeProfile(id) => {
                             let state = self.panels_store.volume_profile.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::VolumeProfile {
                                 source,
                                 tick_size: state.tick_size,
@@ -21736,15 +21725,7 @@ impl ChartApp {
                         }
                         FreeItem::LiquidityHeatmap(id) => {
                             let state = self.panels_store.liquidity_heatmap.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::LiquidityHeatmap {
                                 source,
                                 tick_size: state.tick_size,
@@ -21753,45 +21734,21 @@ impl ChartApp {
                         }
                         FreeItem::BigTrades(id) => {
                             let state = self.panels_store.big_trades.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::BigTrades {
                                 source,
                             }
                         }
                         FreeItem::L2Tape(id) => {
                             let state = self.panels_store.l2_tape.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::L2Tape {
                                 source,
                             }
                         }
                         FreeItem::OrderEntry(id) => {
                             let state = self.panels_store.order_entry.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::OrderEntry {
                                 source,
                             }
@@ -21801,15 +21758,7 @@ impl ChartApp {
                         FreeItem::RiskCalculator(_) => PersistedFreeItemKind::RiskCalculator,
                         FreeItem::TradingContainer(id) => {
                             let state = self.panels_store.trading_container.get(id)?;
-                            let source = if state.symbol.is_empty() {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus
-                            } else {
-                                zengeld_chart::preset::preset::PersistedSymbolSource::Fixed {
-                                    symbol: state.symbol.clone(),
-                                    exchange: String::new(),
-                                    account_type: String::new(),
-                                }
-                            };
+                            let source = persist_source(&state.source);
                             PersistedFreeItemKind::TradingContainer {
                                 source,
                                 tick_size: state.tick_size,
