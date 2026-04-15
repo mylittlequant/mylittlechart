@@ -72,7 +72,15 @@ pub struct SyncColorGridState {
     /// Popup top-left corner in screen coordinates.
     pub origin: (f64, f64),
     /// Which leaf's color tag is being edited (set when opened).
+    ///
+    /// Exactly one of `target_leaf` and `target_panel` is `Some` when the
+    /// popup is open.
     pub target_leaf: Option<LeafId>,
+    /// Which trading panel's color tag is being edited (set when opened for a panel).
+    ///
+    /// Holds the raw `u64` inner value of `SyncMemberId::Panel`.
+    /// Exactly one of `target_leaf` and `target_panel` is `Some` when open.
+    pub target_panel: Option<u64>,
     /// User-defined custom colors (up to 6).
     pub custom_colors: Vec<[f32; 4]>,
     /// Index of the currently hovered swatch (0..all_colors().len()), or `None`.
@@ -99,6 +107,7 @@ impl SyncColorGridState {
             open: false,
             origin: (0.0, 0.0),
             target_leaf: None,
+            target_panel: None,
             custom_colors: Vec::new(),
             hovered_index: None,
             hovered_remove: false,
@@ -120,6 +129,7 @@ impl SyncColorGridState {
         window_h: f64,
     ) {
         self.target_leaf = Some(leaf_id);
+        self.target_panel = None;
         self.hovered_index = None;
         self.hovered_remove = false;
         self.hovered_add = false;
@@ -150,6 +160,7 @@ impl SyncColorGridState {
     pub fn close(&mut self) {
         self.open = false;
         self.target_leaf = None;
+        self.target_panel = None;
         self.hovered_index = None;
         self.hovered_remove = false;
         self.hovered_add = false;
@@ -161,11 +172,52 @@ impl SyncColorGridState {
     /// at the same position it was before.
     pub fn reopen(&mut self, leaf_id: LeafId) {
         self.target_leaf = Some(leaf_id);
+        self.target_panel = None;
         self.hovered_index = None;
         self.hovered_remove = false;
         self.hovered_add = false;
         self.open = true;
         // origin stays unchanged from the previous open()
+    }
+
+    /// Open the popup for a trading panel (e.g. DOM, Footprint), anchored near
+    /// `(anchor_x, anchor_y)`.  Clears `target_leaf` so exactly one target is set.
+    pub fn open_for_panel(
+        &mut self,
+        panel_id: u64,
+        anchor_x: f64,
+        anchor_y: f64,
+        window_w: f64,
+        window_h: f64,
+    ) {
+        self.target_panel = Some(panel_id);
+        self.target_leaf = None;
+        self.hovered_index = None;
+        self.hovered_remove = false;
+        self.hovered_add = false;
+        self.open = true;
+
+        let (pw, ph) = self.popup_size();
+        let margin = 4.0;
+
+        let mut x = anchor_x;
+        let mut y = anchor_y;
+
+        if x + pw > window_w - margin {
+            x = (window_w - pw - margin).max(margin);
+        }
+        if y + ph > window_h - margin {
+            y = (anchor_y - ph).max(margin);
+        }
+        x = x.clamp(margin, (window_w - pw - margin).max(margin));
+        y = y.clamp(margin, (window_h - ph - margin).max(margin));
+
+        self.origin = (x, y);
+    }
+
+    /// Returns `true` when the current target is a trading panel (not a chart leaf).
+    pub fn target_is_panel(&self) -> bool {
+        self.target_panel.is_some()
     }
 
     /// Returns `true` if the popup is currently open.

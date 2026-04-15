@@ -3180,8 +3180,19 @@ impl ChartPanelApp {
             use uzor::{Rect, input::Sense};
             use crate::ui::z_order::ZLayer;
 
-            let current_color = self.sync_color_grid.target_leaf
-                .and_then(|lid| self.leaf_color_tags.get(&lid).copied());
+            let current_color = if let Some(lid) = self.sync_color_grid.target_leaf {
+                self.leaf_color_tags.get(&lid).copied()
+            } else if let Some(panel_id) = self.sync_color_grid.target_panel {
+                use crate::tag_manager::SyncMemberId;
+                let member = SyncMemberId::Panel(panel_id);
+                self.tag_manager
+                    .group_for_member(member)
+                    .and_then(|gid| self.tag_manager.group(gid))
+                    .filter(|g| !g.auto_created)
+                    .map(|g| g.color)
+            } else {
+                None
+            };
 
             let draw_result: SyncColorGridDrawResult =
                 draw_sync_color_grid(ctx, &self.sync_color_grid, current_color, toolbar_theme);

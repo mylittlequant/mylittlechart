@@ -72,6 +72,7 @@ pub enum KeyPress {
 }
 
 use crate::ChartApp;
+use crate::PanelSyncMenuState;
 use zengeld_chart::{
     ChartInputAction,
     ChartOutputAction,
@@ -10529,6 +10530,45 @@ impl ChartApp {
             }
         }
 
+        // --- slot:{idx}:leaf:{leaf_id}:color_tag — open sync color grid for panel ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((_idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Some(leaf_id_str) = leaf_rest.strip_suffix(":color_tag") {
+                    if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                        self.panel_app.sync_color_grid.open_for_panel(
+                            raw,
+                            x,
+                            y + 4.0,
+                            self.width as f64,
+                            self.height as f64,
+                        );
+                        eprintln!("[ChartApp] open sync color grid for panel {}", raw);
+                    }
+                    return;
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:sync_menu — toggle panel sync menu ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((_idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Some(leaf_id_str) = leaf_rest.strip_suffix(":sync_menu") {
+                    if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                        if self.panel_sync_menu_open.as_ref().map(|s| s.panel_id) == Some(raw) {
+                            self.panel_sync_menu_open = None;
+                        } else {
+                            self.panel_sync_menu_open = Some(PanelSyncMenuState {
+                                panel_id: raw,
+                                origin: (x, y + 4.0),
+                            });
+                        }
+                        eprintln!("[ChartApp] panel sync menu toggled for panel {}", raw);
+                    }
+                    return;
+                }
+            }
+        }
+
         // --- slot:{idx}:leaf:{leaf_id}:tick_size — cycle DOM tick_size ---
         if let Some(rest) = widget_id.strip_prefix("slot:") {
             if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
@@ -11764,6 +11804,12 @@ impl ChartApp {
         // === Sync color grid clicks ===
         if widget_id.starts_with("sync_color_grid:") {
             self.handle_sync_color_grid_click(widget_id, x, y);
+            return;
+        }
+
+        // === Panel sync menu popup clicks ===
+        if widget_id.starts_with("panel_sync_menu:") {
+            self.handle_panel_sync_menu_click(widget_id);
             return;
         }
 
@@ -16373,6 +16419,8 @@ impl ChartApp {
                     // Bug E fix: persist the untag operation immediately.
                     self.autosave_snapshot();
                 }
+            } else if let Some(panel_id) = self.panel_app.sync_color_grid.target_panel {
+                self.perform_panel_desync(panel_id);
             }
             self.panel_app.sync_color_grid.close();
             return;
@@ -16431,6 +16479,39 @@ impl ChartApp {
                             // Persist tag assignment immediately.
                             self.autosave_snapshot();
                         }
+                    } else if let Some(panel_id) = self.panel_app.sync_color_grid.target_panel {
+                        use zengeld_chart::tag_manager::SyncMemberId;
+                        let member = SyncMemberId::Panel(panel_id);
+                        let old_color = self.panel_app.tag_manager
+                            .group_for_member(member)
+                            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+                            .filter(|g| !g.auto_created)
+                            .map(|g| g.color);
+                        let same_color = old_color.is_some_and(|oc|
+                            (oc[0] - new_color[0]).abs() < 0.01
+                            && (oc[1] - new_color[1]).abs() < 0.01
+                            && (oc[2] - new_color[2]).abs() < 0.01
+                        );
+                        if !same_color {
+                            self.panel_app.tag_manager.disconnect(member);
+                            let target_gid = self.panel_app.tag_manager
+                                .find_group_by_color(new_color)
+                                .unwrap_or_else(|| {
+                                    self.panel_app.tag_manager.create_group(
+                                        new_color,
+                                        String::new(),
+                                        zengeld_chart::state::Timeframe::m1(),
+                                    )
+                                });
+                            let _ = self.panel_app.tag_manager.connect(member, target_gid);
+                            self.panel_app.tag_manager.synced_panels_remove(member);
+                            eprintln!(
+                                "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
+                                panel_id, new_color[0], new_color[1], new_color[2]
+                            );
+                            self.sidebar_data_dirty = true;
+                            self.autosave_snapshot();
+                        }
                     }
                 }
                 self.panel_app.sync_color_grid.close();
@@ -16440,6 +16521,61 @@ impl ChartApp {
 
         // Unknown sub-id — absorb
         let _ = (x, y);
+    }
+
+    /// Handle clicks on widgets registered with the "panel_sync_menu:" prefix.
+    fn handle_panel_sync_menu_click(&mut self, widget_id: &str) {
+        use zengeld_chart::tag_manager::SyncMemberId;
+
+        if widget_id == "panel_sync_menu:outside" {
+            self.panel_sync_menu_open = None;
+            return;
+        }
+
+        // Background absorbs clicks inside the popup without closing it.
+        if widget_id == "panel_sync_menu:bg" {
+            return;
+        }
+
+        if widget_id == "panel_sync_menu:symbol" {
+            if let Some(ref state) = self.panel_sync_menu_open.clone() {
+                let pid = state.panel_id;
+                let member = SyncMemberId::Panel(pid);
+                if let Some(gid) = self.panel_app.tag_manager.group_for_member(member) {
+                    let current = self.panel_app.tag_manager.group(gid)
+                        .map(|g| g.effective_sync_symbol(member))
+                        .unwrap_or(false);
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        let entry = group.member_overrides.entry(member).or_default();
+                        entry.sync_symbol = Some(!current);
+                    }
+                    eprintln!("[ChartApp] panel {} sync_symbol → {}", pid, !current);
+                    self.sidebar_data_dirty = true;
+                    self.autosave_snapshot();
+                }
+            }
+            return;
+        }
+
+        if widget_id == "panel_sync_menu:crosshair" {
+            if let Some(ref state) = self.panel_sync_menu_open.clone() {
+                let pid = state.panel_id;
+                let member = SyncMemberId::Panel(pid);
+                if let Some(gid) = self.panel_app.tag_manager.group_for_member(member) {
+                    let current = self.panel_app.tag_manager.group(gid)
+                        .map(|g| g.effective_sync_crosshair(member))
+                        .unwrap_or(false);
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        let entry = group.member_overrides.entry(member).or_default();
+                        entry.sync_crosshair = Some(!current);
+                    }
+                    eprintln!("[ChartApp] panel {} sync_crosshair → {}", pid, !current);
+                    self.sidebar_data_dirty = true;
+                    self.autosave_snapshot();
+                }
+            }
+            return;
+        }
     }
 
     /// Apply the current color picker color to the selected primitive by field name.
@@ -22209,6 +22345,23 @@ impl ChartApp {
     ///
     /// Removes the color tag, purges cloned drawing primitives, and purges
     /// cloned indicator instances that were added when the split occurred.
+    /// Disconnect a trading panel from its color sync group and move it to a private
+    /// auto-created group so it is no longer visually tagged.
+    fn perform_panel_desync(&mut self, panel_id: u64) {
+        use zengeld_chart::tag_manager::SyncMemberId;
+        let member = SyncMemberId::Panel(panel_id);
+        self.panel_app.tag_manager.disconnect(member);
+        let gid = self.panel_app.tag_manager.create_group_auto(
+            [0.5, 0.5, 0.5, 1.0],
+            String::new(),
+            zengeld_chart::state::Timeframe::m1(),
+        );
+        self.panel_app.tag_manager.set_auto_group(member, gid);
+        eprintln!("[ChartApp] Panel {} desynced → auto group {:?}", panel_id, gid);
+        self.sidebar_data_dirty = true;
+        self.autosave_snapshot();
+    }
+
     fn perform_desync(&mut self, leaf_id: zengeld_chart::LeafId) {
         // 1. Remove color tag.
         self.panel_app.leaf_color_tags.remove(&leaf_id);

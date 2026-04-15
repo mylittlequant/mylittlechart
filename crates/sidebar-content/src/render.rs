@@ -177,6 +177,20 @@ pub struct RightSidebarResult {
 }
 
 // =============================================================================
+// Public data types
+// =============================================================================
+
+/// Sync-flag snapshot for a single panel — only the flags panels care about.
+///
+/// Passed into `render_right_sidebar` via the `panel_sync_flags_fn` closure so
+/// that `sidebar-content` never imports from `zengeld-chart` or `chart-app`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PanelSyncFlagsSnapshot {
+    pub sync_symbol: bool,
+    pub sync_crosshair: bool,
+}
+
+// =============================================================================
 // Text helpers
 // =============================================================================
 
@@ -225,6 +239,8 @@ pub fn render_right_sidebar(
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
+    panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
+    panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -586,6 +602,8 @@ pub fn render_right_sidebar(
                 free_item_renderer,
                 panel_source_label_fn,
                 panel_dom_info_fn,
+                panel_color_tag_fn,
+                panel_sync_flags_fn,
             );
         }
 
@@ -3443,6 +3461,8 @@ fn render_slot_panel(
     free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
+    panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
+    panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3794,6 +3814,82 @@ fn render_slot_panel(
         input_coordinator.register(close_id.as_str(), close_rect, uzor::input::Sense::CLICK);
         result.item_rects.push((close_id, close_rect));
         right_x -= 2.0;
+
+        // [◆] color-tag square — 14px, always shown, dim when untagged
+        {
+            let tag_w = 14.0_f32;
+            right_x -= tag_w;
+            let tag_x = right_x;
+            let tag_id = format!("slot:{}:leaf:{}:color_tag", slot_idx, leaf_id.0);
+            let tag_color_opt = panel_color_tag_fn(&item);
+            let tag_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&tag_id));
+            // Draw the swatch background
+            let fill_hex: String = match tag_color_opt {
+                Some(c) => {
+                    let r = (c[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let g = (c[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+                    let b = (c[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+                    format!("#{:02x}{:02x}{:02x}", r, g, b)
+                }
+                None => "#ffffff22".to_string(),
+            };
+            if tag_hov {
+                ctx.set_fill_color(&theme.item_bg_hover);
+                ctx.fill_rounded_rect(
+                    (tag_x - 1.0) as f64,
+                    (btn_y - 1.0) as f64,
+                    (tag_w + 2.0) as f64,
+                    (btn_h + 2.0) as f64,
+                    3.0,
+                );
+            }
+            ctx.set_fill_color(&fill_hex);
+            ctx.fill_rounded_rect(
+                tag_x as f64,
+                (btn_y + 1.0) as f64,
+                tag_w as f64,
+                (btn_h - 2.0) as f64,
+                2.0,
+            );
+            let tag_rect = WidgetRect::new(tag_x as f64, btn_y as f64, tag_w as f64, btn_h as f64);
+            input_coordinator.register(tag_id.as_str(), tag_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((tag_id, tag_rect));
+            right_x -= 2.0;
+        }
+
+        // [⚙] sync-menu button — 14px, dim when no sync active, bright when any sync on
+        {
+            let sync_btn_w = 14.0_f32;
+            right_x -= sync_btn_w;
+            let sync_btn_x = right_x;
+            let sync_id = format!("slot:{}:leaf:{}:sync_menu", slot_idx, leaf_id.0);
+            let sync_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sync_id));
+            let flags_opt = panel_sync_flags_fn(&item);
+            let any_sync = flags_opt.map(|f| f.sync_symbol || f.sync_crosshair).unwrap_or(false);
+            if sync_hov {
+                ctx.set_fill_color(&theme.item_bg_hover);
+                ctx.fill_rounded_rect(
+                    sync_btn_x as f64,
+                    btn_y as f64,
+                    sync_btn_w as f64,
+                    btn_h as f64,
+                    2.0,
+                );
+            }
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if any_sync { &theme.accent } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "\u{2699}",
+                (sync_btn_x + sync_btn_w / 2.0) as f64,
+                (btn_y + btn_h / 2.0) as f64,
+            );
+            let sync_rect = WidgetRect::new(sync_btn_x as f64, btn_y as f64, sync_btn_w as f64, btn_h as f64);
+            input_coordinator.register(sync_id.as_str(), sync_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((sync_id, sync_rect));
+            right_x -= 2.0;
+        }
 
         // DOM-specific: [A/M] toggle + tick_size label + [F] volume filter button
         if let Some((auto_center, tick_size, min_volume_filter)) = panel_dom_info_fn(&item) {
