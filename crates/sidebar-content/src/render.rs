@@ -161,7 +161,8 @@ pub struct RightSidebarResult {
     /// `render_slot_panel` for every visible leaf.  Used by `chart-app` to
     /// dispatch clicks on the color-tag and gear-menu using the same mechanism
     /// as chart leaf overlay tabs.
-    pub panel_overlay_zones: Vec<(uzor::panels::LeafId, LeafTabHitZones)>,
+    /// (panel_id, leaf_id, hit_zones)
+    pub panel_overlay_zones: Vec<(u64, uzor::panels::LeafId, LeafTabHitZones)>,
 
     /// Bounding rect of the currently-rendered free-slot body (inner padded area).
     ///
@@ -3954,7 +3955,7 @@ fn render_slot_panel(
         );
 
         // Store hit zones for chart-app click dispatch.
-        result.panel_overlay_zones.push((leaf_id, hit_zones));
+        result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones));
     }
 
     // Draw slot separators and register their hit zones.

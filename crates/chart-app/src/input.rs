@@ -283,36 +283,35 @@ impl ChartApp {
         // 0. Check panel overlay zones (free-slot leaf overlay tabs) — manual hit-testing,
         //    not registered with input_coordinator, so must be checked before it.
         {
-            let overlay_zones: Vec<(uzor::panels::LeafId, zengeld_chart::LeafTabHitZones)> = self
+            let overlay_zones: Vec<(u64, uzor::panels::LeafId, zengeld_chart::LeafTabHitZones)> = self
                 .last_sidebar_result
                 .as_ref()
                 .map(|r| r.panel_overlay_zones.clone())
                 .unwrap_or_default();
-            for (leaf_id, zones) in &overlay_zones {
+            for (panel_id, _leaf_id, zones) in &overlay_zones {
                 if point_in_rect(x, y, zones.color_tag_rect) {
                     // Open SyncColorGrid for this panel.
                     self.panel_app.sync_color_grid.open_for_panel(
-                        leaf_id.0,
+                        *panel_id,
                         zones.color_tag_rect[0],
                         zones.color_tag_rect[1] + zones.color_tag_rect[3],
                         self.width as f64,
                         self.height as f64,
                     );
-                    eprintln!("[ChartApp] panel overlay: open sync color grid for leaf {:?}", leaf_id);
+                    eprintln!("[ChartApp] panel overlay: open sync color grid for panel {}", panel_id);
                     return;
                 }
                 if point_in_rect(x, y, zones.dots_rect) {
                     // Toggle panel sync menu.
-                    let raw = leaf_id.0;
-                    if self.panel_sync_menu_open.as_ref().map(|s| s.panel_id) == Some(raw) {
+                    if self.panel_sync_menu_open.as_ref().map(|s| s.panel_id) == Some(*panel_id) {
                         self.panel_sync_menu_open = None;
                     } else {
                         self.panel_sync_menu_open = Some(PanelSyncMenuState {
-                            panel_id: raw,
+                            panel_id: *panel_id,
                             origin: (zones.dots_rect[0], zones.dots_rect[1] + zones.dots_rect[3]),
                         });
                     }
-                    eprintln!("[ChartApp] panel overlay: sync menu toggled for leaf {:?}", leaf_id);
+                    eprintln!("[ChartApp] panel overlay: sync menu toggled for panel {}", panel_id);
                     return;
                 }
             }
@@ -4498,7 +4497,7 @@ impl ChartApp {
         {
             self.sidebar_state.free_leaf_overlay_hover.clear();
             if let Some(ref sidebar_result) = self.last_sidebar_result {
-                for (leaf_id, zones) in &sidebar_result.panel_overlay_zones {
+                for (_panel_id, leaf_id, zones) in &sidebar_result.panel_overlay_zones {
                     let [tx, ty, tw, th] = zones.tab_rect;
                     let hover_zone = if x >= tx && x < tx + tw && y >= ty && y < ty + th {
                         let [dx, dy, dw, dh] = zones.dots_rect;

@@ -170,9 +170,9 @@ pub fn render_leaf_tab(
     // Active leaf: slightly brighter — use toolbar background at 0.82 opacity.
     // Inactive leaf: same base color at 0.70 opacity (darker appearance).
     let bg_color = if is_active {
-        hex_with_alpha(&toolbar_theme.background, 0.82)
+        hex_with_alpha(&toolbar_theme.background, 1.0)
     } else {
-        hex_with_alpha(&toolbar_theme.background, 0.70)
+        hex_with_alpha(&toolbar_theme.background, 1.0)
     };
     ctx.set_fill_color(&bg_color);
     ctx.fill_rounded_rect(x, y, tab_width, TAB_HEIGHT, 2.0);
