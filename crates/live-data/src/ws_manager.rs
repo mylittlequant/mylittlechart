@@ -184,13 +184,10 @@ async fn run_ws_actor(
     let mut retry_count: u32 = 0;
 
     // Depth stitcher — only used for `WsStreamType::Depth` connections.
+    // Starts as None each connect cycle; upgraded to Some when a REST connector
+    // appears in the pool.
     use crate::depth_stitcher::{DepthStitcher, EMIT_LEVELS};
     let is_depth = key.stream_type == WsStreamType::Depth;
-    let mut depth_stitcher: Option<DepthStitcher> = if is_depth {
-        Some(DepthStitcher::new())
-    } else {
-        None
-    };
 
     // Channel for receiving REST snapshots fetched by the stitcher bootstrap.
     let (snap_tx, mut snap_rx) = tokio::sync::mpsc::channel::<OrderBook>(4);
@@ -207,10 +204,9 @@ async fn run_ws_actor(
         }
         retry_count += 1;
 
-        // Reset stitcher on every (re)connect so we start fresh.
-        if let Some(ref mut stitcher) = depth_stitcher {
-            *stitcher = DepthStitcher::new();
-        }
+        // Start each connect cycle with no stitcher — partial-depth snapshots
+        // provide immediate data until the upgrade fires.
+        let mut depth_stitcher: Option<DepthStitcher> = None;
         // Drain any leftover snapshot that arrived during the previous connect cycle.
         while snap_rx.try_recv().is_ok() {}
 
@@ -241,6 +237,40 @@ async fn run_ws_actor(
 
         // Inner event loop — exits on stream error/close; 'outer then reconnects.
         loop {
+            // ── Depth upgrade: switch from partial snapshots to diff stream ─────
+            if is_depth && depth_stitcher.is_none() {
+                if pool.get(&key.exchange_id).is_some() {
+                    eprintln!(
+                        "[WsActor] {:?} upgrading depth to diff stream",
+                        key.exchange_id
+                    );
+                    depth_stitcher = Some(DepthStitcher::new());
+                    // Resubscribe all active symbols: unsub partial-depth, sub diff.
+                    let active_syms: Vec<String> = state
+                        .refcounts
+                        .iter()
+                        .filter(|(_, &c)| c > 0)
+                        .map(|(s, _)| s.clone())
+                        .collect();
+                    for symbol in active_syms {
+                        // Unsubscribe partial-depth snapshot stream.
+                        let old_req = SubscriptionRequest::orderbook(
+                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol),
+                        )
+                        .with_depth(20);
+                        let _ = ws.unsubscribe(old_req).await;
+                        // Subscribe diff stream.
+                        let sym =
+                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol);
+                        let mut new_req =
+                            SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
+                        new_req.account_type = key.account_type;
+                        new_req.update_speed_ms = Some(100);
+                        let _ = ws.subscribe(new_req).await;
+                    }
+                }
+            }
+
             // ── Depth stitcher: trigger REST snapshot if needed ────────────────
             if let Some(ref mut stitcher) = depth_stitcher {
                 if stitcher.needs_snapshot() {
@@ -801,14 +831,10 @@ pub(crate) fn make_sub_request(
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        // Use the diff stream (`@depth@100ms`) so the DepthStitcher can maintain a
-        // full local book from REST snapshot + incremental deltas.
-        WsStreamType::Depth => {
-            let mut req = SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
-            req.account_type = account_type;
-            req.update_speed_ms = Some(100);
-            req
-        }
+        // Start with partial-depth snapshots (20 levels, works immediately, no REST
+        // bootstrap needed). The actor upgrades to the diff stream automatically
+        // once a REST connector appears in the pool.
+        WsStreamType::Depth => SubscriptionRequest::orderbook(sym).with_depth(20),
         // Private streams don't use per-symbol subscription requests.
         // This arm exists for exhaustiveness only; the private actor bypasses
         // this function entirely.
