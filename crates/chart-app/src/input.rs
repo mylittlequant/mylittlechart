@@ -9971,7 +9971,7 @@ impl ChartApp {
                                     .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                                 let at = self.panel_app.panel_grid.active_window()
                                     .map(|w| w.account_type.clone())
-                                    .unwrap_or_else(|| "spot".to_string());
+                                    .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
                                 SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
                             }
                             SlotSourceMode::Linked => {
@@ -10006,13 +10006,15 @@ impl ChartApp {
                         let exchange_str = resolved.as_ref().map(|r| r.exchange.clone())
                             .unwrap_or_else(|| self.active_exchange.as_str().to_string());
                         let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
-                            .unwrap_or_else(|| "spot".to_string());
+                            .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
 
                         let item_opt = match kind_str {
                             "dom" => {
                                 let pid = self.panels_store.create_dom(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::Dom(pid))
                             }
@@ -10020,6 +10022,8 @@ impl ChartApp {
                                 let pid = self.panels_store.create_footprint(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::Footprint(pid))
                             }
@@ -10027,6 +10031,8 @@ impl ChartApp {
                                 let pid = self.panels_store.create_volume_profile(symbol.clone(), 0.01);
                                 if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::VolumeProfile(pid))
                             }
@@ -10034,6 +10040,8 @@ impl ChartApp {
                                 let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), 0.01, 1000);
                                 if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid))
                             }
@@ -10042,6 +10050,8 @@ impl ChartApp {
                                 if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                     state.symbol = symbol.clone();
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::BigTrades(pid))
                             }
@@ -10050,6 +10060,8 @@ impl ChartApp {
                                 if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::L2Tape(pid))
                             }
@@ -10057,6 +10069,8 @@ impl ChartApp {
                                 let pid = self.panels_store.create_order_entry(symbol.clone());
                                 if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::OrderEntry(pid))
                             }
@@ -10076,6 +10090,8 @@ impl ChartApp {
                                 let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
                                 if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
                                     state.source = source.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::TradingContainer(pid))
                             }

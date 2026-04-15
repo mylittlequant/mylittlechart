@@ -3694,6 +3694,8 @@ impl ChartApp {
                                 state.source.resolve(active_resolved.as_ref(), &resolve_leaf)
                             {
                                 state.symbol = resolved.symbol;
+                                state.exchange = resolved.exchange;
+                                state.account_type = resolved.account_type;
                             }
                         }
                     };
