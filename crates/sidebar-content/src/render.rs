@@ -3755,9 +3755,6 @@ fn render_slot_panel(
         // Draw border/background frame for the leaf.
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
 
         // ── Two-level per-leaf header ────────────────────────────────────────
         // Level 2 (top, y = header_y):  panel control strip (28px)
