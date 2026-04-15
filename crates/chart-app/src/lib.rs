@@ -6491,32 +6491,32 @@ impl ChartApp {
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;
                 use zengeld_panels::trading::SymbolSource;
-                fn label_from_source_and_symbol(source: &SymbolSource, symbol: &str) -> Option<String> {
+                fn label_from_state(source: &SymbolSource, symbol: &str, exchange: &str, account_type: &str) -> Option<String> {
                     match source {
                         SymbolSource::Fixed { symbol, exchange, account_type } => {
                             Some(format!("{}:{}:{}", exchange, symbol, account_type))
                         }
                         SymbolSource::BoundToChart { leaf_id } => Some(format!("L#{}", leaf_id)),
-                        SymbolSource::HyperFocus => Some(format!("binance:{}:spot", symbol)),
+                        SymbolSource::HyperFocus => Some(format!("{}:{}:{}", exchange, symbol, account_type)),
                     }
                 }
                 match item {
                     FreeItem::Dom(id) => panels_store.dom.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::Footprint(id) => panels_store.footprint.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::VolumeProfile(id) => panels_store.volume_profile.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
-                        .and_then(|s| label_from_source_and_symbol(&s.source, &s.symbol)),
+                        .and_then(|s| label_from_state(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_) => None,
