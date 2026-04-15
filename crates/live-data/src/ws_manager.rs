@@ -14,9 +14,12 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use digdigdig3::{
-    AccountType, ExchangeId, StreamEvent, SubscriptionRequest,
+    AccountType, ExchangeId, StreamEvent, SubscriptionRequest, Symbol, StreamType,
     WebSocketConnector,
 };
+use digdigdig3::connector_manager::ConnectorPool;
+use digdigdig3::core::types::OrderBook;
+use digdigdig3::MarketData;
 use digdigdig3::crypto::cex::binance::BinanceWebSocket;
 use digdigdig3::crypto::cex::bybit::BybitWebSocket;
 use digdigdig3::crypto::cex::okx::OkxWebSocket;
@@ -95,6 +98,7 @@ impl WsActorMap {
         ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
         rt: &tokio::runtime::Handle,
         credentials: Option<digdigdig3::Credentials>,
+        pool: ConnectorPool,
     ) -> mpsc::Sender<WsCmd> {
         if let Some(handle) = self.actors.get(&key) {
             if !handle.task.is_finished() {
@@ -103,7 +107,7 @@ impl WsActorMap {
             self.actors.remove(&key);
         }
         let (cmd_tx, cmd_rx) = mpsc::channel::<WsCmd>(64);
-        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials));
+        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials, pool));
         self.actors.insert(key, WsActorHandle { cmd_tx: cmd_tx.clone(), task });
         cmd_tx
     }
@@ -161,6 +165,7 @@ async fn run_ws_actor(
     tx: broadcast::Sender<LiveUpdate>,
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
     credentials: Option<digdigdig3::Credentials>,
+    pool: ConnectorPool,
 ) {
     // Private actors use a simplified loop that connects immediately and
     // subscribes to all three private streams without any per-symbol logic.
@@ -178,6 +183,18 @@ async fn run_ws_actor(
     };
     let mut retry_count: u32 = 0;
 
+    // Depth stitcher — only used for `WsStreamType::Depth` connections.
+    use crate::depth_stitcher::{DepthStitcher, EMIT_LEVELS};
+    let is_depth = key.stream_type == WsStreamType::Depth;
+    let mut depth_stitcher: Option<DepthStitcher> = if is_depth {
+        Some(DepthStitcher::new())
+    } else {
+        None
+    };
+
+    // Channel for receiving REST snapshots fetched by the stitcher bootstrap.
+    let (snap_tx, mut snap_rx) = tokio::sync::mpsc::channel::<OrderBook>(4);
+
     'outer: loop {
         // Exponential backoff before reconnect attempts.
         if retry_count > 0 {
@@ -189,6 +206,13 @@ async fn run_ws_actor(
             .await;
         }
         retry_count += 1;
+
+        // Reset stitcher on every (re)connect so we start fresh.
+        if let Some(ref mut stitcher) = depth_stitcher {
+            *stitcher = DepthStitcher::new();
+        }
+        // Drain any leftover snapshot that arrived during the previous connect cycle.
+        while snap_rx.try_recv().is_ok() {}
 
         // Build a new WS connection.
         let mut ws: Box<dyn WebSocketConnector> =
@@ -217,6 +241,46 @@ async fn run_ws_actor(
 
         // Inner event loop — exits on stream error/close; 'outer then reconnects.
         loop {
+            // ── Depth stitcher: trigger REST snapshot if needed ────────────────
+            if let Some(ref mut stitcher) = depth_stitcher {
+                if stitcher.needs_snapshot() {
+                    // Pick the first active symbol for the snapshot fetch.
+                    // Depth actors are keyed per (exchange, stream_type, account_type)
+                    // and in practice serve a single symbol at a time.
+                    let maybe_symbol = state
+                        .refcounts
+                        .iter()
+                        .find(|(_, &c)| c > 0)
+                        .map(|(s, _)| s.clone());
+
+                    if let Some(raw_symbol) = maybe_symbol {
+                        stitcher.mark_snapshot_requested();
+                        let pool_clone = pool.clone();
+                        let snap_tx_clone = snap_tx.clone();
+                        let exchange_id = key.exchange_id;
+                        let account_type = key.account_type;
+                        let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, &raw_symbol);
+                        tokio::spawn(async move {
+                            if let Some(connector) = pool_clone.get(&exchange_id) {
+                                match connector.get_orderbook(sym, Some(1000), account_type).await {
+                                    Ok(ob) => {
+                                        let _ = snap_tx_clone.send(ob).await;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[DepthStitch] snapshot fetch failed: {e}");
+                                    }
+                                }
+                            } else {
+                                eprintln!(
+                                    "[DepthStitch] no connector in pool for {:?}",
+                                    exchange_id
+                                );
+                            }
+                        });
+                    }
+                }
+            }
+
             // Calculate how long until the next deferred-unsub deadline.
             let next_defer = state.deferred_unsub.values().copied().min();
             let timeout_dur = match next_defer {
@@ -291,6 +355,30 @@ async fn run_ws_actor(
                     }
                 }
 
+                // REST snapshot arrived — feed into the stitcher.
+                Some(ob) = snap_rx.recv() => {
+                    if let Some(ref mut stitcher) = depth_stitcher {
+                        if let Some(book) = stitcher.apply_rest_snapshot(ob, EMIT_LEVELS) {
+                            // Emit under the first active symbol.
+                            let maybe_sym = state
+                                .refcounts
+                                .iter()
+                                .find(|(_, &c)| c > 0)
+                                .map(|(s, _)| s.clone());
+                            if let Some(sym) = maybe_sym {
+                                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                    exchange_id: state.exchange_id,
+                                    account_type: state.account_type,
+                                    symbol: sym,
+                                    bids: book.bids,
+                                    asks: book.asks,
+                                    timestamp: book.timestamp,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(60),
                     event_stream.next(),
@@ -298,6 +386,32 @@ async fn run_ws_actor(
                     match result {
                         Ok(Some(Ok(event))) => {
                             retry_count = 0; // Reset backoff on successful data.
+
+                            // Intercept depth deltas for stitching before normal dispatch.
+                            if let (Some(ref mut stitcher), StreamEvent::OrderbookDelta(ref delta)) =
+                                (&mut depth_stitcher, &event)
+                            {
+                                if let Some(book) = stitcher.feed_delta(delta, EMIT_LEVELS) {
+                                    let maybe_sym = state
+                                        .refcounts
+                                        .iter()
+                                        .find(|(_, &c)| c > 0)
+                                        .map(|(s, _)| s.clone());
+                                    if let Some(sym) = maybe_sym {
+                                        let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                            exchange_id: state.exchange_id,
+                                            account_type: state.account_type,
+                                            symbol: sym,
+                                            bids: book.bids,
+                                            asks: book.asks,
+                                            timestamp: book.timestamp,
+                                        });
+                                    }
+                                }
+                                // Delta handled by stitcher — skip normal dispatch.
+                                continue;
+                            }
+
                             dispatch_event(&tx, &state, event);
                         }
                         Ok(Some(Err(e))) => {
@@ -379,7 +493,6 @@ async fn run_private_ws_actor(
         let mut event_stream = ws.event_stream();
 
         // Subscribe to all three private stream types immediately.
-        use digdigdig3::{StreamType, Symbol};
         let private_streams = [
             StreamType::OrderUpdate,
             StreamType::BalanceUpdate,
@@ -688,15 +801,20 @@ pub(crate) fn make_sub_request(
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        // Binance partial-depth stream supports only 5, 10, 20 levels (@depth{N}@{ms}).
-        // 20 is the max for partial snapshots; diff-stream stitching would be needed for more.
-        WsStreamType::Depth => SubscriptionRequest::orderbook(sym).with_depth(20),
+        // Use the diff stream (`@depth@100ms`) so the DepthStitcher can maintain a
+        // full local book from REST snapshot + incremental deltas.
+        WsStreamType::Depth => {
+            let mut req = SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
+            req.account_type = account_type;
+            req.update_speed_ms = Some(100);
+            req
+        }
         // Private streams don't use per-symbol subscription requests.
         // This arm exists for exhaustiveness only; the private actor bypasses
         // this function entirely.
         WsStreamType::Private => SubscriptionRequest::new(
-            digdigdig3::Symbol::empty(),
-            digdigdig3::StreamType::OrderUpdate,
+            Symbol::empty(),
+            StreamType::OrderUpdate,
         ),
     }
 }

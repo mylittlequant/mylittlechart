@@ -758,8 +758,9 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
+        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -772,8 +773,9 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
+        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -787,8 +789,9 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
+        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -817,9 +820,10 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
+        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
             // get_or_spawn returns existing cmd_tx if already running.
-            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials));
+            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), pool);
         }
     }
 
