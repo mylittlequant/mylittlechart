@@ -139,10 +139,12 @@ pub fn render_leaf_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
 
-    let display_text = if exchange.is_empty() {
-        format!("{} · {} · {}", symbol, timeframe, account_type)
-    } else {
-        format!("{} · {} · {} · {}", symbol, timeframe, exchange, account_type)
+    let display_text = {
+        let mut parts = vec![symbol.to_string()];
+        if !timeframe.is_empty() { parts.push(timeframe.to_string()); }
+        if !exchange.is_empty() { parts.push(exchange.to_string()); }
+        if !account_type.is_empty() { parts.push(account_type.to_string()); }
+        parts.join(" · ")
     };
 
     // Available width for the text container.
@@ -237,6 +239,6 @@ pub fn render_leaf_tab(
     LeafTabHitZones {
         tab_rect: [x, y, tab_width, TAB_HEIGHT],
         color_tag_rect: [tag_container_x, y, TAG_CONTAINER_W, TAB_HEIGHT],
-        dots_rect: [dots_container_x, y, dots_w, TAB_HEIGHT],
+        dots_rect: [dots_container_x, y, DOTS_CONTAINER_W_EXPANDED, TAB_HEIGHT],
     }
 }
