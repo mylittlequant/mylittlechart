@@ -4094,20 +4094,34 @@ impl ChartApp {
                 }
 
                 for meta in registry.list_all() {
+                    let is_active = active_ids.contains(&meta.id);
+                    if !is_active {
+                        continue; // connector not in pool = not shown
+                    }
+
                     let mut item = ConnectorStatusItem::new(
                         meta.id.as_str(),
                         meta.name,
                     );
-                    let is_active = active_ids.contains(&meta.id);
+
+                    let pool = self.bridge.pool();
+                    let at = digdigdig3::AccountType::Spot;
+                    let md_caps = pool.market_data_capabilities(&meta.id, at);
+                    let tr_caps = pool.trading_capabilities(&meta.id, at);
+                    let ac_caps = pool.account_capabilities(&meta.id, at);
 
                     item.enabled = *self.sidebar_state.connector_enabled
                         .get(meta.id.as_str())
-                        .unwrap_or(&is_active);
+                        .unwrap_or(&true);
                     item.expanded = *self.sidebar_state.connector_expanded
                         .get(meta.id.as_str())
                         .unwrap_or(&false);
                     item.rest_healthy = item.enabled;
-                    item.ws_connected = item.enabled && meta.supported_features.websocket;
+
+                    let has_ws = meta.supported_features.ws_klines
+                        || meta.supported_features.ws_trades
+                        || meta.supported_features.ws_orderbook;
+                    item.ws_connected = item.enabled && has_ws;
 
                     item.auth_type = match meta.authentication {
                         AuthType::ApiKey => "API Key".to_string(),
@@ -4119,7 +4133,7 @@ impl ChartApp {
                     };
                     item.requires_api_key = meta.requires_api_key_for_data;
                     item.free_tier = meta.free_tier;
-                    item.group = if !meta.supported_features.market_data {
+                    item.group = if md_caps.map_or(true, |md| !md.has_klines) {
                         ConnectorGroup::NonChartData
                     } else if meta.requires_api_key_for_data {
                         ConnectorGroup::RequiresApiKey
@@ -4127,16 +4141,23 @@ impl ChartApp {
                         ConnectorGroup::NoApiKey
                     };
 
-                    item.has_klines = meta.supported_features.market_data;
+                    if let Some(md) = md_caps {
+                        item.has_klines = md.has_klines;
+                        item.has_trades = md.has_recent_trades;
+                        item.has_orderbook = md.has_orderbook;
+                        item.has_aggregated_bars = md.has_klines;
+                    }
                     item.has_ws_klines = meta.supported_features.ws_klines;
-                    item.has_trades = meta.supported_features.market_data;
                     item.has_ws_trades = meta.supported_features.ws_trades;
-                    item.has_orderbook = meta.supported_features.market_data;
                     item.has_ws_orderbook = meta.supported_features.ws_orderbook;
-                    item.has_trading = meta.supported_features.trading;
-                    item.has_account = meta.supported_features.account;
+                    if let Some(tr) = tr_caps {
+                        item.has_trading = tr.has_market_order || tr.has_limit_order;
+                    }
+                    if let Some(ac) = ac_caps {
+                        item.has_account = ac.has_balances;
+                    }
+                    // TODO: add has_positions to caps when Positions trait gets capabilities
                     item.has_positions = meta.supported_features.positions;
-                    item.has_aggregated_bars = meta.supported_features.market_data;
 
                     item.rate_limit_per_second = meta.rate_limits.requests_per_second;
                     item.rate_limit_per_minute = meta.rate_limits.requests_per_minute;
@@ -4145,78 +4166,20 @@ impl ChartApp {
                     item.base_url = meta.base_url.to_string();
                     item.ws_url = meta.websocket_url.unwrap_or("").to_string();
 
-                    item.rest_status = if is_active { "active".to_string() } else { "inactive".to_string() };
-                    item.ws_status = if is_active && meta.supported_features.websocket {
+                    item.rest_status = "active".to_string();
+                    item.ws_status = if has_ws {
                         "available".to_string()
-                    } else if !meta.supported_features.websocket {
-                        "n/a".to_string()
                     } else {
-                        "inactive".to_string()
+                        "n/a".to_string()
                     };
 
-                    item.kline_batch_size = match meta.id.as_str() {
-                        "binance"     => 1000,
-                        "bybit"       => 1000,
-                        "okx"         => 300,
-                        "kucoin"      => 1500,
-                        "mexc"        => 1000,
-                        "bitget"      => 1000,
-                        "gateio"      => 1000,
-                        "coinbase"    => 350,
-                        "kraken"      => 720,
-                        "bitstamp"    => 1000,
-                        "bitfinex"    => 10000,
-                        "bingx"       => 1440,
-                        "upbit"       => 200,
-                        "dydx"        => 1000,
-                        "htx"         => 2000,
-                        "crypto_com"  => 300,
-                        "lighter"     => 500,
-                        "deribit"     => 2000,
-                        "hyperliquid" => 5000,
-                        "vertex"      => 1000,
-                        "gemini"      => 500,
-                        _             => 0,
-                    };
+                    item.kline_batch_size = md_caps
+                        .and_then(|md| md.max_kline_limit)
+                        .unwrap_or(0);
 
-                    item.supported_timeframes = match meta.id.as_str() {
-                        "binance" | "bybit" | "okx" | "mexc" | "bitget" | "gateio" | "htx" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"]
-                                .into_iter().map(String::from).collect(),
-                        "kucoin" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","1w"]
-                                .into_iter().map(String::from).collect(),
-                        "coinbase" =>
-                            vec!["1m","5m","15m","30m","1h","2h","6h","1d"]
-                                .into_iter().map(String::from).collect(),
-                        "kraken" =>
-                            vec!["1m","5m","15m","30m","1h","4h","1d","1w"]
-                                .into_iter().map(String::from).collect(),
-                        "bitstamp" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d"]
-                                .into_iter().map(String::from).collect(),
-                        "bitfinex" =>
-                            vec!["1m","5m","15m","30m","1h","3h","6h","12h","1d","1w"]
-                                .into_iter().map(String::from).collect(),
-                        "upbit" =>
-                            vec!["1m","3m","5m","10m","15m","30m","1h","4h","1d","1w","1M"]
-                                .into_iter().map(String::from).collect(),
-                        "dydx" =>
-                            vec!["1m","5m","15m","30m","1h","4h","1d"]
-                                .into_iter().map(String::from).collect(),
-                        "bingx" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"]
-                                .into_iter().map(String::from).collect(),
-                        "deribit" =>
-                            vec!["1m","3m","5m","10m","15m","30m","1h","2h","3h","6h","12h","1d"]
-                                .into_iter().map(String::from).collect(),
-                        "hyperliquid" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w","1M"]
-                                .into_iter().map(String::from).collect(),
-                        _ =>
-                            vec!["1m","5m","15m","1h","4h","1d"]
-                                .into_iter().map(String::from).collect(),
-                    };
+                    item.supported_timeframes = md_caps
+                        .map(|md| md.supported_intervals.iter().map(|s| s.to_string()).collect())
+                        .unwrap_or_default();
 
                     if let Some((stats, ws_count)) = metrics_map.get(meta.id.as_str()) {
                         item.ws_active_count = *ws_count;
