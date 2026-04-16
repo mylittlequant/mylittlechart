@@ -14,7 +14,7 @@ bar-store = { path = "../bar-store" }
 bar-service = { path = "../bar-service" }
 
 # V5 connectors (async exchange API) — separate workspace, use path
-digdigdig3 = "=0.1.18"
+digdigdig3 = "=0.1.20"
 
 # Async runtime for background tasks
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
