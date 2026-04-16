@@ -1041,7 +1041,7 @@ impl ChartApp {
                     digdigdig3::ExchangeId::BingX | digdigdig3::ExchangeId::Bitfinex |
                     digdigdig3::ExchangeId::Bitstamp | digdigdig3::ExchangeId::Gemini |
                     digdigdig3::ExchangeId::CryptoCom | digdigdig3::ExchangeId::Lighter |
-                    digdigdig3::ExchangeId::Upbit | digdigdig3::ExchangeId::Phemex |
+                    digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx | digdigdig3::ExchangeId::Gmx |
                     digdigdig3::ExchangeId::Paradex | digdigdig3::ExchangeId::Moex
@@ -1598,7 +1598,7 @@ impl ChartApp {
                     digdigdig3::ExchangeId::BingX | digdigdig3::ExchangeId::Bitfinex |
                     digdigdig3::ExchangeId::Bitstamp | digdigdig3::ExchangeId::Gemini |
                     digdigdig3::ExchangeId::CryptoCom | digdigdig3::ExchangeId::Lighter |
-                    digdigdig3::ExchangeId::Upbit | digdigdig3::ExchangeId::Phemex |
+                    digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx | digdigdig3::ExchangeId::Gmx |
                     digdigdig3::ExchangeId::Paradex | digdigdig3::ExchangeId::Moex
@@ -4169,7 +4169,6 @@ impl ChartApp {
                         "bingx"       => 1440,
                         "upbit"       => 200,
                         "dydx"        => 1000,
-                        "phemex"      => 1000,
                         "htx"         => 2000,
                         "crypto_com"  => 300,
                         "lighter"     => 500,
@@ -4177,7 +4176,6 @@ impl ChartApp {
                         "hyperliquid" => 5000,
                         "vertex"      => 1000,
                         "gemini"      => 500,
-                        "bithumb"     => 1440,
                         _             => 0,
                     };
 
@@ -4205,9 +4203,6 @@ impl ChartApp {
                                 .into_iter().map(String::from).collect(),
                         "dydx" =>
                             vec!["1m","5m","15m","30m","1h","4h","1d"]
-                                .into_iter().map(String::from).collect(),
-                        "phemex" =>
-                            vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w","1M"]
                                 .into_iter().map(String::from).collect(),
                         "bingx" =>
                             vec!["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"]

@@ -33,7 +33,6 @@ use digdigdig3::crypto::cex::mexc::MexcWebSocket;
 use digdigdig3::crypto::cex::htx::HtxWebSocket;
 use digdigdig3::crypto::cex::bitget::BitgetWebSocket;
 use digdigdig3::crypto::cex::bingx::BingxWebSocket;
-use digdigdig3::crypto::cex::phemex::PhemexWebSocket;
 use digdigdig3::crypto::cex::upbit::UpbitWebSocket;
 use digdigdig3::crypto::cex::deribit::DeribitWebSocket;
 use digdigdig3::crypto::cex::hyperliquid::HyperliquidWebSocket;
@@ -228,8 +227,10 @@ async fn run_ws_actor(
         let mut event_stream = ws.event_stream();
 
         // Re-subscribe all symbols that were active before this reconnect.
+        let ob_caps = ws.orderbook_capabilities(key.account_type);
         for symbol in state.refcounts.keys().cloned().collect::<Vec<_>>() {
-            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
+            let depth = ob_caps.clamp_depth(Some(50));
+            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type, depth);
             if let Err(e) = ws.subscribe(req).await {
                 eprintln!("[WsActor] re-subscribe {} failed: {}", symbol, e);
             }
@@ -252,12 +253,18 @@ async fn run_ws_actor(
                         .filter(|(_, &c)| c > 0)
                         .map(|(s, _)| s.clone())
                         .collect();
+                    let upgrade_caps = ws.orderbook_capabilities(key.account_type);
                     for symbol in active_syms {
                         // Unsubscribe partial-depth snapshot stream.
-                        let old_req = SubscriptionRequest::orderbook(
-                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol),
-                        )
-                        .with_depth(20);
+                        // Use the same clamped depth that was used when subscribing.
+                        let snap_depth = upgrade_caps.clamp_depth(Some(50));
+                        let snap_sym =
+                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol);
+                        let old_req = if let Some(d) = snap_depth {
+                            SubscriptionRequest::orderbook(snap_sym).with_depth(d)
+                        } else {
+                            SubscriptionRequest::orderbook(snap_sym)
+                        };
                         let _ = ws.unsubscribe(old_req).await;
                         // Subscribe diff stream.
                         let sym =
@@ -265,7 +272,7 @@ async fn run_ws_actor(
                         let mut new_req =
                             SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
                         new_req.account_type = key.account_type;
-                        new_req.update_speed_ms = Some(100);
+                        new_req.update_speed_ms = upgrade_caps.clamp_speed(Some(100));
                         let _ = ws.subscribe(new_req).await;
                     }
                 }
@@ -340,7 +347,8 @@ async fn run_ws_actor(
                             // Subscribe only if this is the first reference and was not
                             // simply re-activated from the deferred-unsub queue.
                             if *count == 1 && !already_subbed {
-                                let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
+                                let depth = ws.orderbook_capabilities(key.account_type).clamp_depth(Some(50));
+                                let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type, depth);
                                 if let Err(e) = ws.subscribe(req).await {
                                     eprintln!("[WsActor] subscribe {} failed: {}", symbol, e);
                                 }
@@ -375,7 +383,8 @@ async fn run_ws_actor(
                         state.deferred_unsub.remove(&symbol);
                         if state.refcounts.get(&symbol).copied().unwrap_or(0) == 0 {
                             state.refcounts.remove(&symbol);
-                            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type);
+                            let depth = ws.orderbook_capabilities(key.account_type).clamp_depth(Some(50));
+                            let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type, depth);
                             let _ = ws.unsubscribe(req).await;
                             eprintln!(
                                 "[WsActor] {:?} unsubscribed {} after 30s grace",
@@ -669,7 +678,6 @@ async fn build_ws(
         }
 
         // ── No AccountType in constructor ──
-        ExchangeId::Phemex  => no_account_type!(PhemexWebSocket),
         ExchangeId::Paradex => no_account_type!(ParadexWebSocket),
 
         // ── Credentials only (no testnet, no account_type) ──
@@ -821,20 +829,32 @@ fn capture_rtt<C: WebSocketConnector>(
 // SUBSCRIPTION REQUEST BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// `depth` should be pre-clamped via `OrderbookCapabilities::clamp_depth`.
+/// `None` means the exchange doesn't accept a depth parameter — it is omitted.
 pub(crate) fn make_sub_request(
     stream_type: WsStreamType,
     exchange_id: ExchangeId,
     symbol: &str,
     account_type: AccountType,
+    depth: Option<u32>,
 ) -> SubscriptionRequest {
     let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, symbol);
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        // Start with partial-depth snapshots (20 levels, works immediately, no REST
-        // bootstrap needed). The actor upgrades to the diff stream automatically
-        // once a REST connector appears in the pool.
-        WsStreamType::Depth => SubscriptionRequest::orderbook(sym).with_depth(20),
+        // Start with partial-depth snapshots. The depth is clamped to the
+        // nearest valid value declared by the exchange's `OrderbookCapabilities`.
+        // When `depth` is `None` the exchange decides the level count internally.
+        // The actor upgrades to the diff stream automatically once a REST
+        // connector appears in the pool.
+        WsStreamType::Depth => {
+            let base = SubscriptionRequest::orderbook(sym);
+            if let Some(d) = depth {
+                base.with_depth(d)
+            } else {
+                base
+            }
+        }
         // Private streams don't use per-symbol subscription requests.
         // This arm exists for exhaustiveness only; the private actor bypasses
         // this function entirely.
