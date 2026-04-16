@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 bar-store = { path = "../bar-store" }
 zengeld-chart = { path = "../chart" }
-digdigdig3 = "=0.1.17"
+digdigdig3 = "=0.1.18"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "sync"] }
