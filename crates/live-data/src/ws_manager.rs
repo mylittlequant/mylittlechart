@@ -37,7 +37,6 @@ use digdigdig3::l3::open::crypto::cex::upbit::UpbitWebSocket;
 use digdigdig3::l3::open::crypto::cex::deribit::DeribitWebSocket;
 use digdigdig3::l3::open::crypto::cex::hyperliquid::HyperliquidWebSocket;
 use digdigdig3::l3::open::crypto::dex::dydx::DydxWebSocket;
-use digdigdig3::l3::open::crypto::dex::paradex::ParadexWebSocket;
 use digdigdig3::l2::free::moex::MoexWebSocket;
 use digdigdig3::l3::open::crypto::cex::gemini::GeminiWebSocket;
 use digdigdig3::l3::open::crypto::cex::crypto_com::CryptoComWebSocket;
@@ -678,8 +677,6 @@ async fn build_ws(
         }
 
         // ── No AccountType in constructor ──
-        ExchangeId::Paradex => no_account_type!(ParadexWebSocket),
-
         // ── Credentials only (no testnet, no account_type) ──
         ExchangeId::Coinbase => credentials_only!(CoinbaseWebSocket),
         ExchangeId::MEXC     => credentials_only!(MexcWebSocket),
