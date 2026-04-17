@@ -4162,9 +4162,16 @@ impl ChartApp {
                         item.has_positions = ac.has_positions;
                     }
 
-                    item.rate_limit_per_second = meta.rate_limits.requests_per_second;
-                    item.rate_limit_per_minute = meta.rate_limits.requests_per_minute;
-                    item.weight_per_minute = meta.rate_limits.weight_per_minute;
+                    // Derive legacy UI fields from RateLimitCapabilities
+                    if let Some(pool) = meta.rate_limits.rest_pools.first() {
+                        if pool.is_weight {
+                            item.weight_per_minute = Some(pool.max_budget * 60 / pool.window_seconds.max(1));
+                        } else {
+                            let rps = pool.max_budget / pool.window_seconds.max(1);
+                            item.rate_limit_per_second = if rps > 0 { Some(rps) } else { None };
+                            item.rate_limit_per_minute = Some(pool.max_budget * 60 / pool.window_seconds.max(1));
+                        }
+                    }
 
                     item.base_url = meta.base_url.to_string();
                     item.ws_url = meta.websocket_url.unwrap_or("").to_string();
@@ -4192,7 +4199,7 @@ impl ChartApp {
                         item.rate_used = stats.rate_used;
                         item.rate_max = stats.rate_max;
                         item.rate_groups = stats.rate_groups.clone();
-                        item.rate_window_seconds = meta.rate_limits.window_seconds;
+                        item.rate_window_seconds = meta.rate_limits.rest_pools.first().map(|p| p.window_seconds).unwrap_or(60);
                         item.ws_ping_rtt_ms = stats.ws_ping_rtt_ms;
                     }
 
