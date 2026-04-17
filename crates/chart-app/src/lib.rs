@@ -1032,6 +1032,7 @@ impl ChartApp {
             let registry = ConnectorRegistry::new();
             for meta in registry.list_all() {
                 // Original 24 exchanges default to enabled; new ones default to disabled.
+                // l3/open connectors with real capabilities — enabled by default
                 let default_enabled = matches!(meta.id,
                     digdigdig3::ExchangeId::Binance | digdigdig3::ExchangeId::Bybit |
                     digdigdig3::ExchangeId::OKX | digdigdig3::ExchangeId::KuCoin |
@@ -1044,7 +1045,7 @@ impl ChartApp {
                     digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Moex
+                    digdigdig3::ExchangeId::Polymarket
                 );
                 if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
@@ -1589,6 +1590,7 @@ impl ChartApp {
             let registry = ConnectorRegistry::new();
             for meta in registry.list_all() {
                 // Original 24 exchanges default to enabled; new ones default to disabled.
+                // l3/open connectors with real capabilities — enabled by default
                 let default_enabled = matches!(meta.id,
                     digdigdig3::ExchangeId::Binance | digdigdig3::ExchangeId::Bybit |
                     digdigdig3::ExchangeId::OKX | digdigdig3::ExchangeId::KuCoin |
@@ -1601,7 +1603,7 @@ impl ChartApp {
                     digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Moex
+                    digdigdig3::ExchangeId::Polymarket
                 );
                 if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
