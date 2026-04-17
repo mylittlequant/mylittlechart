@@ -213,8 +213,17 @@ impl DepthStitcher {
         delta: &OrderbookDelta,
         emit_levels: usize,
     ) -> Option<ReconstructedBook> {
-        let first_uid = delta.first_update_id?;
-        let last_uid = delta.last_update_id?;
+        // Fast path: exchange provides no sequence IDs at all (e.g. some CEXes
+        // that send full book diffs without Binance-style U/u fields).
+        // Apply directly to the local book without gap detection.
+        if delta.first_update_id.is_none() && delta.last_update_id.is_none() {
+            return self.apply_unsequenced_delta(delta, emit_levels);
+        }
+
+        // If only first_update_id is missing, use last_update_id for both
+        // (Bybit sends `u` / last_update_id but not `U` / first_update_id).
+        let first_uid = delta.first_update_id.or(delta.last_update_id)?;
+        let last_uid = delta.last_update_id.or(delta.first_update_id)?;
 
         match self.phase {
             StitchPhase::AwaitingSnapshot | StitchPhase::Resyncing => {
@@ -340,6 +349,23 @@ impl DepthStitcher {
         let result = book.emit_top_n(emit_levels);
         self.local_book = Some(book);
         Some(result)
+    }
+
+    /// Apply a delta from an exchange that does not provide sequence IDs.
+    ///
+    /// Without sequence numbers there is no way to detect gaps, so we apply
+    /// the delta directly to whatever local book we have.  If no local book
+    /// exists yet we return `None` — the caller must wait for a snapshot.
+    fn apply_unsequenced_delta(
+        &mut self,
+        delta: &OrderbookDelta,
+        emit_levels: usize,
+    ) -> Option<ReconstructedBook> {
+        let book = self.local_book.as_mut()?;
+        let bids: Vec<(f64, f64)> = delta.bids.iter().map(|l| (l.price, l.size)).collect();
+        let asks: Vec<(f64, f64)> = delta.asks.iter().map(|l| (l.price, l.size)).collect();
+        book.apply_levels(&bids, &asks, delta.timestamp);
+        Some(book.emit_top_n(emit_levels))
     }
 }
 

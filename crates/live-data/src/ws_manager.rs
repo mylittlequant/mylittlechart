@@ -239,7 +239,8 @@ async fn run_ws_actor(
         loop {
             // ── Depth upgrade: switch from partial snapshots to diff stream ─────
             if is_depth && depth_stitcher.is_none() {
-                if pool.get(&key.exchange_id).is_some() {
+                let ob_caps = ws.orderbook_capabilities(key.account_type);
+                if ob_caps.supports_delta && pool.get(&key.exchange_id).is_some() {
                     eprintln!(
                         "[WsActor] {:?} upgrading depth to diff stream",
                         key.exchange_id
@@ -252,11 +253,10 @@ async fn run_ws_actor(
                         .filter(|(_, &c)| c > 0)
                         .map(|(s, _)| s.clone())
                         .collect();
-                    let upgrade_caps = ws.orderbook_capabilities(key.account_type);
                     for symbol in active_syms {
                         // Unsubscribe partial-depth snapshot stream.
                         // Use the same clamped depth that was used when subscribing.
-                        let snap_depth = upgrade_caps.clamp_depth(Some(50));
+                        let snap_depth = ob_caps.clamp_depth(Some(50));
                         let snap_sym =
                             crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol);
                         let old_req = if let Some(d) = snap_depth {
@@ -271,7 +271,7 @@ async fn run_ws_actor(
                         let mut new_req =
                             SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
                         new_req.account_type = key.account_type;
-                        new_req.update_speed_ms = upgrade_caps.clamp_speed(Some(100));
+                        new_req.update_speed_ms = ob_caps.clamp_speed(Some(100));
                         let _ = ws.subscribe(new_req).await;
                     }
                 }
@@ -601,19 +601,6 @@ async fn build_ws(
     macro_rules! standard {
         ($ws_type:ty) => {{
             let mut ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS create failed: {}", e))?;
-            ws.connect(AccountType::Spot)
-                .await
-                .map_err(|e| format!("WS connect failed: {}", e))?;
-            capture_rtt(&ws, exchange_id, ws_rtt_handles);
-            Box::new(ws) as Box<dyn WebSocketConnector>
-        }};
-    }
-
-    macro_rules! no_account_type {
-        ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(credentials.clone(), false)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
