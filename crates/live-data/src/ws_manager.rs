@@ -18,8 +18,6 @@ use digdigdig3::{
     WebSocketConnector,
 };
 use digdigdig3::connector_manager::ConnectorPool;
-use digdigdig3::core::types::OrderBook;
-use digdigdig3::MarketData;
 use digdigdig3::l3::open::crypto::cex::binance::BinanceWebSocket;
 use digdigdig3::l3::open::crypto::cex::bybit::BybitWebSocket;
 use digdigdig3::l3::open::crypto::cex::okx::OkxWebSocket;
@@ -163,7 +161,7 @@ async fn run_ws_actor(
     tx: broadcast::Sender<LiveUpdate>,
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
     credentials: Option<digdigdig3::Credentials>,
-    pool: ConnectorPool,
+    _pool: ConnectorPool,
 ) {
     // Private actors use a simplified loop that connects immediately and
     // subscribes to all three private streams without any per-symbol logic.
@@ -181,14 +179,11 @@ async fn run_ws_actor(
     };
     let mut retry_count: u32 = 0;
 
-    // Depth stitcher — only used for `WsStreamType::Depth` connections.
-    // Starts as None each connect cycle; upgraded to Some when a REST connector
-    // appears in the pool.
-    use crate::depth_stitcher::{DepthStitcher, EMIT_LEVELS};
+    // Local depth book — only for `WsStreamType::Depth` connections.
+    // Seeded by the first WS snapshot, updated by WS deltas.
+    use crate::depth_stitcher::{DepthBook, EMIT_LEVELS};
     let is_depth = key.stream_type == WsStreamType::Depth;
-
-    // Channel for receiving REST snapshots fetched by the stitcher bootstrap.
-    let (snap_tx, mut snap_rx) = tokio::sync::mpsc::channel::<OrderBook>(4);
+    let mut depth_book: Option<DepthBook> = if is_depth { Some(DepthBook::new()) } else { None };
 
     'outer: loop {
         // Exponential backoff before reconnect attempts.
@@ -202,11 +197,10 @@ async fn run_ws_actor(
         }
         retry_count += 1;
 
-        // Start each connect cycle with no stitcher — partial-depth snapshots
-        // provide immediate data until the upgrade fires.
-        let mut depth_stitcher: Option<DepthStitcher> = None;
-        // Drain any leftover snapshot that arrived during the previous connect cycle.
-        while snap_rx.try_recv().is_ok() {}
+        // Reset depth book on reconnect — wait for a fresh WS snapshot.
+        if let Some(ref mut db) = depth_book {
+            *db = DepthBook::new();
+        }
 
         // Build a new WS connection.
         let mut ws: Box<dyn WebSocketConnector> =
@@ -237,86 +231,6 @@ async fn run_ws_actor(
 
         // Inner event loop — exits on stream error/close; 'outer then reconnects.
         loop {
-            // ── Depth upgrade: switch from partial snapshots to diff stream ─────
-            if is_depth && depth_stitcher.is_none() {
-                let ob_caps = ws.orderbook_capabilities(key.account_type);
-                if ob_caps.supports_delta && pool.get(&key.exchange_id).is_some() {
-                    eprintln!(
-                        "[WsActor] {:?} upgrading depth to diff stream",
-                        key.exchange_id
-                    );
-                    depth_stitcher = Some(DepthStitcher::new());
-                    // Resubscribe all active symbols: unsub partial-depth, sub diff.
-                    let active_syms: Vec<String> = state
-                        .refcounts
-                        .iter()
-                        .filter(|(_, &c)| c > 0)
-                        .map(|(s, _)| s.clone())
-                        .collect();
-                    for symbol in active_syms {
-                        // Unsubscribe partial-depth snapshot stream.
-                        // Use the same clamped depth that was used when subscribing.
-                        let snap_depth = ob_caps.clamp_depth(Some(50));
-                        let snap_sym =
-                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol);
-                        let old_req = if let Some(d) = snap_depth {
-                            SubscriptionRequest::orderbook(snap_sym).with_depth(d)
-                        } else {
-                            SubscriptionRequest::orderbook(snap_sym)
-                        };
-                        let _ = ws.unsubscribe(old_req).await;
-                        // Subscribe diff stream.
-                        let sym =
-                            crate::bridge::parse_symbol_for_exchange(key.exchange_id, &symbol);
-                        let mut new_req =
-                            SubscriptionRequest::new(sym, StreamType::OrderbookDelta);
-                        new_req.account_type = key.account_type;
-                        new_req.update_speed_ms = ob_caps.clamp_speed(Some(100));
-                        let _ = ws.subscribe(new_req).await;
-                    }
-                }
-            }
-
-            // ── Depth stitcher: trigger REST snapshot if needed ────────────────
-            if let Some(ref mut stitcher) = depth_stitcher {
-                if stitcher.needs_snapshot() {
-                    // Pick the first active symbol for the snapshot fetch.
-                    // Depth actors are keyed per (exchange, stream_type, account_type)
-                    // and in practice serve a single symbol at a time.
-                    let maybe_symbol = state
-                        .refcounts
-                        .iter()
-                        .find(|(_, &c)| c > 0)
-                        .map(|(s, _)| s.clone());
-
-                    if let Some(raw_symbol) = maybe_symbol {
-                        stitcher.mark_snapshot_requested();
-                        let pool_clone = pool.clone();
-                        let snap_tx_clone = snap_tx.clone();
-                        let exchange_id = key.exchange_id;
-                        let account_type = key.account_type;
-                        let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, &raw_symbol);
-                        tokio::spawn(async move {
-                            if let Some(connector) = pool_clone.get(&exchange_id) {
-                                match connector.get_orderbook(sym, Some(1000), account_type).await {
-                                    Ok(ob) => {
-                                        let _ = snap_tx_clone.send(ob).await;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[DepthStitch] snapshot fetch failed: {e}");
-                                    }
-                                }
-                            } else {
-                                eprintln!(
-                                    "[DepthStitch] no connector in pool for {:?}",
-                                    exchange_id
-                                );
-                            }
-                        });
-                    }
-                }
-            }
-
             // Calculate how long until the next deferred-unsub deadline.
             let next_defer = state.deferred_unsub.values().copied().min();
             let timeout_dur = match next_defer {
@@ -393,30 +307,6 @@ async fn run_ws_actor(
                     }
                 }
 
-                // REST snapshot arrived — feed into the stitcher.
-                Some(ob) = snap_rx.recv() => {
-                    if let Some(ref mut stitcher) = depth_stitcher {
-                        if let Some(book) = stitcher.apply_rest_snapshot(ob, EMIT_LEVELS) {
-                            // Emit under the first active symbol.
-                            let maybe_sym = state
-                                .refcounts
-                                .iter()
-                                .find(|(_, &c)| c > 0)
-                                .map(|(s, _)| s.clone());
-                            if let Some(sym) = maybe_sym {
-                                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                                    exchange_id: state.exchange_id,
-                                    account_type: state.account_type,
-                                    symbol: sym,
-                                    bids: book.bids,
-                                    asks: book.asks,
-                                    timestamp: book.timestamp,
-                                });
-                            }
-                        }
-                    }
-                }
-
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(60),
                     event_stream.next(),
@@ -425,29 +315,50 @@ async fn run_ws_actor(
                         Ok(Some(Ok(event))) => {
                             retry_count = 0; // Reset backoff on successful data.
 
-                            // Intercept depth deltas for stitching before normal dispatch.
-                            if let (Some(ref mut stitcher), StreamEvent::OrderbookDelta(ref delta)) =
-                                (&mut depth_stitcher, &event)
-                            {
-                                if let Some(book) = stitcher.feed_delta(delta, EMIT_LEVELS) {
-                                    let maybe_sym = state
-                                        .refcounts
-                                        .iter()
-                                        .find(|(_, &c)| c > 0)
-                                        .map(|(s, _)| s.clone());
-                                    if let Some(sym) = maybe_sym {
-                                        let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                                            exchange_id: state.exchange_id,
-                                            account_type: state.account_type,
-                                            symbol: sym,
-                                            bids: book.bids,
-                                            asks: book.asks,
-                                            timestamp: book.timestamp,
-                                        });
+                            // Intercept depth events — maintain local book from WS data.
+                            if let Some(ref mut db) = depth_book {
+                                match &event {
+                                    StreamEvent::OrderbookSnapshot(ref ob) => {
+                                        let emitted = db.feed_snapshot(ob, EMIT_LEVELS);
+                                        let maybe_sym = state
+                                            .refcounts
+                                            .iter()
+                                            .find(|(_, &c)| c > 0)
+                                            .map(|(s, _)| s.clone());
+                                        if let Some(sym) = maybe_sym {
+                                            let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                                exchange_id: state.exchange_id,
+                                                account_type: state.account_type,
+                                                symbol: sym,
+                                                bids: emitted.bids,
+                                                asks: emitted.asks,
+                                                timestamp: emitted.timestamp,
+                                            });
+                                        }
+                                        continue;
                                     }
+                                    StreamEvent::OrderbookDelta(ref delta) => {
+                                        if let Some(emitted) = db.feed_delta(delta, EMIT_LEVELS) {
+                                            let maybe_sym = state
+                                                .refcounts
+                                                .iter()
+                                                .find(|(_, &c)| c > 0)
+                                                .map(|(s, _)| s.clone());
+                                            if let Some(sym) = maybe_sym {
+                                                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                                                    exchange_id: state.exchange_id,
+                                                    account_type: state.account_type,
+                                                    symbol: sym,
+                                                    bids: emitted.bids,
+                                                    asks: emitted.asks,
+                                                    timestamp: emitted.timestamp,
+                                                });
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    _ => {}
                                 }
-                                // Delta handled by stitcher — skip normal dispatch.
-                                continue;
                             }
 
                             dispatch_event(&tx, &state, event);
