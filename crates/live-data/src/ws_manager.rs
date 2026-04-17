@@ -199,6 +199,9 @@ async fn run_ws_actor(
 
         // Reset depth book on reconnect — wait for a fresh WS snapshot.
         if let Some(ref mut db) = depth_book {
+            if db.is_seeded() {
+                eprintln!("[WsActor] {:?} depth book reset on reconnect", key.exchange_id);
+            }
             *db = DepthBook::new();
         }
 
@@ -319,7 +322,7 @@ async fn run_ws_actor(
                             if let Some(ref mut db) = depth_book {
                                 match &event {
                                     StreamEvent::OrderbookSnapshot(ref ob) => {
-                                        let emitted = db.feed_snapshot(ob, EMIT_LEVELS);
+                                        let (emitted, synthetic_delta) = db.feed_snapshot(ob, EMIT_LEVELS);
                                         let maybe_sym = state
                                             .refcounts
                                             .iter()
@@ -329,11 +332,27 @@ async fn run_ws_actor(
                                             let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                                 exchange_id: state.exchange_id,
                                                 account_type: state.account_type,
-                                                symbol: sym,
+                                                symbol: sym.clone(),
                                                 bids: emitted.bids,
                                                 asks: emitted.asks,
                                                 timestamp: emitted.timestamp,
                                             });
+                                            // For exchanges that deliver full snapshots instead of
+                                            // incremental deltas, synthesise a delta so that
+                                            // consumers tracking incremental changes (L2 Tape, etc.)
+                                            // receive the same event shape regardless of exchange.
+                                            if let Some(delta) = synthetic_delta {
+                                                if !delta.bids.is_empty() || !delta.asks.is_empty() {
+                                                    let _ = tx.send(LiveUpdate::OrderbookDelta {
+                                                        exchange_id: state.exchange_id,
+                                                        account_type: state.account_type,
+                                                        symbol: sym,
+                                                        bids: delta.bids,
+                                                        asks: delta.asks,
+                                                        timestamp: ob.timestamp,
+                                                    });
+                                                }
+                                            }
                                         }
                                         continue;
                                     }

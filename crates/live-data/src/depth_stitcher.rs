@@ -107,21 +107,6 @@ impl LocalBook {
         self.timestamp = timestamp;
     }
 
-    /// Merge deeper levels from a REST snapshot without replacing the top of book.
-    /// Only adds levels that don't already exist (preserves WS-fresh data).
-    fn merge_deep(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        for &(price, size) in bids {
-            if size > 0.0 {
-                self.bids.entry(OrderedFloat(price)).or_insert(size);
-            }
-        }
-        for &(price, size) in asks {
-            if size > 0.0 {
-                self.asks.entry(OrderedFloat(price)).or_insert(size);
-            }
-        }
-    }
-
     /// Emit the top-N best bid/ask levels.
     fn emit_top_n(&self, n: usize) -> EmittedBook {
         let bids: Vec<(f64, f64)> = self
@@ -145,9 +130,70 @@ impl LocalBook {
     }
 }
 
+impl LocalBook {
+    /// Compute the diff between current state and a new snapshot.
+    ///
+    /// Returns entries for:
+    /// - prices in NEW missing from OLD, or with a different size → `(price, new_size)`
+    /// - prices in OLD missing from NEW → `(price, 0.0)` (removal)
+    /// - prices with identical sizes are skipped
+    fn diff_against(&self, new_bids: &[(f64, f64)], new_asks: &[(f64, f64)]) -> SyntheticDelta {
+        let mut bids = Vec::new();
+        let mut asks = Vec::new();
+
+        // Bids: check new against old
+        for &(price, new_size) in new_bids {
+            let key = OrderedFloat(price);
+            match self.bids.get(&key) {
+                Some(&old_size) if old_size == new_size => {}
+                _ => bids.push((price, new_size)),
+            }
+        }
+        // Bids: emit removals for prices no longer in new snapshot
+        let new_bid_keys: std::collections::HashSet<u64> = new_bids
+            .iter()
+            .map(|&(p, _)| OrderedFloat(p).0.to_bits())
+            .collect();
+        for (key, _) in &self.bids {
+            if !new_bid_keys.contains(&key.0.to_bits()) {
+                bids.push((key.0, 0.0));
+            }
+        }
+
+        // Asks: check new against old
+        for &(price, new_size) in new_asks {
+            let key = OrderedFloat(price);
+            match self.asks.get(&key) {
+                Some(&old_size) if old_size == new_size => {}
+                _ => asks.push((price, new_size)),
+            }
+        }
+        // Asks: emit removals for prices no longer in new snapshot
+        let new_ask_keys: std::collections::HashSet<u64> = new_asks
+            .iter()
+            .map(|&(p, _)| OrderedFloat(p).0.to_bits())
+            .collect();
+        for (key, _) in &self.asks {
+            if !new_ask_keys.contains(&key.0.to_bits()) {
+                asks.push((key.0, 0.0));
+            }
+        }
+
+        SyntheticDelta { bids, asks }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC TYPES
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Computed diff between two consecutive snapshots.
+///
+/// Each entry is `(price, size)` where `size == 0.0` means the level was removed.
+pub(crate) struct SyntheticDelta {
+    pub bids: Vec<(f64, f64)>,
+    pub asks: Vec<(f64, f64)>,
+}
 
 /// A fully-assembled orderbook ready for rendering.
 pub(crate) struct EmittedBook {
@@ -180,16 +226,24 @@ impl DepthBook {
     }
 
     /// Feed a WS snapshot — replaces the entire book.
+    ///
+    /// Returns `(EmittedBook, None)` on the first snapshot (no previous state to diff).
+    /// Returns `(EmittedBook, Some(SyntheticDelta))` on subsequent snapshots.
     pub(crate) fn feed_snapshot(
         &mut self,
         snapshot: &OrderBook,
         emit_levels: usize,
-    ) -> EmittedBook {
+    ) -> (EmittedBook, Option<SyntheticDelta>) {
         let bids: Vec<(f64, f64)> = snapshot.bids.iter().map(|l| (l.price, l.size)).collect();
         let asks: Vec<(f64, f64)> = snapshot.asks.iter().map(|l| (l.price, l.size)).collect();
+        let delta = if self.seeded {
+            Some(self.book.diff_against(&bids, &asks))
+        } else {
+            None
+        };
         self.book.seed(&bids, &asks, snapshot.timestamp);
         self.seeded = true;
-        self.book.emit_top_n(emit_levels)
+        (self.book.emit_top_n(emit_levels), delta)
     }
 
     /// Feed a WS delta — applies incremental updates.
@@ -208,22 +262,6 @@ impl DepthBook {
         Some(self.book.emit_top_n(emit_levels))
     }
 
-    /// Merge deeper levels from a REST snapshot (background deep fill).
-    /// Only adds levels not already in the book.
-    pub(crate) fn merge_rest_snapshot(
-        &mut self,
-        snapshot: &OrderBook,
-        emit_levels: usize,
-    ) -> Option<EmittedBook> {
-        if !self.seeded {
-            return None;
-        }
-        let bids: Vec<(f64, f64)> = snapshot.bids.iter().map(|l| (l.price, l.size)).collect();
-        let asks: Vec<(f64, f64)> = snapshot.asks.iter().map(|l| (l.price, l.size)).collect();
-        self.book.merge_deep(&bids, &asks);
-        Some(self.book.emit_top_n(emit_levels))
-    }
-
     /// Whether the book has been seeded with at least one snapshot.
     pub(crate) fn is_seeded(&self) -> bool {
         self.seeded
@@ -237,7 +275,7 @@ impl DepthBook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use digdigdig3::core::types::market_data::OrderBookLevel;
+    use digdigdig3::core::types::OrderBookLevel;
 
     fn make_level(price: f64, size: f64) -> OrderBookLevel {
         OrderBookLevel {
@@ -287,7 +325,7 @@ mod tests {
     fn test_snapshot_seeds_book() {
         let mut book = DepthBook::new();
         let snap = make_snapshot(vec![(100.0, 1.0), (99.0, 2.0)], vec![(101.0, 1.5)]);
-        let emitted = book.feed_snapshot(&snap, EMIT_LEVELS);
+        let (emitted, _delta) = book.feed_snapshot(&snap, EMIT_LEVELS);
         assert!(book.is_seeded());
         assert_eq!(emitted.bids.len(), 2);
         assert_eq!(emitted.bids[0], (100.0, 1.0)); // best bid first
@@ -325,35 +363,90 @@ mod tests {
 
         // New snapshot should completely replace the book.
         let snap2 = make_snapshot(vec![(200.0, 3.0)], vec![(201.0, 3.0)]);
-        let emitted = book.feed_snapshot(&snap2, EMIT_LEVELS);
+        let (emitted, _delta) = book.feed_snapshot(&snap2, EMIT_LEVELS);
         assert_eq!(emitted.bids.len(), 1);
         assert_eq!(emitted.bids[0], (200.0, 3.0));
         assert!(emitted.bids.iter().all(|(p, _)| *p != 100.0));
     }
 
     #[test]
-    fn test_merge_deep_adds_only_new_levels() {
+    fn test_no_delta_on_first_snapshot() {
         let mut book = DepthBook::new();
         let snap = make_snapshot(vec![(100.0, 1.0)], vec![(101.0, 1.0)]);
+        let (_emitted, delta) = book.feed_snapshot(&snap, EMIT_LEVELS);
+        assert!(delta.is_none(), "first snapshot must not produce a delta");
+    }
+
+    #[test]
+    fn test_synthetic_delta_on_second_snapshot() {
+        let mut book = DepthBook::new();
+
+        // Seed: bids [100@1, 99@2], asks [101@1, 102@3]
+        let snap1 = make_snapshot(
+            vec![(100.0, 1.0), (99.0, 2.0)],
+            vec![(101.0, 1.0), (102.0, 3.0)],
+        );
+        book.feed_snapshot(&snap1, EMIT_LEVELS);
+
+        // New snapshot:
+        //   bids: 100@5 (changed), 98@4 (new), 99 removed
+        //   asks: 101@1 (unchanged), 103@7 (new), 102 removed
+        let snap2 = make_snapshot(
+            vec![(100.0, 5.0), (98.0, 4.0)],
+            vec![(101.0, 1.0), (103.0, 7.0)],
+        );
+        let (_emitted, delta) = book.feed_snapshot(&snap2, EMIT_LEVELS);
+        let delta = delta.expect("second snapshot must produce a delta");
+
+        // Changed bid: 100@5
+        assert!(
+            delta.bids.iter().any(|&(p, s)| p == 100.0 && s == 5.0),
+            "expected changed bid 100@5 in delta"
+        );
+        // New bid: 98@4
+        assert!(
+            delta.bids.iter().any(|&(p, s)| p == 98.0 && s == 4.0),
+            "expected new bid 98@4 in delta"
+        );
+        // Removed bid: 99@0
+        assert!(
+            delta.bids.iter().any(|&(p, s)| p == 99.0 && s == 0.0),
+            "expected removed bid 99@0.0 in delta"
+        );
+        // Unchanged ask 101 must NOT appear
+        assert!(
+            !delta.asks.iter().any(|&(p, _)| p == 101.0),
+            "unchanged ask 101 must not appear in delta"
+        );
+        // New ask: 103@7
+        assert!(
+            delta.asks.iter().any(|&(p, s)| p == 103.0 && s == 7.0),
+            "expected new ask 103@7 in delta"
+        );
+        // Removed ask: 102@0
+        assert!(
+            delta.asks.iter().any(|&(p, s)| p == 102.0 && s == 0.0),
+            "expected removed ask 102@0.0 in delta"
+        );
+    }
+
+    #[test]
+    fn test_identical_snapshots_empty_delta() {
+        let mut book = DepthBook::new();
+        let snap = make_snapshot(vec![(100.0, 1.0), (99.0, 2.0)], vec![(101.0, 1.5)]);
         book.feed_snapshot(&snap, EMIT_LEVELS);
 
-        // REST snapshot with deeper levels + overlapping 100.0
-        let rest = make_snapshot(
-            vec![(100.0, 999.0), (98.0, 5.0), (97.0, 10.0)],
-            vec![(101.0, 999.0), (102.0, 5.0)],
+        // Feed the exact same snapshot again.
+        let snap2 = make_snapshot(vec![(100.0, 1.0), (99.0, 2.0)], vec![(101.0, 1.5)]);
+        let (_emitted, delta) = book.feed_snapshot(&snap2, EMIT_LEVELS);
+        let delta = delta.expect("second snapshot must produce a delta");
+        assert!(
+            delta.bids.is_empty(),
+            "identical bids must produce empty delta"
         );
-        let result = book.merge_rest_snapshot(&rest, EMIT_LEVELS).unwrap();
-
-        // 100.0 should keep WS value (1.0), not REST (999.0)
-        let bid_100 = result.bids.iter().find(|(p, _)| *p == 100.0).unwrap();
-        assert_eq!(bid_100.1, 1.0);
-        // 98.0 and 97.0 should be added
-        assert!(result.bids.iter().any(|(p, _)| *p == 98.0));
-        assert!(result.bids.iter().any(|(p, _)| *p == 97.0));
-        // 101.0 should keep WS value
-        let ask_101 = result.asks.iter().find(|(p, _)| *p == 101.0).unwrap();
-        assert_eq!(ask_101.1, 1.0);
-        // 102.0 should be added
-        assert!(result.asks.iter().any(|(p, _)| *p == 102.0));
+        assert!(
+            delta.asks.is_empty(),
+            "identical asks must produce empty delta"
+        );
     }
 }
