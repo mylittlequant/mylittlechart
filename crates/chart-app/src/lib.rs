@@ -4122,9 +4122,7 @@ impl ChartApp {
                         .unwrap_or(&false);
                     item.rest_healthy = item.enabled;
 
-                    let has_ws = meta.supported_features.ws_klines
-                        || meta.supported_features.ws_trades
-                        || meta.supported_features.ws_orderbook;
+                    let has_ws = md_caps.map_or(false, |md| md.has_ws_klines || md.has_ws_trades || md.has_ws_orderbook);
                     item.ws_connected = item.enabled && has_ws;
 
                     item.auth_type = match meta.authentication {
@@ -4151,17 +4149,20 @@ impl ChartApp {
                         item.has_orderbook = md.has_orderbook;
                         item.has_aggregated_bars = md.has_klines;
                     }
-                    item.has_ws_klines = meta.supported_features.ws_klines;
-                    item.has_ws_trades = meta.supported_features.ws_trades;
-                    item.has_ws_orderbook = meta.supported_features.ws_orderbook;
+                    if let Some(md) = md_caps {
+                        item.has_ws_klines = md.has_ws_klines;
+                        item.has_ws_trades = md.has_ws_trades;
+                        item.has_ws_orderbook = md.has_ws_orderbook;
+                    }
                     if let Some(tr) = tr_caps {
                         item.has_trading = tr.has_market_order || tr.has_limit_order;
                     }
                     if let Some(ac) = ac_caps {
                         item.has_account = ac.has_balances;
                     }
-                    // TODO: add has_positions to caps when Positions trait gets capabilities
-                    item.has_positions = meta.supported_features.positions;
+                    if let Some(ac) = ac_caps {
+                        item.has_positions = ac.has_positions;
+                    }
 
                     item.rate_limit_per_second = meta.rate_limits.requests_per_second;
                     item.rate_limit_per_minute = meta.rate_limits.requests_per_minute;
