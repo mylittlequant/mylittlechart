@@ -288,24 +288,52 @@ impl DomState {
         }
     }
 
-    /// Apply a full orderbook snapshot — replaces all volume data.
+    /// Apply a full orderbook snapshot — diff-merges into existing state so
+    /// rows that didn't change keep their previous (volume, order_count) and
+    /// the panel doesn't visually flicker on every snapshot.
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        self.volume_by_price.clear();
+        use std::collections::HashSet;
+
+        // Build new bid/ask maps by tick.
+        let mut new_bids: HashMap<i64, f64> = HashMap::with_capacity(bids.len());
         for &(price, qty) in bids {
             if qty > 0.0 {
-                let tick = self.price_to_tick(price);
-                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-                entry.0 += qty;   // bid volume
-                entry.2 += 1;     // bid order count
+                *new_bids.entry(self.price_to_tick(price)).or_insert(0.0) += qty;
             }
         }
+        let mut new_asks: HashMap<i64, f64> = HashMap::with_capacity(asks.len());
         for &(price, qty) in asks {
             if qty > 0.0 {
-                let tick = self.price_to_tick(price);
-                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-                entry.1 += qty;   // ask volume
-                entry.3 += 1;     // ask order count
+                *new_asks.entry(self.price_to_tick(price)).or_insert(0.0) += qty;
             }
+        }
+
+        // Drop ticks that disappeared from both sides; otherwise zero out the
+        // missing side (if a level only had bid before and now only has ask, etc.).
+        let known_ticks: HashSet<i64> = self.volume_by_price.keys().copied().collect();
+        for tick in known_ticks {
+            let has_bid = new_bids.contains_key(&tick);
+            let has_ask = new_asks.contains_key(&tick);
+            if !has_bid && !has_ask {
+                self.volume_by_price.remove(&tick);
+            } else {
+                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
+                    if !has_bid { entry.0 = 0.0; entry.2 = 0; }
+                    if !has_ask { entry.1 = 0.0; entry.3 = 0; }
+                }
+            }
+        }
+
+        // Upsert new levels.
+        for (tick, qty) in new_bids {
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.0 = qty;
+            entry.2 = 1;
+        }
+        for (tick, qty) in new_asks {
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.1 = qty;
+            entry.3 = 1;
         }
         self.recompute_max_volume();
         // Update market price from best bid/ask mid
@@ -578,10 +606,6 @@ impl TradingPanel for DomState {
                 // Semi-transparent white overlay — subtle, distinct from hover
                 ctx.set_fill_color("#ffffff26");
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
-                // Thin 1px accent line at the vertical center of the row
-                ctx.set_fill_color("#ffffff80");
-                let line_y = (row_y + row_height / 2.0 - 0.5) as f64;
-                ctx.fill_rect(x as f64, line_y, w as f64, 1.0);
             }
 
             // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---
