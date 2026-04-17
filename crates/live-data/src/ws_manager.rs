@@ -345,13 +345,24 @@ async fn run_ws_actor(
                                                 .find(|(_, &c)| c > 0)
                                                 .map(|(s, _)| s.clone());
                                             if let Some(sym) = maybe_sym {
+                                                // Emit reconstructed book for DOM rendering.
                                                 let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                                     exchange_id: state.exchange_id,
                                                     account_type: state.account_type,
-                                                    symbol: sym,
+                                                    symbol: sym.clone(),
                                                     bids: emitted.bids,
                                                     asks: emitted.asks,
                                                     timestamp: emitted.timestamp,
+                                                });
+                                                // Also forward raw delta for consumers that
+                                                // track incremental changes (L2 Tape, etc.).
+                                                let _ = tx.send(LiveUpdate::OrderbookDelta {
+                                                    exchange_id: state.exchange_id,
+                                                    account_type: state.account_type,
+                                                    symbol: sym,
+                                                    bids: delta.bids.iter().map(|l| (l.price, l.size)).collect(),
+                                                    asks: delta.asks.iter().map(|l| (l.price, l.size)).collect(),
+                                                    timestamp: delta.timestamp,
                                                 });
                                             }
                                         }
