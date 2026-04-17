@@ -1045,7 +1045,6 @@ impl ChartApp {
                     digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Polymarket |
                     digdigdig3::ExchangeId::Moex
                 );
                 if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
@@ -1604,7 +1603,6 @@ impl ChartApp {
                     digdigdig3::ExchangeId::Upbit |
                     digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
                     digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Polymarket |
                     digdigdig3::ExchangeId::Moex
                 );
                 if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
