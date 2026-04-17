@@ -223,6 +223,30 @@ impl DomState {
         (price / self.tick_size).round() as i64
     }
 
+    /// Number of decimal places to display for volume, derived from `tick_size`.
+    /// Coarse ticks (≥1) → 0 decimals; finer ticks → more precision so that
+    /// sub-1 quantities (typical for BTC/ETH per level) don't round to "0".
+    pub fn volume_decimals(&self) -> usize {
+        let ts = self.tick_size.abs();
+        if ts == 0.0 || ts >= 1.0 { 2 }
+        else if ts >= 0.1 { 3 }
+        else if ts >= 0.01 { 3 }
+        else if ts >= 0.001 { 4 }
+        else { 5 }
+    }
+
+    /// Number of decimal places to display for price, derived from `tick_size`.
+    pub fn price_decimals(&self) -> usize {
+        let ts = self.tick_size.abs();
+        if ts == 0.0 { 2 }
+        else if ts >= 1.0 { 0 }
+        else if ts >= 0.1 { 1 }
+        else if ts >= 0.01 { 2 }
+        else if ts >= 0.001 { 3 }
+        else if ts >= 0.0001 { 4 }
+        else { 6 }
+    }
+
     /// Convert tick index back to price
     pub fn tick_to_price(&self, tick: i64) -> f64 {
         tick as f64 * self.tick_size
@@ -577,7 +601,7 @@ impl TradingPanel for DomState {
 
                 let text_x = bid_vol_col_x + bid_vol_col_w - 4.0;
                 let text_y = row_y + row_height / 2.0;
-                let vol_text = format!("{:.0}", level.bid_volume);
+                let vol_text = format!("{:.*}", self.volume_decimals(), level.bid_volume);
                 let text_w = ctx.measure_text(&vol_text);
                 let bid_text_color = if bar_width as f64 >= text_w {
                     &theme.text_primary
@@ -604,7 +628,7 @@ impl TradingPanel for DomState {
 
                 let text_x = ask_vol_col_x + 4.0;
                 let text_y = row_y + row_height / 2.0;
-                let vol_text = format!("{:.0}", level.ask_volume);
+                let vol_text = format!("{:.*}", self.volume_decimals(), level.ask_volume);
                 let text_w = ctx.measure_text(&vol_text);
                 let ask_text_color = if bar_width as f64 >= text_w {
                     &theme.text_primary
@@ -635,7 +659,7 @@ impl TradingPanel for DomState {
 
             let price_x = price_col_x + price_col_w / 2.0;
             let price_y = row_y + row_height / 2.0;
-            let price_text = format!("{:.2}", level.price);
+            let price_text = format!("{:.*}", self.price_decimals(), level.price);
             ctx.fill_text(&price_text, price_x as f64, price_y as f64);
 
             // --- Step 4.5: User order markers ---
