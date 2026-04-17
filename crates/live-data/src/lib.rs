@@ -44,7 +44,7 @@
 //! ```
 
 mod bridge;
-mod depth_stitcher;
+mod depth_book;
 mod provider;
 mod convert;
 mod ws_manager;

@@ -181,7 +181,7 @@ async fn run_ws_actor(
 
     // Local depth book — only for `WsStreamType::Depth` connections.
     // Seeded by the first WS snapshot, updated by WS deltas.
-    use crate::depth_stitcher::{DepthBook, EMIT_LEVELS};
+    use crate::depth_book::{DepthBook, EMIT_LEVELS};
     let is_depth = key.stream_type == WsStreamType::Depth;
     let mut depth_book: Option<DepthBook> = if is_depth { Some(DepthBook::new()) } else { None };
 
