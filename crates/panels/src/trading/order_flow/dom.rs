@@ -37,6 +37,13 @@ pub struct DomState {
     /// HashMap<price_level, (bid_volume, ask_volume, bid_order_count, ask_order_count)>
     pub volume_by_price: HashMap<i64, (f64, f64, usize, usize)>, // Using i64 for price ticks
 
+    /// Raw bid orderbook (price → qty), kept independent of `tick_size` so
+    /// aggregation can be recomputed when the user changes tick granularity
+    /// without losing data.
+    pub raw_bids: HashMap<u64, f64>, // price.to_bits() → qty
+    /// Raw ask orderbook (same shape as `raw_bids`).
+    pub raw_asks: HashMap<u64, f64>,
+
     /// Maximum volume across all visible levels (for bar scaling)
     pub max_volume: f64,
 
@@ -97,6 +104,8 @@ impl DomState {
             levels_displayed: 20,
             tick_size,
             volume_by_price: HashMap::new(),
+            raw_bids: HashMap::new(),
+            raw_asks: HashMap::new(),
             max_volume: 0.0,
             user_orders: HashMap::new(),
             hovered_price: None,
@@ -288,55 +297,19 @@ impl DomState {
         }
     }
 
-    /// Apply a full orderbook snapshot — diff-merges into existing state so
-    /// rows that didn't change keep their previous (volume, order_count) and
-    /// the panel doesn't visually flicker on every snapshot.
+    /// Apply a full orderbook snapshot — replaces raw orderbook then rebuilds
+    /// the tick-aggregated `volume_by_price` from raw data.
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        use std::collections::HashSet;
-
-        // Build new bid/ask maps by tick.
-        let mut new_bids: HashMap<i64, f64> = HashMap::with_capacity(bids.len());
+        self.raw_bids.clear();
+        self.raw_asks.clear();
         for &(price, qty) in bids {
-            if qty > 0.0 {
-                *new_bids.entry(self.price_to_tick(price)).or_insert(0.0) += qty;
-            }
+            if qty > 0.0 { self.raw_bids.insert(price.to_bits(), qty); }
         }
-        let mut new_asks: HashMap<i64, f64> = HashMap::with_capacity(asks.len());
         for &(price, qty) in asks {
-            if qty > 0.0 {
-                *new_asks.entry(self.price_to_tick(price)).or_insert(0.0) += qty;
-            }
+            if qty > 0.0 { self.raw_asks.insert(price.to_bits(), qty); }
         }
-
-        // Drop ticks that disappeared from both sides; otherwise zero out the
-        // missing side (if a level only had bid before and now only has ask, etc.).
-        let known_ticks: HashSet<i64> = self.volume_by_price.keys().copied().collect();
-        for tick in known_ticks {
-            let has_bid = new_bids.contains_key(&tick);
-            let has_ask = new_asks.contains_key(&tick);
-            if !has_bid && !has_ask {
-                self.volume_by_price.remove(&tick);
-            } else {
-                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
-                    if !has_bid { entry.0 = 0.0; entry.2 = 0; }
-                    if !has_ask { entry.1 = 0.0; entry.3 = 0; }
-                }
-            }
-        }
-
-        // Upsert new levels.
-        for (tick, qty) in new_bids {
-            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.0 = qty;
-            entry.2 = 1;
-        }
-        for (tick, qty) in new_asks {
-            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.1 = qty;
-            entry.3 = 1;
-        }
-        self.recompute_max_volume();
-        // Update market price from best bid/ask mid
+        self.rebuild_aggregation();
+        // Update market price from best bid/ask mid (snapshot is sorted: best first)
         let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
         let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
         if best_bid > 0.0 && best_ask > 0.0 {
@@ -347,57 +320,64 @@ impl DomState {
         }
     }
 
-    /// Apply an incremental orderbook delta — update changed levels only.
+    /// Apply an incremental orderbook delta — update raw orderbook then rebuild aggregation.
     pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
         for &(price, qty) in bids {
-            let tick = self.price_to_tick(price);
-            if qty == 0.0 {
-                // Remove level
-                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
-                    entry.0 = 0.0;
-                    entry.2 = 0;
-                    if entry.1 == 0.0 {
-                        self.volume_by_price.remove(&tick);
-                    }
-                }
-            } else {
-                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-                entry.0 = qty;
-                entry.2 = 1;
-            }
+            let key = price.to_bits();
+            if qty == 0.0 { self.raw_bids.remove(&key); }
+            else { self.raw_bids.insert(key, qty); }
         }
         for &(price, qty) in asks {
-            let tick = self.price_to_tick(price);
-            if qty == 0.0 {
-                if let Some(entry) = self.volume_by_price.get_mut(&tick) {
-                    entry.1 = 0.0;
-                    entry.3 = 0;
-                    if entry.0 == 0.0 {
-                        self.volume_by_price.remove(&tick);
-                    }
-                }
-            } else {
-                let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
-                entry.1 = qty;
-                entry.3 = 1;
-            }
+            let key = price.to_bits();
+            if qty == 0.0 { self.raw_asks.remove(&key); }
+            else { self.raw_asks.insert(key, qty); }
         }
-        self.recompute_max_volume();
-        // Update market price from best bid/ask
-        let best_bid = self.volume_by_price.iter()
-            .filter(|(_, (bv, _, _, _))| *bv > 0.0)
-            .map(|(t, _)| self.tick_to_price(*t))
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let best_ask = self.volume_by_price.iter()
-            .filter(|(_, (_, av, _, _))| *av > 0.0)
-            .map(|(t, _)| self.tick_to_price(*t))
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        if let (Some(bid), Some(ask)) = (best_bid, best_ask) {
-            self.market_price = (bid + ask) / 2.0;
+        self.rebuild_aggregation();
+        // Recompute market price from raw best bid/ask
+        let best_bid = self.raw_bids.keys()
+            .map(|b| f64::from_bits(*b))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let best_ask = self.raw_asks.keys()
+            .map(|b| f64::from_bits(*b))
+            .fold(f64::INFINITY, f64::min);
+        if best_bid > 0.0 && best_ask.is_finite() && best_ask > 0.0 {
+            self.market_price = (best_bid + best_ask) / 2.0;
             if self.center_price == 0.0 || self.auto_center {
                 self.center_price = self.market_price;
             }
         }
+    }
+
+    /// Change `tick_size` (depth aggregation granularity) and rebuild the
+    /// aggregated view from raw data — no data loss, no flicker waiting for
+    /// the next snapshot.
+    pub fn set_tick_size(&mut self, new_tick: f64) {
+        if new_tick <= 0.0 || (new_tick - self.tick_size).abs() < f64::EPSILON {
+            return;
+        }
+        self.tick_size = new_tick;
+        self.rebuild_aggregation();
+    }
+
+    /// Rebuild `volume_by_price` from `raw_bids`/`raw_asks` using the current
+    /// `tick_size` as bucket width.
+    fn rebuild_aggregation(&mut self) {
+        self.volume_by_price.clear();
+        for (&price_bits, &qty) in &self.raw_bids {
+            let price = f64::from_bits(price_bits);
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.0 += qty;
+            entry.2 += 1;
+        }
+        for (&price_bits, &qty) in &self.raw_asks {
+            let price = f64::from_bits(price_bits);
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.1 += qty;
+            entry.3 += 1;
+        }
+        self.recompute_max_volume();
     }
 
     /// Recompute max_volume from all visible levels.
@@ -696,17 +676,9 @@ impl TradingPanel for DomState {
             }
         }
 
-        // === STEP 5: Render spread separator (horizontal line) ===
-        if let (Some(best_bid), Some(best_ask)) = (best_bid_price, best_ask_price) {
-            if let (Some(bid_idx), Some(_ask_idx)) = (
-                levels.iter().position(|l| (l.price - best_bid).abs() < 0.001),
-                levels.iter().position(|l| (l.price - best_ask).abs() < 0.001),
-            ) {
-                let spread_y = y + (bid_idx as f32 + 0.5) * row_height;
-                ctx.set_fill_color(&theme.separator);
-                ctx.fill_rect(x as f64, spread_y as f64, w as f64, 1.0);
-            }
-        }
+        // === STEP 5: spread separator removed — best-bid/best-ask coloured
+        // backgrounds already mark the boundary; the extra 1px line clutters
+        // the median row.
 
         // === STEP 6: Flash animation for recent fills ===
         let now = std::time::Instant::now();

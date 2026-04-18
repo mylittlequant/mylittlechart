@@ -6472,15 +6472,18 @@ impl ChartApp {
                                         if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                             if ctrl {
                                                 // Ctrl+scroll: zoom tick_size (depth aggregation).
-                                                // Scroll up (scroll_step > 0) → multiply by 10 (zoom out).
-                                                // Scroll down (scroll_step < 0) → divide by 10 (zoom in).
-                                                if scroll_step > 0.0 {
-                                                    state.tick_size = (state.tick_size * 10.0).clamp(0.0001, 100.0);
+                                                // Scroll up → multiply by 10 (zoom out / coarser).
+                                                // Scroll down → divide by 10 (zoom in / finer).
+                                                // `set_tick_size` rebuilds aggregation from raw orderbook
+                                                // so no data is lost waiting for the next snapshot.
+                                                let new_tick = if scroll_step > 0.0 {
+                                                    (state.tick_size * 10.0).clamp(0.0001, 100.0)
                                                 } else if scroll_step < 0.0 {
-                                                    state.tick_size = (state.tick_size / 10.0).clamp(0.0001, 100.0);
-                                                }
-                                                // Clear accumulated volume so it repopulates at the new granularity.
-                                                state.volume_by_price.clear();
+                                                    (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                                } else {
+                                                    state.tick_size
+                                                };
+                                                state.set_tick_size(new_tick);
                                             } else {
                                                 // Normal scroll: move center price 1 tick per notch.
                                                 state.auto_center = false;
