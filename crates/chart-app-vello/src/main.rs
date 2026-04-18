@@ -731,6 +731,11 @@ struct App<'s> {
     last_bar_cache_save: std::time::Instant,
     /// Wall-clock instant of the last periodic bar-cache cleanup run.
     last_cleanup_check: std::time::Instant,
+
+    /// Trade cache persistence service — owns TradeStoreHandle + shared trade map.
+    trade_service: trade_service::TradeService,
+    /// Wall-clock instant of the last periodic trade-cache save.
+    last_trade_cache_save: std::time::Instant,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2365,6 +2370,47 @@ impl App<'_> {
             });
         }
 
+        // ── Trade cache persistence ───────────────────────────────────────────
+        // Create the TradeStoreHandle, load persisted trades, and seed the shared
+        // trade map so that panels opening at startup see historical trades immediately.
+        // `TradeService::with_map` attaches to the same `SharedTradeMap` that
+        // `DataBridge` already holds, so persistence and live-feed share one map.
+        let trades_dir = zengeld_chart::app_data_dir().join("trades");
+        let trade_store_handle = trade_store::TradeStoreHandle::new(trades_dir, bridge.runtime());
+        let mut trade_service = trade_service::TradeService::with_map(
+            bridge.trade_map(),
+            trade_store_handle.clone(),
+            trade_service::DEFAULT_CAPACITY,
+        );
+
+        // Collect trade keys from presets and load them from disk.
+        // Seed TradeService series from disk data so panels don't start cold.
+        {
+            // Re-use bar key tuples (exchange, symbol, _, account_type) — trades are
+            // keyed by (exchange, symbol, account_type) only (no timeframe).
+            let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
+            // Deduplicate by (exchange, symbol, account_type) since each symbol only
+            // has one trade ring regardless of how many timeframes are open.
+            let mut seen = std::collections::HashSet::new();
+            for (exchange_str, symbol, _timeframe, account_type_label) in &bar_keys {
+                if seen.insert((exchange_str.clone(), symbol.clone(), account_type_label.clone())) {
+                    if let Some(eid) = chart_app::ExchangeId::from_str(exchange_str) {
+                        let at = chart_app::account_type_from_label(account_type_label);
+                        let key = trade_service::TradeKey::new(eid, at, symbol.as_str());
+                        let trades_vec = trade_store_handle.load(
+                            key.exchange_str(),
+                            &key.symbol,
+                            key.account_type_label(),
+                        );
+                        if !trades_vec.is_empty() {
+                            eprintln!("[App] seeding {} trades for {}/{}", trades_vec.len(), exchange_str, symbol);
+                            trade_service.seed_from_disk(key, trades_vec);
+                        }
+                    }
+                }
+            }
+        }
+
         // Load device settings once for App struct initialisation.
         let ds_init = zengeld_chart::user_profile::DeviceSettings::load();
 
@@ -2447,6 +2493,8 @@ impl App<'_> {
             bar_service,
             last_bar_cache_save: std::time::Instant::now(),
             last_cleanup_check: std::time::Instant::now(),
+            trade_service,
+            last_trade_cache_save: std::time::Instant::now(),
         }
     }
 
@@ -3410,6 +3458,11 @@ impl App<'_> {
         eprintln!("[App] save_all: flushing {} bar series to disk", self.bar_service.series_count());
         self.bar_service.flush_dirty();
         self.bar_service.flush_sync();
+
+        // 11. Flush trade cache to disk.
+        eprintln!("[App] save_all: flushing {} trade series to disk", self.trade_service.series_count());
+        self.trade_service.flush_dirty();
+        self.trade_service.flush_sync();
     }
 
     /// Drain app-level broadcast messages each frame.
@@ -4167,6 +4220,12 @@ impl ApplicationHandler for App<'_> {
             self.last_bar_cache_save = std::time::Instant::now();
             // BarService already has all data from tick() events — just flush.
             self.bar_service.flush_dirty();
+        }
+
+        // ── Periodic trade cache save (every 30 seconds) ──────────────────────
+        if self.last_trade_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
+            self.last_trade_cache_save = std::time::Instant::now();
+            self.trade_service.flush_dirty();
         }
 
         // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
