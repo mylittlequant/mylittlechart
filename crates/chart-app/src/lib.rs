@@ -2673,6 +2673,21 @@ impl ChartApp {
                             }
                         }
                     }
+
+                    // Update orderbook last_trade_price so the ghost-level filter
+                    // has an authoritative mid to work with.
+                    {
+                        let ob_key = orderbook_service::OrderbookKey::new(exchange_id, account_type, &symbol);
+                        let series_arc = {
+                            let ob_map = self.bridge.orderbook_map();
+                            ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned())
+                        };
+                        if let Some(arc) = series_arc {
+                            if let Ok(mut s) = arc.write() {
+                                s.set_last_trade_price(price);
+                            }
+                        }
+                    }
                 }
                 LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type } => {
                     // Cache the 24h ticker stats keyed by symbol:exchange:account_type so that
@@ -2699,6 +2714,21 @@ impl ChartApp {
                     if let Some(v) = high_price           { entry.high_price = v; }
                     if let Some(v) = low_price            { entry.low_price = v; }
                     if let Some(v) = volume               { entry.volume = v; }
+
+                    // Mirror last_price into the matching OrderbookSeries so the ghost
+                    // filter has an authoritative mid even on slow markets with no trades.
+                    {
+                        let ob_key = orderbook_service::OrderbookKey::new(exchange_id, account_type, &symbol);
+                        let series_arc = {
+                            let ob_map = self.bridge.orderbook_map();
+                            ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned())
+                        };
+                        if let Some(arc) = series_arc {
+                            if let Ok(mut s) = arc.write() {
+                                s.set_last_trade_price(last_price);
+                            }
+                        }
+                    }
                 }
                 LiveUpdate::ConnectorReady { exchange_id } => {
                     let eid_str = exchange_id.as_str();

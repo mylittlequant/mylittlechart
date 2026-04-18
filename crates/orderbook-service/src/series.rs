@@ -18,6 +18,9 @@ pub struct OrderbookSnapshot {
     pub last_rest_ts_ms: i64,
     pub last_ws_ts_ms: i64,
     pub version: u64,
+    /// Last trade price from the trade/ticker stream — authoritative mid.
+    /// `None` until first trade arrives.
+    pub last_trade_price: Option<f64>,
 }
 
 impl OrderbookSnapshot {
@@ -30,10 +33,10 @@ impl OrderbookSnapshot {
     }
 
     pub fn mid(&self) -> Option<f64> {
-        match (self.best_bid(), self.best_ask()) {
+        self.last_trade_price.or_else(|| match (self.best_bid(), self.best_ask()) {
             (Some(b), Some(a)) => Some((b + a) / 2.0),
             _ => None,
-        }
+        })
     }
 
     /// Iterator over top N bids, highest price first (price, qty).
@@ -129,6 +132,7 @@ impl OrderbookSeries {
     pub fn apply_ws_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
         self.replace_in_range(bids, asks);
         self.current.last_ws_ts_ms = ts_ms;
+        self.sweep_ghost_levels();
         self.current.version += 1;
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
@@ -148,6 +152,7 @@ impl OrderbookSeries {
     pub fn apply_rest(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
         self.replace_in_range(bids, asks);
         self.current.last_rest_ts_ms = ts_ms;
+        self.sweep_ghost_levels();
         self.current.version += 1;
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
@@ -176,6 +181,7 @@ impl OrderbookSeries {
             }
         }
         self.current.last_ws_ts_ms = ts_ms;
+        self.sweep_ghost_levels();
         self.current.version += 1;
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
@@ -202,6 +208,25 @@ impl OrderbookSeries {
                 if q > 0.0 { self.current.asks.insert(OrderedFloat(p), q); }
             }
         }
+    }
+
+    /// Drop ghost levels: bids strictly above `last_trade_price` and asks
+    /// strictly below it can never legally exist (they would self-execute).
+    /// No-op when `last_trade_price` is not yet known.
+    fn sweep_ghost_levels(&mut self) {
+        let Some(tp) = self.current.last_trade_price else { return };
+        self.current.bids.retain(|k, _| k.0 <= tp);
+        self.current.asks.retain(|k, _| k.0 >= tp);
+    }
+
+    /// Set the last trade price and immediately sweep ghost levels.
+    ///
+    /// Bumps `version` and marks `dirty` so DOM panels detect the change.
+    pub fn set_last_trade_price(&mut self, price: f64) {
+        self.current.last_trade_price = Some(price);
+        self.sweep_ghost_levels();
+        self.current.version += 1;
+        self.dirty = true;
     }
 
     /// Legacy full-replace, kept for tests and potential callers that want to
@@ -469,5 +494,68 @@ mod tests {
 
         s.apply_ws_delta(&[(98.0, 1.0)], &[], 3000);
         assert_eq!(s.current.version, 3);
+    }
+
+    // ── ghost level filtering ─────────────────────────────────────────────────
+
+    #[test]
+    fn ghost_bids_above_last_trade_are_swept() {
+        let mut s = series();
+        // Insert two bids: 76000 (normal) and 76100 (ghost — above last trade).
+        s.apply_ws_delta(&[(76000.0, 1.0), (76100.0, 5.0)], &[(76200.0, 3.0)], 1000);
+        assert_eq!(s.current.bids.len(), 2);
+        // Set last_trade_price = 76050. Bid at 76100 > 76050 → ghost.
+        s.set_last_trade_price(76050.0);
+        assert_eq!(s.current.bids.len(), 1);
+        assert!(s.current.bids.contains_key(&OrderedFloat(76000.0)));
+        assert!(!s.current.bids.contains_key(&OrderedFloat(76100.0)));
+    }
+
+    #[test]
+    fn ghost_asks_below_last_trade_are_swept() {
+        let mut s = series();
+        // Insert two asks: 75900 (ghost — below last trade) and 76100 (normal).
+        s.apply_ws_delta(&[], &[(75900.0, 3.0), (76100.0, 1.0)], 1000);
+        assert_eq!(s.current.asks.len(), 2);
+        // Set last_trade_price = 76000. Ask at 75900 < 76000 → ghost.
+        s.set_last_trade_price(76000.0);
+        assert_eq!(s.current.asks.len(), 1);
+        assert!(!s.current.asks.contains_key(&OrderedFloat(75900.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(76100.0)));
+    }
+
+    #[test]
+    fn mid_returns_last_trade_price_when_set() {
+        let mut s = series();
+        s.apply_ws_delta(&[(76000.0, 1.0)], &[(76100.0, 1.0)], 1000);
+        // Before setting last_trade_price: mid = (best_bid + best_ask) / 2.
+        assert_eq!(s.current.mid(), Some(76050.0));
+        // After: mid = last_trade_price, ignoring bid/ask spread.
+        s.set_last_trade_price(76025.0);
+        assert_eq!(s.current.mid(), Some(76025.0));
+    }
+
+    #[test]
+    fn sweep_does_not_drop_levels_at_exact_last_trade_price() {
+        let mut s = series();
+        // Levels exactly at last_trade_price must not be dropped (strict > / <).
+        s.apply_ws_delta(&[(76000.0, 1.0)], &[(76000.0, 1.0)], 1000);
+        s.set_last_trade_price(76000.0);
+        assert_eq!(s.current.bids.len(), 1, "bid at exact price must survive");
+        assert_eq!(s.current.asks.len(), 1, "ask at exact price must survive");
+    }
+
+    #[test]
+    fn sweep_is_applied_on_apply_ws_delta_when_price_known() {
+        let mut s = series();
+        s.set_last_trade_price(76000.0);
+        // Delta inserts a ghost bid (above last_trade_price) and ghost ask (below).
+        s.apply_ws_delta(&[(76500.0, 2.0), (75000.0, 1.0)], &[(75500.0, 1.0), (76100.0, 2.0)], 2000);
+        // Ghost bid 76500 > 76000 → swept; normal bid 75000 <= 76000 → kept.
+        assert!(!s.current.bids.contains_key(&OrderedFloat(76500.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(75000.0)));
+        // Ghost ask 75500 < 76000 → swept; normal ask 76100 >= 76000 → kept.
+        assert!(!s.current.asks.contains_key(&OrderedFloat(75500.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(76100.0)));
     }
 }
