@@ -27,6 +27,14 @@ pub struct DomState {
     /// Current market price (last trade or mid-price)
     pub market_price: f64,
 
+    /// Best bid price from the shared orderbook (max of `current.bids`).
+    /// Source of truth for highlighting — independent of which buckets are
+    /// currently visible on screen.
+    pub best_bid_price: Option<f64>,
+
+    /// Best ask price from the shared orderbook (min of `current.asks`).
+    pub best_ask_price: Option<f64>,
+
     /// Center price for ladder (usually market_price, can be adjusted)
     pub center_price: f64,
 
@@ -103,6 +111,8 @@ impl DomState {
             exchange: String::new(),
             account_type: String::new(),
             market_price: 0.0,
+            best_bid_price: None,
+            best_ask_price: None,
             center_price: 0.0,
             levels_displayed: 20,
             tick_size,
@@ -312,7 +322,10 @@ impl DomState {
         }
         self.last_seen_orderbook_version = series.current.version;
 
-        // Update market_price from current mid.
+        // Update market_price + best bid/ask straight from the shared series
+        // (source of truth, independent of which buckets render currently shows).
+        self.best_bid_price = series.current.best_bid();
+        self.best_ask_price = series.current.best_ask();
         if let Some(mid) = series.current.mid() {
             self.market_price = mid;
             if self.center_price == 0.0 || self.auto_center {
@@ -511,16 +524,19 @@ impl TradingPanel for DomState {
 
         let ask_vol_col_x = price_col_x + price_col_w + pad;
 
-        // === STEP 3: Find best bid and best ask for highlighting ===
-        let best_bid_price = levels.iter()
-            .filter(|level| level.is_bid)
-            .map(|level| level.price)
-            .max_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-        let best_ask_price = levels.iter()
-            .filter(|level| level.is_ask)
-            .map(|level| level.price)
-            .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // === STEP 3: Best bid/ask come from shared OrderbookSeries via tick().
+        // The raw native-tick prices are aggregated into the same buckets the
+        // renderer uses (bids floor, asks ceil — matches rebuild_aggregation).
+        let best_bid_bucket_price = self.best_bid_price.map(|p| {
+            let tick = (p / self.tick_size).floor() as i64;
+            self.tick_to_price(tick)
+        });
+        let best_ask_bucket_price = self.best_ask_price.map(|p| {
+            let tick = (p / self.tick_size).ceil() as i64;
+            self.tick_to_price(tick)
+        });
+        let best_bid_price = best_bid_bucket_price;
+        let best_ask_price = best_ask_bucket_price;
 
         // Decide mid-line rendering style:
         // - If there's at least one empty bucket between best_bid and best_ask
