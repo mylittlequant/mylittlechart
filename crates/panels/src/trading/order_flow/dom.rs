@@ -330,6 +330,11 @@ impl DomState {
 
     /// Rebuild `volume_by_price` from flat bid/ask level lists.
     fn rebuild_aggregation_from_levels(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        // Side-aware rounding (flowsurface model): bids round DOWN, asks round UP.
+        // Guarantees that bid and ask buckets never collide on the same row, so
+        // each bucket has a single dominant side. Without this, a bid at 76095
+        // and an ask at 76105 (tick=10) would both land in bucket 76090..76100
+        // and the renderer can't decide which side it represents.
         self.volume_by_price.clear();
         for &(price, qty) in bids {
             let tick = (price / self.tick_size).floor() as i64;
@@ -338,7 +343,7 @@ impl DomState {
             entry.2 += 1;
         }
         for &(price, qty) in asks {
-            let tick = (price / self.tick_size).floor() as i64;
+            let tick = (price / self.tick_size).ceil() as i64;
             let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
             entry.1 += qty;
             entry.3 += 1;
