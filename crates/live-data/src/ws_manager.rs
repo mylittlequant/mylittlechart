@@ -782,30 +782,31 @@ fn capture_rtt<C: WebSocketConnector>(
 // SUBSCRIPTION REQUEST BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `depth` should be pre-clamped via `OrderbookCapabilities::clamp_depth`.
-/// `None` means the exchange doesn't accept a depth parameter — it is omitted.
+/// `_depth` is reserved for Trades/Ticker paths that may use it in future.
+/// For the Depth path it is ignored — the diff stream has no depth limit.
 pub(crate) fn make_sub_request(
     stream_type: WsStreamType,
     exchange_id: ExchangeId,
     symbol: &str,
     account_type: AccountType,
-    depth: Option<u32>,
+    _depth: Option<u32>,
 ) -> SubscriptionRequest {
     let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, symbol);
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        // Start with partial-depth snapshots. The depth is clamped to the
-        // nearest valid value declared by the exchange's `OrderbookCapabilities`.
-        // When `depth` is `None` the exchange decides the level count internally.
-        // The actor upgrades to the diff stream automatically once a REST
-        // connector appears in the pool.
+        // Subscribe to the full diff stream (`@depth@100ms` on Binance).
+        // The local book is bootstrapped once via a one-shot REST call in
+        // `bridge.rs`; subsequent WS deltas maintain it incrementally.
+        // `depth` and `update_speed_ms` are passed through so each exchange
+        // implementation can map them to its own wire format.
         WsStreamType::Depth => {
-            let base = SubscriptionRequest::orderbook(sym);
-            if let Some(d) = depth {
-                base.with_depth(d)
-            } else {
-                base
+            SubscriptionRequest {
+                symbol: sym,
+                stream_type: StreamType::OrderbookDelta,
+                account_type,
+                depth: None,            // diff stream is full-book, no depth limit
+                update_speed_ms: Some(100),
             }
         }
         // Private streams don't use per-symbol subscription requests.

@@ -26,8 +26,8 @@ use crate::convert::{kline_to_bar, timeframe_to_interval};
 use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
 /// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
-/// periodic REST poller (wide, up to 1000 levels) or from the WebSocket stream
-/// (narrow window around mid, ~20 levels).
+/// one-shot REST bootstrap (deep, up to 1000 levels) or from the WebSocket
+/// stream (partial snapshot — only used by exchanges that lack a diff stream).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderbookSource {
     Rest,
@@ -117,7 +117,7 @@ pub enum LiveUpdate {
         bars: Vec<Bar>,
         prepend_count: usize,
     },
-    /// Full orderbook snapshot — REST (wide, 1000 levels) or WS (narrow, ~20 levels).
+    /// Full orderbook snapshot — REST bootstrap (deep, up to 1000 levels) or WS partial snapshot.
     OrderbookSnapshot {
         exchange_id: ExchangeId,
         account_type: AccountType,
@@ -244,12 +244,12 @@ pub struct DataBridge {
     /// scroll-left requests can request the correct older window without
     /// re-fetching data that is already cached.
     oldest_fetched_ts: Arc<Mutex<HashMap<BarSeriesKey, i64>>>,
-    /// Per-symbol REST orderbook poll task handles.
+    /// Per-symbol one-shot REST bootstrap task handles.
     ///
     /// Keyed by `(ExchangeId, symbol, AccountType)`. Each handle is spawned
-    /// alongside the WS depth subscription and aborted when the last depth
-    /// consumer unsubscribes. Multiple consumers sharing the same depth stream
-    /// share a single poll task (tracked via the WS actor's own refcount).
+    /// once when a depth subscription starts and aborted (if still running)
+    /// when the last depth consumer unsubscribes. The task exits after a
+    /// single REST fetch — it is not a periodic poller.
     rest_orderbook_pollers: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
     /// Session-level live orderbook series map.
     ///
@@ -870,11 +870,16 @@ impl DataBridge {
     /// Routes the symbol to the shared per-exchange depth actor, which
     /// multiplexes all symbols over a single WS connection.
     ///
-    /// Also spawns a periodic REST orderbook snapshot poller (every 5 s) that
-    /// feeds deeper snapshots (up to 1000 levels) into the same broadcast
-    /// channel as `LiveUpdate::OrderbookSnapshot`. The poller is shared: a
-    /// second call for the same `(exchange_id, symbol, account_type)` reuses
-    /// the existing handle.
+    /// The WS actor subscribes to the incremental diff stream (`@depth@100ms`
+    /// on Binance) rather than a partial-snapshot stream.  To seed the local
+    /// book before the first WS delta arrives, a **one-shot** REST bootstrap
+    /// task is spawned here.  The bootstrap fetches a deep snapshot (up to
+    /// 1000 levels) and writes it via `series.apply_rest(…)`, then exits.
+    ///
+    /// The bootstrap handle is stored in `rest_orderbook_pollers` (same map,
+    /// different semantics) so it can be aborted on unsubscribe if it hasn't
+    /// finished yet.  A second call for the same `(exchange_id, symbol,
+    /// account_type)` reuses the existing handle.
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         let tx = self.tx.clone();
@@ -886,12 +891,12 @@ impl DataBridge {
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
 
-        // Spawn a REST poll task if one is not already running for this key.
+        // Spawn a one-shot REST bootstrap task if not already running for this key.
         let poll_key = (exchange_id, symbol.to_string(), account_type);
         if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
             if !pollers.contains_key(&poll_key) {
                 let symbol_owned = symbol.to_string();
-                let handle = self.runtime.spawn(rest_orderbook_poller(
+                let handle = self.runtime.spawn(rest_orderbook_bootstrap(
                     pool,
                     exchange_id,
                     symbol_owned,
@@ -907,16 +912,16 @@ impl DataBridge {
     /// Subscribe to the shared `OrderbookSeries` for `(exchange, symbol, account_type)`.
     ///
     /// Mirrors `subscribe_trades`: increments `refcount`, starts the WS depth
-    /// actor + REST poller (via `subscribe_depth`), and returns a cloned `Arc`
-    /// so the caller (DOM panel) can read the live snapshot without going through
-    /// the broadcast channel.
+    /// actor + one-shot REST bootstrap (via `subscribe_depth`), and returns a
+    /// cloned `Arc` so the caller (DOM panel) can read the live snapshot without
+    /// going through the broadcast channel.
     pub fn subscribe_orderbook(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
     ) -> Arc<RwLock<OrderbookSeries>> {
-        // Start WS depth actor + REST poller (idempotent).
+        // Start WS depth actor + one-shot REST bootstrap (idempotent).
         self.subscribe_depth(exchange_id, symbol, account_type);
 
         // Get-or-create the OrderbookSeries in the shared map, incrementing refcount.
@@ -996,8 +1001,8 @@ impl DataBridge {
 
     /// Remove one consumer interest in depth stream for this symbol.
     ///
-    /// Also aborts the associated REST orderbook poll task immediately (no grace
-    /// period — the poll is cheap to restart and has no ordering guarantee).
+    /// Also aborts the one-shot REST bootstrap task if it is still in flight
+    /// (no grace period — the bootstrap is cheap to restart on re-subscribe).
     pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
@@ -2047,19 +2052,16 @@ fn parse_symbol(s: &str) -> Symbol {
 
 /// Periodic REST orderbook snapshot task.
 ///
-/// Polls `connector.get_orderbook(symbol, depth)` every 5 seconds and emits
-/// [`LiveUpdate::OrderbookSnapshot`] on the shared broadcast channel. This
-/// complements the WS depth subscription, which only carries ~20 levels, by
-/// providing deep snapshots (up to 1000 levels) that the DOM panel can use
-/// when the user zooms out to a wide tick aggregation.
+/// Fetches a single deep orderbook snapshot via REST and seeds the local book.
 ///
-/// The task intentionally skips the first interval tick so that the initial
-/// WS snapshot (which arrives faster) is not immediately overwritten by a REST
-/// snapshot that might be slightly stale.
+/// This is the **canonical Binance pattern**: subscribe to the diff stream
+/// (`@depth@100ms`) for incremental updates, then bootstrap ONCE from REST
+/// to get the initial deep state (up to 1000 levels).  After this task
+/// completes, all subsequent updates flow through the WS delta path.
 ///
-/// Errors are logged with `eprintln!` and silently skipped — the WS stream
-/// continues to function even when the REST poll fails.
-async fn rest_orderbook_poller(
+/// Errors are logged with `eprintln!`; on failure the local book simply
+/// remains empty until the WS diff stream has applied enough updates.
+async fn rest_orderbook_bootstrap(
     pool: ConnectorPool,
     exchange_id: ExchangeId,
     symbol: String,
@@ -2067,62 +2069,55 @@ async fn rest_orderbook_poller(
     tx: broadcast::Sender<LiveUpdate>,
     orderbook_map: SharedOrderbookMap,
 ) {
-    // Resolve max depth from connector caps. Falls back to 100 if unknown.
+    // Resolve max depth from connector caps. Falls back to 1000 if unknown.
     let depth: u16 = match pool.get(&exchange_id) {
         Some(conn) => conn
             .orderbook_capabilities(account_type)
             .rest_max_depth
             .map(|d| d as u16)
-            .unwrap_or(100),
-        None => 100,
+            .unwrap_or(1000),
+        None => 1000,
     };
 
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let conn = match pool.get(&exchange_id) {
+        Some(c) => c,
+        None => return,
+    };
 
-    // First tick fires immediately — we want the deep snapshot ASAP, before
-    // the WS shallow snapshot has a chance to be the only data on screen.
-    loop {
-        interval.tick().await;
+    let sym = parse_symbol_for_exchange(exchange_id, &symbol);
 
-        let conn = match pool.get(&exchange_id) {
-            Some(c) => c,
-            None => continue,
-        };
+    match conn.get_orderbook(sym, Some(depth), account_type).await {
+        Ok(book) => {
+            let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
+            let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
+            let ts = book.timestamp;
 
-        let sym = parse_symbol_for_exchange(exchange_id, &symbol);
-
-        match conn.get_orderbook(sym, Some(depth), account_type).await {
-            Ok(book) => {
-                let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
-                let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
-                let ts = book.timestamp;
-
-                // Write to SharedOrderbookMap — panels read from this directly.
-                let ob_key = OrderbookKey::new(exchange_id, account_type, &symbol);
-                if let Some(handle) = orderbook_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
-                    if let Ok(mut series) = handle.write() {
-                        series.apply_rest(&bids, &asks, ts);
-                    }
+            // Write to SharedOrderbookMap — full replace seeds the book.
+            let ob_key = OrderbookKey::new(exchange_id, account_type, &symbol);
+            if let Some(handle) = orderbook_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                if let Ok(mut series) = handle.write() {
+                    series.apply_rest(&bids, &asks, ts);
                 }
+            }
 
-                // Also broadcast for backward compat (not-yet-migrated panels).
-                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
-                    exchange_id,
-                    account_type,
-                    symbol: symbol.clone(),
-                    bids,
-                    asks,
-                    timestamp: ts,
-                    source: OrderbookSource::Rest,
-                });
-            }
-            Err(e) => {
-                eprintln!(
-                    "[RestOrderbookPoll] {:?} {} failed: {}",
-                    exchange_id, symbol, e
-                );
-            }
+            // Broadcast so any panel listening on the channel gets the bootstrap
+            // snapshot immediately (backward compat).
+            let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                exchange_id,
+                account_type,
+                symbol: symbol.clone(),
+                bids,
+                asks,
+                timestamp: ts,
+                source: OrderbookSource::Rest,
+            });
+        }
+        Err(e) => {
+            eprintln!(
+                "[OB Bootstrap] {:?} {} failed: {}",
+                exchange_id, symbol, e
+            );
         }
     }
+    // Task exits after one fetch — no loop.
 }
