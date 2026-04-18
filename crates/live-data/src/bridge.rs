@@ -15,6 +15,7 @@ use tokio::runtime::Runtime;
 use digdigdig3::{
     ExchangeId, AccountType, Symbol, MarketData, SymbolInfo,
 };
+use digdigdig3::core::traits::ExchangeIdentity;
 use digdigdig3::connector_manager::{ConnectorFactory, ConnectorPool};
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;
@@ -1907,14 +1908,21 @@ async fn rest_orderbook_poller(
     account_type: AccountType,
     tx: broadcast::Sender<LiveUpdate>,
 ) {
-    const POLL_DEPTH: u16 = 1000;
+    // Resolve max depth from connector caps. Falls back to 100 if unknown.
+    let depth: u16 = match pool.get(&exchange_id) {
+        Some(conn) => conn
+            .orderbook_capabilities(account_type)
+            .rest_max_depth
+            .map(|d| d as u16)
+            .unwrap_or(100),
+        None => 100,
+    };
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    // Skip first immediate tick — let the WS snapshot arrive first.
-    interval.tick().await;
-
+    // First tick fires immediately — we want the deep snapshot ASAP, before
+    // the WS shallow snapshot has a chance to be the only data on screen.
     loop {
         interval.tick().await;
 
@@ -1925,7 +1933,7 @@ async fn rest_orderbook_poller(
 
         let sym = parse_symbol_for_exchange(exchange_id, &symbol);
 
-        match conn.get_orderbook(sym, Some(POLL_DEPTH), account_type).await {
+        match conn.get_orderbook(sym, Some(depth), account_type).await {
             Ok(book) => {
                 let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
                 let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
