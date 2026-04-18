@@ -297,17 +297,42 @@ impl DomState {
         }
     }
 
-    /// Apply a full orderbook snapshot — replaces raw orderbook then rebuilds
-    /// the tick-aggregated `volume_by_price` from raw data.
+    /// Apply an orderbook snapshot — replaces ONLY the price range covered by
+    /// this snapshot, leaves levels outside that range untouched.
+    ///
+    /// Sources of snapshots have different depths: WS gives ~20 levels around
+    /// mid, REST gives 1000+ levels covering a much wider range. A shallow
+    /// snapshot must NOT erase deeper levels supplied by an earlier deep one
+    /// (and vice versa: a deep one fully refreshes the wide range it covers).
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        self.raw_bids.clear();
-        self.raw_asks.clear();
+        // Determine the price ranges this snapshot actually covers.
+        // bids: [min_bid, max_bid]; asks: [min_ask, max_ask].
+        let bid_range = price_range(bids);
+        let ask_range = price_range(asks);
+
+        // Drop existing raw entries inside the snapshot's coverage range, on
+        // each side independently. Levels deeper than the snapshot are kept.
+        if let Some((lo, hi)) = bid_range {
+            self.raw_bids.retain(|&k, _| {
+                let p = f64::from_bits(k);
+                p < lo || p > hi
+            });
+        }
+        if let Some((lo, hi)) = ask_range {
+            self.raw_asks.retain(|&k, _| {
+                let p = f64::from_bits(k);
+                p < lo || p > hi
+            });
+        }
+
+        // Insert/replace levels from the snapshot.
         for &(price, qty) in bids {
             if qty > 0.0 { self.raw_bids.insert(price.to_bits(), qty); }
         }
         for &(price, qty) in asks {
             if qty > 0.0 { self.raw_asks.insert(price.to_bits(), qty); }
         }
+
         self.rebuild_aggregation();
         // Update market price from best bid/ask mid (snapshot is sorted: best first)
         let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
@@ -391,6 +416,22 @@ impl DomState {
             .map(|(bv, av, _, _)| bv.max(*av))
             .fold(0.0f64, f64::max);
     }
+}
+
+/// Compute the [min, max] price range covered by a list of (price, qty)
+/// levels. Returns `None` if the list is empty or contains no positive qty.
+fn price_range(levels: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let mut found = false;
+    for &(price, qty) in levels {
+        if qty > 0.0 {
+            if price < lo { lo = price; }
+            if price > hi { hi = price; }
+            found = true;
+        }
+    }
+    if found { Some((lo, hi)) } else { None }
 }
 
 /// DOM panel configuration
