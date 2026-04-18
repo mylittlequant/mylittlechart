@@ -53,18 +53,16 @@ impl OrderbookSnapshot {
 /// bridge write paths). Panels hold `Arc<RwLock<OrderbookSeries>>` and call
 /// `.read()` during render.
 ///
-/// ## Layered priority model
+/// ## Simple last-write-wins model
 ///
-/// Three writers, three priorities:
+/// Two writers, one map per side:
 ///
-/// 1. **WS snapshot** — source of truth inside its narrow price window (~$3–5 wide
-///    for BTC perp). Owns every level in `[ws_window.0, ws_window.1]`.
-/// 2. **REST snapshot** — secondary truth for the deep ladder *outside* the WS
-///    window. Polled every 5 s. Must not overwrite WS-owned levels.
-/// 3. **WS delta** — incremental updates for levels *outside* the WS window only.
-///    Updates inside the window are silently ignored (snapshot already has truth).
+/// 1. **Snapshot** (`apply_ws_snapshot` / `apply_rest`) — full replace. Clears
+///    both maps and inserts the incoming levels. Last snapshot always wins.
+/// 2. **WS delta** (`apply_ws_delta`) — incremental per-level update. `qty == 0`
+///    removes the level; any positive `qty` inserts or replaces it.
 ///
-/// After every write, a crossed-book sweep removes any bid ≥ best ask overlap.
+/// No window tracking, no priority regions, no crossed-book sweep.
 #[derive(Debug)]
 pub struct OrderbookSeries {
     /// Live merged state, updated on every apply_* call.
@@ -83,11 +81,6 @@ pub struct OrderbookSeries {
 
     /// True when `current` has been mutated since the last disk flush.
     pub dirty: bool,
-
-    /// Price range of the most recent WS snapshot. Levels inside this range
-    /// are owned by the WS snapshot — REST snapshots and WS deltas must not
-    /// overwrite them.
-    pub ws_window: Option<(f64, f64)>,
 }
 
 impl OrderbookSeries {
@@ -98,7 +91,6 @@ impl OrderbookSeries {
             history_capacity,
             refcount: 0,
             dirty: false,
-            ws_window: None,
         }
     }
 
@@ -123,170 +115,72 @@ impl OrderbookSeries {
 
     // ── Apply methods ────────────────────────────────────────────────────────
 
-    /// WS partial replace (range-based). Source of truth for the narrow price
-    /// window it covers.
+    /// WS full snapshot — replaces the entire book.
     ///
-    /// Computes the price range of the incoming levels, stores it as `ws_window`,
-    /// wipes all existing levels inside that window, inserts the new levels, then
-    /// runs a crossed-book sweep.
+    /// Both maps are cleared and repopulated from the incoming levels. Any level
+    /// with `qty <= 0` is skipped. This is the source of truth for the full ladder.
     pub fn apply_ws_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
-        // 1. Compute the price window of this snapshot
-        let mut min_p = f64::MAX;
-        let mut max_p = f64::MIN;
-        for &(p, _) in bids.iter().chain(asks.iter()) {
-            if p < min_p { min_p = p; }
-            if p > max_p { max_p = p; }
+        self.replace_all(bids, asks);
+        self.current.last_ws_ts_ms = ts_ms;
+        self.current.version += 1;
+        self.dirty = true;
+        let snap = self.current_to_timed_snapshot();
+        self.append_history(snap);
+    }
+
+    /// REST background snapshot — replaces the entire book.
+    ///
+    /// Identical to `apply_ws_snapshot` in behaviour; only the timestamp field
+    /// differs. Last write wins regardless of source.
+    pub fn apply_rest(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
+        self.replace_all(bids, asks);
+        self.current.last_rest_ts_ms = ts_ms;
+        self.current.version += 1;
+        self.dirty = true;
+        let snap = self.current_to_timed_snapshot();
+        self.append_history(snap);
+    }
+
+    /// WS incremental delta — updates individual price levels.
+    ///
+    /// `qty == 0.0` removes the level; any positive qty inserts or replaces it.
+    /// No window filtering, no crossed-book sweep.
+    pub fn apply_ws_delta(&mut self, bid_changes: &[(f64, f64)], ask_changes: &[(f64, f64)], ts_ms: i64) {
+        for &(p, q) in bid_changes {
+            let key = OrderedFloat(p);
+            if q == 0.0 {
+                self.current.bids.remove(&key);
+            } else {
+                self.current.bids.insert(key, q);
+            }
         }
-        if min_p > max_p {
-            // Empty snapshot — record the timestamp but do nothing
-            self.current.last_ws_ts_ms = ts_ms;
-            return;
+        for &(p, q) in ask_changes {
+            let key = OrderedFloat(p);
+            if q == 0.0 {
+                self.current.asks.remove(&key);
+            } else {
+                self.current.asks.insert(key, q);
+            }
         }
+        self.current.last_ws_ts_ms = ts_ms;
+        self.current.version += 1;
+        self.dirty = true;
+        let snap = self.current_to_timed_snapshot();
+        self.append_history(snap);
+    }
 
-        // 2. Update window
-        self.ws_window = Some((min_p, max_p));
-
-        // 3. Remove ALL existing levels in the window (both sides)
-        self.current.bids.retain(|k, _| k.0 < min_p || k.0 > max_p);
-        self.current.asks.retain(|k, _| k.0 < min_p || k.0 > max_p);
-
-        // 4. Insert new levels (with cross-side cleanup)
+    /// Shared full-replace logic used by both snapshot apply methods.
+    fn replace_all(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.current.bids.clear();
+        self.current.asks.clear();
         for &(p, q) in bids {
             if q > 0.0 {
-                self.current.asks.remove(&OrderedFloat(p)); // cross-side cleanup
                 self.current.bids.insert(OrderedFloat(p), q);
             }
         }
         for &(p, q) in asks {
             if q > 0.0 {
-                self.current.bids.remove(&OrderedFloat(p)); // cross-side cleanup
                 self.current.asks.insert(OrderedFloat(p), q);
-            }
-        }
-
-        // 5. Crossed-book sweep
-        self.sweep_crossed_book();
-
-        // 6. Bookkeeping
-        self.current.last_ws_ts_ms = ts_ms;
-        self.current.version += 1;
-        self.dirty = true;
-
-        let snap = self.current_to_timed_snapshot();
-        self.append_history(snap);
-    }
-
-    /// REST background snapshot. Secondary truth for the deep ladder *outside*
-    /// the WS window.
-    ///
-    /// If no WS window is recorded yet, behaves as a full replace (REST is the
-    /// only source). Otherwise clears REST-owned levels (outside the window),
-    /// inserts the REST data for those regions, and leaves WS-owned levels
-    /// (inside the window) untouched.
-    pub fn apply_rest(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
-        let window = self.ws_window;
-
-        // 1. Remove existing levels OUTSIDE the WS window (REST owns those)
-        if let Some((lo, hi)) = window {
-            // Keep WS-owned levels (inside window), drop the rest
-            self.current.bids.retain(|k, _| k.0 >= lo && k.0 <= hi);
-            self.current.asks.retain(|k, _| k.0 >= lo && k.0 <= hi);
-        } else {
-            // No WS window yet — REST is the only source, do full replace
-            self.current.bids.clear();
-            self.current.asks.clear();
-        }
-
-        // 2. Insert REST levels — skip those inside WS window (WS already there)
-        for &(p, q) in bids {
-            if q <= 0.0 { continue; }
-            if let Some((lo, hi)) = window {
-                if p >= lo && p <= hi { continue; } // WS owns this slot
-            }
-            self.current.asks.remove(&OrderedFloat(p)); // cross-side cleanup
-            self.current.bids.insert(OrderedFloat(p), q);
-        }
-        for &(p, q) in asks {
-            if q <= 0.0 { continue; }
-            if let Some((lo, hi)) = window {
-                if p >= lo && p <= hi { continue; } // WS owns this slot
-            }
-            self.current.bids.remove(&OrderedFloat(p)); // cross-side cleanup
-            self.current.asks.insert(OrderedFloat(p), q);
-        }
-
-        // 3. Crossed-book sweep
-        self.sweep_crossed_book();
-
-        // 4. Bookkeeping
-        self.current.last_rest_ts_ms = ts_ms;
-        self.current.version += 1;
-        self.dirty = true;
-
-        let snap = self.current_to_timed_snapshot();
-        self.append_history(snap);
-    }
-
-    /// WS incremental delta. Updates levels *outside* the WS window only.
-    ///
-    /// Levels inside the WS window are silently skipped — the WS snapshot already
-    /// holds the truth for that region. `qty == 0.0` means remove that price level.
-    pub fn apply_ws_delta(&mut self, bid_changes: &[(f64, f64)], ask_changes: &[(f64, f64)], ts_ms: i64) {
-        let window = self.ws_window;
-        let in_window = |p: f64| -> bool {
-            match window {
-                Some((lo, hi)) => p >= lo && p <= hi,
-                None => false,
-            }
-        };
-
-        for &(p, q) in bid_changes {
-            if in_window(p) { continue; } // WS snapshot owns this range, skip
-            let key = OrderedFloat(p);
-            if q == 0.0 {
-                self.current.bids.remove(&key);
-            } else {
-                self.current.asks.remove(&key); // cross-side cleanup
-                self.current.bids.insert(key, q);
-            }
-        }
-        for &(p, q) in ask_changes {
-            if in_window(p) { continue; }
-            let key = OrderedFloat(p);
-            if q == 0.0 {
-                self.current.asks.remove(&key);
-            } else {
-                self.current.bids.remove(&key); // cross-side cleanup
-                self.current.asks.insert(key, q);
-            }
-        }
-
-        self.sweep_crossed_book();
-
-        self.current.last_ws_ts_ms = ts_ms;
-        self.current.version += 1;
-        self.dirty = true;
-
-        let snap = self.current_to_timed_snapshot();
-        self.append_history(snap);
-    }
-
-    /// Resolve a crossed book (best_bid >= best_ask) by removing the offending
-    /// top-of-book entry on each side, repeating until uncrossed.
-    ///
-    /// This is conservative: when crossed it removes both touching levels and
-    /// continues until the book is clean. Typically 1–2 iterations suffice.
-    fn sweep_crossed_book(&mut self) {
-        loop {
-            let best_bid = self.current.bids.iter().rev().next().map(|(k, _)| k.0);
-            let best_ask = self.current.asks.iter().next().map(|(k, _)| k.0);
-            match (best_bid, best_ask) {
-                (Some(bb), Some(ba)) if bb >= ba => {
-                    // Crossed — drop the offending entry on each side and repeat.
-                    self.current.bids.remove(&OrderedFloat(bb));
-                    self.current.asks.remove(&OrderedFloat(ba));
-                }
-                _ => break,
             }
         }
     }
@@ -302,19 +196,18 @@ mod tests {
         OrderbookSeries::new(100)
     }
 
-    // ── apply_rest (no WS window) ────────────────────────────────────────────
+    // ── apply_rest — full replace ────────────────────────────────────────────
 
     #[test]
-    fn apply_rest_full_replaces_when_no_ws_window() {
+    fn apply_rest_full_replace() {
         let mut s = series();
-        // First REST call — full replace
         s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5)], 1000);
         assert_eq!(s.current.bids.len(), 2);
         assert_eq!(s.current.asks.len(), 1);
         assert_eq!(s.current.best_bid(), Some(100.0));
         assert_eq!(s.current.best_ask(), Some(101.0));
 
-        // Second REST call without WS window — replaces the whole book
+        // Second REST call replaces the whole book
         s.apply_rest(&[(98.0, 3.0)], &[(103.0, 1.0)], 2000);
         assert_eq!(s.current.bids.len(), 1);
         assert_eq!(s.current.asks.len(), 1);
@@ -322,154 +215,139 @@ mod tests {
         assert_eq!(s.current.best_ask(), Some(103.0));
     }
 
-    // ── apply_rest with WS window ────────────────────────────────────────────
+    // ── apply_ws_snapshot — full replace ────────────────────────────────────
 
     #[test]
-    fn apply_rest_preserves_ws_window() {
+    fn apply_ws_snapshot_full_replace() {
+        let mut s = series();
+        s.apply_ws_snapshot(&[(99.0, 5.0), (99.5, 3.0)], &[(100.5, 2.0), (101.0, 1.0)], 1000);
+        assert_eq!(s.current.bids.len(), 2);
+        assert_eq!(s.current.asks.len(), 2);
+        assert_eq!(s.current.best_bid(), Some(99.5));
+        assert_eq!(s.current.best_ask(), Some(100.5));
+
+        // Second snapshot replaces everything — previous levels gone
+        s.apply_ws_snapshot(&[(50.0, 1.0)], &[(51.0, 1.0)], 2000);
+        assert_eq!(s.current.bids.len(), 1);
+        assert_eq!(s.current.asks.len(), 1);
+        assert_eq!(s.current.best_bid(), Some(50.0));
+        assert_eq!(s.current.best_ask(), Some(51.0));
+    }
+
+    // ── snapshot fully replaces previous state regardless of source ──────────
+
+    #[test]
+    fn snapshot_replaces_previous_state_across_sources() {
         let mut s = series();
 
-        // WS snapshot owns 99.0 – 101.0
-        s.apply_ws_snapshot(
-            &[(99.0, 5.0), (99.5, 3.0)],
-            &[(100.5, 2.0), (101.0, 1.0)],
-            1000,
-        );
-        assert_eq!(s.ws_window, Some((99.0, 101.0)));
+        // Start with REST
+        s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5), (102.0, 3.0)], 1000);
+        assert_eq!(s.current.bids.len(), 2);
+        assert_eq!(s.current.asks.len(), 2);
 
-        // REST provides deep levels (outside window) AND tries to overwrite 99.0
-        s.apply_rest(
-            &[(95.0, 10.0), (96.0, 8.0), (99.0, 999.0)], // 99.0 is inside window
-            &[(105.0, 4.0), (106.0, 3.0), (100.5, 999.0)], // 100.5 inside window
-            2000,
-        );
+        // WS snapshot fully replaces — REST levels gone
+        s.apply_ws_snapshot(&[(50.0, 1.0)], &[(51.0, 1.0)], 2000);
+        assert_eq!(s.current.bids.len(), 1);
+        assert_eq!(s.current.asks.len(), 1);
+        assert!(!s.current.bids.contains_key(&OrderedFloat(100.0)));
+        assert!(!s.current.asks.contains_key(&OrderedFloat(101.0)));
 
-        // WS-owned levels must be untouched
-        assert_eq!(s.current.bids.get(&OrderedFloat(99.0)), Some(&5.0), "WS bid 99.0 overwritten");
-        assert_eq!(s.current.bids.get(&OrderedFloat(99.5)), Some(&3.0), "WS bid 99.5 overwritten");
-        assert_eq!(s.current.asks.get(&OrderedFloat(100.5)), Some(&2.0), "WS ask 100.5 overwritten");
-        assert_eq!(s.current.asks.get(&OrderedFloat(101.0)), Some(&1.0), "WS ask 101.0 overwritten");
+        // REST snapshot after WS — WS levels gone, REST wins
+        s.apply_rest(&[(200.0, 5.0)], &[(201.0, 5.0)], 3000);
+        assert_eq!(s.current.bids.len(), 1);
+        assert_eq!(s.current.asks.len(), 1);
+        assert!(!s.current.bids.contains_key(&OrderedFloat(50.0)));
+        assert_eq!(s.current.best_bid(), Some(200.0));
+    }
 
-        // REST deep levels should be present
-        assert_eq!(s.current.bids.get(&OrderedFloat(95.0)), Some(&10.0));
-        assert_eq!(s.current.bids.get(&OrderedFloat(96.0)), Some(&8.0));
-        assert_eq!(s.current.asks.get(&OrderedFloat(105.0)), Some(&4.0));
+    // ── apply_ws_delta — insert new level ────────────────────────────────────
+
+    #[test]
+    fn apply_ws_delta_inserts_new_level() {
+        let mut s = series();
+        s.apply_rest(&[(100.0, 1.0)], &[(101.0, 1.0)], 1000);
+
+        s.apply_ws_delta(&[(95.0, 8.0)], &[(106.0, 3.0)], 1001);
+
+        assert_eq!(s.current.bids.get(&OrderedFloat(95.0)), Some(&8.0));
         assert_eq!(s.current.asks.get(&OrderedFloat(106.0)), Some(&3.0));
+        // Previous levels still present
+        assert_eq!(s.current.bids.get(&OrderedFloat(100.0)), Some(&1.0));
+        assert_eq!(s.current.asks.get(&OrderedFloat(101.0)), Some(&1.0));
     }
 
-    // ── apply_ws_delta — inside window is ignored ────────────────────────────
+    // ── apply_ws_delta — remove level via qty=0 ──────────────────────────────
 
     #[test]
-    fn apply_ws_delta_skips_ws_window() {
+    fn apply_ws_delta_removes_level_on_zero_qty() {
         let mut s = series();
+        s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5), (102.0, 3.0)], 1000);
 
-        // WS snapshot: bids 99–99.5, asks 100.5–101
-        s.apply_ws_snapshot(
-            &[(99.0, 5.0), (99.5, 3.0)],
-            &[(100.5, 2.0), (101.0, 1.0)],
-            1000,
-        );
+        // Remove 99.0 bid and 102.0 ask
+        s.apply_ws_delta(&[(99.0, 0.0)], &[(102.0, 0.0)], 1001);
 
-        let version_before = s.current.version;
-
-        // Delta tries to touch levels inside the window — should be ignored
-        s.apply_ws_delta(
-            &[(99.0, 0.0), (99.5, 99.0)], // remove 99.0, overwrite 99.5
-            &[(100.5, 0.0)],               // remove 100.5
-            1001,
-        );
-
-        // All WS-window levels unchanged
-        assert_eq!(s.current.bids.get(&OrderedFloat(99.0)), Some(&5.0));
-        assert_eq!(s.current.bids.get(&OrderedFloat(99.5)), Some(&3.0));
-        assert_eq!(s.current.asks.get(&OrderedFloat(100.5)), Some(&2.0));
-
-        // Version still incremented (bookkeeping happens even with no-op delta)
-        assert_eq!(s.current.version, version_before + 1);
+        assert!(!s.current.bids.contains_key(&OrderedFloat(99.0)));
+        assert!(!s.current.asks.contains_key(&OrderedFloat(102.0)));
+        // Other levels untouched
+        assert_eq!(s.current.bids.get(&OrderedFloat(100.0)), Some(&1.0));
+        assert_eq!(s.current.asks.get(&OrderedFloat(101.0)), Some(&1.5));
     }
 
-    // ── apply_ws_delta — outside window writes ────────────────────────────────
+    // ── apply_ws_delta — writes at any price ────────────────────────────────
 
     #[test]
-    fn apply_ws_delta_outside_window_writes() {
+    fn apply_ws_delta_writes_at_any_price() {
         let mut s = series();
 
-        // WS snapshot window: 99.0 – 101.0
-        s.apply_ws_snapshot(
-            &[(99.0, 5.0)],
-            &[(101.0, 1.0)],
-            1000,
-        );
+        s.apply_ws_snapshot(&[(99.0, 5.0)], &[(101.0, 1.0)], 1000);
 
-        // Delta on prices outside the window
+        // Delta on any prices — no filtering
         s.apply_ws_delta(
-            &[(95.0, 8.0), (96.0, 6.0)],   // outside: write
-            &[(105.0, 3.0), (106.0, 2.0)],  // outside: write
+            &[(95.0, 8.0), (96.0, 6.0), (99.0, 0.0)],
+            &[(105.0, 3.0), (106.0, 2.0), (101.0, 0.0)],
             1001,
         );
 
         assert_eq!(s.current.bids.get(&OrderedFloat(95.0)), Some(&8.0));
         assert_eq!(s.current.bids.get(&OrderedFloat(96.0)), Some(&6.0));
+        assert!(!s.current.bids.contains_key(&OrderedFloat(99.0)));
         assert_eq!(s.current.asks.get(&OrderedFloat(105.0)), Some(&3.0));
         assert_eq!(s.current.asks.get(&OrderedFloat(106.0)), Some(&2.0));
-
-        // Remove via zero qty
-        s.apply_ws_delta(&[(95.0, 0.0)], &[(105.0, 0.0)], 1002);
-        assert!(!s.current.bids.contains_key(&OrderedFloat(95.0)));
-        assert!(!s.current.asks.contains_key(&OrderedFloat(105.0)));
+        assert!(!s.current.asks.contains_key(&OrderedFloat(101.0)));
     }
 
-    // ── sweep_crossed_book ───────────────────────────────────────────────────
+    // ── best_bid / best_ask helpers ───────────────────────────────────────────
 
     #[test]
-    fn crossed_book_sweep() {
+    fn best_bid_and_best_ask() {
         let mut s = series();
+        assert_eq!(s.current.best_bid(), None);
+        assert_eq!(s.current.best_ask(), None);
 
-        // Manually create a crossed book: best_bid 102 > best_ask 100
-        s.current.bids.insert(OrderedFloat(100.0), 1.0);
-        s.current.bids.insert(OrderedFloat(101.0), 2.0);
-        s.current.bids.insert(OrderedFloat(102.0), 3.0); // will cross
-        s.current.asks.insert(OrderedFloat(100.0), 1.0); // crossed
-        s.current.asks.insert(OrderedFloat(103.0), 1.0);
+        s.apply_ws_snapshot(
+            &[(99.0, 1.0), (100.0, 2.0), (98.0, 3.0)],
+            &[(101.0, 1.0), (102.0, 0.5), (103.0, 0.1)],
+            1000,
+        );
 
-        s.sweep_crossed_book();
-
-        // After sweep: no bid >= best_ask
-        if let (Some(bb), Some(ba)) = (s.current.best_bid(), s.current.best_ask()) {
-            assert!(bb < ba, "book still crossed after sweep: bid={bb} ask={ba}");
-        }
-        // Healthy levels beyond the overlap should survive
-        assert!(s.current.asks.contains_key(&OrderedFloat(103.0)));
+        assert_eq!(s.current.best_bid(), Some(100.0));
+        assert_eq!(s.current.best_ask(), Some(101.0));
     }
 
-    // ── ws_window is set correctly ────────────────────────────────────────────
+    // ── version always incremented ────────────────────────────────────────────
 
     #[test]
-    fn ws_window_tracks_snapshot_range() {
+    fn version_incremented_on_every_apply() {
         let mut s = series();
-        assert_eq!(s.ws_window, None);
+        assert_eq!(s.current.version, 0);
 
-        s.apply_ws_snapshot(&[(50.0, 1.0), (51.0, 2.0)], &[(52.0, 1.0), (53.0, 0.5)], 1000);
-        assert_eq!(s.ws_window, Some((50.0, 53.0)));
-
-        // Second snapshot with different range updates the window
-        s.apply_ws_snapshot(&[(60.0, 1.0)], &[(61.0, 1.0)], 2000);
-        assert_eq!(s.ws_window, Some((60.0, 61.0)));
-    }
-
-    // ── empty WS snapshot doesn't clear window ───────────────────────────────
-
-    #[test]
-    fn apply_ws_snapshot_empty_noop() {
-        let mut s = series();
         s.apply_ws_snapshot(&[(99.0, 1.0)], &[(101.0, 1.0)], 1000);
-        let window_before = s.ws_window;
-        let version_before = s.current.version;
+        assert_eq!(s.current.version, 1);
 
-        // Empty slices → min_p > max_p → early return
-        s.apply_ws_snapshot(&[], &[], 2000);
+        s.apply_rest(&[(99.0, 1.0)], &[(101.0, 1.0)], 2000);
+        assert_eq!(s.current.version, 2);
 
-        assert_eq!(s.ws_window, window_before, "window changed on empty snapshot");
-        assert_eq!(s.current.version, version_before, "version changed on empty snapshot");
-        assert_eq!(s.current.last_ws_ts_ms, 2000, "ts not updated on empty snapshot");
+        s.apply_ws_delta(&[(98.0, 1.0)], &[], 3000);
+        assert_eq!(s.current.version, 3);
     }
 }
