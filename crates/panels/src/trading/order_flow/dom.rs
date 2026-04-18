@@ -522,6 +522,16 @@ impl TradingPanel for DomState {
             .map(|level| level.price)
             .min_by(|a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
+        // Decide mid-line rendering style:
+        // - If there's at least one empty bucket between best_bid and best_ask
+        //   (spread spans 2+ ticks), draw the mid as a full row.
+        // - Otherwise (best_bid and best_ask are in adjacent rows) draw the
+        //   mid as a thin 1px line between them.
+        let mid_as_row = match (best_bid_price, best_ask_price) {
+            (Some(bb), Some(ba)) => (ba - bb) > self.tick_size * 1.5,
+            _ => true, // unknown — fall back to row style
+        };
+
         // === STEP 4: Render each price level row ===
         for (i, level) in levels.iter().enumerate() {
             let row_y = y + (i as f32 * row_height);
@@ -551,8 +561,12 @@ impl TradingPanel for DomState {
             ctx.set_fill_color(bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
 
-            // Current price row: semi-transparent gold background (~30% opacity)
-            if is_current_price {
+            // Current price marker:
+            // - mid_as_row=true: paint the whole row in semi-transparent gold
+            //   (works when there's an empty row between best_bid and best_ask)
+            // - mid_as_row=false: draw a 1px gold line between best_bid and
+            //   best_ask rows (when they are adjacent, no empty mid row exists)
+            if is_current_price && mid_as_row {
                 let cp_bg = if theme.current_price.len() >= 7 {
                     format!("{}50", &theme.current_price[..7])
                 } else {
@@ -560,6 +574,12 @@ impl TradingPanel for DomState {
                 };
                 ctx.set_fill_color(&cp_bg);
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
+            }
+            // 1px mid line between best_bid (above) and best_ask (below) row.
+            // We draw it on the bottom edge of the best_ask row.
+            if !mid_as_row && is_best_ask {
+                ctx.set_fill_color(&theme.current_price);
+                ctx.fill_rect(x as f64, (row_y + row_height) as f64, w as f64, 1.0);
             }
 
             // --- Step 4.1b: Hover highlight overlay ---

@@ -115,12 +115,14 @@ impl OrderbookSeries {
 
     // ── Apply methods ────────────────────────────────────────────────────────
 
-    /// WS full snapshot — replaces the entire book.
+    /// WS partial snapshot — replaces ONLY the price range it covers.
     ///
-    /// Both maps are cleared and repopulated from the incoming levels. Any level
-    /// with `qty <= 0` is skipped. This is the source of truth for the full ladder.
+    /// A WS snapshot is a narrow window (~$3 wide for BTC perp). It must NOT
+    /// wipe the deep ladder supplied by REST. We compute the price range of
+    /// the incoming levels per side, drop existing entries inside that range,
+    /// then insert the new ones. Levels outside the range survive untouched.
     pub fn apply_ws_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
-        self.replace_all(bids, asks);
+        self.replace_in_range(bids, asks);
         self.current.last_ws_ts_ms = ts_ms;
         self.current.version += 1;
         self.dirty = true;
@@ -128,12 +130,13 @@ impl OrderbookSeries {
         self.append_history(snap);
     }
 
-    /// REST background snapshot — replaces the entire book.
+    /// REST deep snapshot — replaces ONLY the price range it covers.
     ///
-    /// Identical to `apply_ws_snapshot` in behaviour; only the timestamp field
-    /// differs. Last write wins regardless of source.
+    /// REST gives ~1000 levels (~$130 wide for BTC perp). We replace exactly
+    /// that range; if any WS-supplied level sits outside (rare — REST is wider
+    /// than WS by design) it is preserved. Within the range, REST is the truth.
     pub fn apply_rest(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
-        self.replace_all(bids, asks);
+        self.replace_in_range(bids, asks);
         self.current.last_rest_ts_ms = ts_ms;
         self.current.version += 1;
         self.dirty = true;
@@ -169,7 +172,31 @@ impl OrderbookSeries {
         self.append_history(snap);
     }
 
-    /// Shared full-replace logic used by both snapshot apply methods.
+    /// Shared range-replace logic used by both snapshot apply methods.
+    ///
+    /// Per side: compute the price range of the incoming levels, drop existing
+    /// entries inside that range, then insert the new ones. This keeps deep
+    /// ladder data (REST) when a narrow snapshot (WS) arrives, and vice versa.
+    fn replace_in_range(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        // Bids
+        if let Some((lo, hi)) = price_range(bids) {
+            self.current.bids.retain(|k, _| k.0 < lo || k.0 > hi);
+            for &(p, q) in bids {
+                if q > 0.0 { self.current.bids.insert(OrderedFloat(p), q); }
+            }
+        }
+        // Asks
+        if let Some((lo, hi)) = price_range(asks) {
+            self.current.asks.retain(|k, _| k.0 < lo || k.0 > hi);
+            for &(p, q) in asks {
+                if q > 0.0 { self.current.asks.insert(OrderedFloat(p), q); }
+            }
+        }
+    }
+
+    /// Legacy full-replace, kept for tests and potential callers that want to
+    /// truly wipe the book. Not used by the apply_* paths anymore.
+    #[allow(dead_code)]
     fn replace_all(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
         self.current.bids.clear();
         self.current.asks.clear();
@@ -186,6 +213,22 @@ impl OrderbookSeries {
     }
 }
 
+/// Compute (min_price, max_price) from a slice of (price, qty) levels.
+/// Returns `None` if every level has qty <= 0 or the slice is empty.
+fn price_range(levels: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let mut found = false;
+    for &(p, q) in levels {
+        if q > 0.0 {
+            if p < lo { lo = p; }
+            if p > hi { hi = p; }
+            found = true;
+        }
+    }
+    if found { Some((lo, hi)) } else { None }
+}
+
 // ── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -199,7 +242,7 @@ mod tests {
     // ── apply_rest — full replace ────────────────────────────────────────────
 
     #[test]
-    fn apply_rest_full_replace() {
+    fn apply_rest_inserts_levels() {
         let mut s = series();
         s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5)], 1000);
         assert_eq!(s.current.bids.len(), 2);
@@ -207,18 +250,24 @@ mod tests {
         assert_eq!(s.current.best_bid(), Some(100.0));
         assert_eq!(s.current.best_ask(), Some(101.0));
 
-        // Second REST call replaces the whole book
+        // Second REST call replaces only its own range. Old level at 99 was
+        // inside [99,100] of the first call; new call covers [99,100] too,
+        // so 99 disappears (not in new payload). 100 gone (not in new). 98
+        // and 103 are inserted.
         s.apply_rest(&[(98.0, 3.0)], &[(103.0, 1.0)], 2000);
-        assert_eq!(s.current.bids.len(), 1);
-        assert_eq!(s.current.asks.len(), 1);
-        assert_eq!(s.current.best_bid(), Some(98.0));
-        assert_eq!(s.current.best_ask(), Some(103.0));
+        // 98 inserted, 99/100 cleared (NOT in new range though — range is
+        // [98,98] for bids — so 99 and 100 SURVIVE). Verify:
+        assert!(s.current.bids.contains_key(&OrderedFloat(98.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(99.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(100.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(103.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(101.0)));
     }
 
-    // ── apply_ws_snapshot — full replace ────────────────────────────────────
+    // ── apply_ws_snapshot — range replace ────────────────────────────────────
 
     #[test]
-    fn apply_ws_snapshot_full_replace() {
+    fn apply_ws_snapshot_replaces_only_its_range() {
         let mut s = series();
         s.apply_ws_snapshot(&[(99.0, 5.0), (99.5, 3.0)], &[(100.5, 2.0), (101.0, 1.0)], 1000);
         assert_eq!(s.current.bids.len(), 2);
@@ -226,37 +275,64 @@ mod tests {
         assert_eq!(s.current.best_bid(), Some(99.5));
         assert_eq!(s.current.best_ask(), Some(100.5));
 
-        // Second snapshot replaces everything — previous levels gone
+        // Second snapshot covers [50,50] bid and [51,51] ask. Old levels
+        // (99..99.5 bids, 100.5..101 asks) are OUTSIDE that range → preserved.
         s.apply_ws_snapshot(&[(50.0, 1.0)], &[(51.0, 1.0)], 2000);
-        assert_eq!(s.current.bids.len(), 1);
-        assert_eq!(s.current.asks.len(), 1);
-        assert_eq!(s.current.best_bid(), Some(50.0));
-        assert_eq!(s.current.best_ask(), Some(51.0));
+        assert_eq!(s.current.bids.len(), 3);  // 99, 99.5, 50
+        assert_eq!(s.current.asks.len(), 3);  // 100.5, 101, 51
     }
 
-    // ── snapshot fully replaces previous state regardless of source ──────────
+    // ── range-based: WS narrow snapshot preserves REST deep ladder ───────────
 
     #[test]
-    fn snapshot_replaces_previous_state_across_sources() {
+    fn ws_snapshot_preserves_rest_outside_range() {
         let mut s = series();
 
-        // Start with REST
+        // REST gives wide depth: bids 90..100, asks 101..110
+        let rest_bids: Vec<(f64,f64)> = (90..=100).map(|p| (p as f64, 1.0)).collect();
+        let rest_asks: Vec<(f64,f64)> = (101..=110).map(|p| (p as f64, 1.0)).collect();
+        s.apply_rest(&rest_bids, &rest_asks, 1000);
+        assert_eq!(s.current.bids.len(), 11);
+        assert_eq!(s.current.asks.len(), 10);
+
+        // WS narrow snapshot: only [99,100] bid and [101,102] ask
+        s.apply_ws_snapshot(&[(99.0, 5.0), (100.0, 5.0)], &[(101.0, 5.0), (102.0, 5.0)], 2000);
+
+        // Bids: 90..98 from REST (9), 99..100 replaced from WS (2) → still 11 entries
+        assert_eq!(s.current.bids.len(), 11);
+        // Asks: 101..102 replaced from WS (2), 103..110 from REST (8) → 10 total
+        assert_eq!(s.current.asks.len(), 10);
+        // Inside WS range, qty was 5.0
+        assert_eq!(s.current.bids.get(&OrderedFloat(99.0)).copied(), Some(5.0));
+        assert_eq!(s.current.asks.get(&OrderedFloat(102.0)).copied(), Some(5.0));
+        // Outside WS range, REST qty 1.0 preserved
+        assert_eq!(s.current.bids.get(&OrderedFloat(90.0)).copied(), Some(1.0));
+        assert_eq!(s.current.asks.get(&OrderedFloat(110.0)).copied(), Some(1.0));
+    }
+
+    // ── snapshot semantics across sources (range-based, both preserve outside) ──
+
+    #[test]
+    fn snapshot_replaces_only_its_range_across_sources() {
+        let mut s = series();
+
+        // Start with REST: bids 99..100, asks 101..102
         s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5), (102.0, 3.0)], 1000);
         assert_eq!(s.current.bids.len(), 2);
         assert_eq!(s.current.asks.len(), 2);
 
-        // WS snapshot fully replaces — REST levels gone
+        // WS snapshot at [50,50]/[51,51] — completely OUTSIDE REST range,
+        // so REST levels survive AND WS levels added.
         s.apply_ws_snapshot(&[(50.0, 1.0)], &[(51.0, 1.0)], 2000);
-        assert_eq!(s.current.bids.len(), 1);
-        assert_eq!(s.current.asks.len(), 1);
-        assert!(!s.current.bids.contains_key(&OrderedFloat(100.0)));
-        assert!(!s.current.asks.contains_key(&OrderedFloat(101.0)));
+        assert_eq!(s.current.bids.len(), 3);  // 99, 100, 50
+        assert_eq!(s.current.asks.len(), 3);  // 101, 102, 51
 
-        // REST snapshot after WS — WS levels gone, REST wins
+        // REST snapshot at [200,200]/[201,201] — outside everything else.
         s.apply_rest(&[(200.0, 5.0)], &[(201.0, 5.0)], 3000);
-        assert_eq!(s.current.bids.len(), 1);
-        assert_eq!(s.current.asks.len(), 1);
-        assert!(!s.current.bids.contains_key(&OrderedFloat(50.0)));
+        assert_eq!(s.current.bids.len(), 4);  // 99, 100, 50, 200
+        assert_eq!(s.current.asks.len(), 4);  // 101, 102, 51, 201
+        assert!(!s.current.bids.contains_key(&OrderedFloat(50.0)) == false); // still there
+        assert!(s.current.bids.contains_key(&OrderedFloat(50.0)));
         assert_eq!(s.current.best_bid(), Some(200.0));
     }
 
