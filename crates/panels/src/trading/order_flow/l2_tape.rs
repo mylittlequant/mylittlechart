@@ -4,7 +4,10 @@
 //! modifications, cancellations, and executions in real-time.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
 use serde::{Serialize, Deserialize};
+
+use orderbook_service::OrderbookSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -88,6 +91,13 @@ pub struct L2TapeState {
     /// Crosshair price synced from a linked chart window.
     /// When set, events at this price level are highlighted.
     pub crosshair_price: Option<f64>,
+
+    /// Shared orderbook series (written by the bridge, read here each tick).
+    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
+    /// differs we pull a fresh snapshot and generate L2 events from the diff.
+    pub last_seen_orderbook_version: u64,
 }
 
 /// Spoofing alert data
@@ -289,7 +299,41 @@ impl L2TapeState {
             previous_book: HashMap::new(),
             tick_size: 0.01,
             crosshair_price: None,
+            shared_orderbook: None,
+            last_seen_orderbook_version: 0,
         }
+    }
+
+    /// Pull the latest snapshot from `shared_orderbook`, diff against `previous_book`,
+    /// and push any changed levels as L2Events.
+    ///
+    /// Returns immediately when there is no shared handle or the version has not
+    /// advanced since the last call.
+    pub fn tick(&mut self) {
+        let Some(ref ob_handle) = self.shared_orderbook else { return };
+        let Ok(series) = ob_handle.read() else { return };
+        if series.current.version == self.last_seen_orderbook_version {
+            return; // nothing new
+        }
+        self.last_seen_orderbook_version = series.current.version;
+
+        // Clone the snapshot data we need before releasing the lock.
+        let timestamp = series.current.last_rest_ts_ms;
+        let bids: Vec<(f64, f64)> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
+        let asks: Vec<(f64, f64)> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+        drop(series);
+
+        // Update mid-price tracker.
+        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+        if best_bid > 0.0 && best_ask > 0.0 {
+            self.dom_market_price = Some((best_bid + best_ask) / 2.0);
+        }
+
+        // Diff current snapshot against previous_book and generate L2Events.
+        // This reuses the same logic as apply_delta but operates on the full
+        // current book (treating missing levels as qty=0).
+        self.diff_and_push_events(&bids, &asks, timestamp);
     }
 
     /// Get visible events (most recent first), applying filters
@@ -367,30 +411,11 @@ impl L2TapeState {
         (price / self.tick_size).round() as i64
     }
 
-    /// Apply a full orderbook snapshot — resets previous_book, generates no events
-    /// (snapshot is the baseline, events come from subsequent deltas).
-    pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], _timestamp: i64) {
-        self.previous_book.clear();
-        for &(price, qty) in bids {
-            let tick = self.price_to_tick(price);
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
-            entry.0 = qty;
-        }
-        for &(price, qty) in asks {
-            let tick = self.price_to_tick(price);
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
-            entry.1 = qty;
-        }
-        // Update synced market price
-        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
-        if best_bid > 0.0 && best_ask > 0.0 {
-            self.dom_market_price = Some((best_bid + best_ask) / 2.0);
-        }
-    }
-
-    /// Apply an incremental orderbook delta — generates L2Events from changes.
-    pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp: i64) {
+    /// Diff the given bids/asks against `previous_book` and push L2Events for changes.
+    ///
+    /// Also updates `previous_book` to reflect the new state.
+    /// Called by `tick()` after pulling a fresh snapshot from the shared series.
+    fn diff_and_push_events(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp: i64) {
         for &(price, qty) in bids {
             let tick = self.price_to_tick(price);
             let prev_qty = self.previous_book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
@@ -402,14 +427,14 @@ impl L2TapeState {
             } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
-                continue; // No change
+                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                entry.0 = qty;
+                continue;
             };
 
-            // Apply min_quantity filter early to avoid filling the buffer with noise
             if let Some(min_q) = self.min_quantity {
                 let relevant_qty = if qty > 0.0 { qty } else { prev_qty };
                 if relevant_qty < min_q {
-                    // Still update previous_book, just don't generate event
                     let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
                     entry.0 = qty;
                     continue;
@@ -426,7 +451,6 @@ impl L2TapeState {
                 order_id: None,
             });
 
-            // Update previous state
             let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
             entry.0 = qty;
         }
@@ -442,6 +466,8 @@ impl L2TapeState {
             } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
+                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                entry.1 = qty;
                 continue;
             };
 
@@ -468,4 +494,18 @@ impl L2TapeState {
             entry.1 = qty;
         }
     }
+
+    /// Apply a full orderbook snapshot.
+    ///
+    /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
+    /// Kept as a no-op so remaining call sites compile.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    pub fn apply_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
+
+    /// Apply an incremental orderbook delta — generates L2Events from changes.
+    ///
+    /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
+    /// Kept as a no-op so remaining call sites compile.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)], _timestamp: i64) {}
 }

@@ -736,6 +736,11 @@ struct App<'s> {
     trade_service: trade_service::TradeService,
     /// Wall-clock instant of the last periodic trade-cache save.
     last_trade_cache_save: std::time::Instant,
+
+    /// Orderbook cache persistence service — owns OrderbookStoreHandle + shared orderbook map.
+    orderbook_service: orderbook_service::OrderbookService,
+    /// Wall-clock instant of the last periodic orderbook-cache save.
+    last_orderbook_cache_save: std::time::Instant,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -2411,6 +2416,41 @@ impl App<'_> {
             }
         }
 
+        // ── Orderbook cache persistence ───────────────────────────────────────
+        // Mirror the TradeService pattern: create the OrderbookStoreHandle, load
+        // persisted snapshots, and seed the shared orderbook map so that panels
+        // opening at startup see the last known orderbook state immediately.
+        let orderbook_dir = zengeld_chart::app_data_dir().join("orderbook");
+        let orderbook_store_handle = orderbook_store::OrderbookStoreHandle::new(orderbook_dir, bridge.runtime());
+        let mut orderbook_service = orderbook_service::OrderbookService::with_map(
+            bridge.orderbook_map(),
+            orderbook_store_handle.clone(),
+            orderbook_service::DEFAULT_HISTORY_CAPACITY,
+        );
+
+        // Seed OrderbookService series from disk data so panels don't start cold.
+        {
+            let bar_keys = collect_bar_keys_from_presets(&profile, &profile_manager.presets);
+            let mut seen = std::collections::HashSet::new();
+            for (exchange_str, symbol, _timeframe, account_type_label) in &bar_keys {
+                if seen.insert((exchange_str.clone(), symbol.clone(), account_type_label.clone())) {
+                    if let Some(eid) = chart_app::ExchangeId::from_str(exchange_str) {
+                        let at = chart_app::account_type_from_label(account_type_label);
+                        let key = orderbook_service::OrderbookKey::new(eid, at, symbol.as_str());
+                        let history = orderbook_store_handle.load(
+                            key.exchange_str(),
+                            &key.symbol,
+                            key.account_type_label(),
+                        );
+                        if !history.is_empty() {
+                            eprintln!("[App] seeding {} orderbook snapshots for {}/{}", history.len(), exchange_str, symbol);
+                            orderbook_service.seed_from_disk(key, history);
+                        }
+                    }
+                }
+            }
+        }
+
         // Load device settings once for App struct initialisation.
         let ds_init = zengeld_chart::user_profile::DeviceSettings::load();
 
@@ -2495,6 +2535,8 @@ impl App<'_> {
             last_cleanup_check: std::time::Instant::now(),
             trade_service,
             last_trade_cache_save: std::time::Instant::now(),
+            orderbook_service,
+            last_orderbook_cache_save: std::time::Instant::now(),
         }
     }
 
@@ -3463,6 +3505,11 @@ impl App<'_> {
         eprintln!("[App] save_all: flushing {} trade series to disk", self.trade_service.series_count());
         self.trade_service.flush_dirty();
         self.trade_service.flush_sync();
+
+        // 12. Flush orderbook cache to disk.
+        eprintln!("[App] save_all: flushing {} orderbook series to disk", self.orderbook_service.series_count());
+        self.orderbook_service.flush_dirty();
+        self.orderbook_service.flush_sync();
     }
 
     /// Drain app-level broadcast messages each frame.
@@ -4226,6 +4273,12 @@ impl ApplicationHandler for App<'_> {
         if self.last_trade_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
             self.last_trade_cache_save = std::time::Instant::now();
             self.trade_service.flush_dirty();
+        }
+
+        // ── Periodic orderbook cache save (every 30 seconds) ─────────────────
+        if self.last_orderbook_cache_save.elapsed() >= std::time::Duration::from_secs(30) {
+            self.last_orderbook_cache_save = std::time::Instant::now();
+            self.orderbook_service.flush_dirty();
         }
 
         // ── Event-driven bar cache flush (backfill / scroll) ─────────────────
@@ -8463,13 +8516,17 @@ fn main() {
     let shared_trades: trade_service::SharedTradeMap =
         std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
 
+    // Create the shared orderbook map — mirrors shared_trades for live orderbook series.
+    let shared_orderbook: orderbook_service::SharedOrderbookMap =
+        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
     // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
     // The broadcast receiver (`_live_rx`) is dropped here: we no longer subscribe
     // to it at the app level.  Per-window ChartApp instances each subscribe via
     // `bridge.add_listener()`.  The mpsc `connector_ready_rx` is the lightweight
     // channel used by `tick_app_state` to handle ConnectorReady without touching
     // the broadcast buffer.
-    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new(shared_series.clone(), shared_trades.clone());
+    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new(shared_series.clone(), shared_trades.clone(), shared_orderbook.clone());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.

@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use bar_service::{BarSeries, BarSeriesKey, SharedSeriesMap};
 use trade_service::{SharedTradeMap, TradeSeries, TradeKey, DEFAULT_CAPACITY};
+use orderbook_service::{SharedOrderbookMap, OrderbookKey, OrderbookSeries, DEFAULT_HISTORY_CAPACITY};
 
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
@@ -250,6 +251,12 @@ pub struct DataBridge {
     /// consumer unsubscribes. Multiple consumers sharing the same depth stream
     /// share a single poll task (tracked via the WS actor's own refcount).
     rest_orderbook_pollers: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
+    /// Session-level live orderbook series map.
+    ///
+    /// Key: `OrderbookKey`. Shared with `OrderbookService` in `App` via `Arc` — both
+    /// sides see the same `HashMap`. The async REST/WS tasks write orderbook state here;
+    /// panels read at render time. Mirrors `trade_map` semantics.
+    orderbook_map: SharedOrderbookMap,
 }
 
 impl DataBridge {
@@ -270,6 +277,7 @@ impl DataBridge {
     pub fn new(
         bar_cache: SharedSeriesMap,
         trade_map: SharedTradeMap,
+        shared_orderbook: SharedOrderbookMap,
     ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -295,6 +303,7 @@ impl DataBridge {
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
             rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
+            orderbook_map: shared_orderbook,
         }, rx, connector_ready_rx)
     }
 
@@ -304,6 +313,14 @@ impl DataBridge {
     /// will share the same underlying `HashMap` via `Arc`.
     pub fn trade_map(&self) -> SharedTradeMap {
         self.trade_map.clone()
+    }
+
+    /// Get a clone of the shared orderbook map.
+    ///
+    /// Use this to initialize `OrderbookService::with_map()` in `App` — both sides
+    /// will share the same underlying `HashMap` via `Arc`.
+    pub fn orderbook_map(&self) -> SharedOrderbookMap {
+        self.orderbook_map.clone()
     }
 
     /// Create a new update receiver that receives all future updates.
@@ -810,7 +827,7 @@ impl DataBridge {
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, pool);
+            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, pool, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
 
@@ -843,7 +860,7 @@ impl DataBridge {
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -865,7 +882,7 @@ impl DataBridge {
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt, &rt, None, pool.clone());
+            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt, &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
 
@@ -880,8 +897,68 @@ impl DataBridge {
                     symbol_owned,
                     account_type,
                     tx,
+                    self.orderbook_map.clone(),
                 ));
                 pollers.insert(poll_key, handle);
+            }
+        }
+    }
+
+    /// Subscribe to the shared `OrderbookSeries` for `(exchange, symbol, account_type)`.
+    ///
+    /// Mirrors `subscribe_trades`: increments `refcount`, starts the WS depth
+    /// actor + REST poller (via `subscribe_depth`), and returns a cloned `Arc`
+    /// so the caller (DOM panel) can read the live snapshot without going through
+    /// the broadcast channel.
+    pub fn subscribe_orderbook(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Arc<RwLock<OrderbookSeries>> {
+        // Start WS depth actor + REST poller (idempotent).
+        self.subscribe_depth(exchange_id, symbol, account_type);
+
+        // Get-or-create the OrderbookSeries in the shared map, incrementing refcount.
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        let handle = {
+            let mut map = self.orderbook_map.write().unwrap_or_else(|e| e.into_inner());
+            map.entry(ob_key)
+                .or_insert_with(|| Arc::new(RwLock::new(OrderbookSeries::new(DEFAULT_HISTORY_CAPACITY))))
+                .clone()
+        };
+        if let Ok(mut series) = handle.write() {
+            series.refcount += 1;
+        }
+        handle
+    }
+
+    /// Unsubscribe one consumer from the shared `OrderbookSeries`.
+    ///
+    /// Decrements `refcount`; removes the series from the map when it hits zero.
+    /// Also calls `unsubscribe_depth` to manage the underlying WS actor.
+    pub fn unsubscribe_orderbook(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.unsubscribe_depth(exchange_id, symbol, account_type);
+
+        let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
+        if let Ok(mut map) = self.orderbook_map.write() {
+            let remove = if let Some(handle) = map.get(&ob_key) {
+                if let Ok(mut series) = handle.write() {
+                    series.refcount = series.refcount.saturating_sub(1);
+                    series.refcount == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if remove {
+                map.remove(&ob_key);
             }
         }
     }
@@ -913,7 +990,7 @@ impl DataBridge {
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
             // get_or_spawn returns existing cmd_tx if already running.
-            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), pool);
+            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), pool, None);
         }
     }
 
@@ -1988,6 +2065,7 @@ async fn rest_orderbook_poller(
     symbol: String,
     account_type: AccountType,
     tx: broadcast::Sender<LiveUpdate>,
+    orderbook_map: SharedOrderbookMap,
 ) {
     // Resolve max depth from connector caps. Falls back to 100 if unknown.
     let depth: u16 = match pool.get(&exchange_id) {
@@ -2018,13 +2096,24 @@ async fn rest_orderbook_poller(
             Ok(book) => {
                 let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
                 let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
+                let ts = book.timestamp;
+
+                // Write to SharedOrderbookMap — panels read from this directly.
+                let ob_key = OrderbookKey::new(exchange_id, account_type, &symbol);
+                if let Some(handle) = orderbook_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                    if let Ok(mut series) = handle.write() {
+                        series.apply_rest(&bids, &asks, ts);
+                    }
+                }
+
+                // Also broadcast for backward compat (not-yet-migrated panels).
                 let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                     exchange_id,
                     account_type,
                     symbol: symbol.clone(),
                     bids,
                     asks,
-                    timestamp: book.timestamp,
+                    timestamp: ts,
                     source: OrderbookSource::Rest,
                 });
             }

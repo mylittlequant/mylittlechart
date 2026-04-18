@@ -1,0 +1,12 @@
+[package]
+name = "orderbook-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+orderbook-store = { path = "../orderbook-store" }
+digdigdig3 = "=0.1.31"
+ordered-float = "4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "sync"] }

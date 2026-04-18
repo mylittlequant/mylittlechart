@@ -41,6 +41,7 @@ use digdigdig3::l3::open::crypto::cex::crypto_com::CryptoComWebSocket;
 use digdigdig3::l3::open::crypto::dex::lighter::LighterWebSocket;
 
 use crate::bridge::LiveUpdate;
+use orderbook_service::{SharedOrderbookMap, OrderbookKey};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC TYPES
@@ -95,6 +96,7 @@ impl WsActorMap {
         rt: &tokio::runtime::Handle,
         credentials: Option<digdigdig3::Credentials>,
         pool: ConnectorPool,
+        orderbook_map: Option<SharedOrderbookMap>,
     ) -> mpsc::Sender<WsCmd> {
         if let Some(handle) = self.actors.get(&key) {
             if !handle.task.is_finished() {
@@ -103,7 +105,7 @@ impl WsActorMap {
             self.actors.remove(&key);
         }
         let (cmd_tx, cmd_rx) = mpsc::channel::<WsCmd>(64);
-        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials, pool));
+        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials, pool, orderbook_map));
         self.actors.insert(key, WsActorHandle { cmd_tx: cmd_tx.clone(), task });
         cmd_tx
     }
@@ -162,6 +164,7 @@ async fn run_ws_actor(
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
     credentials: Option<digdigdig3::Credentials>,
     _pool: ConnectorPool,
+    orderbook_map: Option<SharedOrderbookMap>,
 ) {
     // Private actors use a simplified loop that connects immediately and
     // subscribes to all three private streams without any per-symbol logic.
@@ -329,6 +332,18 @@ async fn run_ws_actor(
                                             .find(|(_, &c)| c > 0)
                                             .map(|(s, _)| s.clone());
                                         if let Some(sym) = maybe_sym {
+                                            // Write to SharedOrderbookMap — WS snapshot replaces in covered range.
+                                            if let Some(ref ob_map) = orderbook_map {
+                                                let ob_key = OrderbookKey::new(state.exchange_id, state.account_type, &sym);
+                                                if let Some(handle) = ob_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                                                    if let Ok(mut series) = handle.write() {
+                                                        // Clone slices for the map write; originals moved to broadcast below.
+                                                        let bids_ref: Vec<(f64, f64)> = emitted.bids.clone();
+                                                        let asks_ref: Vec<(f64, f64)> = emitted.asks.clone();
+                                                        series.apply_ws_snapshot(&bids_ref, &asks_ref, emitted.timestamp);
+                                                    }
+                                                }
+                                            }
                                             let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                                 exchange_id: state.exchange_id,
                                                 account_type: state.account_type,
@@ -365,6 +380,17 @@ async fn run_ws_actor(
                                                 .find(|(_, &c)| c > 0)
                                                 .map(|(s, _)| s.clone());
                                             if let Some(sym) = maybe_sym {
+                                                // Write delta to SharedOrderbookMap.
+                                                if let Some(ref ob_map) = orderbook_map {
+                                                    let ob_key = OrderbookKey::new(state.exchange_id, state.account_type, &sym);
+                                                    if let Some(handle) = ob_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                                                        if let Ok(mut series) = handle.write() {
+                                                            let bid_changes: Vec<(f64, f64)> = delta.bids.iter().map(|l| (l.price, l.size)).collect();
+                                                            let ask_changes: Vec<(f64, f64)> = delta.asks.iter().map(|l| (l.price, l.size)).collect();
+                                                            series.apply_ws_delta(&bid_changes, &ask_changes, delta.timestamp);
+                                                        }
+                                                    }
+                                                }
                                                 // Emit reconstructed book for DOM rendering.
                                                 let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                                                     exchange_id: state.exchange_id,
@@ -393,7 +419,7 @@ async fn run_ws_actor(
                                 }
                             }
 
-                            dispatch_event(&tx, &state, event);
+                            dispatch_event(&tx, &state, event, orderbook_map.as_ref());
                         }
                         Ok(Some(Err(e))) => {
                             eprintln!(
@@ -508,7 +534,7 @@ async fn run_private_ws_actor(
                     match result {
                         Ok(Some(Ok(event))) => {
                             retry_count = 0;
-                            dispatch_event(&tx, &state, event);
+                            dispatch_event(&tx, &state, event, None);
                         }
                         Ok(Some(Err(e))) => {
                             eprintln!(
@@ -800,6 +826,7 @@ fn dispatch_event(
     tx: &broadcast::Sender<LiveUpdate>,
     state: &WsActorState,
     event: StreamEvent,
+    orderbook_map: Option<&SharedOrderbookMap>,
 ) {
     match event {
         StreamEvent::Trade(trade) => {
@@ -861,12 +888,23 @@ fn dispatch_event(
             if state.stream_type == WsStreamType::Depth {
                 for (sym, &count) in &state.refcounts {
                     if count > 0 {
+                        let bids: Vec<(f64, f64)> = ob.bids.iter().map(|l| (l.price, l.size)).collect();
+                        let asks: Vec<(f64, f64)> = ob.asks.iter().map(|l| (l.price, l.size)).collect();
+                        // Write to SharedOrderbookMap.
+                        if let Some(ob_map) = orderbook_map {
+                            let ob_key = OrderbookKey::new(state.exchange_id, state.account_type, sym.as_str());
+                            if let Some(handle) = ob_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                                if let Ok(mut series) = handle.write() {
+                                    series.apply_ws_snapshot(&bids, &asks, ob.timestamp);
+                                }
+                            }
+                        }
                         let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                             exchange_id: state.exchange_id,
                             account_type: state.account_type,
                             symbol: sym.clone(),
-                            bids: ob.bids.iter().map(|l| (l.price, l.size)).collect(),
-                            asks: ob.asks.iter().map(|l| (l.price, l.size)).collect(),
+                            bids,
+                            asks,
                             timestamp: ob.timestamp,
                             source: crate::bridge::OrderbookSource::Ws,
                         });
@@ -914,12 +952,23 @@ fn dispatch_event(
             if state.stream_type == WsStreamType::Depth {
                 for (sym, &count) in &state.refcounts {
                     if count > 0 {
+                        let bid_changes: Vec<(f64, f64)> = bids.iter().map(|l| (l.price, l.size)).collect();
+                        let ask_changes: Vec<(f64, f64)> = asks.iter().map(|l| (l.price, l.size)).collect();
+                        // Write to SharedOrderbookMap.
+                        if let Some(ob_map) = orderbook_map {
+                            let ob_key = OrderbookKey::new(state.exchange_id, state.account_type, sym.as_str());
+                            if let Some(handle) = ob_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
+                                if let Ok(mut series) = handle.write() {
+                                    series.apply_ws_delta(&bid_changes, &ask_changes, timestamp);
+                                }
+                            }
+                        }
                         let _ = tx.send(LiveUpdate::OrderbookDelta {
                             exchange_id: state.exchange_id,
                             account_type: state.account_type,
                             symbol: sym.clone(),
-                            bids: bids.iter().map(|l| (l.price, l.size)).collect(),
-                            asks: asks.iter().map(|l| (l.price, l.size)).collect(),
+                            bids: bid_changes,
+                            asks: ask_changes,
                             timestamp,
                         });
                     }

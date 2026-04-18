@@ -812,7 +812,9 @@ impl ChartApp {
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let shared_trades: trade_service::SharedTradeMap =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series, shared_trades);
+        let shared_orderbook: orderbook_service::SharedOrderbookMap =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series, shared_trades, shared_orderbook);
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -2738,47 +2740,47 @@ impl ChartApp {
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
-                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids, asks, timestamp, source } => {
+                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source: _ } => {
                     let ex_str = exchange_id.as_str();
                     let at_str = account_type.short_label();
-                    // Route DOM snapshot to the correct store (REST = wide, WS = narrow).
+                    // All orderbook panels now read from the shared OrderbookSeries via tick().
+                    // The bridge already wrote the new data into the shared series before
+                    // broadcasting this LiveUpdate, so tick() will see the version bump.
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            match source {
-                                live_data::OrderbookSource::Rest => state.apply_rest_snapshot(&bids, &asks),
-                                live_data::OrderbookSource::Ws  => state.apply_ws_snapshot(&bids, &asks),
-                            }
+                            state.tick();
                         }
                     }
-                    // L2 Tape and Heatmap consume snapshots as a historical event stream —
-                    // they don't need the source distinction.
                     for state in self.panels_store.l2_tape.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.apply_snapshot(&bids, &asks, timestamp);
+                            state.tick();
                         }
                     }
                     for state in self.panels_store.liquidity_heatmap.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.apply_snapshot(&bids, &asks, timestamp);
+                            state.tick();
                         }
                     }
                 }
-                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids, asks, timestamp } => {
+                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _ } => {
                     let ex_str = exchange_id.as_str();
                     let at_str = account_type.short_label();
-                    // Feed incremental delta into all DOM panels that display this (symbol, exchange, account_type).
+                    // All orderbook panels read from shared OrderbookSeries via tick().
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.apply_delta(&bids, &asks);
+                            state.tick();
                         }
                     }
-                    // Feed delta into L2 Tape panels (generates Add/Modify/Cancel events).
                     for state in self.panels_store.l2_tape.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.apply_delta(&bids, &asks, timestamp);
+                            state.tick();
                         }
                     }
-                    // Heatmap only samples snapshots, not deltas — no action here.
+                    for state in self.panels_store.liquidity_heatmap.values_mut() {
+                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
+                            state.tick();
+                        }
+                    }
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
@@ -6715,23 +6717,43 @@ impl ChartApp {
 
         for pid in &panel_ids {
             let panel_id = sidebar_content::free_slot::PanelId(*pid);
-            if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
-                // Capture old sub key before overwriting if symbol actually changes.
-                if s.symbol != symbol && !s.symbol.is_empty() {
-                    old_depth_subs.push((s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+            // DOM symbol change: unsubscribe old orderbook, subscribe new.
+            // Two-pass to avoid holding a mutable borrow while calling bridge.
+            let dom_change = self.panels_store.dom.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
+                    Some((s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                } else {
+                    None
                 }
-                let symbol_changed = s.symbol != symbol;
-                s.symbol = symbol.clone();
-                s.exchange = exchange.clone();
-                s.account_type = account_type.clone();
-                // Clear stale orderbook data so the panel doesn't flicker between
-                // the old and new symbol's levels.
-                if symbol_changed {
+            });
+            if let Some((old_sym, old_exch, old_at_label)) = dom_change {
+                // Unsubscribe old orderbook.
+                if !old_sym.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
+                        let old_at = account_type_from_label(&old_at_label);
+                        self.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
+                    }
+                }
+                // Subscribe new orderbook.
+                let new_handle = if !symbol.is_empty() {
+                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                        let new_at = account_type_from_label(&account_type);
+                        self.bridge.subscribe_orderbook(eid, &symbol, new_at)
+                    })
+                } else {
+                    None
+                };
+                // Update state.
+                if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    s.exchange = exchange.clone();
+                    s.account_type = account_type.clone();
+                    s.shared_orderbook = new_handle;
+                    s.last_seen_orderbook_version = 0;
                     s.volume_by_price.clear();
                     s.max_volume = 0.0;
                     s.recent_fills.clear();
                 }
-                needs_depth_sub = true;
             }
             if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
                 s.symbol = symbol.clone();

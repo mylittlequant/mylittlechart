@@ -10093,7 +10093,18 @@ impl ChartApp {
                         let item_opt = match kind_str {
                             "dom" => {
                                 let pid = self.panels_store.create_dom(symbol.clone(), resolved_tick_size);
-                                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                if !symbol.is_empty() {
+                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                                        .unwrap_or(self.active_exchange);
+                                    let at = crate::account_type_from_label(&account_type_str);
+                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.exchange = exchange_str.clone();
+                                        state.account_type = account_type_str.clone();
+                                        state.shared_orderbook = Some(handle);
+                                        state.last_seen_orderbook_version = 0;
+                                    }
+                                } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10139,7 +10150,18 @@ impl ChartApp {
                             }
                             "liquidity_heatmap" => {
                                 let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), resolved_tick_size, 1000);
-                                if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                                if !symbol.is_empty() {
+                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                                        .unwrap_or(self.active_exchange);
+                                    let at = crate::account_type_from_label(&account_type_str);
+                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                    if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                                        state.exchange = exchange_str.clone();
+                                        state.account_type = account_type_str.clone();
+                                        state.shared_orderbook = Some(handle);
+                                        state.last_seen_orderbook_version = 0;
+                                    }
+                                } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
                                 }
@@ -10170,7 +10192,19 @@ impl ChartApp {
                             }
                             "l2_tape" => {
                                 let pid = self.panels_store.create_l2_tape();
-                                if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                if !symbol.is_empty() {
+                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                                        .unwrap_or(self.active_exchange);
+                                    let at = crate::account_type_from_label(&account_type_str);
+                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                    if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                        state.symbol = symbol.clone();
+                                        state.exchange = exchange_str.clone();
+                                        state.account_type = account_type_str.clone();
+                                        state.shared_orderbook = Some(handle);
+                                        state.last_seen_orderbook_version = 0;
+                                    }
+                                } else if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();
                                     state.exchange = exchange_str.clone();
                                     state.account_type = account_type_str.clone();
@@ -10210,8 +10244,10 @@ impl ChartApp {
                             _ => None,
                         };
 
-                        // Subscribe depth for panels that need orderbook data.
-                        let needs_depth = matches!(kind_str, "dom" | "l2_tape" | "liquidity_heatmap");
+                        // Subscribe depth for panels that need raw orderbook data.
+                        // DOM is excluded here because it subscribes via subscribe_orderbook()
+                        // above, which internally calls subscribe_depth().
+                        let needs_depth = matches!(kind_str, "l2_tape" | "liquidity_heatmap");
                         if needs_depth {
                             let eid = self.exchange_symbols
                                 .keys()
@@ -10452,8 +10488,18 @@ impl ChartApp {
                                             let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
                                             self.panel_app.tag_manager.disconnect(member);
                                             self.panel_app.tag_manager.synced_panels_remove(member);
-                                            // Unsubscribe order-flow panels from the shared trade ring
+                                            // Unsubscribe panels from shared data streams
                                             // before dropping their state.
+                                            if let sidebar_content::free_slot::FreeItem::Dom(pid) = &item {
+                                                if let Some(state) = self.panels_store.dom.get(pid) {
+                                                    if !state.symbol.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                            let at = crate::account_type_from_label(&state.account_type);
+                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             if let sidebar_content::free_slot::FreeItem::BigTrades(pid) = &item {
                                                 if let Some(state) = self.panels_store.big_trades.get(pid) {
                                                     if !state.symbol.is_empty() {
@@ -10480,6 +10526,26 @@ impl ChartApp {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
                                                             self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if let sidebar_content::free_slot::FreeItem::L2Tape(pid) = &item {
+                                                if let Some(state) = self.panels_store.l2_tape.get(pid) {
+                                                    if !state.symbol.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                            let at = crate::account_type_from_label(&state.account_type);
+                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if let sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid) = &item {
+                                                if let Some(state) = self.panels_store.liquidity_heatmap.get(pid) {
+                                                    if !state.symbol.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                            let at = crate::account_type_from_label(&state.account_type);
+                                                            self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -10565,8 +10631,18 @@ impl ChartApp {
                                 let member = zengeld_chart::tag_manager::SyncMemberId::Panel(item.panel_id().0);
                                 self.panel_app.tag_manager.disconnect(member);
                                 self.panel_app.tag_manager.synced_panels_remove(member);
-                                // Unsubscribe order-flow panels from the shared trade ring
-                                // before dropping their state.
+                                // Unsubscribe panels from shared data streams before
+                                // dropping their state.
+                                if let sidebar_content::free_slot::FreeItem::Dom(pid) = &item {
+                                    if let Some(state) = self.panels_store.dom.get(pid) {
+                                        if !state.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                let at = crate::account_type_from_label(&state.account_type);
+                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                            }
+                                        }
+                                    }
+                                }
                                 if let sidebar_content::free_slot::FreeItem::BigTrades(pid) = &item {
                                     if let Some(state) = self.panels_store.big_trades.get(pid) {
                                         if !state.symbol.is_empty() {
@@ -10593,6 +10669,26 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
                                                 self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                            }
+                                        }
+                                    }
+                                }
+                                if let sidebar_content::free_slot::FreeItem::L2Tape(pid) = &item {
+                                    if let Some(state) = self.panels_store.l2_tape.get(pid) {
+                                        if !state.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                let at = crate::account_type_from_label(&state.account_type);
+                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                            }
+                                        }
+                                    }
+                                }
+                                if let sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid) = &item {
+                                    if let Some(state) = self.panels_store.liquidity_heatmap.get(pid) {
+                                        if !state.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                let at = crate::account_type_from_label(&state.account_type);
+                                                self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -20926,6 +21022,14 @@ impl ChartApp {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
                                         }
+                                        // Subscribe to the shared orderbook series if we have a concrete symbol.
+                                        if !s.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
+                                                let at = crate::account_type_from_label(&s.account_type);
+                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = Some(handle);
+                                            }
+                                        }
                                         self.panels_store.dom.insert(pid, s);
                                     }
                                 }
@@ -20984,6 +21088,14 @@ impl ChartApp {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
                                         }
+                                        // Subscribe to the shared orderbook series if we have a concrete symbol.
+                                        if !s.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
+                                                let at = crate::account_type_from_label(&s.account_type);
+                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = Some(handle);
+                                            }
+                                        }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
                                     }
                                 }
@@ -21021,6 +21133,14 @@ impl ChartApp {
                                         if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
+                                        }
+                                        // Subscribe to the shared orderbook series if we have a concrete symbol.
+                                        if !s.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
+                                                let at = crate::account_type_from_label(&s.account_type);
+                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = Some(handle);
+                                            }
                                         }
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
@@ -21141,21 +21261,9 @@ impl ChartApp {
                                 .unwrap_or(self.active_exchange)
                         };
 
-                        for state in self.panels_store.dom.values() {
-                            if state.symbol.is_empty() { continue; }
-                            // Market-data panels store exchange/account_type directly now.
-                            let eid = if state.exchange.is_empty() {
-                                self.active_exchange
-                            } else {
-                                resolve_eid(&state.exchange)
-                            };
-                            let at = if state.account_type.is_empty() {
-                                digdigdig3::AccountType::Spot
-                            } else {
-                                crate::account_type_from_label(&state.account_type)
-                            };
-                            depth_subs.push((eid, state.symbol.clone(), at));
-                        }
+                        // DOM panels subscribe via subscribe_orderbook() in the
+                        // PersistedFreeItemKind::Dom block above.  No additional
+                        // subscribe_depth() call is needed here for DOM.
 
                         for state in self.panels_store.l2_tape.values() {
                             if state.symbol.is_empty() { continue; }

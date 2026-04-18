@@ -1,5 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+use orderbook_service::OrderbookSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -51,6 +54,13 @@ pub struct LiquidityHeatmapState {
     /// Crosshair price synced from a linked chart window.
     /// When set, a subtle highlight line is drawn at the corresponding price row.
     pub crosshair_price: Option<f64>,
+
+    /// Shared orderbook series (written by the bridge, read here each tick).
+    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
+    /// differs we pull a fresh snapshot and sample it into the heatmap.
+    pub last_seen_orderbook_version: u64,
 }
 
 impl LiquidityHeatmapState {
@@ -71,11 +81,40 @@ impl LiquidityHeatmapState {
             last_snapshot_ms: 0,
             max_snapshots: 1000,
             crosshair_price: None,
+            shared_orderbook: None,
+            last_seen_orderbook_version: 0,
         }
+    }
+
+    /// Pull the latest snapshot from `shared_orderbook` and sample it into the
+    /// heatmap (rate-limited by `snapshot_interval_ms`).
+    ///
+    /// Returns immediately when there is no shared handle or the version has not
+    /// advanced since the last call.
+    pub fn tick(&mut self) {
+        let Some(ref ob_handle) = self.shared_orderbook else { return };
+        let Ok(series) = ob_handle.read() else { return };
+        if series.current.version == self.last_seen_orderbook_version {
+            return; // nothing new
+        }
+        self.last_seen_orderbook_version = series.current.version;
+
+        let timestamp = series.current.last_rest_ts_ms;
+        let bids: Vec<(f64, f64)> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
+        let asks: Vec<(f64, f64)> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+        drop(series);
+
+        // apply_snapshot is rate-limited internally — only samples if enough time passed.
+        #[allow(deprecated)]
+        self.apply_snapshot(&bids, &asks, timestamp);
     }
 
     /// Apply an orderbook snapshot — rate-limited by snapshot_interval_ms.
     /// Returns true if a snapshot was actually recorded.
+    ///
+    /// Deprecated — callers should use `tick()` to pull data from the shared
+    /// `OrderbookSeries`. This method is still called internally by `tick()`.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
     pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp_ms: i64) -> bool {
         // Rate-limit: skip if too soon since last snapshot
         if timestamp_ms - self.last_snapshot_ms < self.snapshot_interval_ms as i64 {

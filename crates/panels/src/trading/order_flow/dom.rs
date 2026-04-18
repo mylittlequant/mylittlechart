@@ -1,6 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
+
+use orderbook_service::OrderbookSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -37,18 +40,15 @@ pub struct DomState {
     /// HashMap<price_level, (bid_volume, ask_volume, bid_order_count, ask_order_count)>
     pub volume_by_price: HashMap<i64, (f64, f64, usize, usize)>, // Using i64 for price ticks
 
-    /// Last full REST snapshot — wide depth, source of truth for the deep ladder.
-    pub rest_bids: HashMap<u64, f64>, // price.to_bits() → qty
-    pub rest_asks: HashMap<u64, f64>,
-    /// Last WS snapshot — narrow window around mid, freshest values.
-    pub ws_bids: HashMap<u64, f64>,
-    pub ws_asks: HashMap<u64, f64>,
-    /// Coverage range of the current WS snapshot (used to skip REST levels inside it).
-    pub ws_bid_range: Option<(f64, f64)>,
-    pub ws_ask_range: Option<(f64, f64)>,
-
     /// Maximum volume across all visible levels (for bar scaling)
     pub max_volume: f64,
+
+    /// Shared orderbook series (written by the bridge, read here each tick).
+    pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Last `OrderbookSnapshot::version` we consumed.  When `series.current.version`
+    /// differs we pull a fresh aggregation from the shared series.
+    pub last_seen_orderbook_version: u64,
 
     /// User's pending orders at each price level
     pub user_orders: HashMap<i64, Vec<String>>, // price_tick -> order_ids
@@ -107,13 +107,9 @@ impl DomState {
             levels_displayed: 20,
             tick_size,
             volume_by_price: HashMap::new(),
-            rest_bids: HashMap::new(),
-            rest_asks: HashMap::new(),
-            ws_bids: HashMap::new(),
-            ws_asks: HashMap::new(),
-            ws_bid_range: None,
-            ws_ask_range: None,
             max_volume: 0.0,
+            shared_orderbook: None,
+            last_seen_orderbook_version: 0,
             user_orders: HashMap::new(),
             hovered_price: None,
             recent_fills: HashMap::new(),
@@ -304,123 +300,81 @@ impl DomState {
         }
     }
 
-    /// Apply a fresh REST orderbook snapshot. Source of truth for the wide
-    /// ladder. Fully replaces the REST cache.
-    pub fn apply_rest_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        self.rest_bids.clear();
-        self.rest_asks.clear();
-        for &(p, q) in bids { if q > 0.0 { self.rest_bids.insert(p.to_bits(), q); } }
-        for &(p, q) in asks { if q > 0.0 { self.rest_asks.insert(p.to_bits(), q); } }
-        self.update_market_price_from(bids, asks);
-        self.rebuild_aggregation();
-    }
+    /// Pull the latest snapshot from `shared_orderbook` and update derived state.
+    ///
+    /// Returns immediately when there is no shared handle or when the version
+    /// has not advanced since the last call.
+    pub fn tick(&mut self) {
+        let Some(ref ob_handle) = self.shared_orderbook else { return };
+        let Ok(series) = ob_handle.read() else { return };
+        if series.current.version == self.last_seen_orderbook_version {
+            return; // nothing new
+        }
+        self.last_seen_orderbook_version = series.current.version;
 
-    /// Apply a fresh WS orderbook snapshot. Narrow window patch over the REST
-    /// cache. Fully replaces the WS cache.
-    pub fn apply_ws_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        self.ws_bids.clear();
-        self.ws_asks.clear();
-        for &(p, q) in bids { if q > 0.0 { self.ws_bids.insert(p.to_bits(), q); } }
-        for &(p, q) in asks { if q > 0.0 { self.ws_asks.insert(p.to_bits(), q); } }
-        self.ws_bid_range = price_range(bids);
-        self.ws_ask_range = price_range(asks);
-        self.update_market_price_from(bids, asks);
-        self.rebuild_aggregation();
-    }
-
-    fn update_market_price_from(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
-        if best_bid > 0.0 && best_ask > 0.0 {
-            self.market_price = (best_bid + best_ask) / 2.0;
+        // Update market_price from current mid.
+        if let Some(mid) = series.current.mid() {
+            self.market_price = mid;
             if self.center_price == 0.0 || self.auto_center {
-                self.center_price = self.market_price;
+                self.center_price = mid;
             }
         }
+
+        // Rebuild volume_by_price from the shared snapshot.
+        // We must clone the snapshot data we need before releasing the lock.
+        let bids: Vec<_> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
+        let asks: Vec<_> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+        drop(series);
+        self.rebuild_aggregation_from_levels(&bids, &asks);
     }
 
-    /// Apply an incremental orderbook delta — writes into the WS window and rebuilds aggregation.
-    pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        for &(p, q) in bids {
-            let k = p.to_bits();
-            if q == 0.0 { self.ws_bids.remove(&k); } else { self.ws_bids.insert(k, q); }
+    /// Rebuild `volume_by_price` from flat bid/ask level lists.
+    fn rebuild_aggregation_from_levels(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.volume_by_price.clear();
+        for &(price, qty) in bids {
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.0 += qty;
+            entry.2 += 1;
         }
-        for &(p, q) in asks {
-            let k = p.to_bits();
-            if q == 0.0 { self.ws_asks.remove(&k); } else { self.ws_asks.insert(k, q); }
+        for &(price, qty) in asks {
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.1 += qty;
+            entry.3 += 1;
         }
-        // Recompute WS coverage windows from the updated maps.
-        self.ws_bid_range = recompute_window(&self.ws_bids);
-        self.ws_ask_range = recompute_window(&self.ws_asks);
-        self.rebuild_aggregation();
-        // Update market price from WS best bid/ask.
-        let best_bid = self.ws_bids.keys().map(|b| f64::from_bits(*b)).fold(f64::NEG_INFINITY, f64::max);
-        let best_ask = self.ws_asks.keys().map(|b| f64::from_bits(*b)).fold(f64::INFINITY, f64::min);
-        if best_bid > 0.0 && best_ask.is_finite() && best_ask > 0.0 {
-            self.market_price = (best_bid + best_ask) / 2.0;
-            if self.center_price == 0.0 || self.auto_center {
-                self.center_price = self.market_price;
-            }
-        }
+        self.recompute_max_volume();
     }
 
-    /// Change `tick_size` (depth aggregation granularity) and rebuild the
-    /// aggregated view from raw data — no data loss, no flicker waiting for
-    /// the next snapshot.
+    /// Apply a fresh REST orderbook snapshot.
+    ///
+    /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
+    /// Kept as a no-op so that any remaining call sites compile without changes.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    pub fn apply_rest_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
+
+    /// Apply a fresh WS orderbook snapshot.
+    ///
+    /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    pub fn apply_ws_snapshot(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
+
+    /// Apply an incremental orderbook delta.
+    ///
+    /// Deprecated — DOM now reads from `shared_orderbook` via `tick()`.
+    #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
+    pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
+
+    /// Change `tick_size` (depth aggregation granularity) and re-pull from the
+    /// shared series so the change takes effect immediately.
     pub fn set_tick_size(&mut self, new_tick: f64) {
         if new_tick <= 0.0 || (new_tick - self.tick_size).abs() < f64::EPSILON {
             return;
         }
         self.tick_size = new_tick;
-        self.rebuild_aggregation();
-    }
-
-    /// Rebuild `volume_by_price` from REST + WS overlay using the current
-    /// `tick_size` as bucket width. WS levels override REST inside the WS window.
-    fn rebuild_aggregation(&mut self) {
-        let mut next: HashMap<i64, (f64, f64, usize, usize)> =
-            HashMap::with_capacity(self.rest_bids.len() + self.ws_bids.len());
-
-        // 1. REST bids — skip prices inside the WS bid window (WS overrides there).
-        for (&pb, &qty) in &self.rest_bids {
-            let price = f64::from_bits(pb);
-            if let Some((lo, hi)) = self.ws_bid_range {
-                if price >= lo && price <= hi { continue; }
-            }
-            let tick = (price / self.tick_size).floor() as i64;
-            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.0 += qty;
-            entry.2 += 1;
-        }
-        // 2. WS bids — always add (they are the truth in their window).
-        for (&pb, &qty) in &self.ws_bids {
-            let price = f64::from_bits(pb);
-            let tick = (price / self.tick_size).floor() as i64;
-            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.0 += qty;
-            entry.2 += 1;
-        }
-        // 3. REST asks — skip prices inside the WS ask window.
-        for (&pb, &qty) in &self.rest_asks {
-            let price = f64::from_bits(pb);
-            if let Some((lo, hi)) = self.ws_ask_range {
-                if price >= lo && price <= hi { continue; }
-            }
-            let tick = (price / self.tick_size).floor() as i64;
-            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.1 += qty;
-            entry.3 += 1;
-        }
-        // 4. WS asks.
-        for (&pb, &qty) in &self.ws_asks {
-            let price = f64::from_bits(pb);
-            let tick = (price / self.tick_size).floor() as i64;
-            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
-            entry.1 += qty;
-            entry.3 += 1;
-        }
-        self.volume_by_price = next;
-        self.recompute_max_volume();
+        // Force a full rebuild on the next tick by resetting the version cursor.
+        self.last_seen_orderbook_version = 0;
+        self.tick();
     }
 
     /// Recompute max_volume from all visible levels.
@@ -436,36 +390,6 @@ impl DomState {
     }
 }
 
-/// Compute the [min, max] price range covered by a list of (price, qty)
-/// levels. Returns `None` if the list is empty or contains no positive qty.
-fn price_range(levels: &[(f64, f64)]) -> Option<(f64, f64)> {
-    let mut lo = f64::INFINITY;
-    let mut hi = f64::NEG_INFINITY;
-    let mut found = false;
-    for &(price, qty) in levels {
-        if qty > 0.0 {
-            if price < lo { lo = price; }
-            if price > hi { hi = price; }
-            found = true;
-        }
-    }
-    if found { Some((lo, hi)) } else { None }
-}
-
-/// Compute the [min, max] price range from a `HashMap<price_bits, qty>`.
-/// Used to recompute the WS coverage window after delta updates.
-fn recompute_window(map: &HashMap<u64, f64>) -> Option<(f64, f64)> {
-    let mut lo = f64::INFINITY;
-    let mut hi = f64::NEG_INFINITY;
-    let mut found = false;
-    for &pb in map.keys() {
-        let price = f64::from_bits(pb);
-        if price < lo { lo = price; }
-        if price > hi { hi = price; }
-        found = true;
-    }
-    if found { Some((lo, hi)) } else { None }
-}
 
 /// DOM panel configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]

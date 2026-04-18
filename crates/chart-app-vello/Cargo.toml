@@ -18,6 +18,8 @@ bar-store = { path = "../bar-store" }
 bar-service = { path = "../bar-service" }
 trade-service = { path = "../trade-service" }
 trade-store = { path = "../trade-store" }
+orderbook-service = { path = "../orderbook-service" }
+orderbook-store = { path = "../orderbook-store" }
 vello-context = { path = "../vello-context" }
 zengeld-chart = { path = "../chart" }
 uzor = "=1.0.43"
