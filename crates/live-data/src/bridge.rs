@@ -206,7 +206,7 @@ pub struct DataBridge {
     ///
     /// All symbols for the same exchange+stream type share a single WS
     /// connection, managed by a long-running actor task.
-    ws_actors: Mutex<WsActorMap>,
+    ws_actors: Arc<Mutex<WsActorMap>>,
     /// Session-level bar cache.
     ///
     /// Key: `BarSeriesKey`. Stores bars from previous requests so that switching
@@ -295,7 +295,7 @@ impl DataBridge {
             pool,
             tx,
             connector_ready_tx,
-            ws_actors: Mutex::new(WsActorMap::new()),
+            ws_actors: Arc::new(Mutex::new(WsActorMap::new())),
             bar_cache,
             trade_map,
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -881,38 +881,67 @@ impl DataBridge {
     /// finished yet.  A second call for the same `(exchange_id, symbol,
     /// account_type)` reuses the existing handle.
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let tx = self.tx.clone();
-        let rtt = self.ws_rtt_handles.clone();
-        let rt = self.runtime.handle().clone();
-        let pool = self.pool.clone();
-        if let Ok(mut actors) = self.ws_actors.lock() {
-            // Partial-snapshot stream (works on all exchanges).
-            let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
-            let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
-
-            // Full diff/delta stream (Binance @depth@100ms and others that expose one).
-            // Exchanges without a separate diff stream will fail silently inside the actor.
-            let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-            let cmd_tx_diff = actors.get_or_spawn(key_diff, tx.clone(), rtt, &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
-            let _ = cmd_tx_diff.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
-        }
-
-        // Spawn a one-shot REST bootstrap task if not already running for this key.
+        // Idempotent: if a bootstrap task is already in flight or done, skip.
         let poll_key = (exchange_id, symbol.to_string(), account_type);
         if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
-            if !pollers.contains_key(&poll_key) {
-                let symbol_owned = symbol.to_string();
-                let handle = self.runtime.spawn(rest_orderbook_bootstrap(
-                    pool,
-                    exchange_id,
-                    symbol_owned,
-                    account_type,
-                    tx,
-                    self.orderbook_map.clone(),
-                ));
-                pollers.insert(poll_key, handle);
+            if pollers.contains_key(&poll_key) {
+                return;
             }
+
+            // Clone everything needed inside the async task before spawning.
+            let tx = self.tx.clone();
+            let rtt = self.ws_rtt_handles.clone();
+            let rt = self.runtime.handle().clone();
+            let pool = self.pool.clone();
+            let orderbook_map = self.orderbook_map.clone();
+            let ws_actors = self.ws_actors.clone();
+            let symbol_owned = symbol.to_string();
+
+            // Spawn a sequenced bootstrap task:
+            //   Phase 1 — await REST bootstrap (deep snapshot seeds the book)
+            //   Phase 2 — THEN send AddSymbol to WS actors (book is ready)
+            //
+            // The WS actors are spawned here (so their connections can start
+            // negotiating while REST is in-flight) but they do NOT subscribe to
+            // any symbol until the REST response has been applied.  This prevents
+            // WS partial snapshots and deltas from arriving before the full
+            // ladder is in place and then being wiped by a late REST clear().
+            let handle = self.runtime.spawn(async move {
+                // Pre-spawn both WS actors so the TCP/TLS handshake can happen in
+                // parallel with the REST request.  No AddSymbol yet.
+                {
+                    if let Ok(mut actors) = ws_actors.lock() {
+                        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
+                        actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+
+                        let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
+                        actors.get_or_spawn(key_diff, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+                    }
+                }
+
+                // Phase 1: await REST bootstrap — full book before any WS data.
+                rest_orderbook_bootstrap_inner(
+                    pool.clone(),
+                    exchange_id,
+                    &symbol_owned,
+                    account_type,
+                    tx.clone(),
+                    orderbook_map.clone(),
+                ).await;
+
+                // Phase 2: now that the book is seeded, let WS actors subscribe.
+                if let Ok(mut actors) = ws_actors.lock() {
+                    let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
+                    let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+                    let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol_owned.clone() });
+
+                    let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
+                    let cmd_tx_diff = actors.get_or_spawn(key_diff, tx, rtt, &rt, None, pool, Some(orderbook_map));
+                    let _ = cmd_tx_diff.try_send(WsCmd::AddSymbol { symbol: symbol_owned });
+                }
+            });
+
+            pollers.insert(poll_key, handle);
         }
     }
 
@@ -2070,10 +2099,17 @@ fn parse_symbol(s: &str) -> Symbol {
 ///
 /// Errors are logged with `eprintln!`; on failure the local book simply
 /// remains empty until the WS diff stream has applied enough updates.
-async fn rest_orderbook_bootstrap(
+/// Inner implementation of the REST orderbook bootstrap.
+///
+/// Fetches a deep snapshot (up to 1000 levels), writes it into
+/// `orderbook_map` via `apply_rest`, and broadcasts a backward-compat
+/// `OrderbookSnapshot` event.  Called directly (awaited) from the
+/// sequenced bootstrap task in `subscribe_depth` so that WS subscriptions
+/// only start AFTER this snapshot has landed.
+async fn rest_orderbook_bootstrap_inner(
     pool: ConnectorPool,
     exchange_id: ExchangeId,
-    symbol: String,
+    symbol: &str,
     account_type: AccountType,
     tx: broadcast::Sender<LiveUpdate>,
     orderbook_map: SharedOrderbookMap,
@@ -2093,7 +2129,7 @@ async fn rest_orderbook_bootstrap(
         None => return,
     };
 
-    let sym = parse_symbol_for_exchange(exchange_id, &symbol);
+    let sym = parse_symbol_for_exchange(exchange_id, symbol);
 
     match conn.get_orderbook(sym, Some(depth), account_type).await {
         Ok(book) => {
@@ -2101,8 +2137,9 @@ async fn rest_orderbook_bootstrap(
             let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
             let ts = book.timestamp;
 
-            // Write to SharedOrderbookMap — full replace seeds the book.
-            let ob_key = OrderbookKey::new(exchange_id, account_type, &symbol);
+            // Write to SharedOrderbookMap — range-replace seeds the book without
+            // clearing any WS data that may have arrived concurrently.
+            let ob_key = OrderbookKey::new(exchange_id, account_type, symbol);
             if let Some(handle) = orderbook_map.read().ok().and_then(|m| m.get(&ob_key).cloned()) {
                 if let Ok(mut series) = handle.write() {
                     series.apply_rest(&bids, &asks, ts);
@@ -2114,7 +2151,7 @@ async fn rest_orderbook_bootstrap(
             let _ = tx.send(LiveUpdate::OrderbookSnapshot {
                 exchange_id,
                 account_type,
-                symbol: symbol.clone(),
+                symbol: symbol.to_string(),
                 bids,
                 asks,
                 timestamp: ts,

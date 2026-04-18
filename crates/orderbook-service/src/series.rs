@@ -135,25 +135,18 @@ impl OrderbookSeries {
         self.append_history(snap);
     }
 
-    /// REST bootstrap — full replace of the entire local book.
+    /// REST bootstrap — range-replace seeded from the REST snapshot.
     ///
     /// Called ONCE per subscription with a deep REST snapshot (up to 1000
-    /// levels). Clears both sides completely and inserts the incoming levels,
-    /// giving the diff stream a clean, authoritative starting state to apply
-    /// incremental updates against.
+    /// levels). Per side: drops existing entries whose price falls within the
+    /// range covered by the incoming levels, then inserts those levels.
+    /// Entries outside the range survive untouched — this preserves any WS
+    /// data that arrived before the REST response landed (defense-in-depth;
+    /// with proper `subscribe_depth` sequencing this situation cannot occur).
+    ///
+    /// If the book is empty the behaviour is identical to a full replace.
     pub fn apply_rest(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], ts_ms: i64) {
-        self.current.bids.clear();
-        self.current.asks.clear();
-        for &(p, q) in bids {
-            if q > 0.0 {
-                self.current.bids.insert(OrderedFloat(p), q);
-            }
-        }
-        for &(p, q) in asks {
-            if q > 0.0 {
-                self.current.asks.insert(OrderedFloat(p), q);
-            }
-        }
+        self.replace_in_range(bids, asks);
         self.current.last_rest_ts_ms = ts_ms;
         self.current.version += 1;
         self.dirty = true;
@@ -256,43 +249,62 @@ mod tests {
         OrderbookSeries::new(100)
     }
 
-    // ── apply_rest — full replace (bootstrap semantics) ─────────────────────
+    // ── apply_rest — range-replace (bootstrap semantics) ────────────────────
 
     #[test]
-    fn apply_rest_full_replace() {
+    fn apply_rest_seeds_empty_book() {
         let mut s = series();
+        // On an empty book, range-replace is equivalent to a full insert.
         s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5)], 1000);
         assert_eq!(s.current.bids.len(), 2);
         assert_eq!(s.current.asks.len(), 1);
         assert_eq!(s.current.best_bid(), Some(100.0));
         assert_eq!(s.current.best_ask(), Some(101.0));
-
-        // Second REST call is a full replace: old levels are wiped first,
-        // only the new payload survives.
-        s.apply_rest(&[(98.0, 3.0)], &[(103.0, 1.0)], 2000);
-        assert_eq!(s.current.bids.len(), 1);
-        assert_eq!(s.current.asks.len(), 1);
-        assert!(s.current.bids.contains_key(&OrderedFloat(98.0)));
-        assert!(!s.current.bids.contains_key(&OrderedFloat(99.0)));
-        assert!(!s.current.bids.contains_key(&OrderedFloat(100.0)));
-        assert!(s.current.asks.contains_key(&OrderedFloat(103.0)));
-        assert!(!s.current.asks.contains_key(&OrderedFloat(101.0)));
     }
 
     #[test]
-    fn apply_rest_clears_previous_state() {
+    fn apply_rest_range_replaces_overlapping_levels() {
         let mut s = series();
-        // Pre-seed with WS snapshot levels.
-        s.apply_ws_snapshot(&[(99.0, 5.0), (100.0, 5.0)], &[(101.0, 5.0), (102.0, 5.0)], 500);
+        // Seed with two bids (99, 100) and two asks (101, 102).
+        s.apply_rest(&[(100.0, 1.0), (99.0, 2.0)], &[(101.0, 1.5), (102.0, 3.0)], 1000);
+
+        // Second REST call covers bids [98, 100] and asks [103, 103].
+        // Bids 99 and 100 are inside [98, 100] → replaced.
+        // Ask 101 and 102 are outside [103, 103] → survive.
+        s.apply_rest(&[(98.0, 3.0), (100.0, 5.0)], &[(103.0, 1.0)], 2000);
+        // 98 inserted, 100 updated to 5.0, 99 dropped (was in range, not in new payload).
+        assert!(s.current.bids.contains_key(&OrderedFloat(98.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(100.0)));
+        assert!(!s.current.bids.contains_key(&OrderedFloat(99.0)));
+        // Ask 103 inserted; 101 and 102 survive (outside [103,103] range).
+        assert!(s.current.asks.contains_key(&OrderedFloat(103.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(101.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(102.0)));
+    }
+
+    #[test]
+    fn apply_rest_preserves_out_of_range_ws_levels() {
+        let mut s = series();
+        // Pre-seed with WS snapshot at a price range far from the REST range.
+        s.apply_ws_snapshot(&[(50.0, 5.0), (51.0, 5.0)], &[(200.0, 5.0), (201.0, 5.0)], 500);
         assert_eq!(s.current.bids.len(), 2);
 
-        // REST bootstrap replaces everything, including prior WS levels.
+        // REST bootstrap covers [95, 97] bids and [103, 103] asks.
+        // WS levels (50, 51) are outside that bid range → preserved.
+        // WS levels (200, 201) are outside the ask range → preserved.
         s.apply_rest(&[(95.0, 1.0), (96.0, 2.0), (97.0, 3.0)], &[(103.0, 1.0)], 1000);
-        assert_eq!(s.current.bids.len(), 3);
-        assert_eq!(s.current.asks.len(), 1);
-        assert!(!s.current.bids.contains_key(&OrderedFloat(99.0)));
-        assert!(!s.current.bids.contains_key(&OrderedFloat(100.0)));
+        // REST bids inserted.
         assert!(s.current.bids.contains_key(&OrderedFloat(95.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(96.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(97.0)));
+        // Out-of-range WS bids preserved.
+        assert!(s.current.bids.contains_key(&OrderedFloat(50.0)));
+        assert!(s.current.bids.contains_key(&OrderedFloat(51.0)));
+        // REST ask inserted.
+        assert!(s.current.asks.contains_key(&OrderedFloat(103.0)));
+        // Out-of-range WS asks preserved.
+        assert!(s.current.asks.contains_key(&OrderedFloat(200.0)));
+        assert!(s.current.asks.contains_key(&OrderedFloat(201.0)));
     }
 
     // ── apply_ws_snapshot — range replace ────────────────────────────────────
