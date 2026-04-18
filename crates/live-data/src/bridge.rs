@@ -881,14 +881,21 @@ impl DataBridge {
     /// finished yet.  A second call for the same `(exchange_id, symbol,
     /// account_type)` reuses the existing handle.
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt, &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
+            // Partial-snapshot stream (works on all exchanges).
+            let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
+            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+
+            // Full diff/delta stream (Binance @depth@100ms and others that expose one).
+            // Exchanges without a separate diff stream will fail silently inside the actor.
+            let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
+            let cmd_tx_diff = actors.get_or_spawn(key_diff, tx.clone(), rtt, &rt, None, pool.clone(), Some(self.orderbook_map.clone()));
+            let _ = cmd_tx_diff.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
 
         // Spawn a one-shot REST bootstrap task if not already running for this key.
@@ -1004,9 +1011,11 @@ impl DataBridge {
     /// Also aborts the one-shot REST bootstrap task if it is still in flight
     /// (no grace period — the bootstrap is cheap to restart on re-subscribe).
     pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
+            let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
             actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
+            let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
+            actors.send_cmd(&key_diff, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
         }
 
         // Abort the REST poll task for this symbol immediately.

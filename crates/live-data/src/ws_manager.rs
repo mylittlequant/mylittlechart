@@ -60,7 +60,14 @@ pub(crate) struct WsKey {
 pub(crate) enum WsStreamType {
     Trades,
     Ticker,
+    /// Partial-snapshot stream (or unified snapshot+delta stream like Bybit's
+    /// `orderbook.50.SYMBOL`).  Works for all exchanges.
     Depth,
+    /// Full diff/delta stream (Binance `@depth@100ms`).  Only exchanges that
+    /// expose a separate incremental-diff stream will produce events here;
+    /// others will silently fail to connect or return an unsupported-operation
+    /// error, which the actor logs and then exits gracefully.
+    DepthDiff,
     /// Private authenticated stream: order updates, balance changes, position changes.
     Private,
 }
@@ -182,10 +189,10 @@ async fn run_ws_actor(
     };
     let mut retry_count: u32 = 0;
 
-    // Local depth book — only for `WsStreamType::Depth` connections.
-    // Seeded by the first WS snapshot, updated by WS deltas.
+    // Local depth book — for `WsStreamType::Depth` and `WsStreamType::DepthDiff`
+    // connections.  Seeded by the first WS snapshot, updated by WS deltas.
     use crate::depth_book::{DepthBook, EMIT_LEVELS};
-    let is_depth = key.stream_type == WsStreamType::Depth;
+    let is_depth = key.stream_type == WsStreamType::Depth || key.stream_type == WsStreamType::DepthDiff;
     let mut depth_book: Option<DepthBook> = if is_depth { Some(DepthBook::new()) } else { None };
 
     'outer: loop {
@@ -789,26 +796,41 @@ pub(crate) fn make_sub_request(
     exchange_id: ExchangeId,
     symbol: &str,
     account_type: AccountType,
-    _depth: Option<u32>,
+    depth: Option<u32>,
 ) -> SubscriptionRequest {
     let sym = crate::bridge::parse_symbol_for_exchange(exchange_id, symbol);
     match stream_type {
         WsStreamType::Trades => SubscriptionRequest::trade_for(sym, account_type),
         WsStreamType::Ticker => SubscriptionRequest::ticker_for(sym, account_type),
-        // Subscribe to the full diff stream (`@depth@100ms` on Binance).
-        // The local book is bootstrapped once via a one-shot REST call in
-        // `bridge.rs`; subsequent WS deltas maintain it incrementally.
-        // `depth` and `update_speed_ms` are passed through so each exchange
-        // implementation can map them to its own wire format.
+        // Use the standard Orderbook stream (partial snapshot or per-exchange
+        // default). One-shot REST bootstrap in `bridge.rs` seeds the deep
+        // ladder; subsequent WS messages — snapshot or delta, exchange's
+        // choice — maintain it.
+        //
+        // We tried hardcoding StreamType::OrderbookDelta but most exchanges
+        // (Bybit, OKX, Kraken, ...) don't have a Binance-style full diff
+        // stream, and forcing the type through their WS layer broke their
+        // subscriptions. Each connector picks the most fitting stream for
+        // its API.
         WsStreamType::Depth => {
-            SubscriptionRequest {
-                symbol: sym,
-                stream_type: StreamType::OrderbookDelta,
-                account_type,
-                depth: None,            // diff stream is full-book, no depth limit
-                update_speed_ms: Some(100),
+            let req = SubscriptionRequest::orderbook(sym);
+            if let Some(d) = depth {
+                req.with_depth(d)
+            } else {
+                req
             }
         }
+        // Full incremental-diff stream (Binance @depth@100ms).
+        // Exchanges that don't support a separate diff stream will return an
+        // error from `ws.subscribe()`, which the actor logs and ignores — the
+        // Depth actor still covers those exchanges.
+        WsStreamType::DepthDiff => SubscriptionRequest {
+            symbol: sym,
+            stream_type: StreamType::OrderbookDelta,
+            account_type,
+            depth: None,
+            update_speed_ms: Some(100),
+        },
         // Private streams don't use per-symbol subscription requests.
         // This arm exists for exhaustiveness only; the private actor bypasses
         // this function entirely.
@@ -886,7 +908,7 @@ fn dispatch_event(
                     }
                 }
             }
-            if state.stream_type == WsStreamType::Depth {
+            if state.stream_type == WsStreamType::Depth || state.stream_type == WsStreamType::DepthDiff {
                 for (sym, &count) in &state.refcounts {
                     if count > 0 {
                         let bids: Vec<(f64, f64)> = ob.bids.iter().map(|l| (l.price, l.size)).collect();
@@ -950,7 +972,7 @@ fn dispatch_event(
                     }
                 }
             }
-            if state.stream_type == WsStreamType::Depth {
+            if state.stream_type == WsStreamType::Depth || state.stream_type == WsStreamType::DepthDiff {
                 for (sym, &count) in &state.refcounts {
                     if count > 0 {
                         let bid_changes: Vec<(f64, f64)> = bids.iter().map(|l| (l.price, l.size)).collect();
