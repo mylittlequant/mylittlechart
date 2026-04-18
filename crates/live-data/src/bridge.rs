@@ -224,6 +224,13 @@ pub struct DataBridge {
     /// scroll-left requests can request the correct older window without
     /// re-fetching data that is already cached.
     oldest_fetched_ts: Arc<Mutex<HashMap<BarSeriesKey, i64>>>,
+    /// Per-symbol REST orderbook poll task handles.
+    ///
+    /// Keyed by `(ExchangeId, symbol, AccountType)`. Each handle is spawned
+    /// alongside the WS depth subscription and aborted when the last depth
+    /// consumer unsubscribes. Multiple consumers sharing the same depth stream
+    /// share a single poll task (tracked via the WS actor's own refcount).
+    rest_orderbook_pollers: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), tokio::task::JoinHandle<()>>>>,
 }
 
 impl DataBridge {
@@ -264,6 +271,7 @@ impl DataBridge {
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
+            rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
     }
 
@@ -784,6 +792,12 @@ impl DataBridge {
     ///
     /// Routes the symbol to the shared per-exchange depth actor, which
     /// multiplexes all symbols over a single WS connection.
+    ///
+    /// Also spawns a periodic REST orderbook snapshot poller (every 5 s) that
+    /// feeds deeper snapshots (up to 1000 levels) into the same broadcast
+    /// channel as `LiveUpdate::OrderbookSnapshot`. The poller is shared: a
+    /// second call for the same `(exchange_id, symbol, account_type)` reuses
+    /// the existing handle.
     pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         let tx = self.tx.clone();
@@ -791,8 +805,24 @@ impl DataBridge {
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
+            let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt, &rt, None, pool.clone());
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
+        }
+
+        // Spawn a REST poll task if one is not already running for this key.
+        let poll_key = (exchange_id, symbol.to_string(), account_type);
+        if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
+            if !pollers.contains_key(&poll_key) {
+                let symbol_owned = symbol.to_string();
+                let handle = self.runtime.spawn(rest_orderbook_poller(
+                    pool,
+                    exchange_id,
+                    symbol_owned,
+                    account_type,
+                    tx,
+                ));
+                pollers.insert(poll_key, handle);
+            }
         }
     }
 
@@ -828,10 +858,21 @@ impl DataBridge {
     }
 
     /// Remove one consumer interest in depth stream for this symbol.
+    ///
+    /// Also aborts the associated REST orderbook poll task immediately (no grace
+    /// period — the poll is cheap to restart and has no ordering guarantee).
     pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
             actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
+        }
+
+        // Abort the REST poll task for this symbol immediately.
+        let poll_key = (exchange_id, symbol.to_string(), account_type);
+        if let Ok(mut pollers) = self.rest_orderbook_pollers.lock() {
+            if let Some(handle) = pollers.remove(&poll_key) {
+                handle.abort();
+            }
         }
     }
 
@@ -1839,4 +1880,70 @@ fn parse_symbol(s: &str) -> Symbol {
     // Always preserve the original raw input string
     result.raw = Some(original.to_string());
     result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REST ORDERBOOK POLLER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Periodic REST orderbook snapshot task.
+///
+/// Polls `connector.get_orderbook(symbol, depth)` every 5 seconds and emits
+/// [`LiveUpdate::OrderbookSnapshot`] on the shared broadcast channel. This
+/// complements the WS depth subscription, which only carries ~20 levels, by
+/// providing deep snapshots (up to 1000 levels) that the DOM panel can use
+/// when the user zooms out to a wide tick aggregation.
+///
+/// The task intentionally skips the first interval tick so that the initial
+/// WS snapshot (which arrives faster) is not immediately overwritten by a REST
+/// snapshot that might be slightly stale.
+///
+/// Errors are logged with `eprintln!` and silently skipped — the WS stream
+/// continues to function even when the REST poll fails.
+async fn rest_orderbook_poller(
+    pool: ConnectorPool,
+    exchange_id: ExchangeId,
+    symbol: String,
+    account_type: AccountType,
+    tx: broadcast::Sender<LiveUpdate>,
+) {
+    const POLL_DEPTH: u16 = 1000;
+
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    // Skip first immediate tick — let the WS snapshot arrive first.
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+
+        let conn = match pool.get(&exchange_id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let sym = parse_symbol_for_exchange(exchange_id, &symbol);
+
+        match conn.get_orderbook(sym, Some(POLL_DEPTH), account_type).await {
+            Ok(book) => {
+                let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
+                let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
+                let _ = tx.send(LiveUpdate::OrderbookSnapshot {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol.clone(),
+                    bids,
+                    asks,
+                    timestamp: book.timestamp,
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "[RestOrderbookPoll] {:?} {} failed: {}",
+                    exchange_id, symbol, e
+                );
+            }
+        }
+    }
 }
