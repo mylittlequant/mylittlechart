@@ -336,6 +336,7 @@ async fn run_ws_actor(
                                                 bids: emitted.bids,
                                                 asks: emitted.asks,
                                                 timestamp: emitted.timestamp,
+                                                source: crate::bridge::OrderbookSource::Ws,
                                             });
                                             // For exchanges that deliver full snapshots instead of
                                             // incremental deltas, synthesise a delta so that
@@ -372,6 +373,7 @@ async fn run_ws_actor(
                                                     bids: emitted.bids,
                                                     asks: emitted.asks,
                                                     timestamp: emitted.timestamp,
+                                                    source: crate::bridge::OrderbookSource::Ws,
                                                 });
                                                 // Also forward raw delta for consumers that
                                                 // track incremental changes (L2 Tape, etc.).
@@ -866,6 +868,7 @@ fn dispatch_event(
                             bids: ob.bids.iter().map(|l| (l.price, l.size)).collect(),
                             asks: ob.asks.iter().map(|l| (l.price, l.size)).collect(),
                             timestamp: ob.timestamp,
+                            source: crate::bridge::OrderbookSource::Ws,
                         });
                     }
                 }

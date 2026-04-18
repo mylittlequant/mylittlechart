@@ -23,6 +23,15 @@ use zengeld_chart::state::Timeframe;
 use crate::convert::{kline_to_bar, timeframe_to_interval};
 use crate::ws_manager::{WsActorMap, WsCmd, WsKey, WsStreamType};
 
+/// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
+/// periodic REST poller (wide, up to 1000 levels) or from the WebSocket stream
+/// (narrow window around mid, ~20 levels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderbookSource {
+    Rest,
+    Ws,
+}
+
 /// Updates sent from async tasks to the sync chart thread.
 #[derive(Debug, Clone)]
 pub enum LiveUpdate {
@@ -106,7 +115,7 @@ pub enum LiveUpdate {
         bars: Vec<Bar>,
         prepend_count: usize,
     },
-    /// Full orderbook snapshot from WebSocket.
+    /// Full orderbook snapshot — REST (wide, 1000 levels) or WS (narrow, ~20 levels).
     OrderbookSnapshot {
         exchange_id: ExchangeId,
         account_type: AccountType,
@@ -114,6 +123,8 @@ pub enum LiveUpdate {
         bids: Vec<(f64, f64)>,
         asks: Vec<(f64, f64)>,
         timestamp: i64,
+        /// Whether the snapshot originated from the REST poller or the WS stream.
+        source: OrderbookSource,
     },
     /// Incremental orderbook delta from WebSocket.
     OrderbookDelta {
@@ -1944,6 +1955,7 @@ async fn rest_orderbook_poller(
                     bids,
                     asks,
                     timestamp: book.timestamp,
+                    source: OrderbookSource::Rest,
                 });
             }
             Err(e) => {

@@ -2701,22 +2701,25 @@ impl ChartApp {
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
-                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids, asks, timestamp } => {
+                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids, asks, timestamp, source } => {
                     let ex_str = exchange_id.as_str();
                     let at_str = account_type.short_label();
-                    // Feed snapshot into all DOM panels that display this (symbol, exchange, account_type).
+                    // Route DOM snapshot to the correct store (REST = wide, WS = narrow).
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.apply_snapshot(&bids, &asks);
+                            match source {
+                                live_data::OrderbookSource::Rest => state.apply_rest_snapshot(&bids, &asks),
+                                live_data::OrderbookSource::Ws  => state.apply_ws_snapshot(&bids, &asks),
+                            }
                         }
                     }
-                    // Feed snapshot into L2 Tape panels (resets baseline).
+                    // L2 Tape and Heatmap consume snapshots as a historical event stream —
+                    // they don't need the source distinction.
                     for state in self.panels_store.l2_tape.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_snapshot(&bids, &asks, timestamp);
                         }
                     }
-                    // Feed snapshot into Liquidity Heatmap panels (rate-limited sampling).
                     for state in self.panels_store.liquidity_heatmap.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.apply_snapshot(&bids, &asks, timestamp);

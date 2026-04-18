@@ -37,12 +37,15 @@ pub struct DomState {
     /// HashMap<price_level, (bid_volume, ask_volume, bid_order_count, ask_order_count)>
     pub volume_by_price: HashMap<i64, (f64, f64, usize, usize)>, // Using i64 for price ticks
 
-    /// Raw bid orderbook (price → qty), kept independent of `tick_size` so
-    /// aggregation can be recomputed when the user changes tick granularity
-    /// without losing data.
-    pub raw_bids: HashMap<u64, f64>, // price.to_bits() → qty
-    /// Raw ask orderbook (same shape as `raw_bids`).
-    pub raw_asks: HashMap<u64, f64>,
+    /// Last full REST snapshot — wide depth, source of truth for the deep ladder.
+    pub rest_bids: HashMap<u64, f64>, // price.to_bits() → qty
+    pub rest_asks: HashMap<u64, f64>,
+    /// Last WS snapshot — narrow window around mid, freshest values.
+    pub ws_bids: HashMap<u64, f64>,
+    pub ws_asks: HashMap<u64, f64>,
+    /// Coverage range of the current WS snapshot (used to skip REST levels inside it).
+    pub ws_bid_range: Option<(f64, f64)>,
+    pub ws_ask_range: Option<(f64, f64)>,
 
     /// Maximum volume across all visible levels (for bar scaling)
     pub max_volume: f64,
@@ -104,8 +107,12 @@ impl DomState {
             levels_displayed: 20,
             tick_size,
             volume_by_price: HashMap::new(),
-            raw_bids: HashMap::new(),
-            raw_asks: HashMap::new(),
+            rest_bids: HashMap::new(),
+            rest_asks: HashMap::new(),
+            ws_bids: HashMap::new(),
+            ws_asks: HashMap::new(),
+            ws_bid_range: None,
+            ws_ask_range: None,
             max_volume: 0.0,
             user_orders: HashMap::new(),
             hovered_price: None,
@@ -297,44 +304,31 @@ impl DomState {
         }
     }
 
-    /// Apply an orderbook snapshot — replaces ONLY the price range covered by
-    /// this snapshot, leaves levels outside that range untouched.
-    ///
-    /// Sources of snapshots have different depths: WS gives ~20 levels around
-    /// mid, REST gives 1000+ levels covering a much wider range. A shallow
-    /// snapshot must NOT erase deeper levels supplied by an earlier deep one
-    /// (and vice versa: a deep one fully refreshes the wide range it covers).
-    pub fn apply_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        // Determine the price ranges this snapshot actually covers.
-        // bids: [min_bid, max_bid]; asks: [min_ask, max_ask].
-        let bid_range = price_range(bids);
-        let ask_range = price_range(asks);
-
-        // Drop existing raw entries inside the snapshot's coverage range, on
-        // each side independently. Levels deeper than the snapshot are kept.
-        if let Some((lo, hi)) = bid_range {
-            self.raw_bids.retain(|&k, _| {
-                let p = f64::from_bits(k);
-                p < lo || p > hi
-            });
-        }
-        if let Some((lo, hi)) = ask_range {
-            self.raw_asks.retain(|&k, _| {
-                let p = f64::from_bits(k);
-                p < lo || p > hi
-            });
-        }
-
-        // Insert/replace levels from the snapshot.
-        for &(price, qty) in bids {
-            if qty > 0.0 { self.raw_bids.insert(price.to_bits(), qty); }
-        }
-        for &(price, qty) in asks {
-            if qty > 0.0 { self.raw_asks.insert(price.to_bits(), qty); }
-        }
-
+    /// Apply a fresh REST orderbook snapshot. Source of truth for the wide
+    /// ladder. Fully replaces the REST cache.
+    pub fn apply_rest_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.rest_bids.clear();
+        self.rest_asks.clear();
+        for &(p, q) in bids { if q > 0.0 { self.rest_bids.insert(p.to_bits(), q); } }
+        for &(p, q) in asks { if q > 0.0 { self.rest_asks.insert(p.to_bits(), q); } }
+        self.update_market_price_from(bids, asks);
         self.rebuild_aggregation();
-        // Update market price from best bid/ask mid (snapshot is sorted: best first)
+    }
+
+    /// Apply a fresh WS orderbook snapshot. Narrow window patch over the REST
+    /// cache. Fully replaces the WS cache.
+    pub fn apply_ws_snapshot(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.ws_bids.clear();
+        self.ws_asks.clear();
+        for &(p, q) in bids { if q > 0.0 { self.ws_bids.insert(p.to_bits(), q); } }
+        for &(p, q) in asks { if q > 0.0 { self.ws_asks.insert(p.to_bits(), q); } }
+        self.ws_bid_range = price_range(bids);
+        self.ws_ask_range = price_range(asks);
+        self.update_market_price_from(bids, asks);
+        self.rebuild_aggregation();
+    }
+
+    fn update_market_price_from(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
         let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
         let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
         if best_bid > 0.0 && best_ask > 0.0 {
@@ -345,26 +339,23 @@ impl DomState {
         }
     }
 
-    /// Apply an incremental orderbook delta — update raw orderbook then rebuild aggregation.
+    /// Apply an incremental orderbook delta — writes into the WS window and rebuilds aggregation.
     pub fn apply_delta(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        for &(price, qty) in bids {
-            let key = price.to_bits();
-            if qty == 0.0 { self.raw_bids.remove(&key); }
-            else { self.raw_bids.insert(key, qty); }
+        for &(p, q) in bids {
+            let k = p.to_bits();
+            if q == 0.0 { self.ws_bids.remove(&k); } else { self.ws_bids.insert(k, q); }
         }
-        for &(price, qty) in asks {
-            let key = price.to_bits();
-            if qty == 0.0 { self.raw_asks.remove(&key); }
-            else { self.raw_asks.insert(key, qty); }
+        for &(p, q) in asks {
+            let k = p.to_bits();
+            if q == 0.0 { self.ws_asks.remove(&k); } else { self.ws_asks.insert(k, q); }
         }
+        // Recompute WS coverage windows from the updated maps.
+        self.ws_bid_range = recompute_window(&self.ws_bids);
+        self.ws_ask_range = recompute_window(&self.ws_asks);
         self.rebuild_aggregation();
-        // Recompute market price from raw best bid/ask
-        let best_bid = self.raw_bids.keys()
-            .map(|b| f64::from_bits(*b))
-            .fold(f64::NEG_INFINITY, f64::max);
-        let best_ask = self.raw_asks.keys()
-            .map(|b| f64::from_bits(*b))
-            .fold(f64::INFINITY, f64::min);
+        // Update market price from WS best bid/ask.
+        let best_bid = self.ws_bids.keys().map(|b| f64::from_bits(*b)).fold(f64::NEG_INFINITY, f64::max);
+        let best_ask = self.ws_asks.keys().map(|b| f64::from_bits(*b)).fold(f64::INFINITY, f64::min);
         if best_bid > 0.0 && best_ask.is_finite() && best_ask > 0.0 {
             self.market_price = (best_bid + best_ask) / 2.0;
             if self.center_price == 0.0 || self.auto_center {
@@ -384,24 +375,51 @@ impl DomState {
         self.rebuild_aggregation();
     }
 
-    /// Rebuild `volume_by_price` from `raw_bids`/`raw_asks` using the current
-    /// `tick_size` as bucket width.
+    /// Rebuild `volume_by_price` from REST + WS overlay using the current
+    /// `tick_size` as bucket width. WS levels override REST inside the WS window.
     fn rebuild_aggregation(&mut self) {
-        self.volume_by_price.clear();
-        for (&price_bits, &qty) in &self.raw_bids {
-            let price = f64::from_bits(price_bits);
+        let mut next: HashMap<i64, (f64, f64, usize, usize)> =
+            HashMap::with_capacity(self.rest_bids.len() + self.ws_bids.len());
+
+        // 1. REST bids — skip prices inside the WS bid window (WS overrides there).
+        for (&pb, &qty) in &self.rest_bids {
+            let price = f64::from_bits(pb);
+            if let Some((lo, hi)) = self.ws_bid_range {
+                if price >= lo && price <= hi { continue; }
+            }
             let tick = (price / self.tick_size).floor() as i64;
-            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
             entry.0 += qty;
             entry.2 += 1;
         }
-        for (&price_bits, &qty) in &self.raw_asks {
-            let price = f64::from_bits(price_bits);
+        // 2. WS bids — always add (they are the truth in their window).
+        for (&pb, &qty) in &self.ws_bids {
+            let price = f64::from_bits(pb);
             let tick = (price / self.tick_size).floor() as i64;
-            let entry = self.volume_by_price.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.0 += qty;
+            entry.2 += 1;
+        }
+        // 3. REST asks — skip prices inside the WS ask window.
+        for (&pb, &qty) in &self.rest_asks {
+            let price = f64::from_bits(pb);
+            if let Some((lo, hi)) = self.ws_ask_range {
+                if price >= lo && price <= hi { continue; }
+            }
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
             entry.1 += qty;
             entry.3 += 1;
         }
+        // 4. WS asks.
+        for (&pb, &qty) in &self.ws_asks {
+            let price = f64::from_bits(pb);
+            let tick = (price / self.tick_size).floor() as i64;
+            let entry = next.entry(tick).or_insert((0.0, 0.0, 0, 0));
+            entry.1 += qty;
+            entry.3 += 1;
+        }
+        self.volume_by_price = next;
         self.recompute_max_volume();
     }
 
@@ -430,6 +448,21 @@ fn price_range(levels: &[(f64, f64)]) -> Option<(f64, f64)> {
             if price > hi { hi = price; }
             found = true;
         }
+    }
+    if found { Some((lo, hi)) } else { None }
+}
+
+/// Compute the [min, max] price range from a `HashMap<price_bits, qty>`.
+/// Used to recompute the WS coverage window after delta updates.
+fn recompute_window(map: &HashMap<u64, f64>) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let mut found = false;
+    for &pb in map.keys() {
+        let price = f64::from_bits(pb);
+        if price < lo { lo = price; }
+        if price > hi { hi = price; }
+        found = true;
     }
     if found { Some((lo, hi)) } else { None }
 }
