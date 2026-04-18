@@ -6747,7 +6747,7 @@ impl ChartApp {
 
         for pid in &panel_ids {
             let panel_id = sidebar_content::free_slot::PanelId(*pid);
-            // DOM symbol change: unsubscribe old orderbook, subscribe new.
+            // DOM symbol change: unsubscribe old orderbook + trades, subscribe new.
             // Two-pass to avoid holding a mutable borrow while calling bridge.
             let dom_change = self.panels_store.dom.get(&panel_id).and_then(|s| {
                 if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
@@ -6757,29 +6757,35 @@ impl ChartApp {
                 }
             });
             if let Some((old_sym, old_exch, old_at_label)) = dom_change {
-                // Unsubscribe old orderbook.
+                // Unsubscribe old orderbook and trades.
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
                         self.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
+                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
-                // Subscribe new orderbook.
-                let new_handle = if !symbol.is_empty() {
-                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                // Subscribe new orderbook and trades.
+                let (new_ob_handle, new_trade_handle) = if !symbol.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&exchange) {
                         let new_at = account_type_from_label(&account_type);
-                        self.bridge.subscribe_orderbook(eid, &symbol, new_at)
-                    })
+                        let ob = self.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                        let tr = self.bridge.subscribe_trades(eid, &symbol, new_at);
+                        (Some(ob), Some(tr))
+                    } else {
+                        (None, None)
+                    }
                 } else {
-                    None
+                    (None, None)
                 };
                 // Update state.
                 if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
                     s.symbol = symbol.clone();
                     s.exchange = exchange.clone();
                     s.account_type = account_type.clone();
-                    s.shared_orderbook = new_handle;
+                    s.shared_orderbook = new_ob_handle;
                     s.last_seen_orderbook_version = 0;
+                    s.shared_trades = new_trade_handle;
                     s.volume_by_price.clear();
                     s.max_volume = 0.0;
                     s.recent_fills.clear();

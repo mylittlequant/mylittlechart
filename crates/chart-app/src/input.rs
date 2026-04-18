@@ -10097,12 +10097,14 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                    let ob_handle = self.bridge.subscribe_orderbook(eid, &symbol, at);
+                                    let trade_handle = self.bridge.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = Some(handle);
+                                        state.shared_orderbook = Some(ob_handle);
                                         state.last_seen_orderbook_version = 0;
+                                        state.shared_trades = Some(trade_handle);
                                     }
                                 } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                     state.exchange = exchange_str.clone();
@@ -10496,6 +10498,7 @@ impl ChartApp {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
                                                             self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -10639,6 +10642,7 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
                                                 self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -21022,12 +21026,14 @@ impl ChartApp {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
                                         }
-                                        // Subscribe to the shared orderbook series if we have a concrete symbol.
+                                        // Subscribe to the shared orderbook + trade series if we have a concrete symbol.
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                s.shared_orderbook = Some(handle);
+                                                let ob_handle = self.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = Some(ob_handle);
+                                                let trade_handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                s.shared_trades = Some(trade_handle);
                                             }
                                         }
                                         self.panels_store.dom.insert(pid, s);

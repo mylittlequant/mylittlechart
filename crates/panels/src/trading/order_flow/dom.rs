@@ -1,9 +1,11 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use orderbook_service::OrderbookSeries;
+use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -13,7 +15,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 pub struct DomId(pub u64);
 
 /// DOM panel state (heavy data)
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DomState {
     /// Current symbol being displayed
     pub symbol: String,
@@ -58,6 +60,11 @@ pub struct DomState {
     /// differs we pull a fresh aggregation from the shared series.
     pub last_seen_orderbook_version: u64,
 
+    /// Shared trade series — held purely to keep the subscription refcount alive.
+    /// DOM does not read trades directly; last_trade_price flows through
+    /// SharedOrderbookMap → OrderbookSeries::last_trade_price → mid().
+    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
     /// User's pending orders at each price level
     pub user_orders: HashMap<i64, Vec<String>>, // price_tick -> order_ids
 
@@ -78,6 +85,20 @@ pub struct DomState {
     /// Crosshair price synced from a linked chart window.
     /// When set, a subtle highlight line is drawn across the corresponding row.
     pub crosshair_price: Option<f64>,
+}
+
+impl fmt::Debug for DomState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DomState")
+            .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("account_type", &self.account_type)
+            .field("market_price", &self.market_price)
+            .field("center_price", &self.center_price)
+            .field("tick_size", &self.tick_size)
+            .field("auto_center", &self.auto_center)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Helper struct for rendering: represents one price level in the DOM
@@ -120,6 +141,7 @@ impl DomState {
             max_volume: 0.0,
             shared_orderbook: None,
             last_seen_orderbook_version: 0,
+            shared_trades: None,
             user_orders: HashMap::new(),
             hovered_price: None,
             recent_fills: HashMap::new(),
