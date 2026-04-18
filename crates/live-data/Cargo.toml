@@ -13,6 +13,9 @@ bar-store = { path = "../bar-store" }
 # Shared in-memory bar series (replaces DataBridge's internal bar_cache)
 bar-service = { path = "../bar-service" }
 
+# Shared in-memory trade rings
+trade-service = { path = "../trade-service" }
+
 # V5 connectors (async exchange API) — separate workspace, use path
 digdigdig3 = "=0.1.31"
 

@@ -1,5 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, RwLock};
+
+use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -9,7 +13,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 pub struct FootprintId(pub u64);
 
 /// Footprint panel state (heavy data)
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FootprintState {
     pub symbol: String,
 
@@ -49,6 +53,28 @@ pub struct FootprintState {
     pub dom_center_price: Option<f64>,
     /// Number of levels displayed in linked DOM
     pub dom_levels: Option<usize>,
+
+    /// Handle to the shared trade ring for this (exchange, symbol, account_type).
+    ///
+    /// `None` until `subscribe_trades` is called on the bridge. Panels read
+    /// from this at tick time; they NEVER write through it.
+    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
+    /// The `TradeSeries::version` we last processed in `tick()`.
+    pub last_seen_trade_version: u64,
+}
+
+impl fmt::Debug for FootprintState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FootprintState")
+            .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("account_type", &self.account_type)
+            .field("candle_count", &self.footprints.len())
+            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("has_shared_trades", &self.shared_trades.is_some())
+            .finish()
+    }
 }
 
 /// Helper struct for rendering: represents one footprint candle
@@ -77,7 +103,73 @@ impl FootprintState {
             display_mode: FootprintMode::BidAsk,
             dom_center_price: None,
             dom_levels: None,
+            shared_trades: None,
+            last_seen_trade_version: 0,
         }
+    }
+
+    /// Pull new trades from the shared series and accumulate into the current footprint candle.
+    ///
+    /// Call once per frame (or before render). No-op when there is no shared
+    /// series or when the version has not advanced since the last call.
+    pub fn tick(&mut self) {
+        let handle = match self.shared_trades.as_ref() {
+            Some(h) => h,
+            None => return,
+        };
+
+        let series = match handle.read() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        if series.version == self.last_seen_trade_version {
+            return;
+        }
+
+        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
+        let len = series.trades.len();
+        let skip = if new_count < len { len - new_count } else { 0 };
+
+        for trade in series.trades.iter().skip(skip) {
+            let price = trade.price;
+            let quantity = trade.quantity;
+            let is_buyer_maker = trade.is_buyer_maker != 0;
+            let timestamp = trade.timestamp_ms;
+
+            let tick = (price / self.tick_size).round() as i64;
+
+            if self.footprints.is_empty() || self.should_new_candle(timestamp) {
+                self.footprints.push(HashMap::new());
+                self.poc_by_candle.push(0.0);
+                self.imbalances.push(HashMap::new());
+            }
+
+            if let Some(current) = self.footprints.last_mut() {
+                let entry = current.entry(tick).or_insert((0.0, 0.0));
+                if is_buyer_maker {
+                    entry.0 += quantity; // seller-initiated (bid side hit)
+                } else {
+                    entry.1 += quantity; // buyer-initiated (ask side hit)
+                }
+
+                let total = entry.0 + entry.1;
+                let candle_idx = self.footprints.len().saturating_sub(1);
+                if let Some(poc) = self.poc_by_candle.get_mut(candle_idx) {
+                    let current_poc_tick = (*poc / self.tick_size).round() as i64;
+                    let current_poc_vol = self.footprints
+                        .last()
+                        .and_then(|fp| fp.get(&current_poc_tick))
+                        .map(|(b, a)| b + a)
+                        .unwrap_or(0.0);
+                    if total > current_poc_vol {
+                        *poc = tick as f64 * self.tick_size;
+                    }
+                }
+            }
+        }
+
+        self.last_seen_trade_version = series.version;
     }
 
     /// Returns a slice of visible candles for rendering
@@ -181,41 +273,14 @@ impl FootprintState {
         self.poc_by_candle.get(candle_index).copied()
     }
 
-    /// Apply a live trade to the current candle's footprint
-    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool, timestamp: i64) {
-        let tick = (price / self.tick_size).round() as i64;
-
-        // Check if we need a new candle
-        if self.footprints.is_empty() || self.should_new_candle(timestamp) {
-            self.footprints.push(HashMap::new());
-            self.poc_by_candle.push(0.0);
-            self.imbalances.push(HashMap::new());
-        }
-
-        // Add volume to current candle
-        if let Some(current) = self.footprints.last_mut() {
-            let entry = current.entry(tick).or_insert((0.0, 0.0));
-            if is_buyer_maker {
-                entry.0 += quantity; // seller-initiated (bid side hit)
-            } else {
-                entry.1 += quantity; // buyer-initiated (ask side hit)
-            }
-
-            let total = entry.0 + entry.1;
-            let candle_idx = self.footprints.len().saturating_sub(1);
-            if let Some(poc) = self.poc_by_candle.get_mut(candle_idx) {
-                // Retrieve the current POC tick to compare volumes
-                let current_poc_tick = (*poc / self.tick_size).round() as i64;
-                let current_poc_vol = self.footprints
-                    .last()
-                    .and_then(|fp| fp.get(&current_poc_tick))
-                    .map(|(b, a)| b + a)
-                    .unwrap_or(0.0);
-                if total > current_poc_vol {
-                    *poc = tick as f64 * self.tick_size;
-                }
-            }
-        }
+    /// Apply a live trade to the current candle's footprint.
+    ///
+    /// Footprint now reads from `shared_trades` via `tick()`. This method is
+    /// intentionally a no-op and exists only to avoid breaking any call sites
+    /// that have not yet been removed.
+    #[deprecated(note = "Footprint reads from shared_trades via tick(); this method is a no-op")]
+    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool, _timestamp: i64) {
+        // No-op: Footprint now reads from the shared TradeSeries.
     }
 
     fn should_new_candle(&self, _timestamp: i64) -> bool {

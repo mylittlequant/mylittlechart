@@ -8400,13 +8400,17 @@ fn main() {
     let shared_series: bar_service::SharedSeriesMap =
         std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
 
+    // Create the shared trade map — mirrors shared_series for live trade rings.
+    let shared_trades: trade_service::SharedTradeMap =
+        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
     // Create DataBridge ONCE — tokio runtime + connector pool shared by all windows.
     // The broadcast receiver (`_live_rx`) is dropped here: we no longer subscribe
     // to it at the app level.  Per-window ChartApp instances each subscribe via
     // `bridge.add_listener()`.  The mpsc `connector_ready_rx` is the lightweight
     // channel used by `tick_app_state` to handle ConnectorReady without touching
     // the broadcast buffer.
-    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new(shared_series.clone());
+    let (bridge, _live_rx, connector_ready_rx) = live_data::DataBridge::new(shared_series.clone(), shared_trades.clone());
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.

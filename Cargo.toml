@@ -18,6 +18,8 @@ members = [
     "crates/updater",
     "crates/bar-store",
     "crates/bar-service",
+    "crates/trade-store",
+    "crates/trade-service",
     "crates/diagnostics",
 ]
 resolver = "2"
@@ -33,7 +35,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.534"
+version = "0.5.535"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 

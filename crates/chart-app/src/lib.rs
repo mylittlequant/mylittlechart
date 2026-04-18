@@ -319,6 +319,11 @@ pub struct ChartApp {
     /// Live data bridge — owns the tokio runtime and connector pool.
     bridge: std::sync::Arc<DataBridge>,
 
+    /// Shared trade ring map — clone of `bridge.trade_map()`, shared between the
+    /// bridge (write path from WS events) and `ChartApp` (read/write path from
+    /// `TradeUpdate` events and panel subscriptions).
+    trade_map: trade_service::SharedTradeMap,
+
     /// Receiver for async live data updates (bars loaded, errors, etc.).
     live_update_rx: tokio::sync::broadcast::Receiver<LiveUpdate>,
 
@@ -805,7 +810,9 @@ impl ChartApp {
         // receives ConnectorReady via the broadcast channel directly.
         let shared_series: bar_service::SharedSeriesMap =
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
-        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series);
+        let shared_trades: trade_service::SharedTradeMap =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let (bridge, live_update_rx, _connector_ready_rx) = DataBridge::new(shared_series, shared_trades);
         let bridge = std::sync::Arc::new(bridge);
         // live_update_rx is a broadcast::Receiver — see DataBridge::add_listener()
         // for spawning additional windows that share this bridge.
@@ -855,6 +862,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
+            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -1138,6 +1146,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
+            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -1325,6 +1334,7 @@ impl ChartApp {
             last_wl_group_name_result: None,
             needs_initial_viewport_fit: false,
             bridge: bridge.clone(),
+            trade_map: bridge.trade_map(),
             live_update_rx,
             mini_ticker_cache: std::collections::HashMap::new(),
             active_exchange: digdigdig3::ExchangeId::Binance,
@@ -2591,23 +2601,50 @@ impl ChartApp {
                         }
                     }
 
-                    // Fan-out trade to order-flow panels.
-                    let ex_str = exchange_id.as_str();
-                    let at_str = account_type.short_label();
-                    for state in self.panels_store.footprint.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.push_trade(price, quantity, is_buyer_maker, timestamp);
+                    // Write trade into the shared TradeSeries ring so that
+                    // BigTrades (and future panels) can pull from it via tick().
+                    {
+                        let trade_key = trade_service::TradeKey::new(
+                            exchange_id,
+                            account_type,
+                            symbol.clone(),
+                        );
+                        if let Ok(map) = self.trade_map.read() {
+                            if let Some(series_arc) = map.get(&trade_key) {
+                                if let Ok(mut series) = series_arc.write() {
+                                    let trade = trade_service::Trade {
+                                        timestamp_ms: timestamp,
+                                        price,
+                                        quantity,
+                                        trade_id: 0,
+                                        is_buyer_maker: if is_buyer_maker { 1 } else { 0 },
+                                        _pad: [0u8; 7],
+                                    };
+                                    series.trades.push_back(trade);
+                                    series.version += 1;
+                                    series.dirty = true;
+                                    if timestamp > series.last_ts_ms {
+                                        series.last_ts_ms = timestamp;
+                                    }
+                                    // Enforce ring buffer capacity (simple eviction, no disk flush here).
+                                    if series.trades.len() > series.capacity {
+                                        series.trades.pop_front();
+                                    }
+                                }
+                            }
                         }
+                    }
+
+                    // Pull new trades from the shared ring into all order-flow panels.
+                    // All three panel kinds now read from shared_trades via tick().
+                    for state in self.panels_store.big_trades.values_mut() {
+                        state.tick();
                     }
                     for state in self.panels_store.volume_profile.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.push_trade(price, quantity, is_buyer_maker);
-                        }
+                        state.tick();
                     }
-                    for state in self.panels_store.big_trades.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.push_trade(price, quantity, is_buyer_maker, timestamp);
-                        }
+                    for state in self.panels_store.footprint.values_mut() {
+                        state.tick();
                     }
 
                     // Schedule indicator recalculation according to the current mode.
@@ -6720,10 +6757,112 @@ impl ChartApp {
                 }
                 needs_depth_sub = true;
             }
-            if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
-                s.symbol = symbol.clone();
-                s.exchange = exchange.clone();
-                s.account_type = account_type.clone();
+            // BigTrades symbol change: unsubscribe old, subscribe new.
+            // We do this in two passes to avoid holding a mutable borrow on
+            // panels_store at the same time as calling bridge methods.
+            let bt_change = self.panels_store.big_trades.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
+                    Some((s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                } else {
+                    None
+                }
+            });
+            if let Some((old_sym, old_exch, old_at_label)) = bt_change {
+                // Unsubscribe old.
+                if !old_sym.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
+                        let old_at = account_type_from_label(&old_at_label);
+                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                    }
+                }
+                // Subscribe new.
+                let new_handle = if !symbol.is_empty() {
+                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                        let new_at = account_type_from_label(&account_type);
+                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                    })
+                } else {
+                    None
+                };
+                // Update state.
+                if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    s.exchange = exchange.clone();
+                    s.account_type = account_type.clone();
+                    s.shared_trades = new_handle;
+                    s.last_seen_trade_version = 0;
+                    s.big_trades.clear();
+                }
+            }
+            // VolumeProfile symbol change: unsubscribe old, subscribe new.
+            let vp_change = self.panels_store.volume_profile.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
+                    Some((s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                } else {
+                    None
+                }
+            });
+            if let Some((old_sym, old_exch, old_at_label)) = vp_change {
+                if !old_sym.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
+                        let old_at = account_type_from_label(&old_at_label);
+                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                    }
+                }
+                let new_handle = if !symbol.is_empty() {
+                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                        let new_at = account_type_from_label(&account_type);
+                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                    })
+                } else {
+                    None
+                };
+                if let Some(s) = self.panels_store.volume_profile.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    s.exchange = exchange.clone();
+                    s.account_type = account_type.clone();
+                    s.shared_trades = new_handle;
+                    s.last_seen_trade_version = 0;
+                    s.volume_by_price.clear();
+                    s.buy_sell_by_price.clear();
+                    s.total_volume = 0.0;
+                    s.max_volume_at_price = 0.0;
+                    s.poc = 0.0;
+                }
+            }
+            // Footprint symbol change: unsubscribe old, subscribe new.
+            let fp_change = self.panels_store.footprint.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
+                    Some((s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                } else {
+                    None
+                }
+            });
+            if let Some((old_sym, old_exch, old_at_label)) = fp_change {
+                if !old_sym.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
+                        let old_at = account_type_from_label(&old_at_label);
+                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                    }
+                }
+                let new_handle = if !symbol.is_empty() {
+                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                        let new_at = account_type_from_label(&account_type);
+                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                    })
+                } else {
+                    None
+                };
+                if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    s.exchange = exchange.clone();
+                    s.account_type = account_type.clone();
+                    s.shared_trades = new_handle;
+                    s.last_seen_trade_version = 0;
+                    s.footprints.clear();
+                    s.poc_by_candle.clear();
+                    s.imbalances.clear();
+                }
             }
             if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
                 if s.symbol != symbol && !s.symbol.is_empty() {

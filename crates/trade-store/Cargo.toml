@@ -1,0 +1,9 @@
+[package]
+name = "trade-store"
+version = "0.5.534"
+edition = "2021"
+
+[dependencies]
+crc32fast = "1"
+tokio = { version = "1", features = ["sync", "rt"] }
+thiserror = "2"

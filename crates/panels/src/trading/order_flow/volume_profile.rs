@@ -1,5 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, RwLock};
+
+use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -9,7 +13,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 pub struct VolumeProfileId(pub u64);
 
 /// VolumeProfile panel state (heavy data)
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VolumeProfileState {
     pub symbol: String,
 
@@ -53,6 +57,29 @@ pub struct VolumeProfileState {
     pub dom_levels: Option<usize>,
     /// Buy/sell volume split per price tick
     pub buy_sell_by_price: HashMap<i64, (f64, f64)>,  // tick -> (buy_vol, sell_vol)
+
+    /// Handle to the shared trade ring for this (exchange, symbol, account_type).
+    ///
+    /// `None` until `subscribe_trades` is called on the bridge. Panels read
+    /// from this at tick time; they NEVER write through it.
+    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
+    /// The `TradeSeries::version` we last processed in `tick()`.
+    pub last_seen_trade_version: u64,
+}
+
+impl fmt::Debug for VolumeProfileState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VolumeProfileState")
+            .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("account_type", &self.account_type)
+            .field("total_volume", &self.total_volume)
+            .field("poc", &self.poc)
+            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("has_shared_trades", &self.shared_trades.is_some())
+            .finish()
+    }
 }
 
 /// Helper struct for rendering: represents one volume level
@@ -85,7 +112,59 @@ impl VolumeProfileState {
             dom_center_price: None,
             dom_levels: None,
             buy_sell_by_price: HashMap::new(),
+            shared_trades: None,
+            last_seen_trade_version: 0,
         }
+    }
+
+    /// Pull new trades from the shared series and accumulate into the volume profile.
+    ///
+    /// Call once per frame (or before render). No-op when there is no shared
+    /// series or when the version has not advanced since the last call.
+    pub fn tick(&mut self) {
+        let handle = match self.shared_trades.as_ref() {
+            Some(h) => h,
+            None => return,
+        };
+
+        let series = match handle.read() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        if series.version == self.last_seen_trade_version {
+            return;
+        }
+
+        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
+        let len = series.trades.len();
+        let skip = if new_count < len { len - new_count } else { 0 };
+
+        for trade in series.trades.iter().skip(skip) {
+            let price = trade.price;
+            let quantity = trade.quantity;
+            let is_buyer_maker = trade.is_buyer_maker != 0;
+
+            let tick = (price / self.tick_size).round() as i64;
+
+            *self.volume_by_price.entry(tick).or_insert(0.0) += quantity;
+
+            let entry = self.buy_sell_by_price.entry(tick).or_insert((0.0, 0.0));
+            if is_buyer_maker {
+                entry.1 += quantity; // sell volume (seller-initiated)
+            } else {
+                entry.0 += quantity; // buy volume (buyer-initiated)
+            }
+
+            self.total_volume += quantity;
+            let tick_vol = self.volume_by_price[&tick];
+            if tick_vol > self.max_volume_at_price {
+                self.max_volume_at_price = tick_vol;
+                self.poc = tick as f64 * self.tick_size;
+            }
+        }
+
+        self.last_seen_trade_version = series.version;
     }
 
     /// Returns visible price levels with volume, sorted by price descending
@@ -147,28 +226,14 @@ impl VolumeProfileState {
         }
     }
 
-    /// Apply a live trade to the volume profile
-    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool) {
-        let tick = (price / self.tick_size).round() as i64;
-
-        // Update total volume
-        *self.volume_by_price.entry(tick).or_insert(0.0) += quantity;
-
-        // Update buy/sell split
-        let entry = self.buy_sell_by_price.entry(tick).or_insert((0.0, 0.0));
-        if is_buyer_maker {
-            entry.1 += quantity; // sell volume (seller-initiated)
-        } else {
-            entry.0 += quantity; // buy volume (buyer-initiated)
-        }
-
-        // Update total_volume and max_volume_at_price
-        self.total_volume += quantity;
-        let tick_vol = self.volume_by_price[&tick];
-        if tick_vol > self.max_volume_at_price {
-            self.max_volume_at_price = tick_vol;
-            self.poc = tick as f64 * self.tick_size;
-        }
+    /// Apply a live trade to the volume profile.
+    ///
+    /// VolumeProfile now reads from `shared_trades` via `tick()`. This method
+    /// is intentionally a no-op and exists only to avoid breaking any call
+    /// sites that have not yet been removed.
+    #[deprecated(note = "VolumeProfile reads from shared_trades via tick(); this method is a no-op")]
+    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool) {
+        // No-op: VolumeProfile now reads from the shared TradeSeries.
     }
 
     /// Get the POC level data

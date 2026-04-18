@@ -13,6 +13,7 @@ alerts = { path = "../alerts" }
 alert-delivery = { path = "../alert-delivery" }
 live-data = { path = "../live-data" }
 bar-service = { path = "../bar-service" }
+trade-service = { path = "../trade-service" }
 digdigdig3 = "=0.1.31"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }

@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use bar_service::{BarSeries, BarSeriesKey, SharedSeriesMap};
+use trade_service::{SharedTradeMap, TradeSeries, TradeKey, DEFAULT_CAPACITY};
 
 use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
@@ -212,6 +213,12 @@ pub struct DataBridge {
     /// `request_bars`, the cache is sent immediately and then a background fetch
     /// retrieves only the *newer* bars (after the last cached timestamp).
     bar_cache: SharedSeriesMap,
+    /// Session-level live trade ring map.
+    ///
+    /// Key: `TradeKey`. Shared with `TradeService` in `App` via `Arc` — both
+    /// sides see the same `HashMap`. The async WS tasks write trades here;
+    /// panels read at render time. Mirrors `bar_cache` semantics.
+    trade_map: SharedTradeMap,
     /// Session-level symbol cache.
     ///
     /// Key: `ExchangeId`. Stores the full list of trading symbols so that
@@ -260,7 +267,10 @@ impl DataBridge {
     /// Additional broadcast receivers can be created with [`add_listener`]. The channel
     /// capacity is 4096 messages; if a slow receiver falls behind, old messages are
     /// dropped for that receiver only.
-    pub fn new(bar_cache: SharedSeriesMap) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
+    pub fn new(
+        bar_cache: SharedSeriesMap,
+        trade_map: SharedTradeMap,
+    ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("live-data")
@@ -279,12 +289,21 @@ impl DataBridge {
             connector_ready_tx,
             ws_actors: Mutex::new(WsActorMap::new()),
             bar_cache,
+            trade_map,
             symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
             ws_rtt_handles: Arc::new(Mutex::new(HashMap::new())),
             oldest_fetched_ts: Arc::new(Mutex::new(HashMap::new())),
             rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
         }, rx, connector_ready_rx)
+    }
+
+    /// Get a clone of the shared trade map.
+    ///
+    /// Use this to initialize `TradeService::with_map()` in `App` — both sides
+    /// will share the same underlying `HashMap` via `Arc`.
+    pub fn trade_map(&self) -> SharedTradeMap {
+        self.trade_map.clone()
     }
 
     /// Create a new update receiver that receives all future updates.
@@ -773,16 +792,45 @@ impl DataBridge {
     /// Routes the symbol to the shared per-exchange trade actor, which
     /// multiplexes all symbols over a single WS connection.  If no actor
     /// exists yet for this exchange it is spawned automatically.
-    pub fn subscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
+    ///
+    /// Also registers (or re-uses) a `TradeSeries` in the `SharedTradeMap` for
+    /// this `(exchange_id, symbol, account_type)` key, incrementing its
+    /// refcount. Returns the `Arc<RwLock<TradeSeries>>` handle so the caller
+    /// can attach it to a panel state.
+    pub fn subscribe_trades(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Arc<RwLock<TradeSeries>> {
+        // Spawn / re-use the WS actor for the Trades stream.
+        let ws_key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
         let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool);
+            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, pool);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
+
+        // Get-or-create the TradeSeries in the shared map, incrementing refcount.
+        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
+        let handle = {
+            let mut map = self.trade_map.write().unwrap_or_else(|e| e.into_inner());
+            let h = map
+                .entry(trade_key)
+                .or_insert_with(|| {
+                    Arc::new(RwLock::new(TradeSeries::new(DEFAULT_CAPACITY)))
+                })
+                .clone();
+            h
+        };
+        // Increment the logical refcount inside the series.
+        if let Ok(mut series) = handle.write() {
+            series.refcount += 1;
+        }
+        handle
     }
 
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.
@@ -892,10 +940,32 @@ impl DataBridge {
     ///
     /// Sends a `RemoveSymbol` command to the trade actor; the actor applies a
     /// 30-second grace period before actually unsubscribing from the exchange.
+    ///
+    /// Also decrements the `TradeSeries` refcount in the `SharedTradeMap`.
+    /// When the refcount reaches zero the series is removed from the map,
+    /// freeing memory.
     pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        let key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
+        let ws_key = WsKey { exchange_id, stream_type: WsStreamType::Trades, account_type };
         if let Ok(actors) = self.ws_actors.lock() {
-            actors.send_cmd(&key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
+            actors.send_cmd(&ws_key, WsCmd::RemoveSymbol { symbol: symbol.to_string() });
+        }
+
+        // Decrement TradeSeries refcount; remove when it hits zero.
+        let trade_key = TradeKey::new(exchange_id, account_type, symbol);
+        if let Ok(mut map) = self.trade_map.write() {
+            let remove = if let Some(handle) = map.get(&trade_key) {
+                if let Ok(mut series) = handle.write() {
+                    series.refcount = series.refcount.saturating_sub(1);
+                    series.refcount == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if remove {
+                map.remove(&trade_key);
+            }
         }
     }
 

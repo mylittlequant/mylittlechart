@@ -1,0 +1,11 @@
+[package]
+name = "trade-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+trade-store = { path = "../trade-store" }
+digdigdig3 = "=0.1.31"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "sync"] }

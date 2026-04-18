@@ -7,3 +7,4 @@ edition.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 uzor = "=1.0.43"
 zengeld-chart = { path = "../chart" }
+trade-service = { path = "../trade-service" }

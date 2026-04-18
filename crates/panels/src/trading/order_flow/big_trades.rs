@@ -1,5 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
+use std::fmt;
+use std::sync::{Arc, RwLock};
+
+use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -9,7 +13,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 pub struct BigTradesId(pub u64);
 
 /// BigTrades panel state (heavy data)
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BigTradesState {
     /// Symbol being monitored
     pub symbol: String,
@@ -19,7 +23,7 @@ pub struct BigTradesState {
 
     /// Account type short label (e.g. "S", "F", "FI")
     pub account_type: String,
-    /// Ring buffer of large trades
+    /// Derived, filtered ring buffer — kept in sync with the shared series via `tick()`.
     pub big_trades: VecDeque<PublicTrade>,
     /// Threshold for "big" trade
     pub size_threshold: f64,
@@ -33,6 +37,32 @@ pub struct BigTradesState {
     pub dom_tick_size: Option<f64>,
     /// Scroll offset
     pub scroll_offset: f64,
+
+    /// Handle to the shared trade ring for this (exchange, symbol, account_type).
+    ///
+    /// `None` until `subscribe_trades` is called on the bridge. Panels read
+    /// from this at tick time; they NEVER write through it.
+    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
+    /// The `TradeSeries::version` we last processed in `tick()`.
+    ///
+    /// When `shared_trades.version != last_seen_trade_version` there are new
+    /// trades to pull into `big_trades`.
+    pub last_seen_trade_version: u64,
+}
+
+impl fmt::Debug for BigTradesState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BigTradesState")
+            .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("account_type", &self.account_type)
+            .field("big_trades_len", &self.big_trades.len())
+            .field("size_threshold", &self.size_threshold)
+            .field("last_seen_trade_version", &self.last_seen_trade_version)
+            .field("has_shared_trades", &self.shared_trades.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +92,71 @@ impl BigTradesState {
             dom_market_price: None,
             dom_tick_size: None,
             scroll_offset: 0.0,
+            shared_trades: None,
+            last_seen_trade_version: 0,
         }
+    }
+
+    /// Pull new trades from the shared series into the local filter cache.
+    ///
+    /// Call this once per frame (or before render). It is a no-op when there is
+    /// no shared series or when the version has not advanced.
+    pub fn tick(&mut self) {
+        let handle = match self.shared_trades.as_ref() {
+            Some(h) => h,
+            None => return,
+        };
+
+        let series = match handle.read() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        if series.version == self.last_seen_trade_version {
+            return;
+        }
+
+        // How many trades have been added since we last processed?
+        // Version is incremented once per push, so the delta == number of new trades
+        // (assuming no rotations dropped anything — if they did we accept a gap).
+        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
+        let len = series.trades.len();
+
+        // Walk only the tail that is new.
+        let skip = if new_count < len { len - new_count } else { 0 };
+
+        const MAX_TRADES: usize = 1000;
+
+        for trade in series.trades.iter().skip(skip) {
+            // Apply size threshold filter.
+            if trade.quantity < self.size_threshold {
+                continue;
+            }
+            // Apply notional threshold filter if set.
+            if let Some(notional_min) = self.notional_threshold {
+                if trade.price * trade.quantity < notional_min {
+                    continue;
+                }
+            }
+
+            let public = PublicTrade {
+                timestamp: trade.timestamp_ms,
+                price: trade.price,
+                quantity: trade.quantity,
+                side: if trade.is_buyer_maker != 0 {
+                    TradeSide::Sell
+                } else {
+                    TradeSide::Buy
+                },
+            };
+
+            if self.big_trades.len() >= MAX_TRADES {
+                self.big_trades.pop_front();
+            }
+            self.big_trades.push_back(public);
+        }
+
+        self.last_seen_trade_version = series.version;
     }
 
     /// Get visible trades for rendering (most recent first)
@@ -95,25 +189,15 @@ impl BigTradesState {
         base_color
     }
 
-    /// Apply a live trade — only keeps trades above the size threshold
-    pub fn push_trade(&mut self, price: f64, quantity: f64, is_buyer_maker: bool, timestamp: i64) {
-        if quantity < self.size_threshold {
-            return;
-        }
-
-        let trade = PublicTrade {
-            price,
-            quantity,
-            side: if is_buyer_maker { TradeSide::Sell } else { TradeSide::Buy },
-            timestamp,
-        };
-
-        // Cap ring buffer at a fixed maximum to prevent unbounded growth
-        const MAX_TRADES: usize = 1000;
-        if self.big_trades.len() >= MAX_TRADES {
-            self.big_trades.pop_front();
-        }
-        self.big_trades.push_back(trade);
+    /// Apply a live trade directly (legacy broadcast path, kept for compatibility
+    /// while Footprint and VolumeProfile are still on the old fan-out).
+    ///
+    /// BigTrades now reads from `shared_trades` via `tick()`. This method is
+    /// called from the fan-out loop and is intentionally a no-op — all filtering
+    /// happens in `tick()` instead.
+    #[deprecated(note = "BigTrades reads from shared_trades via tick(); this method is a no-op")]
+    pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool, _timestamp: i64) {
+        // No-op: BigTrades now reads from the shared TradeSeries.
     }
 
     /// Calculate bar width for size visualization (0.0-1.0)
