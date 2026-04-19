@@ -501,6 +501,15 @@ impl TradingPanel for FootprintState {
                 continue;
             }
 
+            // Compute per-candle maximums for proportional bar widths.
+            let max_bid = price_levels.iter().map(|&(_, b, _)| b).fold(0.0_f64, f64::max);
+            let max_ask = price_levels.iter().map(|&(_, _, a)| a).fold(0.0_f64, f64::max);
+            let max_vol = price_levels.iter().map(|&(_, b, a)| b + a).fold(0.0_f64, f64::max);
+            let max_abs_delta = price_levels
+                .iter()
+                .map(|&(_, b, a)| (a - b).abs())
+                .fold(0.0_f64, f64::max);
+
             let cell_height = (h / num_levels as f32).clamp(CELL_MIN_HEIGHT, CELL_MAX_HEIGHT);
 
             for (level_idx, &(price_tick, bid_vol, ask_vol)) in price_levels.iter().enumerate() {
@@ -519,6 +528,53 @@ impl TradingPanel for FootprintState {
                 );
                 ctx.set_fill_color(&cell_bg_hex);
                 ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, cell_w as f64, cell_h as f64);
+
+                // Proportional volume bars (drawn on top of background, below text).
+                let bar_alpha = 0x40u8; // ~0.25 alpha
+                let bar_x = (candle_x + 2.0) as f64;
+                let bar_y = cell_y as f64;
+                let bar_h = cell_h as f64;
+                let half_w = cell_w as f64 * 0.5;
+                match self.display_mode {
+                    FootprintMode::BidAsk | FootprintMode::VolumeDeltaColor => {
+                        // Bid bar: green, extends from left edge toward center.
+                        if max_bid > 0.0 {
+                            let bid_w = (bid_vol / max_bid) * half_w;
+                            ctx.set_fill_color(&format!("#00ff00{:02x}", bar_alpha));
+                            ctx.fill_rect(bar_x, bar_y, bid_w, bar_h);
+                        }
+                        // Ask bar: red, extends from right edge toward center.
+                        if max_ask > 0.0 {
+                            let ask_w = (ask_vol / max_ask) * half_w;
+                            ctx.set_fill_color(&format!("#ff0000{:02x}", bar_alpha));
+                            ctx.fill_rect(bar_x + cell_w as f64 - ask_w, bar_y, ask_w, bar_h);
+                        }
+                    }
+                    FootprintMode::Delta | FootprintMode::DeltaProfile => {
+                        // Single bar from center, green if +delta, red if -delta.
+                        let delta = ask_vol - bid_vol;
+                        if max_abs_delta > 0.0 {
+                            let bar_w = (delta.abs() / max_abs_delta) * half_w;
+                            let center_x = bar_x + half_w;
+                            if delta >= 0.0 {
+                                ctx.set_fill_color(&format!("#00ff00{:02x}", bar_alpha));
+                                ctx.fill_rect(center_x, bar_y, bar_w, bar_h);
+                            } else {
+                                ctx.set_fill_color(&format!("#ff0000{:02x}", bar_alpha));
+                                ctx.fill_rect(center_x - bar_w, bar_y, bar_w, bar_h);
+                            }
+                        }
+                    }
+                    FootprintMode::Volume => {
+                        // Single bar from left, width proportional to total volume.
+                        let total = bid_vol + ask_vol;
+                        if max_vol > 0.0 {
+                            let bar_w = (total / max_vol) * cell_w as f64;
+                            ctx.set_fill_color(&format!("#4488ff{:02x}", bar_alpha));
+                            ctx.fill_rect(bar_x, bar_y, bar_w, bar_h);
+                        }
+                    }
+                }
 
                 ctx.set_fill_color(&theme.separator);
                 ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, cell_w as f64, 0.5);

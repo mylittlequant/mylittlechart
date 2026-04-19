@@ -67,6 +67,12 @@ pub struct L2TapeState {
     pub events: VecDeque<L2Event>,
     /// Maximum events to keep in buffer
     pub max_events: usize,
+    /// Time-based retention in milliseconds (default 30 000 ms = 30 s).
+    /// Events older than `retention_ms` are drained from the front on each tick.
+    pub retention_ms: u64,
+    /// Maximum quantity seen in the current event buffer.
+    /// Recalculated after time-based pruning; used to scale row alpha.
+    pub max_qty_seen: f64,
     /// Auto-scroll to latest event
     pub auto_scroll: bool,
     /// Filter by event type
@@ -148,6 +154,29 @@ impl L2TapePanel {
 const L2_ROW_HEIGHT: f32 = 16.0;
 const L2_HEADER_HEIGHT: f32 = 16.0;
 const L2_LEFT_PAD: f32 = 6.0;
+
+/// Format a quantity value using K / M suffixes when the magnitude warrants it.
+fn abbreviate_qty(val: f64) -> String {
+    if val >= 1_000_000.0 {
+        let m = val / 1_000_000.0;
+        if (m - m.floor()).abs() < 0.05 {
+            format!("{:.0}M", m)
+        } else {
+            format!("{:.1}M", m)
+        }
+    } else if val >= 1_000.0 {
+        let k = val / 1_000.0;
+        if (k - k.floor()).abs() < 0.05 {
+            format!("{:.0}K", k)
+        } else {
+            format!("{:.1}K", k)
+        }
+    } else if val >= 1.0 {
+        format!("{:.2}", val)
+    } else {
+        format!("{:.4}", val)
+    }
+}
 
 impl TradingPanel for L2TapeState {
     fn kind(&self) -> &'static str { "l2_tape" }
@@ -234,8 +263,14 @@ impl TradingPanel for L2TapeState {
             let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
             let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
 
+            // Zebra base
             let row_bg = if row_idx % 2 == 0 { &theme.panel_bg } else { &theme.row_bg_alt };
             ctx.set_fill_color(row_bg);
+            ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
+
+            // Chromatic overlay: color by event type + side, alpha scales with qty.
+            let chroma_color = self.row_chroma_color(event);
+            ctx.set_fill_color(&chroma_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
 
             // Flash overlay: bright semi-transparent rect for recently-pushed events.
@@ -282,13 +317,7 @@ impl TradingPanel for L2TapeState {
             ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
 
-            let qty_str = if event.quantity >= 1000.0 {
-                format!("{:.0}", event.quantity)
-            } else if event.quantity >= 1.0 {
-                format!("{:.2}", event.quantity)
-            } else {
-                format!("{:.4}", event.quantity)
-            };
+            let qty_str = abbreviate_qty(event.quantity);
             ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
         }
 
@@ -331,6 +360,8 @@ impl L2TapeState {
             account_type: String::new(),
             events: VecDeque::new(),
             max_events: 10000,
+            retention_ms: 30_000,
+            max_qty_seen: 0.0,
             auto_scroll: true,
             filter_type: None,
             filter_side: None,
@@ -379,6 +410,25 @@ impl L2TapeState {
         // This reuses the same logic as apply_delta but operates on the full
         // current book (treating missing levels as qty=0).
         self.diff_and_push_events(&bids, &asks, timestamp);
+
+        // Time-based retention: drain events older than retention_ms.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
+        let before_len = self.events.len();
+        while let Some(front) = self.events.front() {
+            if front.timestamp < cutoff_ms {
+                self.events.pop_front();
+            } else {
+                break;
+            }
+        }
+        // Only recalculate when events were removed (the old max may be gone).
+        if self.events.len() < before_len {
+            self.recalc_max_qty();
+        }
     }
 
     /// Get visible events as `(deque_index, &L2Event)`, most recent first.
@@ -462,6 +512,10 @@ impl L2TapeState {
         if self.events.len() >= self.max_events {
             self.events.pop_front();
         }
+        // Update max_qty_seen before pushing so the new event is included.
+        if event.quantity > self.max_qty_seen {
+            self.max_qty_seen = event.quantity;
+        }
         self.events.push_back(event);
         self.push_total += 1;
 
@@ -471,6 +525,50 @@ impl L2TapeState {
             .as_millis() as u64;
         // Serial of the event just pushed equals push_total.
         self.flash_events.push((self.push_total, now_ms));
+    }
+
+    /// Recompute `max_qty_seen` from the current event buffer.
+    ///
+    /// Called after time-based pruning removes events from the front,
+    /// which might have held the previous maximum.
+    fn recalc_max_qty(&mut self) {
+        self.max_qty_seen = self.events
+            .iter()
+            .map(|e| e.quantity)
+            .fold(0.0_f64, f64::max);
+    }
+
+    /// Return the RGBA hex color string for the chromatic row background.
+    ///
+    /// Alpha scales with `(qty / max_qty_seen).sqrt().clamp(0.3, 1.0)` so
+    /// larger events get more opaque overlays.
+    fn row_chroma_color(&self, event: &L2Event) -> String {
+        let qty_ratio = if self.max_qty_seen > 0.0 {
+            (event.quantity / self.max_qty_seen).sqrt().clamp(0.3, 1.0)
+        } else {
+            0.3
+        };
+
+        // (r, g, b, base_alpha) — all in [0, 1]
+        let (r, g, b, base_alpha) = match event.event_type {
+            L2EventType::Execute => match event.side {
+                L2Side::Bid  => (0.0,  0.9,  0.35, 0.30), // bright green
+                L2Side::Ask  => (0.95, 0.18, 0.18, 0.30), // bright red
+            },
+            L2EventType::Add => match event.side {
+                L2Side::Bid  => (0.12, 0.47, 0.95, 0.15), // subtle blue
+                L2Side::Ask  => (0.95, 0.55, 0.05, 0.15), // subtle orange
+            },
+            L2EventType::Modify => (0.55, 0.35, 0.90, 0.10), // neutral purple
+            L2EventType::Cancel => (0.45, 0.45, 0.50, 0.10), // gray
+        };
+
+        let alpha = (base_alpha * qty_ratio).clamp(0.0, 1.0);
+        let a_byte = (alpha * 255.0) as u8;
+        let r_byte = (r * 255.0) as u8;
+        let g_byte = (g * 255.0) as u8;
+        let b_byte = (b * 255.0) as u8;
+        format!("#{:02x}{:02x}{:02x}{:02x}", r_byte, g_byte, b_byte, a_byte)
     }
 
     /// Scroll by `delta` rows (positive = scroll toward older events).

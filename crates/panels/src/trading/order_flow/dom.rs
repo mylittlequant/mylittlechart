@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use orderbook_service::OrderbookSeries;
 use trade_service::TradeSeries;
@@ -60,10 +60,21 @@ pub struct DomState {
     /// differs we pull a fresh aggregation from the shared series.
     pub last_seen_orderbook_version: u64,
 
-    /// Shared trade series — held purely to keep the subscription refcount alive.
-    /// DOM does not read trades directly; last_trade_price flows through
-    /// SharedOrderbookMap → OrderbookSeries::last_trade_price → mid().
+    /// Shared trade series — read each tick to accumulate trade volume per price.
     pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
+    /// Last trade series version we consumed.
+    pub last_seen_trade_version: u64,
+
+    /// Accumulated buy/sell trade volume per price tick for the last N minutes.
+    /// HashMap<price_tick, (buy_qty, sell_qty)>
+    pub trade_volume_by_price: HashMap<i64, (f64, f64)>,
+
+    /// Window for trade accumulation in minutes (default: 8).
+    pub trade_window_minutes: u64,
+
+    /// Maximum trade volume across visible levels (for bar scaling).
+    pub max_trade_volume: f64,
 
     /// User's pending orders at each price level
     pub user_orders: HashMap<i64, Vec<String>>, // price_tick -> order_ids
@@ -85,6 +96,23 @@ pub struct DomState {
     /// Crosshair price synced from a linked chart window.
     /// When set, a subtle highlight line is drawn across the corresponding row.
     pub crosshair_price: Option<f64>,
+
+    // --- Chase Tracker ---
+
+    /// Consecutive ticks best_bid has moved upward.
+    pub chase_bid_streak: i32,
+
+    /// Consecutive ticks best_ask has moved downward.
+    pub chase_ask_streak: i32,
+
+    /// Previous best bid (for direction comparison).
+    pub last_best_bid: f64,
+
+    /// Previous best ask (for direction comparison).
+    pub last_best_ask: f64,
+
+    /// Timestamp (ms) of the last chase update, for the 200ms window.
+    pub chase_last_update_ms: i64,
 }
 
 impl fmt::Debug for DomState {
@@ -142,12 +170,21 @@ impl DomState {
             shared_orderbook: None,
             last_seen_orderbook_version: 0,
             shared_trades: None,
+            last_seen_trade_version: 0,
+            trade_volume_by_price: HashMap::new(),
+            trade_window_minutes: 8,
+            max_trade_volume: 0.0,
             user_orders: HashMap::new(),
             hovered_price: None,
             recent_fills: HashMap::new(),
             auto_center: true,
             min_volume_filter: 0.0,
             crosshair_price: None,
+            chase_bid_streak: 0,
+            chase_ask_streak: 0,
+            last_best_bid: 0.0,
+            last_best_ask: 0.0,
+            chase_last_update_ms: 0,
         }
     }
 
@@ -296,24 +333,6 @@ impl DomState {
         tick as f64 * self.tick_size
     }
 
-    /// Calculate proportional width for bid bar
-    pub fn bid_bar_width(&self, volume: f64, max_width: f32) -> f32 {
-        if self.max_volume == 0.0 {
-            0.0
-        } else {
-            (volume / self.max_volume * max_width as f64) as f32
-        }
-    }
-
-    /// Calculate proportional width for ask bar
-    pub fn ask_bar_width(&self, volume: f64, max_width: f32) -> f32 {
-        if self.max_volume == 0.0 {
-            0.0
-        } else {
-            (volume / self.max_volume * max_width as f64) as f32
-        }
-    }
-
     /// Get current spread (best ask - best bid)
     pub fn spread(&self) -> f64 {
         let best_bid = self.volume_by_price.iter()
@@ -337,30 +356,99 @@ impl DomState {
     /// Returns immediately when there is no shared handle or when the version
     /// has not advanced since the last call.
     pub fn tick(&mut self) {
-        let Some(ref ob_handle) = self.shared_orderbook else { return };
-        let Ok(series) = ob_handle.read() else { return };
-        if series.current.version == self.last_seen_orderbook_version {
-            return; // nothing new
-        }
-        self.last_seen_orderbook_version = series.current.version;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
 
-        // Update market_price + best bid/ask straight from the shared series
-        // (source of truth, independent of which buckets render currently shows).
-        self.best_bid_price = series.current.best_bid();
-        self.best_ask_price = series.current.best_ask();
-        if let Some(mid) = series.current.mid() {
-            self.market_price = mid;
-            if self.center_price == 0.0 || self.auto_center {
-                self.center_price = mid;
+        // --- Orderbook update ---
+        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+            if let Ok(series) = ob_handle.read() {
+                if series.current.version != self.last_seen_orderbook_version {
+                    self.last_seen_orderbook_version = series.current.version;
+
+                    self.best_bid_price = series.current.best_bid();
+                    self.best_ask_price = series.current.best_ask();
+                    if let Some(mid) = series.current.mid() {
+                        self.market_price = mid;
+                        if self.center_price == 0.0 || self.auto_center {
+                            self.center_price = mid;
+                        }
+                    }
+
+                    let bids: Vec<_> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
+                    let asks: Vec<_> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+                    drop(series);
+                    self.rebuild_aggregation_from_levels(&bids, &asks);
+                }
             }
         }
 
-        // Rebuild volume_by_price from the shared snapshot.
-        // We must clone the snapshot data we need before releasing the lock.
-        let bids: Vec<_> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
-        let asks: Vec<_> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
-        drop(series);
-        self.rebuild_aggregation_from_levels(&bids, &asks);
+        // --- Chase Tracker update ---
+        let cur_bid = self.best_bid_price.unwrap_or(0.0);
+        let cur_ask = self.best_ask_price.unwrap_or(0.0);
+
+        if self.last_best_bid > 0.0 && self.last_best_ask > 0.0 {
+            let dt_ms = now_ms - self.chase_last_update_ms;
+            let in_window = dt_ms <= 200;
+
+            let bid_moved_up = cur_bid > self.last_best_bid + f64::EPSILON;
+            let ask_moved_down = cur_ask < self.last_best_ask - f64::EPSILON
+                && cur_ask > 0.0;
+
+            if bid_moved_up && in_window {
+                self.chase_bid_streak += 1;
+                self.chase_ask_streak = 0;
+            } else if ask_moved_down && in_window {
+                self.chase_ask_streak += 1;
+                self.chase_bid_streak = 0;
+            } else {
+                // Fade: reduce streaks by 1 each tick
+                self.chase_bid_streak = (self.chase_bid_streak - 1).max(0);
+                self.chase_ask_streak = (self.chase_ask_streak - 1).max(0);
+            }
+        }
+
+        if cur_bid > 0.0 { self.last_best_bid = cur_bid; }
+        if cur_ask > 0.0 { self.last_best_ask = cur_ask; }
+        self.chase_last_update_ms = now_ms;
+
+        // --- Trade volume accumulation ---
+        if let Some(ref trade_handle) = self.shared_trades.clone() {
+            if let Ok(series) = trade_handle.read() {
+                if series.version != self.last_seen_trade_version {
+                    self.last_seen_trade_version = series.version;
+
+                    let cutoff_ms = now_ms - (self.trade_window_minutes as i64 * 60 * 1000);
+                    self.trade_volume_by_price.clear();
+
+                    let (s0, s1) = series.as_slices();
+                    for trade in s0.iter().chain(s1.iter()) {
+                        if trade.timestamp_ms < cutoff_ms {
+                            continue;
+                        }
+                        let tick = (trade.price / self.tick_size).round() as i64;
+                        let entry = self.trade_volume_by_price.entry(tick).or_insert((0.0, 0.0));
+                        // is_buyer_maker=1 means seller was the taker → sell trade
+                        // is_buyer_maker=0 means buyer was the taker → buy trade
+                        if trade.is_buyer_maker == 0 {
+                            entry.0 += trade.quantity; // buy
+                        } else {
+                            entry.1 += trade.quantity; // sell
+                        }
+                    }
+                    drop(series);
+                    self.recompute_max_trade_volume();
+                }
+            }
+        }
+    }
+
+    /// Recompute max_trade_volume across all stored trade levels.
+    fn recompute_max_trade_volume(&mut self) {
+        self.max_trade_volume = self.trade_volume_by_price.values()
+            .map(|(buy, sell)| buy.max(*sell))
+            .fold(0.0_f64, f64::max);
     }
 
     /// Rebuild `volume_by_price` from flat bid/ask level lists.
@@ -419,19 +507,75 @@ impl DomState {
         self.tick_size = new_tick;
         // Force a full rebuild on the next tick by resetting the version cursor.
         self.last_seen_orderbook_version = 0;
+        self.last_seen_trade_version = 0;
         self.tick();
     }
 
-    /// Recompute max_volume from all visible levels.
+    /// Recompute max_volume from ALL stored levels (called after each data update).
     ///
-    /// Levels whose total volume is below `min_volume_filter` are excluded from
-    /// the max so that filtered-out noise does not compress the bar scale.
+    /// This is a coarse pass so that `max_volume` is never zero when render runs.
+    /// The render path immediately overrides it with the visible-only max via
+    /// `recompute_max_volume_for_visible`.
     fn recompute_max_volume(&mut self) {
         let filter = self.min_volume_filter;
         self.max_volume = self.volume_by_price.values()
             .filter(|(bv, av, _, _)| filter <= 0.0 || (bv + av) >= filter)
             .map(|(bv, av, _, _)| bv.max(*av))
             .fold(0.0f64, f64::max);
+    }
+
+    /// Recompute max_volume restricted to the price ticks that are actually
+    /// visible on screen for the given panel height.  Must be called at the
+    /// start of each render frame so that off-screen iceberg orders cannot
+    /// compress the visible bar scale.
+    pub fn recompute_max_volume_for_visible(&mut self, height: f32) {
+        let row_h = 20.0_f32; // DOM_ROW_HEIGHT
+        let visible_rows = ((height / row_h) as usize).max(1);
+        let half = visible_rows / 2;
+        let center_tick = self.price_to_tick(self.center_price);
+        let filter = self.min_volume_filter;
+
+        let mut max_vol = 0.0_f64;
+        for i in 0..visible_rows {
+            let offset = half as i64 - i as i64;
+            let tick = center_tick + offset;
+            if let Some(&(bv, av, _, _)) = self.volume_by_price.get(&tick) {
+                if filter <= 0.0 || (bv + av) >= filter {
+                    let m = bv.max(av);
+                    if m > max_vol {
+                        max_vol = m;
+                    }
+                }
+            }
+        }
+        // Only override if we found at least one visible level; fall back to
+        // the global max so bars never vanish completely on an empty view.
+        if max_vol > 0.0 {
+            self.max_volume = max_vol;
+        }
+    }
+}
+
+/// Format a volume value using K / M suffixes when the magnitude warrants it.
+/// Values below 1000 are printed with the given decimal places unchanged.
+fn abbreviate_number(val: f64, decimals: usize) -> String {
+    if val >= 1_000_000.0 {
+        let m = val / 1_000_000.0;
+        // One decimal place is enough for M-scale; trim trailing ".0"
+        if (m - m.floor()).abs() < 0.05 {
+            format!("{:.0}M", m)
+        } else {
+            format!("{:.1}M", m)
+        }
+    } else if val >= 1_000.0 {
+        let k = val / 1_000.0;
+        if (k - k.floor()).abs() < 0.05 {
+            format!("{:.0}K", k)
+        } else {
+            format!("{:.1}K", k)
+        }
+    } else {
+        format!("{:.*}", decimals, val)
     }
 }
 
@@ -508,6 +652,12 @@ const DOM_ROW_HEIGHT: f32 = 20.0;
 const DOM_LEFT_PAD: f32 = 6.0;
 const DOM_PRICE_COL_WIDTH: f32 = 70.0;
 
+// Trade column proportions relative to available width.
+// Layout: [BidOrders 25%] [SellTrades 10%] [Price ~30%] [BuyTrades 10%] [AskOrders 25%]
+// These are fractions of the non-price non-pad available width.
+const TRADE_COL_FRACTION: f32 = 0.10; // each trade column as fraction of avail
+const ORDER_COL_FRACTION: f32 = 0.25; // each order column as fraction of avail
+
 // ============================================================
 // TradingPanel impl for DomState
 // ============================================================
@@ -534,26 +684,68 @@ impl TradingPanel for DomState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
+        // === STEP 0: Restrict bar scale to visible rows only ===
+        let visible_max_volume: f64 = {
+            let row_h = DOM_ROW_HEIGHT;
+            let visible_rows = ((h / row_h) as usize).max(1);
+            let half = visible_rows / 2;
+            let center_tick = self.price_to_tick(self.center_price);
+            let filter = self.min_volume_filter;
+            let mut mv = 0.0_f64;
+            for i in 0..visible_rows {
+                let offset = half as i64 - i as i64;
+                let tick = center_tick + offset;
+                if let Some(&(bv, av, _, _)) = self.volume_by_price.get(&tick) {
+                    if filter <= 0.0 || (bv + av) >= filter {
+                        let m = bv.max(av);
+                        if m > mv { mv = m; }
+                    }
+                }
+            }
+            if mv > 0.0 { mv } else { self.max_volume }
+        };
+
+        // Compute visible max trade volume for scaling trade bars.
+        let visible_max_trade: f64 = {
+            let row_h = DOM_ROW_HEIGHT;
+            let visible_rows = ((h / row_h) as usize).max(1);
+            let half = visible_rows / 2;
+            let center_tick = self.price_to_tick(self.center_price);
+            let mut mv = 0.0_f64;
+            for i in 0..visible_rows {
+                let offset = half as i64 - i as i64;
+                let tick = center_tick + offset;
+                if let Some(&(buy, sell)) = self.trade_volume_by_price.get(&tick) {
+                    let m = buy.max(sell);
+                    if m > mv { mv = m; }
+                }
+            }
+            if mv > 0.0 { mv } else { self.max_trade_volume }
+        };
+
         // === STEP 1: Calculate layout ===
         let levels = self.visible_levels_for_height(h);
         let row_height = DOM_ROW_HEIGHT;
 
-        // Column layout: [Bid Volume Bar | Price | Ask Volume Bar]
+        // Column layout (5 columns):
+        //   [BidOrders] [SellTrades] [Price] [BuyTrades] [AskOrders]
+        //    25%          10%          ~30%    10%          25%
         let pad = 4.0_f32;
         let price_col_w = DOM_PRICE_COL_WIDTH;
-        let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
-        let vol_col_w = avail / 2.0;
+        // Available width after price column and outer pads
+        let avail = (w - price_col_w - pad * 4.0 - DOM_LEFT_PAD * 2.0).max(0.0);
 
-        let bid_vol_col_x = x + DOM_LEFT_PAD;
-        let bid_vol_col_w = vol_col_w;
+        let order_col_w = avail * ORDER_COL_FRACTION;
+        let trade_col_w = avail * TRADE_COL_FRACTION;
 
-        let price_col_x = bid_vol_col_x + bid_vol_col_w + pad;
+        // X positions (left to right)
+        let bid_ord_col_x = x + DOM_LEFT_PAD;
+        let sell_trade_col_x = bid_ord_col_x + order_col_w + pad;
+        let price_col_x = sell_trade_col_x + trade_col_w + pad;
+        let buy_trade_col_x = price_col_x + price_col_w + pad;
+        let ask_ord_col_x = buy_trade_col_x + trade_col_w + pad;
 
-        let ask_vol_col_x = price_col_x + price_col_w + pad;
-
-        // === STEP 3: Best bid/ask come from shared OrderbookSeries via tick().
-        // The raw native-tick prices are aggregated into the same buckets the
-        // renderer uses (bids floor, asks ceil — matches rebuild_aggregation).
+        // === STEP 3: Best bid/ask bucket prices ===
         let best_bid_bucket_price = self.best_bid_price.map(|p| {
             let tick = (p / self.tick_size).floor() as i64;
             self.tick_to_price(tick)
@@ -565,27 +757,21 @@ impl TradingPanel for DomState {
         let best_bid_price = best_bid_bucket_price;
         let best_ask_price = best_ask_bucket_price;
 
-        // Decide mid-line rendering style:
-        // - If there's at least one empty bucket between best_bid and best_ask
-        //   (spread spans 2+ ticks), draw the mid as a full row.
-        // - Otherwise (best_bid and best_ask are in adjacent rows) draw the
-        //   mid as a thin 1px line between them.
         let mid_as_row = match (best_bid_price, best_ask_price) {
             (Some(bb), Some(ba)) => (ba - bb) > self.tick_size * 1.5,
-            _ => true, // unknown — fall back to row style
+            _ => true,
         };
 
         // === STEP 4: Render each price level row ===
         for (i, level) in levels.iter().enumerate() {
             let row_y = y + (i as f32 * row_height);
+            let price_tick = self.price_to_tick(level.price);
 
             // --- Step 4.1: Row background ---
             let is_best_bid = best_bid_price.map_or(false, |p| (level.price - p).abs() < 0.001);
             let is_best_ask = best_ask_price.map_or(false, |p| (level.price - p).abs() < 0.001);
             let is_current_price = (level.price - self.market_price).abs() < self.tick_size * 0.5;
 
-            // Volume filter: dim levels whose combined volume is below the threshold.
-            // Current-price row is never dimmed so the price marker stays visible.
             let total_volume = level.bid_volume + level.ask_volume;
             let is_filtered = self.min_volume_filter > 0.0
                 && total_volume < self.min_volume_filter
@@ -604,11 +790,6 @@ impl TradingPanel for DomState {
             ctx.set_fill_color(bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
 
-            // Current price marker:
-            // - mid_as_row=true: paint the whole row in semi-transparent gold
-            //   (works when there's an empty row between best_bid and best_ask)
-            // - mid_as_row=false: draw a 1px gold line between best_bid and
-            //   best_ask rows (when they are adjacent, no empty mid row exists)
             if is_current_price && mid_as_row {
                 let cp_bg = if theme.current_price.len() >= 7 {
                     format!("{}50", &theme.current_price[..7])
@@ -618,14 +799,12 @@ impl TradingPanel for DomState {
                 ctx.set_fill_color(&cp_bg);
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
             }
-            // 1px mid line between best_bid (above) and best_ask (below) row.
-            // We draw it on the bottom edge of the best_ask row.
             if !mid_as_row && is_best_ask {
                 ctx.set_fill_color(&theme.current_price);
                 ctx.fill_rect(x as f64, (row_y + row_height) as f64, w as f64, 1.0);
             }
 
-            // --- Step 4.1b: Hover highlight overlay ---
+            // --- Hover highlight overlay ---
             let is_hovered = self.hovered_price
                 .map_or(false, |hp| (level.price - hp).abs() < self.tick_size * 0.5);
 
@@ -644,34 +823,41 @@ impl TradingPanel for DomState {
                 ctx.fill_rect(x as f64, row_y as f64, 3.0, row_height as f64);
             }
 
-            // --- Step 4.1c: Crosshair highlight (synced from linked chart) ---
+            // --- Crosshair highlight ---
             let is_crosshair = self.crosshair_price
                 .map_or(false, |cp| (level.price - cp).abs() < self.tick_size * 0.5);
 
             if is_crosshair && !is_hovered {
-                // Semi-transparent white overlay — subtle, distinct from hover
                 ctx.set_fill_color("#ffffff26");
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
             }
 
-            // --- Step 4.2: Bid volume bar (right-aligned, grows leftward) ---
+            // --- Step 4.2: Bid order volume bar (right-aligned, grows leftward) ---
             if level.bid_volume > 0.0 && !is_filtered {
-                let bar_width = self.bid_bar_width(level.bid_volume, vol_col_w);
-                let bar_x = bid_vol_col_x + bid_vol_col_w - bar_width;
+                let bar_width = if visible_max_volume == 0.0 {
+                    0.0_f32
+                } else {
+                    (level.bid_volume / visible_max_volume * order_col_w as f64) as f32
+                };
+                let bar_x = bid_ord_col_x + order_col_w - bar_width;
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                // Use buy color for bid bars
-                ctx.set_fill_color(&theme.buy);
+                let bid_bar_color = if theme.buy.len() >= 7 {
+                    format!("{}33", &theme.buy[..7])
+                } else {
+                    theme.buy.clone()
+                };
+                ctx.set_fill_color(&bid_bar_color);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Right);
                 ctx.set_text_baseline(TextBaseline::Middle);
 
-                let text_x = bid_vol_col_x + bid_vol_col_w - 4.0;
+                let text_x = bid_ord_col_x + order_col_w - 4.0;
                 let text_y = row_y + row_height / 2.0;
-                let vol_text = format!("{:.*}", self.volume_decimals(), level.bid_volume);
+                let vol_text = abbreviate_number(level.bid_volume, self.volume_decimals());
                 let text_w = ctx.measure_text(&vol_text);
                 let bid_text_color = if bar_width as f64 >= text_w {
                     &theme.text_primary
@@ -682,23 +868,88 @@ impl TradingPanel for DomState {
                 ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
             }
 
-            // --- Step 4.3: Ask volume bar (left-aligned, grows rightward) ---
+            // --- Step 4.3: Sell trade bar (right-aligned within sell trade col) ---
+            if let Some(&(buy_qty, sell_qty)) = self.trade_volume_by_price.get(&price_tick) {
+                let text_y = row_y + row_height / 2.0;
+
+                if sell_qty > 0.0 && visible_max_trade > 0.0 {
+                    let bar_width = (sell_qty / visible_max_trade * trade_col_w as f64) as f32;
+                    let bar_x = sell_trade_col_x + trade_col_w - bar_width;
+                    let bar_y = row_y + 2.0;
+                    let bar_h = row_height - 4.0;
+
+                    // Sell color at 30% opacity (0x4C ≈ 0.30 * 255)
+                    let sell_bar_color = if theme.sell.len() >= 7 {
+                        format!("{}4C", &theme.sell[..7])
+                    } else {
+                        theme.sell.clone()
+                    };
+                    ctx.set_fill_color(&sell_bar_color);
+                    ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+
+                    if bar_width > 12.0 {
+                        ctx.set_font("9px monospace");
+                        ctx.set_text_align(TextAlign::Right);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        ctx.set_fill_color(&theme.sell);
+                        let t = abbreviate_number(sell_qty, self.volume_decimals());
+                        ctx.fill_text(&t, (sell_trade_col_x + trade_col_w - 2.0) as f64, text_y as f64);
+                    }
+                }
+
+                // --- Step 4.4: Buy trade bar (left-aligned within buy trade col) ---
+                if buy_qty > 0.0 && visible_max_trade > 0.0 {
+                    let bar_width = (buy_qty / visible_max_trade * trade_col_w as f64) as f32;
+                    let bar_x = buy_trade_col_x;
+                    let bar_y = row_y + 2.0;
+                    let bar_h = row_height - 4.0;
+
+                    // Buy color at 30% opacity
+                    let buy_bar_color = if theme.buy.len() >= 7 {
+                        format!("{}4C", &theme.buy[..7])
+                    } else {
+                        theme.buy.clone()
+                    };
+                    ctx.set_fill_color(&buy_bar_color);
+                    ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+
+                    if bar_width > 12.0 {
+                        ctx.set_font("9px monospace");
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        ctx.set_fill_color(&theme.buy);
+                        let t = abbreviate_number(buy_qty, self.volume_decimals());
+                        ctx.fill_text(&t, (buy_trade_col_x + 2.0) as f64, text_y as f64);
+                    }
+                }
+            }
+
+            // --- Step 4.5: Ask order volume bar (left-aligned, grows rightward) ---
             if level.ask_volume > 0.0 && !is_filtered {
-                let bar_width = self.ask_bar_width(level.ask_volume, vol_col_w);
-                let bar_x = ask_vol_col_x;
+                let bar_width = if visible_max_volume == 0.0 {
+                    0.0_f32
+                } else {
+                    (level.ask_volume / visible_max_volume * order_col_w as f64) as f32
+                };
+                let bar_x = ask_ord_col_x;
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                ctx.set_fill_color(&theme.sell);
+                let ask_bar_color = if theme.sell.len() >= 7 {
+                    format!("{}33", &theme.sell[..7])
+                } else {
+                    theme.sell.clone()
+                };
+                ctx.set_fill_color(&ask_bar_color);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
 
-                let text_x = ask_vol_col_x + 4.0;
+                let text_x = ask_ord_col_x + 4.0;
                 let text_y = row_y + row_height / 2.0;
-                let vol_text = format!("{:.*}", self.volume_decimals(), level.ask_volume);
+                let vol_text = abbreviate_number(level.ask_volume, self.volume_decimals());
                 let text_w = ctx.measure_text(&vol_text);
                 let ask_text_color = if bar_width as f64 >= text_w {
                     &theme.text_primary
@@ -709,7 +960,7 @@ impl TradingPanel for DomState {
                 ctx.fill_text(&vol_text, text_x as f64, text_y as f64);
             }
 
-            // --- Step 4.4: Price text (centered in price column) ---
+            // --- Step 4.6: Price text (centered in price column) ---
             let price_text_color = if is_filtered {
                 &theme.text_muted
             } else if is_current_price {
@@ -729,22 +980,90 @@ impl TradingPanel for DomState {
 
             let price_x = price_col_x + price_col_w / 2.0;
             let price_y = row_y + row_height / 2.0;
-            let price_text = format!("{:.*}", self.price_decimals(), level.price);
-            ctx.fill_text(&price_text, price_x as f64, price_y as f64);
 
-            // --- Step 4.5: User order markers ---
+            // Spread row improvement: show "Spread: X.XX" when spread > 1.5 * tick_size
+            if level.is_spread && mid_as_row {
+                let sp = self.spread();
+                if sp > self.tick_size * 1.5 {
+                    let dec = self.price_decimals();
+                    let spread_text = format!("Spread: {:.*}", dec, sp);
+                    ctx.set_fill_color("#ffff0099");
+                    ctx.set_font("9px monospace");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.fill_text(&spread_text, price_x as f64, price_y as f64);
+                    // Skip normal price text on spread rows with the label
+                    // User order marker still applies below
+                } else {
+                    let price_text = format!("{:.*}", self.price_decimals(), level.price);
+                    ctx.fill_text(&price_text, price_x as f64, price_y as f64);
+                }
+            } else {
+                let price_text = format!("{:.*}", self.price_decimals(), level.price);
+                ctx.fill_text(&price_text, price_x as f64, price_y as f64);
+            }
+
+            // --- Step 4.7: User order markers ---
             if level.has_user_order {
                 ctx.set_fill_color(&theme.dom_user_order);
                 ctx.set_font("10px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("▲", bid_vol_col_x as f64, price_y as f64);
+                ctx.fill_text("▲", bid_ord_col_x as f64, price_y as f64);
             }
         }
 
-        // === STEP 5: spread separator removed — best-bid/best-ask coloured
-        // backgrounds already mark the boundary; the extra 1px line clutters
-        // the median row.
+        // === STEP 5: Chase Tracker indicator on the spread row ===
+        // Draw on the row closest to the mid-price
+        let chase_bid = self.chase_bid_streak;
+        let chase_ask = self.chase_ask_streak;
+
+        if chase_bid > 0 || chase_ask > 0 {
+            // Find spread/mid row index
+            let spread_row_idx = levels.iter().position(|l| l.is_spread || {
+                (l.price - self.market_price).abs() < self.tick_size * 0.5
+            });
+
+            if let Some(row_idx) = spread_row_idx {
+                let row_y = y + (row_idx as f32 * row_height);
+                let indicator_y = row_y + row_height / 2.0;
+
+                // Draw indicator centered above the price column
+                let center_x = price_col_x + price_col_w / 2.0;
+
+                if chase_bid > 0 {
+                    let streak = chase_bid;
+                    let alpha = (1.0 - 1.0 / (1.0 + streak as f64)).clamp(0.15, 0.9);
+                    let alpha_hex = (alpha * 255.0) as u8;
+                    let indicator_color = if theme.buy.len() >= 7 {
+                        format!("{}{:02X}", &theme.buy[..7], alpha_hex)
+                    } else {
+                        theme.buy.clone()
+                    };
+                    ctx.set_fill_color(&indicator_color);
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    // Arrow + count
+                    let label = format!("▲{}", streak);
+                    ctx.fill_text(&label, (center_x - 8.0) as f64, indicator_y as f64);
+                } else if chase_ask > 0 {
+                    let streak = chase_ask;
+                    let alpha = (1.0 - 1.0 / (1.0 + streak as f64)).clamp(0.15, 0.9);
+                    let alpha_hex = (alpha * 255.0) as u8;
+                    let indicator_color = if theme.sell.len() >= 7 {
+                        format!("{}{:02X}", &theme.sell[..7], alpha_hex)
+                    } else {
+                        theme.sell.clone()
+                    };
+                    ctx.set_fill_color(&indicator_color);
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    let label = format!("▼{}", streak);
+                    ctx.fill_text(&label, (center_x + 8.0) as f64, indicator_y as f64);
+                }
+            }
+        }
 
         // === STEP 6: Flash animation for recent fills ===
         let now = std::time::Instant::now();

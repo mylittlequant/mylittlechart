@@ -1,8 +1,9 @@
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
 use orderbook_service::OrderbookSeries;
+use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -12,7 +13,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 pub struct LiquidityHeatmapId(pub u64);
 
 /// LiquidityHeatmap panel state (heavy data)
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LiquidityHeatmapState {
     pub symbol: String,
 
@@ -26,8 +27,7 @@ pub struct LiquidityHeatmapState {
     pub start_time: i64,
     pub end_time: i64,
 
-    /// Heatmap data: (timestamp, price) -> depth
-    /// Stored as Vec of snapshots for efficient time slicing
+    /// Heatmap data: Vec of snapshots for efficient time slicing
     pub snapshots: Vec<LiquiditySnapshot>,
 
     /// Snapshot interval (ms) - how often we sample order book
@@ -52,15 +52,54 @@ pub struct LiquidityHeatmapState {
     pub max_snapshots: usize,
 
     /// Crosshair price synced from a linked chart window.
-    /// When set, a subtle highlight line is drawn at the corresponding price row.
     pub crosshair_price: Option<f64>,
 
     /// Shared orderbook series (written by the bridge, read here each tick).
     pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
 
-    /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
-    /// differs we pull a fresh snapshot and sample it into the heatmap.
+    /// Last `OrderbookSnapshot::version` we consumed.
     pub last_seen_orderbook_version: u64,
+
+    /// Shared trade series for circle overlay rendering.
+    pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
+
+    /// The `TradeSeries::version` we last consumed in `tick()`.
+    pub last_seen_trade_version: u64,
+
+    /// Recent trades stored for circle overlay (capped at 1000).
+    pub trade_circles: Vec<TradeCircle>,
+
+    /// Maximum trade quantity seen — used to scale circle radius.
+    pub max_trade_qty: f64,
+
+    /// Number of adjacent price ticks to coalesce into one bucket (1 = no coalescing).
+    pub coalesce_ticks: u32,
+
+    /// When true, new snapshots go to `pause_buffer` instead of `snapshots`.
+    pub paused: bool,
+
+    /// Buffer accumulating snapshots while paused (max 200).
+    pub pause_buffer: VecDeque<LiquiditySnapshot>,
+
+    /// Mid price used to determine bid/ask side for coloring.
+    pub mid_price: Option<f64>,
+}
+
+impl std::fmt::Debug for LiquidityHeatmapState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiquidityHeatmapState")
+            .field("symbol", &self.symbol)
+            .field("exchange", &self.exchange)
+            .field("snapshots_len", &self.snapshots.len())
+            .field("trade_circles_len", &self.trade_circles.len())
+            .field("max_trade_qty", &self.max_trade_qty)
+            .field("paused", &self.paused)
+            .field("pause_buffer_len", &self.pause_buffer.len())
+            .field("coalesce_ticks", &self.coalesce_ticks)
+            .field("has_shared_orderbook", &self.shared_orderbook.is_some())
+            .field("has_shared_trades", &self.shared_trades.is_some())
+            .finish()
+    }
 }
 
 impl LiquidityHeatmapState {
@@ -83,23 +122,50 @@ impl LiquidityHeatmapState {
             crosshair_price: None,
             shared_orderbook: None,
             last_seen_orderbook_version: 0,
+            shared_trades: None,
+            last_seen_trade_version: 0,
+            trade_circles: Vec::new(),
+            max_trade_qty: 0.0,
+            coalesce_ticks: 1,
+            paused: false,
+            pause_buffer: VecDeque::new(),
+            mid_price: None,
         }
     }
 
     /// Shift the time-axis scroll by `delta` pixels (positive = scroll right / older data).
     pub fn handle_scroll(&mut self, delta: f64) {
-        self.scroll_x = (self.scroll_x + delta as f32).max(0.0);
+        let new_x = self.scroll_x + delta as f32;
+        if new_x > self.scroll_x {
+            // scrolling back in time — engage pause
+            self.paused = true;
+        }
+        self.scroll_x = new_x.max(0.0);
     }
 
-    /// Reset time scroll to the latest snapshot (rightmost position).
+    /// Reset time scroll to the latest snapshot and flush the pause buffer.
     pub fn handle_double_click(&mut self) {
         self.scroll_x = 0.0;
         self.scroll_y = 0.0;
+        self.paused = false;
+        // Drain pause buffer into main snapshots
+        while let Some(snap) = self.pause_buffer.pop_front() {
+            self.snapshots.push(snap);
+        }
+        // Enforce rolling window after drain
+        while self.snapshots.len() > self.max_snapshots {
+            self.snapshots.remove(0);
+        }
+        self.rebuild_time_range();
     }
 
     /// Pan the viewport: `dx` scrolls the time axis, `dy` scrolls the price axis.
     pub fn handle_drag(&mut self, dx: f64, dy: f64) {
-        self.scroll_x = (self.scroll_x - dx as f32).max(0.0);
+        let new_x = self.scroll_x - dx as f32;
+        if new_x > self.scroll_x {
+            self.paused = true;
+        }
+        self.scroll_x = new_x.max(0.0);
         self.scroll_y += dy as f32;
     }
 
@@ -108,27 +174,79 @@ impl LiquidityHeatmapState {
         false
     }
 
-    /// Pull the latest snapshot from `shared_orderbook` and sample it into the
-    /// heatmap (rate-limited by `snapshot_interval_ms`).
-    ///
-    /// Returns immediately when there is no shared handle or the version has not
-    /// advanced since the last call.
-    pub fn tick(&mut self) {
-        let Some(ref ob_handle) = self.shared_orderbook else { return };
-        let Ok(series) = ob_handle.read() else { return };
-        if series.current.version == self.last_seen_orderbook_version {
-            return; // nothing new
+    fn rebuild_time_range(&mut self) {
+        if let Some(first) = self.snapshots.first() {
+            self.start_time = first.timestamp;
         }
-        self.last_seen_orderbook_version = series.current.version;
+        if let Some(last) = self.snapshots.last() {
+            self.end_time = last.timestamp;
+        }
+    }
 
-        let timestamp = series.current.last_rest_ts_ms;
-        let bids: Vec<(f64, f64)> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
-        let asks: Vec<(f64, f64)> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
-        drop(series);
+    /// Pull the latest snapshot from `shared_orderbook` and sample it into the heatmap.
+    /// Also pulls new trades from `shared_trades` into the circle overlay buffer.
+    pub fn tick(&mut self) {
+        // --- Orderbook ---
+        let ob_handle = self.shared_orderbook.clone();
+        if let Some(ob_handle) = ob_handle {
+            if let Ok(series) = ob_handle.read() {
+                if series.current.version != self.last_seen_orderbook_version {
+                    self.last_seen_orderbook_version = series.current.version;
 
-        // apply_snapshot is rate-limited internally — only samples if enough time passed.
-        #[allow(deprecated)]
-        self.apply_snapshot(&bids, &asks, timestamp);
+                    let timestamp = series.current.last_rest_ts_ms;
+                    let bids: Vec<(f64, f64)> =
+                        series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
+                    let asks: Vec<(f64, f64)> =
+                        series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+
+                    // Compute mid price from best bid/ask
+                    let best_bid = bids.iter().map(|(p, _)| *p).fold(f64::NEG_INFINITY, f64::max);
+                    let best_ask = asks.iter().map(|(p, _)| *p).fold(f64::INFINITY, f64::min);
+                    if best_bid.is_finite() && best_ask.is_finite() {
+                        self.mid_price = Some((best_bid + best_ask) / 2.0);
+                    }
+
+                    drop(series);
+
+                    #[allow(deprecated)]
+                    self.apply_snapshot(&bids, &asks, timestamp);
+                }
+            }
+        }
+
+        // --- Trades ---
+        if let Some(ref trade_handle) = self.shared_trades {
+            if let Ok(series) = trade_handle.read() {
+                if series.version != self.last_seen_trade_version {
+                    let new_count =
+                        (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
+                    let len = series.trades.len();
+                    let skip = if new_count < len { len - new_count } else { 0 };
+
+                    const MAX_CIRCLES: usize = 1000;
+
+                    for trade in series.trades.iter().skip(skip) {
+                        let circle = TradeCircle {
+                            timestamp: trade.timestamp_ms,
+                            price: trade.price,
+                            qty: trade.quantity,
+                            // is_buyer_maker == 1 → seller initiated → red (sell)
+                            // is_buyer_maker == 0 → buyer initiated → green (buy)
+                            is_buy: trade.is_buyer_maker == 0,
+                        };
+                        if circle.qty > self.max_trade_qty {
+                            self.max_trade_qty = circle.qty;
+                        }
+                        if self.trade_circles.len() >= MAX_CIRCLES {
+                            self.trade_circles.remove(0);
+                        }
+                        self.trade_circles.push(circle);
+                    }
+
+                    self.last_seen_trade_version = series.version;
+                }
+            }
+        }
     }
 
     /// Apply an orderbook snapshot — rate-limited by snapshot_interval_ms.
@@ -144,19 +262,24 @@ impl LiquidityHeatmapState {
         }
         self.last_snapshot_ms = timestamp_ms;
 
-        // Build depth map
-        let mut depth_by_price: HashMap<i64, (f64, f64)> = HashMap::new();
+        let coalesce = self.coalesce_ticks.max(1) as i64;
+
+        // Build depth map using BTreeMap for ordered iteration.
+        // Coalesce adjacent price ticks into buckets.
+        let mut depth_by_price: BTreeMap<i64, (f64, f64)> = BTreeMap::new();
         for &(price, qty) in bids {
             if qty > 0.0 {
-                let tick = (price / self.tick_size).round() as i64;
-                let entry = depth_by_price.entry(tick).or_insert((0.0, 0.0));
+                let raw_tick = (price / self.tick_size).round() as i64;
+                let bucket = raw_tick / coalesce * coalesce;
+                let entry = depth_by_price.entry(bucket).or_insert((0.0, 0.0));
                 entry.0 += qty;
             }
         }
         for &(price, qty) in asks {
             if qty > 0.0 {
-                let tick = (price / self.tick_size).round() as i64;
-                let entry = depth_by_price.entry(tick).or_insert((0.0, 0.0));
+                let raw_tick = (price / self.tick_size).round() as i64;
+                let bucket = raw_tick / coalesce * coalesce;
+                let entry = depth_by_price.entry(bucket).or_insert((0.0, 0.0));
                 entry.1 += qty;
             }
         }
@@ -178,25 +301,26 @@ impl LiquidityHeatmapState {
             depth_by_price,
         };
 
-        self.snapshots.push(snapshot);
-
-        // Enforce rolling window
-        while self.snapshots.len() > self.max_snapshots {
-            self.snapshots.remove(0);
-        }
-
-        // Update time range
-        if let Some(first) = self.snapshots.first() {
-            self.start_time = first.timestamp;
-        }
-        if let Some(last) = self.snapshots.last() {
-            self.end_time = last.timestamp;
+        if self.paused {
+            // Buffer while paused
+            self.pause_buffer.push_back(snapshot);
+            const MAX_PAUSE_BUFFER: usize = 200;
+            while self.pause_buffer.len() > MAX_PAUSE_BUFFER {
+                self.pause_buffer.pop_front();
+            }
+        } else {
+            self.snapshots.push(snapshot);
+            // Enforce rolling window
+            while self.snapshots.len() > self.max_snapshots {
+                self.snapshots.remove(0);
+            }
+            self.rebuild_time_range();
         }
 
         true
     }
 
-    /// Get intensity (0.0-1.0) for a specific cell in the heatmap
+    /// Get intensity (0.0–1.0) for a specific cell in the heatmap
     pub fn cell_intensity(&self, time_idx: usize, price_tick: i64) -> f64 {
         if time_idx >= self.snapshots.len() {
             return 0.0;
@@ -218,24 +342,47 @@ impl LiquidityHeatmapState {
         }
     }
 
-    /// Convert intensity to heatmap color (blue -> green -> yellow -> red)
-    pub fn intensity_to_color(&self, intensity: f64) -> [f32; 4] {
+    /// Semantic bid/ask color.
+    ///
+    /// - `price_tick` is compared against `mid_price` to determine side.
+    /// - Bids (price < mid): green (#2ecc71), alpha 0.1–0.8.
+    /// - Asks (price > mid): red  (#e74c3c), alpha 0.1–0.8.
+    /// - `fade_factor` (0.3–1.0) applied for horizontal fade (older = dimmer).
+    pub fn side_color(&self, price_tick: i64, intensity: f64, fade_factor: f32) -> [f32; 4] {
+        let alpha = ((intensity as f32).sqrt().clamp(0.1, 0.8)) * fade_factor;
+
+        let mid_tick = self.mid_price
+            .map(|m| (m / self.tick_size).round() as i64);
+
+        let is_bid = match mid_tick {
+            Some(mid) => price_tick < mid,
+            // Without mid price, fall back to 0 boundary
+            None => price_tick < 0,
+        };
+
+        if is_bid {
+            // #2ecc71 = (46, 204, 113)
+            [46.0 / 255.0, 204.0 / 255.0, 113.0 / 255.0, alpha]
+        } else {
+            // #e74c3c = (231, 76, 60)
+            [231.0 / 255.0, 76.0 / 255.0, 60.0 / 255.0, alpha]
+        }
+    }
+
+    /// Convert intensity to heatmap color (legacy rainbow, kept for `depth_color`).
+    fn intensity_to_color_rainbow(intensity: f64) -> [f32; 4] {
         let intensity = intensity.clamp(0.0, 1.0) as f32;
 
         if intensity < 0.25 {
-            // Blue to cyan
             let t = intensity / 0.25;
             [0.0, t * 0.5, 1.0, 0.7]
         } else if intensity < 0.5 {
-            // Cyan to green
             let t = (intensity - 0.25) / 0.25;
             [0.0, 0.5 + t * 0.5, 1.0 - t, 0.7]
         } else if intensity < 0.75 {
-            // Green to yellow
             let t = (intensity - 0.5) / 0.25;
             [t, 1.0, 0.0, 0.7]
         } else {
-            // Yellow to red
             let t = (intensity - 0.75) / 0.25;
             [1.0, 1.0 - t, 0.0, 0.7]
         }
@@ -253,17 +400,22 @@ impl LiquidityHeatmapState {
         (start, end)
     }
 
-    /// Get visible cells for rendering (time_idx, price_tick, color)
+    /// Get visible cells for rendering (time_idx, price_tick, color).
+    /// Colors are side-aware with horizontal fade applied.
     pub fn visible_cells(&self, _width: f32, _height: f32) -> Vec<(usize, i64, [f32; 4])> {
         let (start_time, end_time) = self.visible_time_range();
+        let visible_columns = (end_time - start_time).max(1);
         let mut cells = Vec::new();
 
-        for time_idx in start_time..end_time {
+        for (col, time_idx) in (start_time..end_time).enumerate() {
+            // Horizontal fade: older columns (lower col index) are dimmer.
+            let fade_factor = (col as f32 / visible_columns as f32).clamp(0.3, 1.0);
+
             if let Some(snapshot) = self.snapshots.get(time_idx) {
-                for (price_tick, _) in &snapshot.depth_by_price {
-                    let intensity = self.cell_intensity(time_idx, *price_tick);
-                    let color = self.intensity_to_color(intensity);
-                    cells.push((time_idx, *price_tick, color));
+                for (&price_tick, _) in &snapshot.depth_by_price {
+                    let intensity = self.cell_intensity(time_idx, price_tick);
+                    let color = self.side_color(price_tick, intensity, fade_factor);
+                    cells.push((time_idx, price_tick, color));
                 }
             }
         }
@@ -271,19 +423,18 @@ impl LiquidityHeatmapState {
         cells
     }
 
-    /// Get color for depth value (alias for intensity_to_color)
+    /// Get color for depth value using the rainbow ramp (used for sidebar).
     pub fn depth_color(&self, depth: f64) -> [f32; 4] {
         let intensity = if self.max_depth == 0.0 {
             0.0
         } else {
             (depth / self.max_depth).min(1.0)
         };
-        self.intensity_to_color(intensity)
+        Self::intensity_to_color_rainbow(intensity)
     }
 
     /// Convert price tick to Y coordinate
     pub fn price_to_y(&self, price_tick: i64, height: f32) -> f32 {
-        // Find min/max price in current snapshots
         let (min_price, max_price) = self.snapshots.iter()
             .flat_map(|s| s.depth_by_price.keys())
             .fold((i64::MAX, i64::MIN), |(min, max), &tick| {
@@ -312,11 +463,24 @@ impl LiquidityHeatmapState {
     }
 }
 
+/// A single trade recorded for the heatmap circle overlay.
+#[derive(Debug, Clone)]
+pub struct TradeCircle {
+    /// Exchange timestamp (ms).
+    pub timestamp: i64,
+    /// Trade price.
+    pub price: f64,
+    /// Trade quantity.
+    pub qty: f64,
+    /// `true` = buyer-initiated (green), `false` = seller-initiated (red).
+    pub is_buy: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct LiquiditySnapshot {
     pub timestamp: i64,
-    /// Price -> (bid_depth, ask_depth)
-    pub depth_by_price: HashMap<i64, (f64, f64)>, // Using i64 for price ticks
+    /// Price tick -> (bid_depth, ask_depth), ordered for iteration.
+    pub depth_by_price: BTreeMap<i64, (f64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -350,7 +514,6 @@ impl TradingPanel for LiquidityHeatmapState {
             let cell_x = x + self.time_to_x(time_idx, w);
             let cell_y = y + self.price_to_y(price_tick, h);
 
-            // color comes from intensity_to_color — convert f32 rgba to hex
             let color_hex = format!(
                 "#{:02x}{:02x}{:02x}{:02x}",
                 (color[0].clamp(0.0, 1.0) * 255.0) as u8,
@@ -393,7 +556,6 @@ impl TradingPanel for LiquidityHeatmapState {
 
         if config.show_current_book {
             if let Some(snapshot) = self.snapshots.last() {
-                // Find max quantity across all price levels for normalisation
                 let max_qty = snapshot
                     .depth_by_price
                     .values()
@@ -436,6 +598,54 @@ impl TradingPanel for LiquidityHeatmapState {
                         }
                     }
                 }
+            }
+        }
+
+        // Trade circles overlay
+        if !self.trade_circles.is_empty() && self.max_trade_qty > 0.0 {
+            let time_span_ms = if self.end_time > self.start_time {
+                (self.end_time - self.start_time) as f64
+            } else {
+                1.0
+            };
+
+            let ts_to_x = |ts: i64| -> f64 {
+                let frac = (ts - self.start_time) as f64 / time_span_ms;
+                x as f64 + frac * heatmap_w as f64
+            };
+
+            let price_to_y_f = |price: f64| -> f64 {
+                if !has_price_range {
+                    return (y as f64) + (h as f64) / 2.0;
+                }
+                let tick = (price / self.tick_size).round() as i64;
+                y as f64 + tick_to_y(tick)
+            };
+
+            use std::f64::consts::TAU;
+
+            for circle in &self.trade_circles {
+                if circle.timestamp < self.start_time || circle.timestamp > self.end_time {
+                    continue;
+                }
+
+                let cx = ts_to_x(circle.timestamp);
+                let cy = price_to_y_f(circle.price);
+
+                if cx < x as f64 || cx > (x + heatmap_w) as f64 {
+                    continue;
+                }
+                if cy < y as f64 || cy > (y + h) as f64 {
+                    continue;
+                }
+
+                let radius = 2.0 + (circle.qty / self.max_trade_qty).sqrt() * 8.0;
+
+                let color = if circle.is_buy { "#2ecc7199" } else { "#e74c3c99" };
+                ctx.set_fill_color(color);
+                ctx.begin_path();
+                ctx.arc(cx, cy, radius, 0.0, TAU);
+                ctx.fill();
             }
         }
 
@@ -489,6 +699,22 @@ impl TradingPanel for LiquidityHeatmapState {
             };
             let label_text = format!("{:.prec$}", price, prec = decimal_places);
             ctx.fill_text(&label_text, (x + heatmap_w - 4.0) as f64, label_y as f64);
+        }
+
+        // "PAUSED" badge at top-right when paused
+        if self.paused {
+            let badge_text = "PAUSED";
+            let badge_x = x + w - 60.0;
+            let badge_y = y + 6.0;
+
+            ctx.set_fill_color("#00000099");
+            ctx.fill_rect((badge_x - 4.0) as f64, badge_y as f64, 56.0, 14.0);
+
+            ctx.set_font("bold 9px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.set_fill_color("#e74c3cff");
+            ctx.fill_text(badge_text, badge_x as f64, badge_y as f64);
         }
     }
 
