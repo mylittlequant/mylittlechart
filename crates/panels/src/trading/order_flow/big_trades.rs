@@ -183,6 +183,20 @@ impl BigTradesState {
         self.scroll_offset = 0.0;
     }
 
+    /// Continuous drag scroll: drag up (dy < 0) shows older trades, drag down
+    /// (dy > 0) scrolls back toward newest.  Sensitivity: 1 px = 1 trade.
+    pub fn handle_drag(&mut self, _dx: f64, dy: f64) {
+        // Invert: dragging upward = scroll toward older trades.
+        let raw = self.scroll_offset - dy;
+        let max_offset = self.big_trades.len().saturating_sub(1) as f64;
+        self.scroll_offset = raw.clamp(0.0, max_offset);
+    }
+
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
+    }
+
     /// Get visible trades for rendering (most recent first, respecting `scroll_offset`).
     ///
     /// `scroll_offset` rows are skipped from the newest end so the user can scroll

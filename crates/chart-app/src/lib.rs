@@ -592,6 +592,26 @@ pub struct ChartApp {
     /// `(heatmap_panel_id, last_x, last_y)`.
     pub(crate) slot_heatmap_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
 
+    /// Active L2Tape drag-to-scroll.
+    ///
+    /// `(panel_id, last_x, last_y)`.
+    pub(crate) slot_l2tape_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
+    /// Active Footprint drag-to-pan.
+    ///
+    /// `(panel_id, last_x, last_y)`.
+    pub(crate) slot_footprint_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
+    /// Active BigTrades drag-to-scroll.
+    ///
+    /// `(panel_id, last_x, last_y)`.
+    pub(crate) slot_bigtrades_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
+    /// Active VolumeProfile drag-to-pan.
+    ///
+    /// `(panel_id, last_x, last_y)`.
+    pub(crate) slot_volprofile_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
 }
 
 /// An action that mutates the app-level watchlist.
@@ -934,6 +954,10 @@ impl ChartApp {
             slot_sep_drag: None,
             slot_dom_drag: None,
             slot_heatmap_drag: None,
+            slot_l2tape_drag: None,
+            slot_footprint_drag: None,
+            slot_bigtrades_drag: None,
+            slot_volprofile_drag: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1222,6 +1246,10 @@ impl ChartApp {
             slot_sep_drag: None,
             slot_dom_drag: None,
             slot_heatmap_drag: None,
+            slot_l2tape_drag: None,
+            slot_footprint_drag: None,
+            slot_bigtrades_drag: None,
+            slot_volprofile_drag: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1405,6 +1433,10 @@ impl ChartApp {
             slot_sep_drag: None,
             slot_dom_drag: None,
             slot_heatmap_drag: None,
+            slot_l2tape_drag: None,
+            slot_footprint_drag: None,
+            slot_bigtrades_drag: None,
+            slot_volprofile_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.

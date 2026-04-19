@@ -73,6 +73,11 @@ pub struct VolumeProfileState {
     /// Price zoom multiplier — how many price levels are visible relative to the
     /// full profile range.  1.0 = show all levels; > 1.0 = zoomed in.
     pub price_zoom: f64,
+
+    /// Vertical pan offset in price units.  Positive = viewport shifted upward
+    /// (shows lower price levels); negative = shifted downward.  Reset to 0.0
+    /// on double-click together with `price_zoom`.
+    pub price_pan: f64,
 }
 
 impl fmt::Debug for VolumeProfileState {
@@ -123,6 +128,7 @@ impl VolumeProfileState {
             last_seen_trade_version: 0,
             crosshair_price: None,
             price_zoom: 1.0,
+            price_pan: 0.0,
         }
     }
 
@@ -337,6 +343,19 @@ impl VolumeProfileState {
     /// Reset price zoom to the default (show all levels).
     pub fn handle_double_click(&mut self) {
         self.price_zoom = 1.0;
+        self.price_pan = 0.0;
+    }
+
+    /// Continuous drag pan: dy shifts the price viewport (drag down = see higher
+    /// prices; drag up = see lower prices).  Sensitivity: 1 px per tick unit.
+    pub fn handle_drag(&mut self, _dx: f64, dy: f64) {
+        // dy > 0 means dragging downward → viewport moves down → see lower prices.
+        self.price_pan -= dy * self.tick_size;
+    }
+
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
     }
 
     /// Get the POC level data

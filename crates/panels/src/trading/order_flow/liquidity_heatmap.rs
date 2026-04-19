@@ -103,6 +103,11 @@ impl LiquidityHeatmapState {
         self.scroll_y += dy as f32;
     }
 
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
+    }
+
     /// Pull the latest snapshot from `shared_orderbook` and sample it into the
     /// heatmap (rate-limited by `snapshot_interval_ms`).
     ///

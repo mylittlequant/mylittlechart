@@ -405,6 +405,11 @@ impl DomState {
     #[deprecated(note = "Use tick() to pull data from the shared OrderbookSeries instead")]
     pub fn apply_delta(&mut self, _bids: &[(f64, f64)], _asks: &[(f64, f64)]) {}
 
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
+    }
+
     /// Change `tick_size` (depth aggregation granularity) and re-pull from the
     /// shared series so the change takes effect immediately.
     pub fn set_tick_size(&mut self, new_tick: f64) {

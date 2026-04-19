@@ -1466,6 +1466,26 @@ impl ChartApp {
                                             self.ui_drag_active = true;
                                             return false;
                                         }
+                                        Some(FreeItem::L2Tape(pid)) => {
+                                            self.slot_l2tape_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        Some(FreeItem::Footprint(pid)) => {
+                                            self.slot_footprint_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        Some(FreeItem::BigTrades(pid)) => {
+                                            self.slot_bigtrades_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        Some(FreeItem::VolumeProfile(pid)) => {
+                                            self.slot_volprofile_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -2891,6 +2911,66 @@ impl ChartApp {
             return;
         }
 
+        // ── L2Tape drag-to-scroll ────────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_l2tape_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
+        // ── Footprint drag-to-pan ────────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_footprint_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
+        // ── BigTrades drag-to-scroll ─────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_bigtrades_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
+        // ── VolumeProfile drag-to-pan ────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_volprofile_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
         // ── Free-slot separator resize drag ─────────────────────────────────
         if let Some((slot_idx, sep_idx, start_pos, _total_size)) = self.slot_sep_drag {
             let (is_vertical, content_width, content_height) = {
@@ -3882,6 +3962,30 @@ impl ChartApp {
 
         // ── End heatmap drag-to-pan ───────────────────────────────────────────
         if self.slot_heatmap_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End L2Tape drag-to-scroll ────────────────────────────────────────
+        if self.slot_l2tape_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End Footprint drag-to-pan ────────────────────────────────────────
+        if self.slot_footprint_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End BigTrades drag-to-scroll ─────────────────────────────────────
+        if self.slot_bigtrades_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End VolumeProfile drag-to-pan ────────────────────────────────────
+        if self.slot_volprofile_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             return;
         }
@@ -8331,6 +8435,89 @@ impl ChartApp {
                 let q = self.modal_state.search_query.clone();
                 self.modal_state.symbol_search_results =
                     crate::ChartApp::build_demo_symbol_results(&q, &self.sidebar_state.watchlist_manager, &self.exchange_symbols);
+            }
+            return;
+        }
+
+        // ── Trading panel keyboard routing ───────────────────────────────────
+        // Route key events to whichever order-flow panel is currently hovered
+        // (identified by the `slot:{idx}:leaf:{id}:focus_content` widget).
+        // Panels return `false` until they implement actual hotkeys, at which
+        // point returning `true` stops propagation here.
+        {
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref wid) = hovered_wid {
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((slot_str, leaf_rest)) = rest.split_once(":leaf:") {
+                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus_content") {
+                            if let (Ok(slot_idx), Ok(raw)) =
+                                (slot_str.parse::<usize>(), leaf_id_str.parse::<u64>())
+                            {
+                                if slot_idx < 4 {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use sidebar_content::free_slot::FreeItem;
+                                    // Convert KeyPress to zengeld_chart::input::KeyCode for panels.
+                                    // Most KeyPress variants map to specific KeyCode values; the
+                                    // ones with no equivalent are passed as KeyCode::Other.
+                                    let panel_key = match &key {
+                                        KeyPress::ArrowUp    => zengeld_chart::input::KeyCode::ArrowUp,
+                                        KeyPress::ArrowDown  => zengeld_chart::input::KeyCode::ArrowDown,
+                                        KeyPress::ArrowLeft  => zengeld_chart::input::KeyCode::ArrowLeft,
+                                        KeyPress::ArrowRight => zengeld_chart::input::KeyCode::ArrowRight,
+                                        KeyPress::PageUp     => zengeld_chart::input::KeyCode::PageUp,
+                                        KeyPress::PageDown   => zengeld_chart::input::KeyCode::PageDown,
+                                        KeyPress::Home       => zengeld_chart::input::KeyCode::Home,
+                                        KeyPress::End        => zengeld_chart::input::KeyCode::End,
+                                        KeyPress::Enter      => zengeld_chart::input::KeyCode::Enter,
+                                        KeyPress::Escape     => zengeld_chart::input::KeyCode::Escape,
+                                        KeyPress::Tab        => zengeld_chart::input::KeyCode::Tab,
+                                        KeyPress::Backspace  => zengeld_chart::input::KeyCode::Backspace,
+                                        KeyPress::Delete     => zengeld_chart::input::KeyCode::Delete,
+                                        _                    => zengeld_chart::input::KeyCode::Unknown,
+                                    };
+                                    let _consumed = match item_opt {
+                                        Some(FreeItem::Dom(pid)) => {
+                                            self.panels_store.dom.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::L2Tape(pid)) => {
+                                            self.panels_store.l2_tape.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::Footprint(pid)) => {
+                                            self.panels_store.footprint.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::LiquidityHeatmap(pid)) => {
+                                            self.panels_store.liquidity_heatmap.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::BigTrades(pid)) => {
+                                            self.panels_store.big_trades.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::VolumeProfile(pid)) => {
+                                            self.panels_store.volume_profile.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        _ => false,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

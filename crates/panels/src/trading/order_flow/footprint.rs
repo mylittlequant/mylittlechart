@@ -131,6 +131,18 @@ impl FootprintState {
         self.scroll_x = 0.0;
     }
 
+    /// Continuous drag pan: dx scrolls the time axis (positive = toward older
+    /// candles), dy scrolls the price axis.
+    pub fn handle_drag(&mut self, dx: f64, dy: f64) {
+        self.scroll_x = (self.scroll_x + dx as f32).max(0.0);
+        self.scroll_y += dy as f32;
+    }
+
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
+    }
+
     /// Pull new trades from the shared series and accumulate into the current footprint candle.
     ///
     /// Call once per frame (or before render). No-op when there is no shared

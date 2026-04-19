@@ -508,6 +508,18 @@ impl L2TapeState {
         self.auto_scroll = true;
     }
 
+    /// Continuous drag scroll: drag up (dy < 0) shows older events, drag down
+    /// (dy > 0) scrolls back toward newest.  Sensitivity: 1 row per 16 px.
+    pub fn handle_drag(&mut self, _dx: f64, dy: f64) {
+        // Invert: dragging upward (negative dy) = scroll toward older events.
+        self.handle_scroll(-dy / 16.0);
+    }
+
+    /// Handle a named key event.  Returns `true` if the key was consumed.
+    pub fn handle_key(&mut self, _key: zengeld_chart::input::KeyCode) -> bool {
+        false
+    }
+
     /// Prune expired flash entries and, if `auto_scroll`, reset scroll offset.
     ///
     /// Call once per frame / tick after `tick()`.
