@@ -171,6 +171,18 @@ impl BigTradesState {
         self.last_seen_trade_version = series.version;
     }
 
+    /// Scroll through the trade list.  Positive `delta` scrolls toward older trades.
+    pub fn handle_scroll(&mut self, delta: f64) {
+        let raw = self.scroll_offset + delta * 30.0;
+        let max_offset = self.big_trades.len().saturating_sub(1) as f64;
+        self.scroll_offset = raw.clamp(0.0, max_offset);
+    }
+
+    /// Reset scroll to latest (show most recent trades).
+    pub fn handle_double_click(&mut self) {
+        self.scroll_offset = 0.0;
+    }
+
     /// Get visible trades for rendering (most recent first, respecting `scroll_offset`).
     ///
     /// `scroll_offset` rows are skipped from the newest end so the user can scroll

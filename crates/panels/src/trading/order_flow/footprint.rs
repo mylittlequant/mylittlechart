@@ -126,6 +126,11 @@ impl FootprintState {
         self.scroll_x = (self.scroll_x + delta as f32).max(0.0);
     }
 
+    /// Reset horizontal scroll to 0 (show latest candles).
+    pub fn handle_double_click(&mut self) {
+        self.scroll_x = 0.0;
+    }
+
     /// Pull new trades from the shared series and accumulate into the current footprint candle.
     ///
     /// Call once per frame (or before render). No-op when there is no shared

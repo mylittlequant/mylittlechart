@@ -587,6 +587,11 @@ pub struct ChartApp {
     /// `(slot_index, leaf_id, dom_panel_id, last_y, row_height)`.
     pub(crate) slot_dom_drag: Option<(usize, uzor::panels::LeafId, sidebar_content::free_slot::PanelId, f64, f64)>,
 
+    /// Active LiquidityHeatmap drag-to-pan.
+    ///
+    /// `(heatmap_panel_id, last_x, last_y)`.
+    pub(crate) slot_heatmap_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
 }
 
 /// An action that mutates the app-level watchlist.
@@ -928,6 +933,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
+            slot_heatmap_drag: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1215,6 +1221,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
+            slot_heatmap_drag: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1397,6 +1404,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
+            slot_heatmap_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.

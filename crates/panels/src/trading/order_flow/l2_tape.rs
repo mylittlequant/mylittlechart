@@ -502,6 +502,12 @@ impl L2TapeState {
         self.auto_scroll = self.scroll_offset <= 0.0;
     }
 
+    /// Reset scroll to the latest event and re-enable auto-scroll.
+    pub fn handle_double_click(&mut self) {
+        self.scroll_offset = 0.0;
+        self.auto_scroll = true;
+    }
+
     /// Prune expired flash entries and, if `auto_scroll`, reset scroll offset.
     ///
     /// Call once per frame / tick after `tick()`.

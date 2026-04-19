@@ -69,6 +69,10 @@ pub struct VolumeProfileState {
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
+
+    /// Price zoom multiplier — how many price levels are visible relative to the
+    /// full profile range.  1.0 = show all levels; > 1.0 = zoomed in.
+    pub price_zoom: f64,
 }
 
 impl fmt::Debug for VolumeProfileState {
@@ -118,6 +122,7 @@ impl VolumeProfileState {
             shared_trades: None,
             last_seen_trade_version: 0,
             crosshair_price: None,
+            price_zoom: 1.0,
         }
     }
 
@@ -319,6 +324,19 @@ impl VolumeProfileState {
     #[deprecated(note = "VolumeProfile reads from shared_trades via tick(); this method is a no-op")]
     pub fn push_trade(&mut self, _price: f64, _quantity: f64, _is_buyer_maker: bool) {
         // No-op: VolumeProfile now reads from the shared TradeSeries.
+    }
+
+    /// Zoom the price range.  Positive `delta` zooms in (fewer levels visible);
+    /// negative `delta` zooms out (more levels visible).  Clamped to [0.5, 20.0].
+    pub fn handle_scroll(&mut self, delta: f64) {
+        // Each scroll notch adjusts zoom by 10%.
+        let factor = if delta > 0.0 { 1.1_f64.powf(delta / 20.0) } else { (1.0 / 1.1_f64).powf(-delta / 20.0) };
+        self.price_zoom = (self.price_zoom * factor).clamp(0.5, 20.0);
+    }
+
+    /// Reset price zoom to the default (show all levels).
+    pub fn handle_double_click(&mut self) {
+        self.price_zoom = 1.0;
     }
 
     /// Get the POC level data

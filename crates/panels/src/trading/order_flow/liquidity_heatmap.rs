@@ -91,6 +91,18 @@ impl LiquidityHeatmapState {
         self.scroll_x = (self.scroll_x + delta as f32).max(0.0);
     }
 
+    /// Reset time scroll to the latest snapshot (rightmost position).
+    pub fn handle_double_click(&mut self) {
+        self.scroll_x = 0.0;
+        self.scroll_y = 0.0;
+    }
+
+    /// Pan the viewport: `dx` scrolls the time axis, `dy` scrolls the price axis.
+    pub fn handle_drag(&mut self, dx: f64, dy: f64) {
+        self.scroll_x = (self.scroll_x - dx as f32).max(0.0);
+        self.scroll_y += dy as f32;
+    }
+
     /// Pull the latest snapshot from `shared_orderbook` and sample it into the
     /// heatmap (rate-limited by `snapshot_interval_ms`).
     ///

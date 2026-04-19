@@ -349,6 +349,59 @@ impl ChartApp {
             }
         }
 
+        // 1c. Click inside a free-slot order-flow panel — route to the active panel.
+        //     Panels currently receive the click but have no built-in behavior.
+        //     Infrastructure is wired so behavior can be added per-panel later.
+        {
+            use sidebar_content::state::RightSidebarPanel;
+            let slot_idx_opt = match self.sidebar_state.right_panel {
+                RightSidebarPanel::Slot1 => Some(0usize),
+                RightSidebarPanel::Slot2 => Some(1),
+                RightSidebarPanel::Slot3 => Some(2),
+                RightSidebarPanel::Slot4 => Some(3),
+                _ => None,
+            };
+            if let Some(idx) = slot_idx_opt {
+                if let Some(ref sr) = self.last_sidebar_result {
+                    for (wid, wr) in &sr.item_rects {
+                        if wid.starts_with(&format!("slot:{}:leaf:", idx))
+                            && wid.ends_with(":focus_content")
+                            && x >= wr.x && x < wr.x + wr.width
+                            && y >= wr.y && y < wr.y + wr.height
+                        {
+                            let parts: Vec<&str> = wid.split(':').collect();
+                            if parts.len() >= 4 {
+                                if let Ok(raw) = parts[3].parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use sidebar_content::free_slot::FreeItem;
+                                    match item_opt {
+                                        Some(FreeItem::Dom(_))
+                                        | Some(FreeItem::L2Tape(_))
+                                        | Some(FreeItem::Footprint(_))
+                                        | Some(FreeItem::LiquidityHeatmap(_))
+                                        | Some(FreeItem::BigTrades(_))
+                                        | Some(FreeItem::VolumeProfile(_)) => {
+                                            // Click acknowledged — no panel action yet.
+                                            // Return without closing dropdowns so the click
+                                            // doesn't reset UI state the user didn't touch.
+                                            return;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         // 2. Click outside any registered widget — check for modal backdrop.
         //    Use layered close: only close the topmost modal layer, not all at once.
         let in_modal = self.input_coordinator.borrow_mut().is_point_in_modal_layer(x, y);
@@ -772,12 +825,46 @@ impl ChartApp {
                                         .tree()
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
-                                    if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
-                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                            state.auto_center = true;
-                                            state.center_price = state.market_price;
-                                            self.sidebar_data_dirty = true;
+                                    use sidebar_content::free_slot::FreeItem;
+                                    match item_opt {
+                                        Some(FreeItem::Dom(pid)) => {
+                                            if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                                state.auto_center = true;
+                                                state.center_price = state.market_price;
+                                                self.sidebar_data_dirty = true;
+                                            }
                                         }
+                                        Some(FreeItem::L2Tape(pid)) => {
+                                            if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        Some(FreeItem::Footprint(pid)) => {
+                                            if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        Some(FreeItem::LiquidityHeatmap(pid)) => {
+                                            if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        Some(FreeItem::BigTrades(pid)) => {
+                                            if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        Some(FreeItem::VolumeProfile(pid)) => {
+                                            if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -1367,10 +1454,19 @@ impl ChartApp {
                                         .tree()
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
-                                    if let Some(sidebar_content::free_slot::FreeItem::Dom(pid)) = item_opt {
-                                        self.slot_dom_drag = Some((slot_idx, leaf_id, pid, y, 20.0));
-                                        self.ui_drag_active = true;
-                                        return false;
+                                    use sidebar_content::free_slot::FreeItem;
+                                    match item_opt {
+                                        Some(FreeItem::Dom(pid)) => {
+                                            self.slot_dom_drag = Some((slot_idx, leaf_id, pid, y, 20.0));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        Some(FreeItem::LiquidityHeatmap(pid)) => {
+                                            self.slot_heatmap_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -2780,6 +2876,21 @@ impl ChartApp {
             return;
         }
 
+        // ── Heatmap drag-to-pan ──────────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_heatmap_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
         // ── Free-slot separator resize drag ─────────────────────────────────
         if let Some((slot_idx, sep_idx, start_pos, _total_size)) = self.slot_sep_drag {
             let (is_vertical, content_width, content_height) = {
@@ -3765,6 +3876,12 @@ impl ChartApp {
 
         // ── End DOM drag scroll ───────────────────────────────────────────────
         if self.slot_dom_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End heatmap drag-to-pan ───────────────────────────────────────────
+        if self.slot_heatmap_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             return;
         }
@@ -6495,9 +6612,7 @@ impl ChartApp {
                                     }
                                     Some(FreeItem::BigTrades(pid)) => {
                                         if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                            let raw = state.scroll_offset + scroll_step * 30.0;
-                                            let max_offset = state.big_trades.len().saturating_sub(1) as f64;
-                                            state.scroll_offset = raw.clamp(0.0, max_offset);
+                                            state.handle_scroll(scroll_step);
                                         }
                                     }
                                     Some(FreeItem::L2Tape(pid)) => {
@@ -6513,6 +6628,11 @@ impl ChartApp {
                                     Some(FreeItem::LiquidityHeatmap(pid)) => {
                                         if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                             state.handle_scroll(scroll_step * 3.0);
+                                        }
+                                    }
+                                    Some(FreeItem::VolumeProfile(pid)) => {
+                                        if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                                            state.handle_scroll(scroll_step);
                                         }
                                     }
                                     _ => {}
