@@ -86,6 +86,11 @@ impl LiquidityHeatmapState {
         }
     }
 
+    /// Shift the time-axis scroll by `delta` pixels (positive = scroll right / older data).
+    pub fn handle_scroll(&mut self, delta: f64) {
+        self.scroll_x = (self.scroll_x + delta as f32).max(0.0);
+    }
+
     /// Pull the latest snapshot from `shared_orderbook` and sample it into the
     /// heatmap (rate-limited by `snapshot_interval_ms`).
     ///

@@ -6495,11 +6495,23 @@ impl ChartApp {
                                     }
                                     Some(FreeItem::BigTrades(pid)) => {
                                         if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                            state.scroll_offset = (state.scroll_offset + scroll_step * 30.0).max(0.0);
+                                            let raw = state.scroll_offset + scroll_step * 30.0;
+                                            let max_offset = state.big_trades.len().saturating_sub(1) as f64;
+                                            state.scroll_offset = raw.clamp(0.0, max_offset);
                                         }
                                     }
                                     Some(FreeItem::L2Tape(pid)) => {
                                         if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                            state.handle_scroll(scroll_step * 3.0);
+                                        }
+                                    }
+                                    Some(FreeItem::Footprint(pid)) => {
+                                        if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                                            state.handle_scroll(scroll_step * 3.0);
+                                        }
+                                    }
+                                    Some(FreeItem::LiquidityHeatmap(pid)) => {
+                                        if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                             state.handle_scroll(scroll_step * 3.0);
                                         }
                                     }
@@ -23506,8 +23518,7 @@ impl ChartApp {
             }
         }
 
-        // Propagate crosshair price to L2 panels (DOM, LiquidityHeatmap, L2Tape)
-        // that belong to the same sync group.
+        // Propagate crosshair price to all order-flow panels that belong to the same sync group.
         if let Some(gid) = group_id {
             let panel_ids = self.panel_app.tag_manager.panel_members(gid);
             let crosshair_price = if visible { Some(price) } else { None };
@@ -23520,6 +23531,15 @@ impl ChartApp {
                     s.crosshair_price = crosshair_price;
                 }
                 if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.footprint.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.big_trades.get_mut(&panel_id) {
+                    s.crosshair_price = crosshair_price;
+                }
+                if let Some(s) = self.panels_store.volume_profile.get_mut(&panel_id) {
                     s.crosshair_price = crosshair_price;
                 }
             }

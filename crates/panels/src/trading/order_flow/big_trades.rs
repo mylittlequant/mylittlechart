@@ -52,6 +52,9 @@ pub struct BigTradesState {
     /// When `shared_trades.version != last_seen_trade_version` there are new
     /// trades to pull into `big_trades`.
     pub last_seen_trade_version: u64,
+
+    /// Crosshair price synced from a linked chart window.
+    pub crosshair_price: Option<f64>,
 }
 
 impl fmt::Debug for BigTradesState {
@@ -98,6 +101,7 @@ impl BigTradesState {
             max_qty_seen: 0.0,
             shared_trades: None,
             last_seen_trade_version: 0,
+            crosshair_price: None,
         }
     }
 
@@ -167,9 +171,14 @@ impl BigTradesState {
         self.last_seen_trade_version = series.version;
     }
 
-    /// Get visible trades for rendering (most recent first)
+    /// Get visible trades for rendering (most recent first, respecting `scroll_offset`).
+    ///
+    /// `scroll_offset` rows are skipped from the newest end so the user can scroll
+    /// back through history. The offset is clamped to the available trade count so
+    /// it never underflows.
     pub fn visible_trades(&self, max_count: usize) -> Vec<&PublicTrade> {
-        self.big_trades.iter().rev().take(max_count).collect()
+        let skip = (self.scroll_offset as usize).min(self.big_trades.len());
+        self.big_trades.iter().rev().skip(skip).take(max_count).collect()
     }
 
     /// Format trade for display with notional value

@@ -66,6 +66,9 @@ pub struct VolumeProfileState {
 
     /// The `TradeSeries::version` we last processed in `tick()`.
     pub last_seen_trade_version: u64,
+
+    /// Crosshair price synced from a linked chart window.
+    pub crosshair_price: Option<f64>,
 }
 
 impl fmt::Debug for VolumeProfileState {
@@ -114,6 +117,7 @@ impl VolumeProfileState {
             buy_sell_by_price: HashMap::new(),
             shared_trades: None,
             last_seen_trade_version: 0,
+            crosshair_price: None,
         }
     }
 

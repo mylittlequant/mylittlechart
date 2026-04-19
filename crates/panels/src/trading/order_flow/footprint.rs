@@ -69,6 +69,9 @@ pub struct FootprintState {
 
     /// The `TradeSeries::version` we last processed in `tick()`.
     pub last_seen_trade_version: u64,
+
+    /// Crosshair price synced from a linked chart window.
+    pub crosshair_price: Option<f64>,
 }
 
 impl fmt::Debug for FootprintState {
@@ -114,7 +117,13 @@ impl FootprintState {
             candle_start_ms: 0,
             shared_trades: None,
             last_seen_trade_version: 0,
+            crosshair_price: None,
         }
+    }
+
+    /// Shift the horizontal scroll by `delta` pixels (positive = scroll right / older data).
+    pub fn handle_scroll(&mut self, delta: f64) {
+        self.scroll_x = (self.scroll_x + delta as f32).max(0.0);
     }
 
     /// Pull new trades from the shared series and accumulate into the current footprint candle.
