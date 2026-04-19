@@ -2686,7 +2686,7 @@ impl ChartApp {
                     }
 
                     // Pull new trades from the shared ring into all order-flow panels.
-                    // All three panel kinds now read from shared_trades via tick().
+                    // All four panel kinds now read from shared_trades via tick().
                     for state in self.panels_store.big_trades.values_mut() {
                         state.tick();
                     }
@@ -2694,6 +2694,9 @@ impl ChartApp {
                         state.tick();
                     }
                     for state in self.panels_store.footprint.values_mut() {
+                        state.tick();
+                    }
+                    for state in self.panels_store.trade_tape.values_mut() {
                         state.tick();
                     }
 
@@ -6978,6 +6981,38 @@ impl ChartApp {
                     s.footprints.clear();
                     s.poc_by_candle.clear();
                     s.imbalances.clear();
+                }
+            }
+            // TradeTape symbol change: unsubscribe old, subscribe new.
+            let tt_change = self.panels_store.trade_tape.get(&panel_id).and_then(|s| {
+                if s.symbol != symbol || s.exchange != exchange || s.account_type != account_type {
+                    Some((s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                } else {
+                    None
+                }
+            });
+            if let Some((old_sym, old_exch, old_at_label)) = tt_change {
+                if !old_sym.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
+                        let old_at = account_type_from_label(&old_at_label);
+                        self.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                    }
+                }
+                let new_handle = if !symbol.is_empty() {
+                    digdigdig3::ExchangeId::from_str(&exchange).map(|eid| {
+                        let new_at = account_type_from_label(&account_type);
+                        self.bridge.subscribe_trades(eid, &symbol, new_at)
+                    })
+                } else {
+                    None
+                };
+                if let Some(s) = self.panels_store.trade_tape.get_mut(&panel_id) {
+                    s.symbol = symbol.clone();
+                    s.exchange = exchange.clone();
+                    s.account_type = account_type.clone();
+                    s.shared_trades = new_handle;
+                    s.last_seen_version = 0;
+                    s.trades.clear();
                 }
             }
             if let Some(s) = self.panels_store.l2_tape.get_mut(&panel_id) {
