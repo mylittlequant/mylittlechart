@@ -843,6 +843,7 @@ fn render_slot_spawn_dropdown(
         ("liquidity_heatmap",  "Liquidity Heatmap"),
         ("big_trades",         "Big Trades"),
         ("l2_tape",            "L2 Tape"),
+        ("trade_tape",         "Trade Tape"),
         ("order_entry",        "Order Entry"),
         ("position_manager",   "Positions"),
         ("trade_log",          "Trade Log"),
