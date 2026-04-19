@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 
 use orderbook_service::OrderbookSeries;
@@ -80,8 +81,17 @@ pub struct L2TapeState {
     pub dom_tick_size: Option<f64>,
     /// Scroll offset
     pub scroll_offset: f64,
-    /// Flash animation state
+    /// Flash animation state: `(events_len_at_push, flash_start_ms)`.
+    ///
+    /// When an event is pushed with serial = `events.len()` at push time,
+    /// render maps visible event → its serial and checks for a matching entry
+    /// whose age is < 200 ms.  Expired entries are pruned in `tick()`.
     pub flash_events: Vec<(usize, u64)>,
+
+    /// Monotone counter: total events ever pushed (never decrements).
+    /// Identifies each event uniquely even after the front of the deque
+    /// is evicted.  `events[i]` has serial `push_total - events.len() + i`.
+    pub push_total: usize,
     /// Spoofing detection: recent large order adds that cancelled quickly
     pub spoof_alerts: VecDeque<SpoofAlert>,
     /// Previous orderbook state for event classification (Add vs Modify vs Cancel)
@@ -197,13 +207,43 @@ impl TradingPanel for L2TapeState {
 
         let events = self.visible_events(max_rows);
 
-        for (row_idx, event) in events.iter().enumerate() {
+        // Build flash-active serial set once per frame.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let flash_active: std::collections::HashSet<usize> = self.flash_events
+            .iter()
+            .filter(|&&(_, start)| now_ms.saturating_sub(start) < 200)
+            .map(|&(serial, _)| serial)
+            .collect();
+
+        let decimals = if self.tick_size >= 1.0 {
+            0usize
+        } else if self.tick_size >= 0.1 {
+            1
+        } else if self.tick_size >= 0.01 {
+            2
+        } else if self.tick_size >= 0.001 {
+            3
+        } else {
+            4
+        };
+
+        for (row_idx, (deque_idx, event)) in events.iter().enumerate() {
             let row_y = y + L2_HEADER_HEIGHT + (row_idx as f32 * L2_ROW_HEIGHT);
             let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
 
             let row_bg = if row_idx % 2 == 0 { &theme.panel_bg } else { &theme.row_bg_alt };
             ctx.set_fill_color(row_bg);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
+
+            // Flash overlay: bright semi-transparent rect for recently-pushed events.
+            let serial = self.event_serial(*deque_idx);
+            if flash_active.contains(&serial) {
+                ctx.set_fill_color("#ffffff28");
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
+            }
 
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
@@ -219,7 +259,7 @@ impl TradingPanel for L2TapeState {
             ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&time_str, col_time_x as f64, row_mid_y);
 
-            // event_color returns f32 rgba — convert to hex inline
+            // event_color returns f32 rgba — convert to hex inline.
             let type_color = self.event_color(event);
             let type_hex = format!(
                 "#{:02x}{:02x}{:02x}{:02x}",
@@ -238,17 +278,6 @@ impl TradingPanel for L2TapeState {
             ctx.set_fill_color(side_color);
             ctx.fill_text(L2TapeState::side_label(&event.side), col_side_x as f64, row_mid_y);
 
-            let decimals = if self.tick_size >= 1.0 {
-                0usize
-            } else if self.tick_size >= 0.1 {
-                1
-            } else if self.tick_size >= 0.01 {
-                2
-            } else if self.tick_size >= 0.001 {
-                3
-            } else {
-                4
-            };
             let price_str = format!("{:.prec$}", event.price, prec = decimals);
             ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
@@ -274,6 +303,21 @@ impl TradingPanel for L2TapeState {
                 (y + h / 2.0) as f64,
             );
         }
+
+        // PAUSED badge — shown when user has scrolled up away from the tail.
+        if !self.auto_scroll {
+            let badge_w = 54.0_f64;
+            let badge_h = 14.0_f64;
+            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
+            let badge_y = (y + L2_HEADER_HEIGHT + 2.0) as f64;
+            ctx.set_fill_color("#c8a000cc");
+            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color("#000000ff");
+            ctx.fill_text("PAUSED", (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
+        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
@@ -295,6 +339,7 @@ impl L2TapeState {
             dom_tick_size: None,
             scroll_offset: 0.0,
             flash_events: vec![],
+            push_total: 0,
             spoof_alerts: VecDeque::new(),
             previous_book: HashMap::new(),
             tick_size: 0.01,
@@ -336,12 +381,18 @@ impl L2TapeState {
         self.diff_and_push_events(&bids, &asks, timestamp);
     }
 
-    /// Get visible events (most recent first), applying filters
-    pub fn visible_events(&self, max_count: usize) -> Vec<&L2Event> {
+    /// Get visible events as `(deque_index, &L2Event)`, most recent first.
+    ///
+    /// Applies filters and `scroll_offset`.  When `auto_scroll` is true the
+    /// most recent `max_count` events are shown; when false the viewport is
+    /// shifted by `scroll_offset` rows toward older events.
+    pub fn visible_events(&self, max_count: usize) -> Vec<(usize, &L2Event)> {
+        let skip = if self.auto_scroll { 0 } else { self.scroll_offset as usize };
         self.events
             .iter()
+            .enumerate()
             .rev()
-            .filter(|e| {
+            .filter(|(_, e)| {
                 if let Some(ref ft) = self.filter_type {
                     if &e.event_type != ft {
                         return false;
@@ -359,8 +410,20 @@ impl L2TapeState {
                 }
                 true
             })
+            .skip(skip)
             .take(max_count)
             .collect()
+    }
+
+    /// Return the monotone serial of the event at deque position `i`.
+    ///
+    /// Serial 0 is unused (push_total starts at 0 before any push).
+    /// After N total pushes, `events[i]` has serial = `push_total - (len-1-i)`.
+    fn event_serial(&self, deque_index: usize) -> usize {
+        let len = self.events.len();
+        // deque_index counts from 0 (oldest) to len-1 (newest).
+        // newest has serial = push_total; each step back subtracts 1.
+        self.push_total.saturating_sub(len.saturating_sub(deque_index + 1))
     }
 
     /// Color for event type
@@ -394,12 +457,66 @@ impl L2TapeState {
         }
     }
 
-    /// Add an event to the buffer
+    /// Add an event to the buffer, recording a flash animation entry.
     pub fn push_event(&mut self, event: L2Event) {
         if self.events.len() >= self.max_events {
             self.events.pop_front();
         }
         self.events.push_back(event);
+        self.push_total += 1;
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        // Serial of the event just pushed equals push_total.
+        self.flash_events.push((self.push_total, now_ms));
+    }
+
+    /// Scroll by `delta` rows (positive = scroll toward older events).
+    ///
+    /// Switches off `auto_scroll` when scrolling up; re-enables it when the
+    /// user scrolls back to offset 0.
+    pub fn handle_scroll(&mut self, delta: f64) {
+        let filtered_len = self.events
+            .iter()
+            .filter(|e| {
+                if let Some(ref ft) = self.filter_type {
+                    if &e.event_type != ft { return false; }
+                }
+                if let Some(ref fs) = self.filter_side {
+                    if &e.side != fs { return false; }
+                }
+                if let Some(min_q) = self.min_quantity {
+                    if e.quantity < min_q { return false; }
+                }
+                true
+            })
+            .count();
+
+        // delta > 0: scroll wheel up → show older events → increase offset.
+        let new_offset = (self.scroll_offset + delta).max(0.0);
+        // Cannot scroll past oldest visible event.
+        let max_offset = filtered_len.saturating_sub(1) as f64;
+        self.scroll_offset = new_offset.min(max_offset);
+        self.auto_scroll = self.scroll_offset <= 0.0;
+    }
+
+    /// Prune expired flash entries and, if `auto_scroll`, reset scroll offset.
+    ///
+    /// Call once per frame / tick after `tick()`.
+    pub fn prune_flash(&mut self) {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.flash_events.retain(|&(_, start)| {
+            now_ms.saturating_sub(start) < 200
+        });
+
+        if self.auto_scroll {
+            self.scroll_offset = 0.0;
+        }
     }
 
     /// Set tick size (called when panel is linked to a symbol with known tick size)

@@ -345,30 +345,128 @@ impl TradingPanel for LiquidityHeatmapState {
             );
         }
 
+        // Compute real price range from visible snapshots
+        let (start_snap, end_snap) = self.visible_time_range();
+        let (price_min_tick, price_max_tick) = self.snapshots[start_snap..end_snap]
+            .iter()
+            .flat_map(|s| s.depth_by_price.keys().copied())
+            .fold((i64::MAX, i64::MIN), |(mn, mx), t| (mn.min(t), mx.max(t)));
+
+        let has_price_range = price_max_tick > price_min_tick;
+
+        // Depth profile sidebar width (~15% of panel)
+        let sidebar_w = w * 0.15;
+        let heatmap_w = w - sidebar_w;
+
+        // Helper: price tick → pixel y (local, uses real range)
+        let tick_to_y = |tick: i64| -> f64 {
+            if !has_price_range {
+                return (h / 2.0) as f64;
+            }
+            let normalized =
+                (tick - price_min_tick) as f64 / (price_max_tick - price_min_tick) as f64;
+            // high price at top → invert
+            h as f64 * (1.0 - normalized)
+        };
+
         if config.show_current_book {
             if let Some(snapshot) = self.snapshots.last() {
-                if let Some(&current_tick) = snapshot.depth_by_price.keys().next() {
-                    let current_y = self.price_to_y(current_tick, h);
+                // Find max quantity across all price levels for normalisation
+                let max_qty = snapshot
+                    .depth_by_price
+                    .values()
+                    .map(|&(bid, ask)| bid + ask)
+                    .fold(0.0_f64, f64::max);
 
-                    ctx.set_fill_color(&theme.heatmap_price_line);
-                    ctx.fill_rect(x as f64, current_y as f64, w as f64, 2.0);
+                if max_qty > 0.0 {
+                    let cell_px_h = if has_price_range {
+                        ((h as f64) / (price_max_tick - price_min_tick).max(1) as f64)
+                            .max(1.0)
+                    } else {
+                        2.0
+                    };
 
-                    ctx.set_fill_color(&theme.panel_bg);
-                    ctx.fill_rect(x as f64, (current_y + 2.0) as f64, w as f64, 1.0);
+                    for (&tick, &(bid_qty, ask_qty)) in &snapshot.depth_by_price {
+                        let bar_y = y as f64 + tick_to_y(tick) - cell_px_h / 2.0;
+
+                        // Bids — green
+                        if bid_qty > 0.0 {
+                            let bar_w = sidebar_w as f64 * (bid_qty / max_qty) * 0.5;
+                            ctx.set_fill_color("#2ecc7199");
+                            ctx.fill_rect(
+                                (x + heatmap_w) as f64,
+                                bar_y,
+                                bar_w,
+                                cell_px_h,
+                            );
+                        }
+
+                        // Asks — red
+                        if ask_qty > 0.0 {
+                            let bar_w = sidebar_w as f64 * (ask_qty / max_qty) * 0.5;
+                            ctx.set_fill_color("#e74c3c99");
+                            ctx.fill_rect(
+                                (x + heatmap_w) as f64 + sidebar_w as f64 * 0.5,
+                                bar_y,
+                                bar_w,
+                                cell_px_h,
+                            );
+                        }
+                    }
                 }
             }
         }
 
+        // Crosshair: horizontal line + price label
+        if let Some(crosshair_price) = self.crosshair_price {
+            let crosshair_tick = (crosshair_price / self.tick_size).round() as i64;
+            let cy = y as f64 + tick_to_y(crosshair_tick);
+
+            ctx.set_fill_color("#ffffff66");
+            ctx.fill_rect(x as f64, cy, heatmap_w as f64, 1.0);
+
+            let decimal_places = if self.tick_size < 0.01 {
+                4
+            } else if self.tick_size < 1.0 {
+                2
+            } else {
+                0
+            };
+            let label = format!("{:.prec$}", crosshair_price, prec = decimal_places);
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color("#ffffffcc");
+            ctx.fill_text(&label, (x + heatmap_w - 2.0) as f64, cy);
+        }
+
+        // Price axis labels (right edge of heatmap area, real prices)
         ctx.set_font("9px sans-serif");
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.set_fill_color(&theme.text_muted);
 
-        let num_labels = 10;
-        for i in 0..num_labels {
-            let label_y = y + (i as f32 / num_labels as f32) * h;
-            let label_text = format!("{:.2}", 50000.0 + i as f64 * 10.0);
-            ctx.fill_text(&label_text, (x + w - 4.0) as f64, label_y as f64);
+        let decimal_places = if self.tick_size < 0.01 {
+            4
+        } else if self.tick_size < 1.0 {
+            2
+        } else {
+            0
+        };
+
+        let num_labels = 10_usize;
+        for i in 0..=num_labels {
+            let frac = i as f64 / num_labels as f64;
+            let label_y = y + (frac * h as f64) as f32;
+            // frac 0 = top = price_max, frac 1 = bottom = price_min
+            let price = if has_price_range {
+                (price_max_tick as f64 - frac * (price_max_tick - price_min_tick) as f64)
+                    * self.tick_size
+            } else {
+                price_min_tick as f64 * self.tick_size
+            };
+            let label_text = format!("{:.prec$}", price, prec = decimal_places);
+            ctx.fill_text(&label_text, (x + heatmap_w - 4.0) as f64, label_y as f64);
         }
     }
 

@@ -2784,6 +2784,7 @@ impl ChartApp {
                     for state in self.panels_store.l2_tape.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.tick();
+                            state.prune_flash();
                         }
                     }
                     for state in self.panels_store.liquidity_heatmap.values_mut() {
@@ -2804,6 +2805,7 @@ impl ChartApp {
                     for state in self.panels_store.l2_tape.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.tick();
+                            state.prune_flash();
                         }
                     }
                     for state in self.panels_store.liquidity_heatmap.values_mut() {

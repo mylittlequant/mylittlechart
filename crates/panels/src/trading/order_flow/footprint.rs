@@ -54,6 +54,13 @@ pub struct FootprintState {
     /// Number of levels displayed in linked DOM
     pub dom_levels: Option<usize>,
 
+    /// Candle duration in milliseconds (default: 60_000 = 1 minute).
+    pub candle_duration_ms: i64,
+
+    /// Timestamp (ms) when the current open candle started.
+    /// `0` means no candle has been opened yet.
+    pub candle_start_ms: i64,
+
     /// Handle to the shared trade ring for this (exchange, symbol, account_type).
     ///
     /// `None` until `subscribe_trades` is called on the bridge. Panels read
@@ -103,6 +110,8 @@ impl FootprintState {
             display_mode: FootprintMode::BidAsk,
             dom_center_price: None,
             dom_levels: None,
+            candle_duration_ms: 60_000,
+            candle_start_ms: 0,
             shared_trades: None,
             last_seen_trade_version: 0,
         }
@@ -113,36 +122,55 @@ impl FootprintState {
     /// Call once per frame (or before render). No-op when there is no shared
     /// series or when the version has not advanced since the last call.
     pub fn tick(&mut self) {
-        let handle = match self.shared_trades.as_ref() {
-            Some(h) => h,
-            None => return,
-        };
+        // Snapshot new trades from the shared ring under the lock, then release
+        // immediately so we can call &mut self methods without borrow conflicts.
+        let (new_version, new_trades) = {
+            let handle = match self.shared_trades.as_ref() {
+                Some(h) => h,
+                None => return,
+            };
+            let series = match handle.read() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if series.version == self.last_seen_trade_version {
+                return;
+            }
+            let new_count =
+                (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
+            let len = series.trades.len();
+            let skip = if new_count < len { len - new_count } else { 0 };
+            let trades: Vec<(f64, f64, bool, i64)> = series
+                .trades
+                .iter()
+                .skip(skip)
+                .map(|t| (t.price, t.quantity, t.is_buyer_maker != 0, t.timestamp_ms))
+                .collect();
+            (series.version, trades)
+        }; // lock released here
 
-        let series = match handle.read() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        if series.version == self.last_seen_trade_version {
-            return;
-        }
-
-        let new_count = (series.version.saturating_sub(self.last_seen_trade_version)) as usize;
-        let len = series.trades.len();
-        let skip = if new_count < len { len - new_count } else { 0 };
-
-        for trade in series.trades.iter().skip(skip) {
-            let price = trade.price;
-            let quantity = trade.quantity;
-            let is_buyer_maker = trade.is_buyer_maker != 0;
-            let timestamp = trade.timestamp_ms;
-
+        for (price, quantity, is_buyer_maker, timestamp) in new_trades {
             let tick = (price / self.tick_size).round() as i64;
 
             if self.footprints.is_empty() || self.should_new_candle(timestamp) {
+                // Recompute imbalances for the candle that just closed.
+                if !self.footprints.is_empty() {
+                    let closing_idx = self.footprints.len().saturating_sub(1);
+                    self.compute_imbalances(closing_idx);
+                }
+
                 self.footprints.push(HashMap::new());
                 self.poc_by_candle.push(0.0);
                 self.imbalances.push(HashMap::new());
+                // Align candle start to the nearest boundary so candles don't
+                // drift based on when the first trade happened.
+                if self.candle_start_ms == 0 {
+                    self.candle_start_ms = timestamp
+                        - (timestamp % self.candle_duration_ms);
+                } else {
+                    // Advance by exactly one duration to keep boundaries aligned.
+                    self.candle_start_ms += self.candle_duration_ms;
+                }
             }
 
             if let Some(current) = self.footprints.last_mut() {
@@ -169,7 +197,7 @@ impl FootprintState {
             }
         }
 
-        self.last_seen_trade_version = series.version;
+        self.last_seen_trade_version = new_version;
     }
 
     /// Returns a slice of visible candles for rendering
@@ -196,9 +224,20 @@ impl FootprintState {
         }).collect()
     }
 
-    /// Calculate cell color based on bid/ask volume imbalance
+    /// Calculate cell color based on bid/ask volume balance within a single cell.
+    ///
+    /// ratio = bid / ask (buy pressure over sell pressure).
+    /// ratio > 1 → more buying → green tint.
+    /// ratio < 1 → more selling → red tint.
     pub fn cell_color(&self, bid_vol: f64, ask_vol: f64) -> [f32; 4] {
-        let ratio = self.imbalance_ratio(bid_vol, ask_vol);
+        let ratio = if ask_vol < 0.001 && bid_vol < 0.001 {
+            1.0
+        } else if ask_vol < 0.001 {
+            // Pure bid — strong buy
+            f64::MAX
+        } else {
+            bid_vol / ask_vol
+        };
 
         if ratio > 1.5 {
             // Strong buy imbalance (green)
@@ -218,14 +257,73 @@ impl FootprintState {
         }
     }
 
-    /// Calculate imbalance ratio (ask / bid)
-    pub fn imbalance_ratio(&self, bid_vol: f64, ask_vol: f64) -> f64 {
-        if bid_vol == 0.0 && ask_vol == 0.0 {
-            1.0
-        } else if bid_vol == 0.0 {
-            f64::MAX
-        } else {
-            ask_vol / bid_vol
+    /// Compute diagonal imbalances for a single candle footprint and store them
+    /// in `self.imbalances[candle_idx]`.
+    ///
+    /// Industry-standard diagonal rule:
+    ///   - BuyImbalance  at tick N: buy[N+1]  / sell[N] > threshold  (bid absorption above)
+    ///   - SellImbalance at tick N: sell[N]   / buy[N+1] > threshold (ask absorption above)
+    ///
+    /// Denominator guard: skip comparison when denominator < 0.001 (effectively zero).
+    pub fn compute_imbalances(&mut self, candle_idx: usize) {
+        let fp = match self.footprints.get(candle_idx) {
+            Some(f) => f,
+            None => return,
+        };
+
+        // Collect and sort ticks ascending so N+1 lookups are easy.
+        let mut ticks: Vec<i64> = fp.keys().copied().collect();
+        ticks.sort_unstable();
+
+        let threshold = self.imbalance_threshold;
+
+        let mut result: HashMap<i64, ImbalanceType> = HashMap::new();
+
+        for &tick in &ticks {
+            let next_tick = tick + 1; // one tick above
+            let (_bid_n, ask_n) = match fp.get(&tick) {
+                Some(&v) => v,
+                None => continue,
+            };
+            // sell[N] = ask volume at tick N (ask-side = seller-initiated)
+            let sell_n = ask_n;
+            // buy[N+1] = bid volume one tick above (bid-side = buyer-initiated)
+            let buy_above = match fp.get(&next_tick) {
+                Some(&(bid, _ask)) => bid,
+                None => 0.0,
+            };
+
+            if sell_n < 0.001 && buy_above < 0.001 {
+                continue;
+            }
+
+            if sell_n < 0.001 {
+                // Infinite ratio → buy imbalance
+                result.insert(tick, ImbalanceType::BuyImbalance);
+            } else if buy_above < 0.001 {
+                // Infinite ratio → sell imbalance
+                result.insert(tick, ImbalanceType::SellImbalance);
+            } else {
+                let buy_ratio = buy_above / sell_n;
+                let sell_ratio = sell_n / buy_above;
+                if buy_ratio > threshold {
+                    result.insert(tick, ImbalanceType::BuyImbalance);
+                } else if sell_ratio > threshold {
+                    result.insert(tick, ImbalanceType::SellImbalance);
+                }
+            }
+        }
+
+        if let Some(slot) = self.imbalances.get_mut(candle_idx) {
+            *slot = result;
+        }
+    }
+
+    /// Recompute imbalances for all candles. Call after bulk data load.
+    pub fn recompute_all_imbalances(&mut self) {
+        let count = self.footprints.len();
+        for i in 0..count {
+            self.compute_imbalances(i);
         }
     }
 
@@ -263,11 +361,6 @@ impl FootprintState {
         }
     }
 
-    /// Get color for imbalance visualization
-    pub fn imbalance_color(&self, bid_vol: f64, ask_vol: f64) -> [f32; 4] {
-        self.cell_color(bid_vol, ask_vol)
-    }
-
     /// Get POC (Point of Control) price for a specific candle
     pub fn poc_price_for_candle(&self, candle_index: usize) -> Option<f64> {
         self.poc_by_candle.get(candle_index).copied()
@@ -283,10 +376,9 @@ impl FootprintState {
         // No-op: Footprint now reads from the shared TradeSeries.
     }
 
-    fn should_new_candle(&self, _timestamp: i64) -> bool {
-        // Candle boundary management is handled externally via bulk data loads.
-        // Live trades accumulate into the most recent candle.
-        false
+    fn should_new_candle(&self, timestamp: i64) -> bool {
+        self.candle_start_ms > 0
+            && timestamp - self.candle_start_ms >= self.candle_duration_ms
     }
 }
 
@@ -375,9 +467,6 @@ impl TradingPanel for FootprintState {
             let candle_x = x + (candle_idx as f32 * config.candle_width);
             let candle_w = config.candle_width;
 
-            ctx.set_fill_color(&theme.fp_bullish);
-            ctx.fill_rect(candle_x as f64, y as f64, 2.0, h as f64);
-
             let mut price_levels: Vec<(i64, f64, f64)> = candle.price_levels.clone();
             price_levels.sort_by_key(|&(tick, _, _)| std::cmp::Reverse(tick));
 
@@ -419,8 +508,9 @@ impl TradingPanel for FootprintState {
                 let text_y = cell_y + cell_h / 2.0;
                 ctx.fill_text(&cell_text, text_x as f64, text_y as f64);
 
+                // POC border
                 let price = price_tick as f64 * self.tick_size;
-                if (price - candle.poc).abs() < self.tick_size * 0.5 {
+                if config.show_poc && (price - candle.poc).abs() < self.tick_size * 0.5 {
                     ctx.set_fill_color(&theme.fp_poc_marker);
                     let marker_x = candle_x + candle_w - 6.0;
                     let marker_y = cell_y + cell_h / 2.0 - 3.0;
@@ -431,6 +521,26 @@ impl TradingPanel for FootprintState {
                     ctx.fill_rect((candle_x + 2.0) as f64, (cell_y + cell_h - 1.0) as f64, cell_w as f64, 1.0);
                     ctx.fill_rect((candle_x + 2.0) as f64, cell_y as f64, 1.0, cell_h as f64);
                     ctx.fill_rect((candle_x + candle_w - 3.0) as f64, cell_y as f64, 1.0, cell_h as f64);
+                }
+
+                // Imbalance markers — diagonal comparison result stored in candle.imbalances
+                if config.show_imbalances {
+                    if let Some(imb) = candle.imbalances.get(&price_tick) {
+                        // Dot size: 5x5 px, placed at bottom-left corner of cell
+                        let dot_size = 5.0_f64;
+                        let dot_x = (candle_x + 2.0) as f64;
+                        let dot_y = (cell_y + cell_h - dot_size as f32) as f64;
+                        match imb {
+                            ImbalanceType::BuyImbalance => {
+                                ctx.set_fill_color("#00ff00ff");
+                                ctx.fill_rect(dot_x, dot_y, dot_size, dot_size);
+                            }
+                            ImbalanceType::SellImbalance => {
+                                ctx.set_fill_color("#ff0000ff");
+                                ctx.fill_rect(dot_x, dot_y, dot_size, dot_size);
+                            }
+                        }
+                    }
                 }
             }
         }

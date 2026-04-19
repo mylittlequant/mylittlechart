@@ -165,6 +165,87 @@ impl VolumeProfileState {
         }
 
         self.last_seen_trade_version = series.version;
+        drop(series);
+        self.compute_value_area();
+    }
+
+    /// Compute VAH and VAL by expanding outward from POC until 70% of total volume is accumulated.
+    pub fn compute_value_area(&mut self) {
+        if self.volume_by_price.is_empty() || self.total_volume == 0.0 {
+            self.vah = 0.0;
+            self.val = 0.0;
+            return;
+        }
+
+        let target = self.total_volume * 0.70;
+
+        // Sort ticks ascending so we can binary-search for the POC tick.
+        let mut sorted_ticks: Vec<i64> = self.volume_by_price.keys().copied().collect();
+        sorted_ticks.sort_unstable();
+
+        let poc_tick = (self.poc / self.tick_size).round() as i64;
+
+        // Find the POC position in the sorted slice (fallback to tick with highest volume).
+        let poc_idx = sorted_ticks.partition_point(|&t| t < poc_tick);
+        let poc_idx = if poc_idx < sorted_ticks.len() && sorted_ticks[poc_idx] == poc_tick {
+            poc_idx
+        } else {
+            // POC tick not found exactly — find the tick with the highest volume.
+            sorted_ticks
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| {
+                    self.volume_by_price[a]
+                        .partial_cmp(&self.volume_by_price[b])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        };
+
+        let poc_vol = self.volume_by_price
+            .get(&sorted_ticks[poc_idx])
+            .copied()
+            .unwrap_or(0.0);
+
+        let mut accumulated = poc_vol;
+        let mut lo = poc_idx;
+        let mut hi = poc_idx;
+
+        while accumulated < target {
+            let can_expand_lo = lo > 0;
+            let can_expand_hi = hi + 1 < sorted_ticks.len();
+
+            if !can_expand_lo && !can_expand_hi {
+                break;
+            }
+
+            let vol_lo = if can_expand_lo {
+                self.volume_by_price.get(&sorted_ticks[lo - 1]).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let vol_hi = if can_expand_hi {
+                self.volume_by_price.get(&sorted_ticks[hi + 1]).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+
+            // Expand toward the side with more volume; prefer high side on tie.
+            if can_expand_hi && vol_hi >= vol_lo {
+                hi += 1;
+                accumulated += vol_hi;
+            } else if can_expand_lo {
+                lo -= 1;
+                accumulated += vol_lo;
+            } else {
+                hi += 1;
+                accumulated += vol_hi;
+            }
+        }
+
+        self.val = sorted_ticks[lo] as f64 * self.tick_size;
+        self.vah = sorted_ticks[hi] as f64 * self.tick_size;
     }
 
     /// Returns visible price levels with volume, sorted by price descending

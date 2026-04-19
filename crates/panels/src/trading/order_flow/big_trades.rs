@@ -38,6 +38,9 @@ pub struct BigTradesState {
     /// Scroll offset
     pub scroll_offset: f64,
 
+    /// Maximum quantity seen in the current window — used for bar scaling.
+    pub max_qty_seen: f64,
+
     /// Handle to the shared trade ring for this (exchange, symbol, account_type).
     ///
     /// `None` until `subscribe_trades` is called on the bridge. Panels read
@@ -92,6 +95,7 @@ impl BigTradesState {
             dom_market_price: None,
             dom_tick_size: None,
             scroll_offset: 0.0,
+            max_qty_seen: 0.0,
             shared_trades: None,
             last_seen_trade_version: 0,
         }
@@ -150,6 +154,10 @@ impl BigTradesState {
                 },
             };
 
+            if public.quantity > self.max_qty_seen {
+                self.max_qty_seen = public.quantity;
+            }
+
             if self.big_trades.len() >= MAX_TRADES {
                 self.big_trades.pop_front();
             }
@@ -200,14 +208,17 @@ impl BigTradesState {
         // No-op: BigTrades now reads from the shared TradeSeries.
     }
 
-    /// Calculate bar width for size visualization (0.0-1.0)
+    /// Calculate bar width for size visualization (0.0–1.0 fraction of max_width).
+    ///
+    /// Bars scale against the largest trade seen in the current window so that
+    /// the biggest trade always fills the full width. When no trades have been
+    /// received yet (`max_qty_seen == 0`) the bar is zero-width.
     pub fn size_bar_width(&self, trade: &PublicTrade, max_width: f32) -> f32 {
-        if self.size_threshold == 0.0 {
+        if self.max_qty_seen == 0.0 {
             return 0.0;
         }
-
-        let ratio = (trade.quantity / self.size_threshold).min(3.0); // Cap at 3x threshold
-        (ratio as f32 / 3.0) * max_width
+        let ratio = (trade.quantity / self.max_qty_seen).clamp(0.0, 1.0);
+        ratio as f32 * max_width
     }
 }
 

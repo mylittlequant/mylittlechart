@@ -6500,7 +6500,7 @@ impl ChartApp {
                                     }
                                     Some(FreeItem::L2Tape(pid)) => {
                                         if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                            state.scroll_offset = (state.scroll_offset + scroll_step * 30.0).max(0.0);
+                                            state.handle_scroll(scroll_step * 3.0);
                                         }
                                     }
                                     _ => {}
