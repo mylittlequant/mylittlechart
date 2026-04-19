@@ -67,7 +67,7 @@ pub struct L2TapeState {
     pub events: VecDeque<L2Event>,
     /// Maximum events to keep in buffer
     pub max_events: usize,
-    /// Time-based retention in milliseconds (default 30 000 ms = 30 s).
+    /// Time-based retention in milliseconds (default 120 000 ms = 2 min).
     /// Events older than `retention_ms` are drained from the front on each tick.
     pub retention_ms: u64,
     /// Maximum quantity seen in the current event buffer.
@@ -360,7 +360,7 @@ impl L2TapeState {
             account_type: String::new(),
             events: VecDeque::new(),
             max_events: 10000,
-            retention_ms: 30_000,
+            retention_ms: 120_000,
             max_qty_seen: 0.0,
             auto_scroll: true,
             filter_type: None,
@@ -393,8 +393,11 @@ impl L2TapeState {
         }
         self.last_seen_orderbook_version = series.current.version;
 
-        // Clone the snapshot data we need before releasing the lock.
-        let timestamp = series.current.last_rest_ts_ms;
+        // Use wall-clock time for event timestamps (not REST ts which may be stale).
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
         let bids: Vec<(f64, f64)> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
         let asks: Vec<(f64, f64)> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
         drop(series);

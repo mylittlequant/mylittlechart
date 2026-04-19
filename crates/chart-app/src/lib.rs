@@ -612,6 +612,11 @@ pub struct ChartApp {
     /// `(panel_id, last_x, last_y)`.
     pub(crate) slot_volprofile_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
 
+    /// Active TradeTape drag-to-scroll.
+    ///
+    /// `(panel_id, last_x, last_y)`.
+    pub(crate) slot_tradetape_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
+
 }
 
 /// An action that mutates the app-level watchlist.
@@ -958,6 +963,7 @@ impl ChartApp {
             slot_footprint_drag: None,
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
+            slot_tradetape_drag: None,
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1250,6 +1256,7 @@ impl ChartApp {
             slot_footprint_drag: None,
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
+            slot_tradetape_drag: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1437,6 +1444,7 @@ impl ChartApp {
             slot_footprint_drag: None,
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
+            slot_tradetape_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -6013,6 +6021,8 @@ impl ChartApp {
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
                             .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
+                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                            .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
                             .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                         FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
@@ -6062,6 +6072,8 @@ impl ChartApp {
                         FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                         FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
@@ -6552,6 +6564,8 @@ impl ChartApp {
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
                         .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
+                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
+                        .and_then(|s| label_from_fields(&s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
                         .and_then(|s| label_from_source(&s.source, &s.symbol, &s.exchange, &s.account_type)),
                     FreeItem::TradingContainer(id) => panels_store.trading_container.get(id)
@@ -6601,6 +6615,8 @@ impl ChartApp {
                     FreeItem::BigTrades(id) => panels_store.big_trades.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     FreeItem::L2Tape(id) => panels_store.l2_tape.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
                     FreeItem::OrderEntry(id) => panels_store.order_entry.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),

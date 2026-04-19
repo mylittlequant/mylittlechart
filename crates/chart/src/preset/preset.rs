@@ -147,6 +147,10 @@ pub enum PersistedFreeItemKind {
         #[serde(default)]
         source: PersistedSymbolSource,
     },
+    TradeTape {
+        #[serde(default)]
+        source: PersistedSymbolSource,
+    },
     OrderEntry {
         #[serde(default)]
         source: PersistedSymbolSource,

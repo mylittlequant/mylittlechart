@@ -382,6 +382,7 @@ impl ChartApp {
                                     match item_opt {
                                         Some(FreeItem::Dom(_))
                                         | Some(FreeItem::L2Tape(_))
+                                        | Some(FreeItem::TradeTape(_))
                                         | Some(FreeItem::Footprint(_))
                                         | Some(FreeItem::LiquidityHeatmap(_))
                                         | Some(FreeItem::BigTrades(_))
@@ -836,6 +837,12 @@ impl ChartApp {
                                         }
                                         Some(FreeItem::L2Tape(pid)) => {
                                             if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                                state.handle_double_click();
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                        Some(FreeItem::TradeTape(pid)) => {
+                                            if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
                                                 state.handle_double_click();
                                                 self.sidebar_data_dirty = true;
                                             }
@@ -1468,6 +1475,11 @@ impl ChartApp {
                                         }
                                         Some(FreeItem::L2Tape(pid)) => {
                                             self.slot_l2tape_drag = Some((pid, x, y));
+                                            self.ui_drag_active = true;
+                                            return false;
+                                        }
+                                        Some(FreeItem::TradeTape(pid)) => {
+                                            self.slot_tradetape_drag = Some((pid, x, y));
                                             self.ui_drag_active = true;
                                             return false;
                                         }
@@ -2926,6 +2938,21 @@ impl ChartApp {
             return;
         }
 
+        // ── TradeTape drag-to-scroll ─────────────────────────────────────────
+        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_tradetape_drag {
+            let dx = x - *last_x;
+            let dy = y - *last_y;
+            if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                    state.handle_drag(dx, dy);
+                    self.sidebar_data_dirty = true;
+                }
+                *last_x = x;
+                *last_y = y;
+            }
+            return;
+        }
+
         // ── Footprint drag-to-pan ────────────────────────────────────────────
         if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_footprint_drag {
             let dx = x - *last_x;
@@ -3968,6 +3995,12 @@ impl ChartApp {
 
         // ── End L2Tape drag-to-scroll ────────────────────────────────────────
         if self.slot_l2tape_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End TradeTape drag-to-scroll ─────────────────────────────────────
+        if self.slot_tradetape_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             return;
         }
@@ -6724,6 +6757,11 @@ impl ChartApp {
                                             state.handle_scroll(scroll_step * 3.0);
                                         }
                                     }
+                                    Some(FreeItem::TradeTape(pid)) => {
+                                        if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                                            state.handle_scroll(scroll_step * 3.0);
+                                        }
+                                    }
                                     Some(FreeItem::Footprint(pid)) => {
                                         if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                             state.handle_scroll(scroll_step * 3.0);
@@ -8488,6 +8526,11 @@ impl ChartApp {
                                         }
                                         Some(FreeItem::L2Tape(pid)) => {
                                             self.panels_store.l2_tape.get_mut(&pid)
+                                                .map(|s| s.handle_key(panel_key))
+                                                .unwrap_or(false)
+                                        }
+                                        Some(FreeItem::TradeTape(pid)) => {
+                                            self.panels_store.trade_tape.get_mut(&pid)
                                                 .map(|s| s.handle_key(panel_key))
                                                 .unwrap_or(false)
                                         }
@@ -10532,6 +10575,27 @@ impl ChartApp {
                                 }
                                 Some(sidebar_content::free_slot::FreeItem::L2Tape(pid))
                             }
+                            "trade_tape" => {
+                                let pid = self.panels_store.create_trade_tape();
+                                if !symbol.is_empty() {
+                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                                        .unwrap_or(self.active_exchange);
+                                    let at = crate::account_type_from_label(&account_type_str);
+                                    let handle = self.bridge.subscribe_trades(eid, &symbol, at);
+                                    if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                                        state.symbol = symbol.clone();
+                                        state.exchange = exchange_str.clone();
+                                        state.account_type = account_type_str.clone();
+                                        state.shared_trades = Some(handle);
+                                        state.last_seen_version = 0;
+                                    }
+                                } else if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                                    state.symbol = symbol.clone();
+                                    state.exchange = exchange_str.clone();
+                                    state.account_type = account_type_str.clone();
+                                }
+                                Some(sidebar_content::free_slot::FreeItem::TradeTape(pid))
+                            }
                             "order_entry" => {
                                 let pid = self.panels_store.create_order_entry(symbol.clone());
                                 if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
@@ -10584,7 +10648,7 @@ impl ChartApp {
                         let is_market_data = matches!(
                             kind_str,
                             "dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
-                                | "big_trades" | "l2_tape"
+                                | "big_trades" | "l2_tape" | "trade_tape"
                         );
                         if is_market_data {
                             if let Some(ref item) = item_opt {
@@ -10862,6 +10926,16 @@ impl ChartApp {
                                                     }
                                                 }
                                             }
+                                            if let sidebar_content::free_slot::FreeItem::TradeTape(pid) = &item {
+                                                if let Some(state) = self.panels_store.trade_tape.get(pid) {
+                                                    if !state.symbol.is_empty() {
+                                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                            let at = crate::account_type_from_label(&state.account_type);
+                                                            self.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             if let sidebar_content::free_slot::FreeItem::LiquidityHeatmap(pid) = &item {
                                                 if let Some(state) = self.panels_store.liquidity_heatmap.get(pid) {
                                                     if !state.symbol.is_empty() {
@@ -10919,7 +10993,8 @@ impl ChartApp {
                                     | FreeItem::VolumeProfile(_)
                                     | FreeItem::LiquidityHeatmap(_)
                                     | FreeItem::BigTrades(_)
-                                    | FreeItem::L2Tape(_) => Some(SymbolSource::HyperFocus),
+                                    | FreeItem::L2Tape(_)
+                                    | FreeItem::TradeTape(_) => Some(SymbolSource::HyperFocus),
                                     FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                     FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                     FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -11002,6 +11077,16 @@ impl ChartApp {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
                                                 self.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                            }
+                                        }
+                                    }
+                                }
+                                if let sidebar_content::free_slot::FreeItem::TradeTape(pid) = &item {
+                                    if let Some(state) = self.panels_store.trade_tape.get(pid) {
+                                        if !state.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
+                                                let at = crate::account_type_from_label(&state.account_type);
+                                                self.bridge.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -11193,7 +11278,8 @@ impl ChartApp {
                                         | FreeItem::VolumeProfile(_)
                                         | FreeItem::LiquidityHeatmap(_)
                                         | FreeItem::BigTrades(_)
-                                        | FreeItem::L2Tape(_) => None,
+                                        | FreeItem::L2Tape(_)
+                                        | FreeItem::TradeTape(_) => None,
                                         FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -11317,7 +11403,8 @@ impl ChartApp {
                                         | FreeItem::VolumeProfile(_)
                                         | FreeItem::LiquidityHeatmap(_)
                                         | FreeItem::BigTrades(_)
-                                        | FreeItem::L2Tape(_) => Some(SymbolSource::HyperFocus),
+                                        | FreeItem::L2Tape(_)
+                                        | FreeItem::TradeTape(_) => Some(SymbolSource::HyperFocus),
                                         FreeItem::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         FreeItem::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
                                         FreeItem::PositionManager(_) | FreeItem::TradeLog(_) | FreeItem::RiskCalculator(_) => None,
@@ -21470,6 +21557,29 @@ impl ChartApp {
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
                                 }
+                                PersistedFreeItemKind::TradeTape { source } => {
+                                    if !self.panels_store.trade_tape.contains_key(&pid) {
+                                        let symbol = match source {
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            zengeld_chart::preset::preset::PersistedSymbolSource::BoundToChart { .. } | zengeld_chart::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = zengeld_panels::trading::order_flow::trade_tape::TradeTapeState::new();
+                                        s.symbol = symbol;
+                                        if let zengeld_chart::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
+                                        // Subscribe to the shared trade ring if we have a concrete symbol.
+                                        if !s.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
+                                                let at = crate::account_type_from_label(&s.account_type);
+                                                let handle = self.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                s.shared_trades = Some(handle);
+                                            }
+                                        }
+                                        self.panels_store.trade_tape.insert(pid, s);
+                                    }
+                                }
                                 PersistedFreeItemKind::OrderEntry { source } => {
                                     if !self.panels_store.order_entry.contains_key(&pid) {
                                         let symbol = match source {
@@ -21539,6 +21649,7 @@ impl ChartApp {
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::LiquidityHeatmap { .. }  => FreeItem::LiquidityHeatmap(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::BigTrades { .. }         => FreeItem::BigTrades(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::L2Tape { .. }            => FreeItem::L2Tape(pid),
+                                                zengeld_chart::preset::preset::PersistedFreeItemKind::TradeTape { .. }         => FreeItem::TradeTape(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::OrderEntry { .. }        => FreeItem::OrderEntry(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::PositionManager          => FreeItem::PositionManager(pid),
                                                 zengeld_chart::preset::preset::PersistedFreeItemKind::TradeLog                 => FreeItem::TradeLog(pid),
@@ -22455,6 +22566,13 @@ impl ChartApp {
                             let state = self.panels_store.l2_tape.get(id)?;
                             let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::L2Tape {
+                                source,
+                            }
+                        }
+                        FreeItem::TradeTape(id) => {
+                            let state = self.panels_store.trade_tape.get(id)?;
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
+                            PersistedFreeItemKind::TradeTape {
                                 source,
                             }
                         }

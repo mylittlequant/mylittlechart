@@ -38,6 +38,7 @@ pub enum FreeItem {
     LiquidityHeatmap(PanelId),
     BigTrades(PanelId),
     L2Tape(PanelId),
+    TradeTape(PanelId),
     OrderEntry(PanelId),
     PositionManager(PanelId),
     TradeLog(PanelId),
@@ -55,6 +56,7 @@ impl FreeItem {
             | FreeItem::LiquidityHeatmap(id)
             | FreeItem::BigTrades(id)
             | FreeItem::L2Tape(id)
+            | FreeItem::TradeTape(id)
             | FreeItem::OrderEntry(id)
             | FreeItem::PositionManager(id)
             | FreeItem::TradeLog(id)
@@ -72,6 +74,7 @@ impl FreeItem {
             FreeItem::LiquidityHeatmap(_)  => "liquidity_heatmap",
             FreeItem::BigTrades(_)         => "big_trades",
             FreeItem::L2Tape(_)            => "l2_tape",
+            FreeItem::TradeTape(_)         => "trade_tape",
             FreeItem::OrderEntry(_)        => "order_entry",
             FreeItem::PositionManager(_)   => "position_manager",
             FreeItem::TradeLog(_)          => "trade_log",
@@ -91,6 +94,7 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::LiquidityHeatmap(_)  => "Liquidity Heatmap",
             FreeItem::BigTrades(_)         => "Big Trades",
             FreeItem::L2Tape(_)            => "L2 Tape",
+            FreeItem::TradeTape(_)         => "Trade Tape",
             FreeItem::OrderEntry(_)        => "Order Entry",
             FreeItem::PositionManager(_)   => "Positions",
             FreeItem::TradeLog(_)          => "Trade Log",
@@ -113,6 +117,7 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::LiquidityHeatmap(_)  => "free_liquidity_heatmap",
             FreeItem::BigTrades(_)         => "free_big_trades",
             FreeItem::L2Tape(_)            => "free_l2_tape",
+            FreeItem::TradeTape(_)         => "free_trade_tape",
             FreeItem::OrderEntry(_)        => "free_order_entry",
             FreeItem::PositionManager(_)   => "free_position_manager",
             FreeItem::TradeLog(_)          => "free_trade_log",
@@ -131,6 +136,7 @@ impl uzor::panels::DockPanel for FreeItem {
             FreeItem::LiquidityHeatmap(_)  => (300.0, 200.0),
             FreeItem::BigTrades(_)         => (250.0, 200.0),
             FreeItem::L2Tape(_)            => (200.0, 150.0),
+            FreeItem::TradeTape(_)         => (200.0, 150.0),
             FreeItem::OrderEntry(_)        => (250.0, 300.0),
             FreeItem::PositionManager(_)   => (300.0, 150.0),
             FreeItem::TradeLog(_)          => (200.0, 150.0),

@@ -102,6 +102,14 @@ pub fn panel_header_info(
             account_type: s.account_type.clone(),
             is_dom: false,
         }),
+        FreeItem::TradeTape(id) => store.trade_tape.get(id).map(|s| PanelHeaderInfo {
+            source_label: "Synced",
+            source_color: "#374151",
+            symbol: s.symbol.clone(),
+            exchange: s.exchange.clone(),
+            account_type: s.account_type.clone(),
+            is_dom: false,
+        }),
         FreeItem::OrderEntry(id) => store.order_entry.get(id).map(|s| PanelHeaderInfo {
             source_label: source_label(&s.source),
             source_color: source_color(&s.source),

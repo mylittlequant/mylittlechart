@@ -18,6 +18,7 @@ use zengeld_panels::trading::order_flow::{
     footprint::FootprintState,
     l2_tape::L2TapeState,
     liquidity_heatmap::LiquidityHeatmapState,
+    trade_tape::TradeTapeState,
     volume_profile::VolumeProfileState,
 };
 use zengeld_panels::trading::trading::{
@@ -44,6 +45,7 @@ pub struct TradingPanelsStore {
     pub liquidity_heatmap: HashMap<PanelId, LiquidityHeatmapState>,
     pub big_trades: HashMap<PanelId, BigTradesState>,
     pub l2_tape: HashMap<PanelId, L2TapeState>,
+    pub trade_tape: HashMap<PanelId, TradeTapeState>,
     pub order_entry: HashMap<PanelId, OrderEntryState>,
     pub position_manager: HashMap<PanelId, PositionManagerState>,
     pub trade_log: HashMap<PanelId, TradeLogState>,
@@ -62,6 +64,7 @@ impl TradingPanelsStore {
             liquidity_heatmap: HashMap::new(),
             big_trades: HashMap::new(),
             l2_tape: HashMap::new(),
+            trade_tape: HashMap::new(),
             order_entry: HashMap::new(),
             position_manager: HashMap::new(),
             trade_log: HashMap::new(),
@@ -130,6 +133,13 @@ impl TradingPanelsStore {
         id
     }
 
+    /// Allocate a new Trade Tape panel.
+    pub fn create_trade_tape(&mut self) -> PanelId {
+        let id = self.alloc_id();
+        self.trade_tape.insert(id, TradeTapeState::new());
+        id
+    }
+
     /// Allocate a new Order Entry panel.
     pub fn create_order_entry(&mut self, symbol: String) -> PanelId {
         let id = self.alloc_id();
@@ -187,6 +197,7 @@ impl TradingPanelsStore {
             FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::BigTrades(id) => self.big_trades.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::L2Tape(id) => self.l2_tape.get(id).map(|s| s as &dyn TradingPanel),
+            FreeItem::TradeTape(id) => self.trade_tape.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::OrderEntry(id) => self.order_entry.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
             FreeItem::TradeLog(id) => self.trade_log.get(id).map(|s| s as &dyn TradingPanel),
@@ -204,6 +215,7 @@ impl TradingPanelsStore {
             FreeItem::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::BigTrades(id) => self.big_trades.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::L2Tape(id) => self.l2_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            FreeItem::TradeTape(id) => self.trade_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::OrderEntry(id) => self.order_entry.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             FreeItem::TradeLog(id) => self.trade_log.get_mut(id).map(|s| s as &mut dyn TradingPanel),
@@ -257,6 +269,11 @@ impl TradingPanelsStore {
                 self.l2_tape.insert(pid, L2TapeState::new());
                 Some(FreeItem::L2Tape(pid))
             }
+            FreeItem::TradeTape(_) => {
+                let pid = self.alloc_id();
+                self.trade_tape.insert(pid, TradeTapeState::new());
+                Some(FreeItem::TradeTape(pid))
+            }
             FreeItem::OrderEntry(id) => {
                 let s = self.order_entry.get(id)?;
                 let pid = self.alloc_id();
@@ -302,6 +319,7 @@ impl TradingPanelsStore {
             FreeItem::LiquidityHeatmap(id) => { self.liquidity_heatmap.remove(id); }
             FreeItem::BigTrades(id)        => { self.big_trades.remove(id); }
             FreeItem::L2Tape(id)           => { self.l2_tape.remove(id); }
+            FreeItem::TradeTape(id)        => { self.trade_tape.remove(id); }
             FreeItem::OrderEntry(id)       => { self.order_entry.remove(id); }
             FreeItem::PositionManager(id)  => { self.position_manager.remove(id); }
             FreeItem::TradeLog(id)         => { self.trade_log.remove(id); }
