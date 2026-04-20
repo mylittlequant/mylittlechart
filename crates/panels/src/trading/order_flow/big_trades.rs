@@ -12,6 +12,28 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BigTradesId(pub u64);
 
+/// Column visibility configuration for the Big Trades panel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BigTradesColumnConfig {
+    pub show_time: bool,
+    pub show_side: bool,
+    pub show_price: bool,
+    pub show_size: bool,
+    pub show_notional: bool,
+}
+
+impl Default for BigTradesColumnConfig {
+    fn default() -> Self {
+        Self {
+            show_time: true,
+            show_side: true,
+            show_price: true,
+            show_size: true,
+            show_notional: true,
+        }
+    }
+}
+
 /// BigTrades panel state (heavy data)
 #[derive(Clone)]
 pub struct BigTradesState {
@@ -55,6 +77,9 @@ pub struct BigTradesState {
 
     /// Crosshair price synced from a linked chart window.
     pub crosshair_price: Option<f64>,
+
+    /// Column visibility configuration.
+    pub column_config: BigTradesColumnConfig,
 }
 
 impl fmt::Debug for BigTradesState {
@@ -102,6 +127,7 @@ impl BigTradesState {
             shared_trades: None,
             last_seen_trade_version: 0,
             crosshair_price: None,
+            column_config: BigTradesColumnConfig::default(),
         }
     }
 
@@ -285,15 +311,35 @@ impl TradingPanel for BigTradesState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        let time_col_x = x + BT_LEFT_PAD;
-        let time_col_w = 60.0_f32;
-        let side_col_x = time_col_x + time_col_w + 4.0;
-        let side_col_w = 36.0_f32;
-        let price_col_x = side_col_x + side_col_w + 4.0;
-        let price_col_w = 80.0_f32;
-        let size_col_x = price_col_x + price_col_w + 4.0;
-        let size_col_w = 70.0_f32;
-        let notional_col_x = size_col_x + size_col_w + 4.0;
+        // Build visible column list: (label, default_width).
+        // The last visible column gets all remaining width (no fixed width needed).
+        struct ColDef {
+            label: &'static str,
+            width: f32,
+        }
+        let mut cols: Vec<ColDef> = Vec::with_capacity(5);
+        if self.column_config.show_time     { cols.push(ColDef { label: "TIME",     width: 60.0 }); }
+        if self.column_config.show_side     { cols.push(ColDef { label: "SIDE",     width: 36.0 }); }
+        if self.column_config.show_price    { cols.push(ColDef { label: "PRICE",    width: 80.0 }); }
+        if self.column_config.show_size     { cols.push(ColDef { label: "SIZE",     width: 70.0 }); }
+        if self.column_config.show_notional { cols.push(ColDef { label: "NOTIONAL", width: 0.0  }); }
+
+        // Compute x positions for each column.
+        // The last column stretches to fill remaining space.
+        let usable_w = w - BT_LEFT_PAD * 2.0;
+        let gap = 4.0_f32;
+        let fixed_w: f32 = cols.iter().take(cols.len().saturating_sub(1)).map(|c| c.width + gap).sum();
+        let last_w = (usable_w - fixed_w).max(0.0);
+
+        let mut col_xs: Vec<f32> = Vec::with_capacity(cols.len());
+        {
+            let mut cx = x + BT_LEFT_PAD;
+            for (idx, col) in cols.iter().enumerate() {
+                col_xs.push(cx);
+                let w_used = if idx + 1 == cols.len() { last_w } else { col.width };
+                cx += w_used + gap;
+            }
+        }
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, BT_HEADER_HEIGHT as f64);
@@ -304,11 +350,9 @@ impl TradingPanel for BigTradesState {
         ctx.set_text_baseline(TextBaseline::Middle);
 
         let header_y = (y + BT_HEADER_HEIGHT / 2.0) as f64;
-        ctx.fill_text("TIME", time_col_x as f64, header_y);
-        ctx.fill_text("SIDE", side_col_x as f64, header_y);
-        ctx.fill_text("PRICE", price_col_x as f64, header_y);
-        ctx.fill_text("SIZE", size_col_x as f64, header_y);
-        ctx.fill_text("NOTIONAL", notional_col_x as f64, header_y);
+        for (idx, col) in cols.iter().enumerate() {
+            ctx.fill_text(col.label, col_xs[idx] as f64, header_y);
+        }
 
         let available_height = h - BT_HEADER_HEIGHT;
         let max_rows = (available_height / BT_ROW_HEIGHT) as usize;
@@ -329,37 +373,51 @@ impl TradingPanel for BigTradesState {
 
             let text_y = (row_y + BT_ROW_HEIGHT / 2.0) as f64;
 
-            let time_str = {
-                let secs = (trade.timestamp / 1000) % 86400;
-                let hh = secs / 3600;
-                let mm = (secs % 3600) / 60;
-                let ss = secs % 60;
-                format!("{:02}:{:02}:{:02}", hh, mm, ss)
-            };
-
             ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&time_str, time_col_x as f64, text_y);
 
-            let (side_str, side_color) = match trade.side {
-                TradeSide::Buy => ("BUY", &theme.buy),
-                TradeSide::Sell => ("SELL", &theme.sell),
-            };
-            ctx.set_fill_color(side_color);
-            ctx.fill_text(side_str, side_col_x as f64, text_y);
+            // Track which visible column index maps to which data field.
+            let mut col_idx = 0usize;
 
-            let price_str = format!("{:.4}", trade.price);
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.fill_text(&price_str, price_col_x as f64, text_y);
+            if self.column_config.show_time {
+                let secs = (trade.timestamp / 1000) % 86400;
+                let hh = secs / 3600;
+                let mm = (secs % 3600) / 60;
+                let ss = secs % 60;
+                let time_str = format!("{:02}:{:02}:{:02}", hh, mm, ss);
+                ctx.fill_text(&time_str, col_xs[col_idx] as f64, text_y);
+                col_idx += 1;
+            }
 
-            let size_str = format!("{:.4}", trade.quantity);
-            ctx.fill_text(&size_str, size_col_x as f64, text_y);
+            if self.column_config.show_side {
+                let (side_str, side_color) = match trade.side {
+                    TradeSide::Buy  => ("BUY",  &theme.buy),
+                    TradeSide::Sell => ("SELL", &theme.sell),
+                };
+                ctx.set_fill_color(side_color);
+                ctx.fill_text(side_str, col_xs[col_idx] as f64, text_y);
+                ctx.set_fill_color(&theme.text_primary);
+                col_idx += 1;
+            }
 
-            let notional = trade.price * trade.quantity;
-            let notional_str = format!("{:.2}", notional);
-            ctx.fill_text(&notional_str, notional_col_x as f64, text_y);
+            if self.column_config.show_price {
+                let price_str = format!("{:.4}", trade.price);
+                ctx.fill_text(&price_str, col_xs[col_idx] as f64, text_y);
+                col_idx += 1;
+            }
+
+            if self.column_config.show_size {
+                let size_str = format!("{:.4}", trade.quantity);
+                ctx.fill_text(&size_str, col_xs[col_idx] as f64, text_y);
+                col_idx += 1;
+            }
+
+            if self.column_config.show_notional {
+                let notional_str = format!("{:.2}", trade.price * trade.quantity);
+                ctx.fill_text(&notional_str, col_xs[col_idx] as f64, text_y);
+            }
 
             ctx.set_fill_color(&theme.separator);
             ctx.fill_rect(x as f64, (row_y + BT_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);

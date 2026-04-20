@@ -6087,6 +6087,37 @@ impl ChartApp {
                         | FreeItem::RiskCalculator(_) => None,
                     }
                 },
+                &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
+                    use sidebar_content::free_slot::FreeItem;
+                    match item {
+                        FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| vec![
+                            s.column_config.show_bid_orders,
+                            s.column_config.show_sell_trades,
+                            s.column_config.show_buy_trades,
+                            s.column_config.show_ask_orders,
+                        ]),
+                        FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
+                            s.column_config.show_time,
+                            s.column_config.show_type,
+                            s.column_config.show_side,
+                            s.column_config.show_price,
+                            s.column_config.show_qty,
+                        ]),
+                        FreeItem::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
+                            s.column_config.show_time,
+                            s.column_config.show_price,
+                            s.column_config.show_size,
+                        ]),
+                        FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
+                            s.column_config.show_time,
+                            s.column_config.show_side,
+                            s.column_config.show_price,
+                            s.column_config.show_size,
+                            s.column_config.show_notional,
+                        ]),
+                        _ => None,
+                    }
+                },
             );
 
             Some(sidebar_result)
@@ -6628,6 +6659,37 @@ impl ChartApp {
                     FreeItem::PositionManager(_)
                     | FreeItem::TradeLog(_)
                     | FreeItem::RiskCalculator(_) => None,
+                }
+            },
+            &|item: &sidebar_content::free_slot::FreeItem| -> Option<Vec<bool>> {
+                use sidebar_content::free_slot::FreeItem;
+                match item {
+                    FreeItem::Dom(id) => panels_store.dom.get(id).map(|s| vec![
+                        s.column_config.show_bid_orders,
+                        s.column_config.show_sell_trades,
+                        s.column_config.show_buy_trades,
+                        s.column_config.show_ask_orders,
+                    ]),
+                    FreeItem::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![
+                        s.column_config.show_time,
+                        s.column_config.show_type,
+                        s.column_config.show_side,
+                        s.column_config.show_price,
+                        s.column_config.show_qty,
+                    ]),
+                    FreeItem::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![
+                        s.column_config.show_time,
+                        s.column_config.show_price,
+                        s.column_config.show_size,
+                    ]),
+                    FreeItem::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![
+                        s.column_config.show_time,
+                        s.column_config.show_side,
+                        s.column_config.show_price,
+                        s.column_config.show_size,
+                        s.column_config.show_notional,
+                    ]),
+                    _ => None,
                 }
             },
         );

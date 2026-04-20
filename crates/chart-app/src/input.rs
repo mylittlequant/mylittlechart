@@ -9365,6 +9365,15 @@ impl ChartApp {
             }
         }
 
+        // === Column config popup — click-away-to-dismiss ===
+        if let Some((cfg_slot, cfg_leaf)) = self.sidebar_state.panel_col_config_open {
+            let prefix = format!("slot:{}:leaf:{}:col_", cfg_slot, cfg_leaf);
+            if !widget_id.starts_with(&prefix) {
+                self.sidebar_state.panel_col_config_open = None;
+                self.sidebar_data_dirty = true;
+            }
+        }
+
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
@@ -11207,6 +11216,98 @@ impl ChartApp {
                                     eprintln!("[ChartApp] slot:{}:leaf:{}:vol_filter → {}", idx, raw, next);
                                     self.sidebar_data_dirty = true;
                                 }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:col_config — toggle column config popup ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(leaf_id_str) = leaf_rest.strip_suffix(":col_config") {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            if self.sidebar_state.panel_col_config_open == Some((idx, raw)) {
+                                self.sidebar_state.panel_col_config_open = None;
+                            } else {
+                                self.sidebar_state.panel_col_config_open = Some((idx, raw));
+                            }
+                            self.sidebar_data_dirty = true;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // --- slot:{idx}:leaf:{leaf_id}:col_toggle:{col_idx} — toggle column visibility ---
+        if let Some(rest) = widget_id.strip_prefix("slot:") {
+            if let Some((idx_str, leaf_rest)) = rest.split_once(":leaf:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(toggle_pos) = leaf_rest.find(":col_toggle:") {
+                        let leaf_id_str = &leaf_rest[..toggle_pos];
+                        let col_idx_str = &leaf_rest[toggle_pos + ":col_toggle:".len()..];
+                        if let (Ok(raw), Ok(col_idx)) = (leaf_id_str.parse::<u64>(), col_idx_str.parse::<usize>()) {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+
+                            if let Some(item) = item_opt {
+                                match item {
+                                    sidebar_content::free_slot::FreeItem::Dom(pid) => {
+                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                            match col_idx {
+                                                0 => state.column_config.show_bid_orders = !state.column_config.show_bid_orders,
+                                                1 => state.column_config.show_sell_trades = !state.column_config.show_sell_trades,
+                                                2 => state.column_config.show_buy_trades = !state.column_config.show_buy_trades,
+                                                3 => state.column_config.show_ask_orders = !state.column_config.show_ask_orders,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    sidebar_content::free_slot::FreeItem::L2Tape(pid) => {
+                                        if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                            match col_idx {
+                                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                                1 => state.column_config.show_type = !state.column_config.show_type,
+                                                2 => state.column_config.show_side = !state.column_config.show_side,
+                                                3 => state.column_config.show_price = !state.column_config.show_price,
+                                                4 => state.column_config.show_qty = !state.column_config.show_qty,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    sidebar_content::free_slot::FreeItem::TradeTape(pid) => {
+                                        if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                                            match col_idx {
+                                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                                1 => state.column_config.show_price = !state.column_config.show_price,
+                                                2 => state.column_config.show_size = !state.column_config.show_size,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    sidebar_content::free_slot::FreeItem::BigTrades(pid) => {
+                                        if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                                            match col_idx {
+                                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                                1 => state.column_config.show_side = !state.column_config.show_side,
+                                                2 => state.column_config.show_price = !state.column_config.show_price,
+                                                3 => state.column_config.show_size = !state.column_config.show_size,
+                                                4 => state.column_config.show_notional = !state.column_config.show_notional,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                self.sidebar_data_dirty = true;
                             }
                         }
                         return;

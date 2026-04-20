@@ -253,6 +253,7 @@ pub fn render_right_sidebar(
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
     panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
     panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
+    panel_col_visibility_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<Vec<bool>>,
 ) -> RightSidebarResult {
     let header_height = 40.0;
     // Agents panel manages its own scroll inside chat/PTY content area —
@@ -617,6 +618,7 @@ pub fn render_right_sidebar(
                 panel_color_tag_fn,
                 panel_sync_flags_fn,    // kept for API compat; currently unused in slot rendering
                 panel_overlay_info_fn,
+                panel_col_visibility_fn,
             );
         }
 
@@ -3478,6 +3480,7 @@ fn render_slot_panel(
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
     _panel_sync_flags_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<PanelSyncFlagsSnapshot>,
     panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
+    panel_col_visibility_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<Vec<bool>>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
 
@@ -3787,6 +3790,35 @@ fn render_slot_panel(
         let btn_y = header_y + (ctrl_strip_h - btn_h) / 2.0;
         let mut right_x = header_x + header_w - 3.0;
 
+        // [⚙] column config button — only for panels with column config
+        let has_col_config = matches!(
+            &item,
+            crate::free_slot::FreeItem::Dom(_)
+            | crate::free_slot::FreeItem::L2Tape(_)
+            | crate::free_slot::FreeItem::TradeTape(_)
+            | crate::free_slot::FreeItem::BigTrades(_)
+        );
+        if has_col_config {
+            let gear_w = 20.0_f32;
+            right_x -= gear_w;
+            let gear_x = right_x;
+            let gear_id = format!("slot:{}:leaf:{}:col_config", slot_idx, leaf_id.0);
+            let gear_is_open = state.panel_col_config_open == Some((slot_idx, leaf_id.0));
+            let gear_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&gear_id));
+            if gear_hov || gear_is_open {
+                ctx.set_fill_color(if gear_is_open { &theme.accent } else { &theme.item_bg_hover });
+                ctx.fill_rounded_rect(gear_x as f64, btn_y as f64, gear_w as f64, btn_h as f64, 2.0);
+            }
+            draw_svg_icon(ctx, Icon::Settings.svg(),
+                (gear_x + 2.0) as f64, (btn_y + 2.0) as f64,
+                (gear_w - 4.0) as f64, (btn_h - 4.0) as f64,
+                if gear_is_open { &theme.item_text_active } else if gear_hov { &theme.item_text } else { &theme.item_text_muted });
+            let gear_rect = WidgetRect::new(gear_x as f64, btn_y as f64, gear_w as f64, btn_h as f64);
+            input_coordinator.register(gear_id.as_str(), gear_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((gear_id, gear_rect));
+            right_x -= 2.0;
+        }
+
         // [×] close button (rightmost)
         let close_w = 16.0_f32;
         right_x -= close_w;
@@ -3954,6 +3986,81 @@ fn render_slot_panel(
 
         // Store hit zones for chart-app click dispatch.
         result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones));
+
+        // ── Column config popup ──────────────────────────────────────────
+        if state.panel_col_config_open == Some((slot_idx, leaf_id.0)) {
+            let col_labels: Vec<&str> = match &item {
+                crate::free_slot::FreeItem::Dom(_) => vec![
+                    "Bid Orders", "Sell Trades", "Buy Trades", "Ask Orders",
+                ],
+                crate::free_slot::FreeItem::L2Tape(_) => vec![
+                    "Time", "Type", "Side", "Price", "Qty",
+                ],
+                crate::free_slot::FreeItem::TradeTape(_) => vec![
+                    "Time", "Price", "Size",
+                ],
+                crate::free_slot::FreeItem::BigTrades(_) => vec![
+                    "Time", "Side", "Price", "Size", "Notional",
+                ],
+                _ => vec![],
+            };
+
+            if !col_labels.is_empty() {
+                let popup_w = 140.0_f64;
+                let row_h = 22.0_f64;
+                let popup_h = col_labels.len() as f64 * row_h + 4.0;
+                let popup_x = (right_x as f64).max(r.x as f64);
+                let popup_y = (header_y + ctrl_strip_h) as f64;
+
+                // Background
+                ctx.set_fill_color(&theme.dropdown_bg);
+                ctx.fill_rounded_rect(popup_x, popup_y, popup_w, popup_h, 4.0);
+                // Border
+                ctx.set_stroke_color(&theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(popup_x + 0.5, popup_y + 0.5, popup_w - 1.0, popup_h - 1.0, 4.0);
+
+                let col_visibility = panel_col_visibility_fn(&item).unwrap_or_default();
+
+                for (ci, label) in col_labels.iter().enumerate() {
+                    let item_y = popup_y + 2.0 + ci as f64 * row_h;
+                    let item_id = format!("slot:{}:leaf:{}:col_toggle:{}", slot_idx, leaf_id.0, ci);
+                    let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&item_id));
+
+                    if item_hov {
+                        ctx.set_fill_color(&theme.item_bg_hover);
+                        ctx.fill_rect(popup_x + 2.0, item_y, popup_w - 4.0, row_h);
+                    }
+
+                    // Checkbox border
+                    let cb_x = popup_x + 8.0;
+                    let cb_y = item_y + (row_h - 10.0) / 2.0;
+                    let cb_size = 10.0_f64;
+                    ctx.set_stroke_color(&theme.item_text_muted);
+                    ctx.set_stroke_width(1.0);
+                    ctx.begin_path();
+                    ctx.rect(cb_x, cb_y, cb_size, cb_size);
+                    ctx.stroke();
+                    // Checkbox fill: only draw accent square when column is visible.
+                    let is_checked = col_visibility.get(ci).copied().unwrap_or(true);
+                    if is_checked {
+                        ctx.set_fill_color(&theme.accent);
+                        ctx.fill_rect(cb_x + 2.0, cb_y + 2.0, cb_size - 4.0, cb_size - 4.0);
+                    }
+
+                    // Label
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_fill_color(&theme.item_text);
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(label, cb_x + cb_size + 6.0, item_y + row_h / 2.0);
+
+                    let item_rect = WidgetRect::new(popup_x, item_y, popup_w, row_h);
+                    input_coordinator.register(item_id.as_str(), item_rect, uzor::input::Sense::CLICK);
+                    result.item_rects.push((item_id, item_rect));
+                }
+            }
+        }
     }
 
     // Draw slot separators and register their hit zones.

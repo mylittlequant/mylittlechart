@@ -259,6 +259,10 @@ pub struct SidebarState {
     /// The dropdown renders as an overlay panel over the watchlist content.
     pub watchlist_config_dropdown_open: bool,
 
+    /// Which leaf's column-config popup is open. `None` = closed.
+    /// Value is (slot_idx, leaf_id_raw) — same as used in widget IDs.
+    pub panel_col_config_open: Option<(usize, u64)>,
+
     /// Index of the watchlist row currently being drag-reordered (`None` when idle).
     pub watchlist_drag_index: Option<usize>,
 
@@ -738,6 +742,7 @@ impl Default for SidebarState {
             indicator_signals: IndicatorsTabData::default(),
             watchlist_manager: WatchlistManager::default(),
             watchlist_config_dropdown_open: false,
+            panel_col_config_open: None,
             watchlist_drag_index: None,
             watchlist_drag_y: 0.0,
             watchlist_drop_index: None,

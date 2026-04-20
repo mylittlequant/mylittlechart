@@ -22,6 +22,25 @@ const TT_LEFT_PAD: f32 = 4.0;
 const TT_MAX_TRADES: usize = 1000;
 const TT_RETENTION_MS: i64 = 120_000; // 2 minutes
 
+// ─── column config ───────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TradeTapeColumnConfig {
+    pub show_time: bool,
+    pub show_price: bool,
+    pub show_size: bool,
+}
+
+impl Default for TradeTapeColumnConfig {
+    fn default() -> Self {
+        Self {
+            show_time: true,
+            show_price: true,
+            show_size: true,
+        }
+    }
+}
+
 // ─── types ───────────────────────────────────────────────────────────────────
 
 /// A single executed public trade.
@@ -80,6 +99,9 @@ pub struct TradeTapeState {
     pub dom_market_price: Option<f64>,
     /// Tick size from a linked DOM panel.
     pub dom_tick_size: Option<f64>,
+
+    /// Which columns to show.
+    pub column_config: TradeTapeColumnConfig,
 }
 
 impl std::fmt::Debug for TradeTapeState {
@@ -115,6 +137,7 @@ impl TradeTapeState {
             last_seen_version: 0,
             dom_market_price: None,
             dom_tick_size: None,
+            column_config: TradeTapeColumnConfig::default(),
         }
     }
 
@@ -371,22 +394,42 @@ impl TradingPanel for TradeTapeState {
             ctx.fill_rect(x as f64, y as f64, w as f64, TT_HEADER_HEIGHT as f64);
         }
 
-        // ── header labels ────────────────────────────────────────────────
-        let col_time_x = x + TT_LEFT_PAD;
-        let col_price_x = x + (w * 0.38).max(70.0);
-        let col_size_x = x + (w * 0.70).max(120.0);
+        // ── dynamic column layout ─────────────────────────────────────────
+        // Build list of visible columns in order, then distribute width evenly.
+        #[derive(Clone, Copy)]
+        enum Col { Time, Price, Size }
 
+        let mut visible_cols: Vec<Col> = Vec::with_capacity(3);
+        if self.column_config.show_time  { visible_cols.push(Col::Time);  }
+        if self.column_config.show_price { visible_cols.push(Col::Price); }
+        if self.column_config.show_size  { visible_cols.push(Col::Size);  }
+
+        // Reserve right edge for symbol label (or 0 if no cols — degenerate).
+        let usable_w = w - TT_LEFT_PAD;
+        let col_count = visible_cols.len();
+        // x position for column i: left-pad + i * (usable_w / n_cols)
+        let col_x = |i: usize| -> f32 {
+            if col_count == 0 { return x + TT_LEFT_PAD; }
+            x + TT_LEFT_PAD + (i as f32) * (usable_w / col_count as f32)
+        };
+
+        // ── header labels ────────────────────────────────────────────────
         ctx.set_font("9px monospace");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
 
         let header_mid_y = (y + TT_HEADER_HEIGHT / 2.0) as f64;
 
-        // Draw header text in dark color for readability over green/red bar
         ctx.set_fill_color("#000000cc");
-        ctx.fill_text("TIME", col_time_x as f64, header_mid_y);
-        ctx.fill_text("PRICE", col_price_x as f64, header_mid_y);
-        ctx.fill_text("SIZE", col_size_x as f64, header_mid_y);
+        for (i, &col) in visible_cols.iter().enumerate() {
+            let lx = col_x(i) as f64;
+            let label = match col {
+                Col::Time  => "TIME",
+                Col::Price => "PRICE",
+                Col::Size  => "SIZE",
+            };
+            ctx.fill_text(label, lx, header_mid_y);
+        }
 
         if !self.symbol.is_empty() {
             ctx.set_text_align(TextAlign::Right);
@@ -409,13 +452,10 @@ impl TradingPanel for TradeTapeState {
 
             // Colored background with alpha-by-size
             let alpha = self.row_alpha(entry.quantity);
-            // Encode alpha as two hex digits (0x00..0xff)
             let alpha_byte = (alpha * 255.0).round() as u8;
             let bg_color = if entry.is_buy {
-                // green base #2ea043, apply alpha
                 format!("#2ea043{:02x}", alpha_byte)
             } else {
-                // red base #cc2233, apply alpha
                 format!("#cc2233{:02x}", alpha_byte)
             };
             ctx.set_fill_color(&bg_color);
@@ -425,21 +465,24 @@ impl TradingPanel for TradeTapeState {
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
 
-            // TIME column
-            ctx.set_fill_color(&theme.text_primary);
-            let time_str = Self::format_time(entry.timestamp);
-            ctx.fill_text(&time_str, col_time_x as f64, mid_y);
-
-            // PRICE column — colored by side
-            let price_color = if entry.is_buy { &theme.buy_bright } else { &theme.sell_bright };
-            ctx.set_fill_color(price_color);
-            let price_str = Self::format_price(entry.price, tick_size);
-            ctx.fill_text(&price_str, col_price_x as f64, mid_y);
-
-            // SIZE column
-            ctx.set_fill_color(&theme.text_primary);
-            let qty_str = Self::format_qty(entry.quantity);
-            ctx.fill_text(&qty_str, col_size_x as f64, mid_y);
+            for (i, &col) in visible_cols.iter().enumerate() {
+                let cx = col_x(i) as f64;
+                match col {
+                    Col::Time => {
+                        ctx.set_fill_color(&theme.text_primary);
+                        ctx.fill_text(&Self::format_time(entry.timestamp), cx, mid_y);
+                    }
+                    Col::Price => {
+                        let price_color = if entry.is_buy { &theme.buy_bright } else { &theme.sell_bright };
+                        ctx.set_fill_color(price_color);
+                        ctx.fill_text(&Self::format_price(entry.price, tick_size), cx, mid_y);
+                    }
+                    Col::Size => {
+                        ctx.set_fill_color(&theme.text_primary);
+                        ctx.fill_text(&Self::format_qty(entry.quantity), cx, mid_y);
+                    }
+                }
+            }
         }
 
         if entries.is_empty() {

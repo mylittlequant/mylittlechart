@@ -52,6 +52,27 @@ pub struct L2Event {
     pub order_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct L2TapeColumnConfig {
+    pub show_time: bool,
+    pub show_type: bool,
+    pub show_side: bool,
+    pub show_price: bool,
+    pub show_qty: bool,
+}
+
+impl Default for L2TapeColumnConfig {
+    fn default() -> Self {
+        Self {
+            show_time: true,
+            show_type: true,
+            show_side: true,
+            show_price: true,
+            show_qty: true,
+        }
+    }
+}
+
 /// L2 Tape panel state
 #[derive(Clone, Debug)]
 pub struct L2TapeState {
@@ -114,6 +135,9 @@ pub struct L2TapeState {
     /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
     /// differs we pull a fresh snapshot and generate L2 events from the diff.
     pub last_seen_orderbook_version: u64,
+
+    /// Column visibility configuration.
+    pub column_config: L2TapeColumnConfig,
 }
 
 /// Spoofing alert data
@@ -194,16 +218,35 @@ impl TradingPanel for L2TapeState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        let time_w  = (w * 0.28).max(70.0);
-        let type_w  = (w * 0.12).max(30.0);
-        let side_w  = (w * 0.12).max(28.0);
-        let price_w = (w * 0.24).max(60.0);
-
-        let col_time_x  = x + L2_LEFT_PAD;
-        let col_type_x  = col_time_x  + time_w;
-        let col_side_x  = col_type_x  + type_w;
-        let col_price_x = col_side_x  + side_w;
-        let col_qty_x   = col_price_x + price_w;
+        // Build visible column list from config.
+        // Each entry: (label, original fraction).
+        let all_cols: &[(&str, f32, bool)] = &[
+            ("TIME",  0.28, self.column_config.show_time),
+            ("TYPE",  0.12, self.column_config.show_type),
+            ("SIDE",  0.12, self.column_config.show_side),
+            ("PRICE", 0.24, self.column_config.show_price),
+            ("QTY",   0.24, self.column_config.show_qty),
+        ];
+        let total_frac: f32 = all_cols.iter()
+            .filter(|&&(_, _, vis)| vis)
+            .map(|&(_, frac, _)| frac)
+            .sum();
+        // Compute X positions for each column (None when hidden).
+        let usable_w = w - L2_LEFT_PAD;
+        let mut col_x = [Option::<f32>::None; 5];
+        let mut cursor = x + L2_LEFT_PAD;
+        for (i, &(_, frac, vis)) in all_cols.iter().enumerate() {
+            if vis {
+                col_x[i] = Some(cursor);
+                let col_w = if total_frac > 0.0 { usable_w * frac / total_frac } else { 0.0 };
+                cursor += col_w;
+            }
+        }
+        let col_time_x  = col_x[0];
+        let col_type_x  = col_x[1];
+        let col_side_x  = col_x[2];
+        let col_price_x = col_x[3];
+        let col_qty_x   = col_x[4];
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, L2_HEADER_HEIGHT as f64);
@@ -214,11 +257,11 @@ impl TradingPanel for L2TapeState {
         ctx.set_fill_color(&theme.text_header);
 
         let header_text_y = (y + L2_HEADER_HEIGHT / 2.0) as f64;
-        ctx.fill_text("TIME",  col_time_x  as f64, header_text_y);
-        ctx.fill_text("TYPE",  col_type_x  as f64, header_text_y);
-        ctx.fill_text("SIDE",  col_side_x  as f64, header_text_y);
-        ctx.fill_text("PRICE", col_price_x as f64, header_text_y);
-        ctx.fill_text("QTY",   col_qty_x   as f64, header_text_y);
+        if let Some(cx) = col_time_x  { ctx.fill_text("TIME",  cx as f64, header_text_y); }
+        if let Some(cx) = col_type_x  { ctx.fill_text("TYPE",  cx as f64, header_text_y); }
+        if let Some(cx) = col_side_x  { ctx.fill_text("SIDE",  cx as f64, header_text_y); }
+        if let Some(cx) = col_price_x { ctx.fill_text("PRICE", cx as f64, header_text_y); }
+        if let Some(cx) = col_qty_x   { ctx.fill_text("QTY",   cx as f64, header_text_y); }
 
         if !self.symbol.is_empty() {
             ctx.set_font("9px sans-serif");
@@ -284,41 +327,51 @@ impl TradingPanel for L2TapeState {
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
 
-            let total_secs = (event.timestamp / 1000) % 86400;
-            let hours  = total_secs / 3600;
-            let mins   = (total_secs % 3600) / 60;
-            let secs   = total_secs % 60;
-            let millis = event.timestamp % 1000;
-            let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
+            if let Some(cx) = col_time_x {
+                let total_secs = (event.timestamp / 1000) % 86400;
+                let hours  = total_secs / 3600;
+                let mins   = (total_secs % 3600) / 60;
+                let secs   = total_secs % 60;
+                let millis = event.timestamp % 1000;
+                let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(&time_str, cx as f64, row_mid_y);
+            }
 
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.fill_text(&time_str, col_time_x as f64, row_mid_y);
+            if let Some(cx) = col_type_x {
+                // event_color returns f32 rgba — convert to hex inline.
+                let type_color = self.event_color(event);
+                let type_hex = format!(
+                    "#{:02x}{:02x}{:02x}{:02x}",
+                    (type_color[0].clamp(0.0, 1.0) * 255.0) as u8,
+                    (type_color[1].clamp(0.0, 1.0) * 255.0) as u8,
+                    (type_color[2].clamp(0.0, 1.0) * 255.0) as u8,
+                    (type_color[3].clamp(0.0, 1.0) * 255.0) as u8,
+                );
+                ctx.set_fill_color(&type_hex);
+                ctx.fill_text(L2TapeState::event_label(&event.event_type), cx as f64, row_mid_y);
+            }
 
-            // event_color returns f32 rgba — convert to hex inline.
-            let type_color = self.event_color(event);
-            let type_hex = format!(
-                "#{:02x}{:02x}{:02x}{:02x}",
-                (type_color[0].clamp(0.0, 1.0) * 255.0) as u8,
-                (type_color[1].clamp(0.0, 1.0) * 255.0) as u8,
-                (type_color[2].clamp(0.0, 1.0) * 255.0) as u8,
-                (type_color[3].clamp(0.0, 1.0) * 255.0) as u8,
-            );
-            ctx.set_fill_color(&type_hex);
-            ctx.fill_text(L2TapeState::event_label(&event.event_type), col_type_x as f64, row_mid_y);
+            if let Some(cx) = col_side_x {
+                let side_color = match event.side {
+                    L2Side::Bid => &theme.buy,
+                    L2Side::Ask => &theme.sell,
+                };
+                ctx.set_fill_color(side_color);
+                ctx.fill_text(L2TapeState::side_label(&event.side), cx as f64, row_mid_y);
+            }
 
-            let side_color = match event.side {
-                L2Side::Bid => &theme.buy,
-                L2Side::Ask => &theme.sell,
-            };
-            ctx.set_fill_color(side_color);
-            ctx.fill_text(L2TapeState::side_label(&event.side), col_side_x as f64, row_mid_y);
+            if let Some(cx) = col_price_x {
+                let price_str = format!("{:.prec$}", event.price, prec = decimals);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(&price_str, cx as f64, row_mid_y);
+            }
 
-            let price_str = format!("{:.prec$}", event.price, prec = decimals);
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.fill_text(&price_str, col_price_x as f64, row_mid_y);
-
-            let qty_str = abbreviate_qty(event.quantity);
-            ctx.fill_text(&qty_str, col_qty_x as f64, row_mid_y);
+            if let Some(cx) = col_qty_x {
+                let qty_str = abbreviate_qty(event.quantity);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(&qty_str, cx as f64, row_mid_y);
+            }
         }
 
         if events.is_empty() {
@@ -377,6 +430,7 @@ impl L2TapeState {
             crosshair_price: None,
             shared_orderbook: None,
             last_seen_orderbook_version: 0,
+            column_config: L2TapeColumnConfig::default(),
         }
     }
 

@@ -10,6 +10,26 @@ use trade_service::TradeSeries;
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 
+/// Which columns to show in the DOM panel + optional custom separator offsets.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DomColumnConfig {
+    pub show_bid_orders: bool,
+    pub show_sell_trades: bool,
+    pub show_buy_trades: bool,
+    pub show_ask_orders: bool,
+}
+
+impl Default for DomColumnConfig {
+    fn default() -> Self {
+        Self {
+            show_bid_orders: true,
+            show_sell_trades: true,
+            show_buy_trades: true,
+            show_ask_orders: true,
+        }
+    }
+}
+
 /// DOM panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DomId(pub u64);
@@ -113,6 +133,9 @@ pub struct DomState {
 
     /// Timestamp (ms) of the last chase update, for the 200ms window.
     pub chase_last_update_ms: i64,
+
+    /// Column visibility configuration.
+    pub column_config: DomColumnConfig,
 }
 
 impl fmt::Debug for DomState {
@@ -185,6 +208,7 @@ impl DomState {
             last_best_bid: 0.0,
             last_best_ask: 0.0,
             chase_last_update_ms: 0,
+            column_config: DomColumnConfig::default(),
         }
     }
 
@@ -651,6 +675,7 @@ impl DomPanel {
 const DOM_ROW_HEIGHT: f32 = 20.0;
 const DOM_LEFT_PAD: f32 = 6.0;
 const DOM_PRICE_COL_WIDTH: f32 = 70.0;
+const DOM_COL_HEADER_HEIGHT: f32 = 16.0;
 
 // Trade column proportions relative to available width.
 // Layout: [BidOrders 25%] [SellTrades 10%] [Price ~30%] [BuyTrades 10%] [AskOrders 25%]
@@ -684,10 +709,19 @@ impl TradingPanel for DomState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
+        // ── Column header sub-row ────────────────────────────────────────
+        let col_header_y = y;
+        let body_y = y + DOM_COL_HEADER_HEIGHT;
+        let body_h = (h - DOM_COL_HEADER_HEIGHT).max(0.0);
+
+        // Header background (slightly different from panel bg)
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, col_header_y as f64, w as f64, DOM_COL_HEADER_HEIGHT as f64);
+
         // === STEP 0: Restrict bar scale to visible rows only ===
         let visible_max_volume: f64 = {
             let row_h = DOM_ROW_HEIGHT;
-            let visible_rows = ((h / row_h) as usize).max(1);
+            let visible_rows = ((body_h / row_h) as usize).max(1);
             let half = visible_rows / 2;
             let center_tick = self.price_to_tick(self.center_price);
             let filter = self.min_volume_filter;
@@ -708,7 +742,7 @@ impl TradingPanel for DomState {
         // Compute visible max trade volume for scaling trade bars.
         let visible_max_trade: f64 = {
             let row_h = DOM_ROW_HEIGHT;
-            let visible_rows = ((h / row_h) as usize).max(1);
+            let visible_rows = ((body_h / row_h) as usize).max(1);
             let half = visible_rows / 2;
             let center_tick = self.price_to_tick(self.center_price);
             let mut mv = 0.0_f64;
@@ -724,26 +758,94 @@ impl TradingPanel for DomState {
         };
 
         // === STEP 1: Calculate layout ===
-        let levels = self.visible_levels_for_height(h);
+        let levels = self.visible_levels_for_height(body_h);
         let row_height = DOM_ROW_HEIGHT;
 
-        // Column layout (5 columns):
-        //   [BidOrders] [SellTrades] [Price] [BuyTrades] [AskOrders]
-        //    25%          10%          ~30%    10%          25%
+        // Column layout — only visible columns get width
         let pad = 4.0_f32;
         let price_col_w = DOM_PRICE_COL_WIDTH;
-        // Available width after price column and outer pads
-        let avail = (w - price_col_w - pad * 4.0 - DOM_LEFT_PAD * 2.0).max(0.0);
+        let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
 
-        let order_col_w = avail * ORDER_COL_FRACTION;
-        let trade_col_w = avail * TRADE_COL_FRACTION;
+        // Count visible columns on each side (left = bid_orders + sell_trades, right = buy_trades + ask_orders)
+        let left_count = self.column_config.show_bid_orders as u8 + self.column_config.show_sell_trades as u8;
+        let right_count = self.column_config.show_buy_trades as u8 + self.column_config.show_ask_orders as u8;
+        let total_side_cols = left_count + right_count;
 
-        // X positions (left to right)
-        let bid_ord_col_x = x + DOM_LEFT_PAD;
-        let sell_trade_col_x = bid_ord_col_x + order_col_w + pad;
-        let price_col_x = sell_trade_col_x + trade_col_w + pad;
-        let buy_trade_col_x = price_col_x + price_col_w + pad;
-        let ask_ord_col_x = buy_trade_col_x + trade_col_w + pad;
+        // Distribute available width proportionally
+        let left_avail = if total_side_cols > 0 {
+            avail * left_count as f32 / total_side_cols as f32
+        } else {
+            0.0
+        };
+        let right_avail = avail - left_avail;
+
+        // Within each side, split between order and trade columns
+        let (bid_ord_col_w, sell_trade_col_w) = if left_count == 2 {
+            let total = ORDER_COL_FRACTION + TRADE_COL_FRACTION;
+            (left_avail * ORDER_COL_FRACTION / total, left_avail * TRADE_COL_FRACTION / total)
+        } else if self.column_config.show_bid_orders {
+            (left_avail, 0.0_f32)
+        } else if self.column_config.show_sell_trades {
+            (0.0_f32, left_avail)
+        } else {
+            (0.0_f32, 0.0_f32)
+        };
+
+        let (ask_ord_col_w, buy_trade_col_w) = if right_count == 2 {
+            let total = ORDER_COL_FRACTION + TRADE_COL_FRACTION;
+            (right_avail * ORDER_COL_FRACTION / total, right_avail * TRADE_COL_FRACTION / total)
+        } else if self.column_config.show_ask_orders {
+            (right_avail, 0.0_f32)
+        } else if self.column_config.show_buy_trades {
+            (0.0_f32, right_avail)
+        } else {
+            (0.0_f32, 0.0_f32)
+        };
+
+        // X positions
+        let mut cur_x = x + DOM_LEFT_PAD;
+        let bid_ord_col_x = cur_x;
+        if self.column_config.show_bid_orders { cur_x += bid_ord_col_w + pad; }
+
+        let sell_trade_col_x = cur_x;
+        if self.column_config.show_sell_trades { cur_x += sell_trade_col_w + pad; }
+
+        let price_col_x = cur_x;
+        cur_x = price_col_x + price_col_w + pad;
+
+        let buy_trade_col_x = cur_x;
+        if self.column_config.show_buy_trades { cur_x += buy_trade_col_w + pad; }
+
+        let ask_ord_col_x = cur_x;
+
+        // Column labels
+        ctx.set_font("9px monospace");
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let label_y = (col_header_y + DOM_COL_HEADER_HEIGHT / 2.0) as f64;
+        ctx.set_fill_color(&theme.text_muted);
+
+        if self.column_config.show_bid_orders {
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("BID", (bid_ord_col_x + bid_ord_col_w / 2.0) as f64, label_y);
+        }
+        if self.column_config.show_sell_trades {
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("SELL", (sell_trade_col_x + sell_trade_col_w / 2.0) as f64, label_y);
+        }
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text("PRICE", (price_col_x + price_col_w / 2.0) as f64, label_y);
+        if self.column_config.show_buy_trades {
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("BUY", (buy_trade_col_x + buy_trade_col_w / 2.0) as f64, label_y);
+        }
+        if self.column_config.show_ask_orders {
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("ASK", (ask_ord_col_x + ask_ord_col_w / 2.0) as f64, label_y);
+        }
+
+        // Separator line below header
+        ctx.set_fill_color(&theme.text_muted);
+        ctx.fill_rect(x as f64, (col_header_y + DOM_COL_HEADER_HEIGHT - 1.0) as f64, w as f64, 1.0);
 
         // === STEP 3: Best bid/ask bucket prices ===
         let best_bid_bucket_price = self.best_bid_price.map(|p| {
@@ -764,7 +866,7 @@ impl TradingPanel for DomState {
 
         // === STEP 4: Render each price level row ===
         for (i, level) in levels.iter().enumerate() {
-            let row_y = y + (i as f32 * row_height);
+            let row_y = body_y + (i as f32 * row_height);
             let price_tick = self.price_to_tick(level.price);
 
             // --- Step 4.1: Row background ---
@@ -833,13 +935,13 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.2: Bid order volume bar (right-aligned, grows leftward) ---
-            if level.bid_volume > 0.0 && !is_filtered {
+            if self.column_config.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
-                    (level.bid_volume / visible_max_volume * order_col_w as f64) as f32
+                    (level.bid_volume / visible_max_volume * bid_ord_col_w as f64) as f32
                 };
-                let bar_x = bid_ord_col_x + order_col_w - bar_width;
+                let bar_x = bid_ord_col_x + bid_ord_col_w - bar_width;
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
@@ -855,7 +957,7 @@ impl TradingPanel for DomState {
                 ctx.set_text_align(TextAlign::Right);
                 ctx.set_text_baseline(TextBaseline::Middle);
 
-                let text_x = bid_ord_col_x + order_col_w - 4.0;
+                let text_x = bid_ord_col_x + bid_ord_col_w - 4.0;
                 let text_y = row_y + row_height / 2.0;
                 let vol_text = abbreviate_number(level.bid_volume, self.volume_decimals());
                 let text_w = ctx.measure_text(&vol_text);
@@ -872,9 +974,9 @@ impl TradingPanel for DomState {
             if let Some(&(buy_qty, sell_qty)) = self.trade_volume_by_price.get(&price_tick) {
                 let text_y = row_y + row_height / 2.0;
 
-                if sell_qty > 0.0 && visible_max_trade > 0.0 {
-                    let bar_width = (sell_qty / visible_max_trade * trade_col_w as f64) as f32;
-                    let bar_x = sell_trade_col_x + trade_col_w - bar_width;
+                if self.column_config.show_sell_trades && sell_qty > 0.0 && visible_max_trade > 0.0 {
+                    let bar_width = (sell_qty / visible_max_trade * sell_trade_col_w as f64) as f32;
+                    let bar_x = sell_trade_col_x + sell_trade_col_w - bar_width;
                     let bar_y = row_y + 2.0;
                     let bar_h = row_height - 4.0;
 
@@ -893,13 +995,13 @@ impl TradingPanel for DomState {
                         ctx.set_text_baseline(TextBaseline::Middle);
                         ctx.set_fill_color(&theme.sell);
                         let t = abbreviate_number(sell_qty, self.volume_decimals());
-                        ctx.fill_text(&t, (sell_trade_col_x + trade_col_w - 2.0) as f64, text_y as f64);
+                        ctx.fill_text(&t, (sell_trade_col_x + sell_trade_col_w - 2.0) as f64, text_y as f64);
                     }
                 }
 
                 // --- Step 4.4: Buy trade bar (left-aligned within buy trade col) ---
-                if buy_qty > 0.0 && visible_max_trade > 0.0 {
-                    let bar_width = (buy_qty / visible_max_trade * trade_col_w as f64) as f32;
+                if self.column_config.show_buy_trades && buy_qty > 0.0 && visible_max_trade > 0.0 {
+                    let bar_width = (buy_qty / visible_max_trade * buy_trade_col_w as f64) as f32;
                     let bar_x = buy_trade_col_x;
                     let bar_y = row_y + 2.0;
                     let bar_h = row_height - 4.0;
@@ -925,11 +1027,11 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.5: Ask order volume bar (left-aligned, grows rightward) ---
-            if level.ask_volume > 0.0 && !is_filtered {
+            if self.column_config.show_ask_orders && level.ask_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
-                    (level.ask_volume / visible_max_volume * order_col_w as f64) as f32
+                    (level.ask_volume / visible_max_volume * ask_ord_col_w as f64) as f32
                 };
                 let bar_x = ask_ord_col_x;
                 let bar_y = row_y + 2.0;
@@ -1024,7 +1126,7 @@ impl TradingPanel for DomState {
             });
 
             if let Some(row_idx) = spread_row_idx {
-                let row_y = y + (row_idx as f32 * row_height);
+                let row_y = body_y + (row_idx as f32 * row_height);
                 let indicator_y = row_y + row_height / 2.0;
 
                 // Draw indicator centered above the price column
@@ -1072,7 +1174,7 @@ impl TradingPanel for DomState {
             if elapsed_ms < 300 {
                 let price = self.tick_to_price(*price_tick);
                 if let Some(row_idx) = levels.iter().position(|l| (l.price - price).abs() < 0.001) {
-                    let flash_y = y + (row_idx as f32 * row_height);
+                    let flash_y = body_y + (row_idx as f32 * row_height);
                     let level = &levels[row_idx];
                     let flash_color = if level.is_bid {
                         &theme.buy_bright
