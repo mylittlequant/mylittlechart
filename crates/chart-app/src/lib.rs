@@ -617,6 +617,8 @@ pub struct ChartApp {
     /// `(panel_id, last_x, last_y)`.
     pub(crate) slot_tradetape_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
 
+    /// Trading manager — order routing, position tracking, paper engine.
+    pub trading_manager: Option<trading_manager::TradingManager>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -964,6 +966,10 @@ impl ChartApp {
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
             slot_tradetape_drag: None,
+            trading_manager: trading_manager::TradingManager::new(
+                bridge.clone(),
+                std::path::PathBuf::from("."),
+            ).ok(),
         };
 
         // Initialize WatchlistManager with a minimal default.
@@ -1257,6 +1263,7 @@ impl ChartApp {
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
             slot_tradetape_drag: None,
+            trading_manager: None,
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1445,6 +1452,7 @@ impl ChartApp {
             slot_bigtrades_drag: None,
             slot_volprofile_drag: None,
             slot_tradetape_drag: None,
+            trading_manager: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -2226,6 +2234,7 @@ impl ChartApp {
         // crossing checker can be skipped on quiet (no-trade) frames.
         let mut had_trade_update = false;
         let mut _drain_count = 0u32;
+        let mut trading_updates: Vec<LiveUpdate> = Vec::new();
         let events_start = std::time::Instant::now();
         loop {
             let update = match self.live_update_rx.try_recv() {
@@ -2814,6 +2823,9 @@ impl ChartApp {
                             bridge.request_bars(exchange_id, &window.symbol, &window.timeframe, at, None, None, true);
                         }
                     }
+                    if let Some(tm) = &mut self.trading_manager {
+                        tm.on_connector_ready(exchange_id);
+                    }
                 }
                 LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
                     self.exchange_symbols.insert(exchange_id, symbols);
@@ -2869,7 +2881,8 @@ impl ChartApp {
                     // Metrics snapshots are collected on-demand by the metrics panel.
                     // No action needed in the main update loop.
                 }
-                LiveUpdate::OrderUpdate { event, .. } => {
+                LiveUpdate::OrderUpdate { ref event, .. } => {
+                    trading_updates.push(update.clone());
                     use digdigdig3::{OrderStatus, OrderSide};
                     let status_filled = matches!(event.status, OrderStatus::Filled | OrderStatus::PartiallyFilled);
                     let status_terminal = matches!(event.status, OrderStatus::Filled | OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired);
@@ -2894,12 +2907,14 @@ impl ChartApp {
                         );
                     }
                 }
-                LiveUpdate::BalanceUpdate { event, .. } => {
+                LiveUpdate::BalanceUpdate { ref event, .. } => {
+                    trading_updates.push(update.clone());
                     for state in self.panels_store.order_entry.values_mut() {
                         state.apply_balance_update(event.free);
                     }
                 }
-                LiveUpdate::PositionUpdate { event, .. } => {
+                LiveUpdate::PositionUpdate { ref event, .. } => {
+                    trading_updates.push(update.clone());
                     let side_long = !format!("{:?}", event.side).contains("Short");
                     for state in self.panels_store.position_manager.values_mut() {
                         state.apply_position_update(
@@ -2917,6 +2932,12 @@ impl ChartApp {
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;
+
+        if !trading_updates.is_empty() {
+            if let Some(tm) = &mut self.trading_manager {
+                tm.tick(&trading_updates);
+            }
+        }
 
         // ── Alert checker: detect price crossings for every visible symbol ────
         // Skip entirely when no trade arrived this tick — nothing changed.

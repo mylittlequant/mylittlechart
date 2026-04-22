@@ -16,6 +16,16 @@ use tokio::runtime::Runtime;
 
 use digdigdig3::{
     ExchangeId, AccountType, Symbol, MarketData, SymbolInfo,
+    Trading, Account, Positions,
+    CancelAll, AmendOrder, BatchOrders,
+    Order, Balance, Position,
+    TradingCapabilities, AccountCapabilities,
+    ExchangeError,
+};
+use digdigdig3::core::{
+    OrderRequest, CancelRequest, PlaceOrderResponse, OrderHistoryFilter,
+    BalanceQuery, AccountInfo, PositionQuery, PositionModification,
+    CancelScope, CancelAllResponse, AmendRequest, OrderResult,
 };
 use digdigdig3::core::traits::ExchangeIdentity;
 use digdigdig3::connector_manager::{ConnectorFactory, ConnectorPool};
@@ -2166,4 +2176,201 @@ async fn rest_orderbook_bootstrap_inner(
         }
     }
     // Task exits after one fetch — no loop.
+}
+
+// ── Trading / Account / Position bridge methods ─────────────────────────────
+
+impl DataBridge {
+    /// Returns a handle to the tokio runtime owned by this bridge.
+    ///
+    /// Useful for callers that need to block_on or spawn onto the same runtime
+    /// without holding a reference to the bridge itself.
+    pub fn runtime_handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
+    // ── Trading ──────────────────────────────────────────────────────────────
+
+    /// Place an order on the given exchange.
+    pub async fn place_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: OrderRequest,
+    ) -> digdigdig3::ExchangeResult<PlaceOrderResponse> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.place_order(req).await
+    }
+
+    /// Cancel an order on the given exchange.
+    pub async fn cancel_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: CancelRequest,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.cancel_order(req).await
+    }
+
+    /// Fetch a single order by symbol and order ID.
+    pub async fn get_order(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        order_id: &str,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_order(symbol, order_id, account_type).await
+    }
+
+    /// Fetch all open orders, optionally filtered by symbol.
+    pub async fn get_open_orders(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: Option<&str>,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Vec<Order>> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_open_orders(symbol, account_type).await
+    }
+
+    /// Fetch historical orders matching the given filter.
+    pub async fn get_order_history(
+        &self,
+        exchange_id: ExchangeId,
+        filter: OrderHistoryFilter,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<Vec<Order>> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_order_history(filter, account_type).await
+    }
+
+    // ── Account ──────────────────────────────────────────────────────────────
+
+    /// Fetch account balances.
+    pub async fn get_balance(
+        &self,
+        exchange_id: ExchangeId,
+        query: BalanceQuery,
+    ) -> digdigdig3::ExchangeResult<Vec<Balance>> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_balance(query).await
+    }
+
+    /// Fetch account metadata (fees, permissions, …).
+    pub async fn get_account_info(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<AccountInfo> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_account_info(account_type).await
+    }
+
+    // ── Positions ────────────────────────────────────────────────────────────
+
+    /// Fetch open positions matching the given query.
+    pub async fn get_positions(
+        &self,
+        exchange_id: ExchangeId,
+        query: PositionQuery,
+    ) -> digdigdig3::ExchangeResult<Vec<Position>> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.get_positions(query).await
+    }
+
+    /// Modify an open position (e.g. change TP/SL).
+    pub async fn modify_position(
+        &self,
+        exchange_id: ExchangeId,
+        req: PositionModification,
+    ) -> digdigdig3::ExchangeResult<()> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.modify_position(req).await
+    }
+
+    // ── Optional operations ──────────────────────────────────────────────────
+
+    /// Cancel all orders matching the given scope on the given exchange.
+    pub async fn cancel_all_orders(
+        &self,
+        exchange_id: ExchangeId,
+        scope: CancelScope,
+        account_type: AccountType,
+    ) -> digdigdig3::ExchangeResult<CancelAllResponse> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.cancel_all_orders(scope, account_type).await
+    }
+
+    /// Amend an existing order (price, quantity, or other fields).
+    pub async fn amend_order(
+        &self,
+        exchange_id: ExchangeId,
+        req: AmendRequest,
+    ) -> digdigdig3::ExchangeResult<Order> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.amend_order(req).await
+    }
+
+    /// Place multiple orders in a single batch request.
+    pub async fn place_orders_batch(
+        &self,
+        exchange_id: ExchangeId,
+        orders: Vec<OrderRequest>,
+    ) -> digdigdig3::ExchangeResult<Vec<OrderResult>> {
+        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+            ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
+        })?;
+        connector.place_orders_batch(orders).await
+    }
+
+    // ── Capability queries (synchronous) ─────────────────────────────────────
+
+    /// Returns trading capabilities for the given exchange and account type,
+    /// or `None` if the connector is not yet ready.
+    pub fn trading_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> Option<TradingCapabilities> {
+        self.pool.get(&exchange_id).map(|c| c.trading_capabilities(account_type))
+    }
+
+    /// Returns account capabilities for the given exchange and account type,
+    /// or `None` if the connector is not yet ready.
+    pub fn account_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+    ) -> Option<AccountCapabilities> {
+        self.pool.get(&exchange_id).map(|c| c.account_capabilities(account_type))
+    }
+
+    /// Returns the list of account types supported by the connector,
+    /// or `None` if the connector is not yet ready.
+    pub fn supported_account_types(&self, exchange_id: ExchangeId) -> Option<Vec<AccountType>> {
+        self.pool.get(&exchange_id).map(|c| c.supported_account_types())
+    }
 }

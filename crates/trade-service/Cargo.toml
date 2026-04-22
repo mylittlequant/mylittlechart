@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 trade-store = { path = "../trade-store" }
-digdigdig3 = "=0.1.31"
+digdigdig3 = "=0.1.32"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "sync"] }

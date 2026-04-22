@@ -23,6 +23,7 @@ members = [
     "crates/orderbook-store",
     "crates/orderbook-service",
     "crates/diagnostics",
+    "crates/trading-manager",
 ]
 resolver = "2"
 

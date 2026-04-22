@@ -15,7 +15,8 @@ live-data = { path = "../live-data" }
 bar-service = { path = "../bar-service" }
 trade-service = { path = "../trade-service" }
 orderbook-service = { path = "../orderbook-service" }
-digdigdig3 = "=0.1.31"
+trading-manager = { path = "../trading-manager" }
+digdigdig3 = "=0.1.32"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
