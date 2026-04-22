@@ -972,6 +972,10 @@ impl ChartApp {
             ).ok(),
         };
 
+        if let Some(tm) = &app.trading_manager {
+            app.panels_store.set_trading_snapshot(tm.snapshot());
+        }
+
         // Initialize WatchlistManager with a minimal default.
         // The full list is restored from persisted user state by load_user_state().
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -2881,53 +2885,14 @@ impl ChartApp {
                     // Metrics snapshots are collected on-demand by the metrics panel.
                     // No action needed in the main update loop.
                 }
-                LiveUpdate::OrderUpdate { ref event, .. } => {
+                LiveUpdate::OrderUpdate { .. } => {
                     trading_updates.push(update.clone());
-                    use digdigdig3::{OrderStatus, OrderSide};
-                    let status_filled = matches!(event.status, OrderStatus::Filled | OrderStatus::PartiallyFilled);
-                    let status_terminal = matches!(event.status, OrderStatus::Filled | OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired);
-                    // Route to Order Entry
-                    for state in self.panels_store.order_entry.values_mut() {
-                        state.apply_order_update(
-                            event.client_order_id.as_deref(),
-                            status_filled,
-                            status_terminal,
-                        );
-                    }
-                    // Route to Trade Log — record fills
-                    for state in self.panels_store.trade_log.values_mut() {
-                        state.apply_order_update(
-                            &event.symbol,
-                            event.side == OrderSide::Buy,
-                            status_filled,
-                            event.last_fill_price,
-                            event.last_fill_quantity,
-                            event.last_fill_commission,
-                            event.timestamp,
-                        );
-                    }
                 }
-                LiveUpdate::BalanceUpdate { ref event, .. } => {
+                LiveUpdate::BalanceUpdate { .. } => {
                     trading_updates.push(update.clone());
-                    for state in self.panels_store.order_entry.values_mut() {
-                        state.apply_balance_update(event.free);
-                    }
                 }
-                LiveUpdate::PositionUpdate { ref event, .. } => {
+                LiveUpdate::PositionUpdate { .. } => {
                     trading_updates.push(update.clone());
-                    let side_long = !format!("{:?}", event.side).contains("Short");
-                    for state in self.panels_store.position_manager.values_mut() {
-                        state.apply_position_update(
-                            &event.symbol,
-                            side_long,
-                            event.quantity,
-                            event.entry_price,
-                            event.mark_price,
-                            event.unrealized_pnl,
-                            event.liquidation_price,
-                            event.leverage,
-                        );
-                    }
                 }
             }
         }
@@ -2936,6 +2901,15 @@ impl ChartApp {
         if !trading_updates.is_empty() {
             if let Some(tm) = &mut self.trading_manager {
                 tm.tick(&trading_updates);
+            }
+            for state in self.panels_store.order_entry.values_mut() {
+                state.sync_from_snapshot();
+            }
+            for state in self.panels_store.position_manager.values_mut() {
+                state.sync_from_snapshot();
+            }
+            for state in self.panels_store.trade_log.values_mut() {
+                state.sync_from_snapshot();
             }
         }
 

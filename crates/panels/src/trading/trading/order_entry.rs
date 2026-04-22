@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -78,6 +79,9 @@ pub struct OrderEntryState {
 
     /// Scroll offset for when content exceeds panel height
     pub scroll_offset: f64,
+
+    /// Shared snapshot from TradingManager
+    pub snapshot: Option<SharedTradingSnapshot>,
 }
 
 impl OrderEntryState {
@@ -108,6 +112,7 @@ impl OrderEntryState {
             editing_selection: None,
             editing_blink_time: 0,
             scroll_offset: 0.0,
+            snapshot: None,
         }
     }
 
@@ -225,6 +230,45 @@ impl OrderEntryState {
         }
     }
 
+    /// Attach shared snapshot from TradingManager
+    pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
+        self.snapshot = Some(snap);
+    }
+
+    /// Pull balances and order status from snapshot
+    pub fn sync_from_snapshot(&mut self) {
+        let snap = match &self.snapshot {
+            Some(s) => match s.read() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            },
+            None => return,
+        };
+
+        // Update balance — take the largest free balance as "available"
+        self.available_balance = snap.balances.iter()
+            .map(|b| b.free)
+            .fold(0.0_f64, f64::max);
+
+        // Update submitting state from order_in_flight
+        if !snap.order_in_flight && self.submitting {
+            self.submitting = false;
+        }
+
+        // Show last error from trading manager
+        if let Some(err) = &snap.last_error {
+            if self.errors.is_empty() || self.errors.last().map(|e| e != err).unwrap_or(true) {
+                self.errors.clear();
+                self.errors.push(err.clone());
+            }
+        } else {
+            self.errors.clear();
+        }
+
+        // Recalculate post_order_balance
+        self.post_order_balance = (self.available_balance - self.estimated_cost).max(0.0);
+    }
+
     /// Check if cursor should be visible (500ms blink cycle)
     pub fn is_cursor_visible(&self, now_ms: u64) -> bool {
         if self.editing_field.is_none() { return false; }
@@ -232,44 +276,6 @@ impl OrderEntryState {
         (elapsed / 500) % 2 == 0
     }
 
-    /// Apply an order update event received from the private WebSocket stream.
-    ///
-    /// Parameters match the fields of `digdigdig3::core::types::websocket::OrderUpdateEvent`.
-    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
-    ///
-    /// - `client_order_id`: the client-assigned ID, used to match against a pending submission
-    /// - `status_filled`: true when status is Filled or PartiallyFilled (order touched the market)
-    /// - `status_terminal`: true when status is Filled, Canceled, Rejected, or Expired
-    pub fn apply_order_update(
-        &mut self,
-        client_order_id: Option<&str>,
-        status_filled: bool,
-        status_terminal: bool,
-    ) {
-        // If we are currently waiting for confirmation of a submitted order, clear the flag
-        // when the event is terminal (Filled / Canceled / Rejected / Expired).
-        if self.submitting && status_terminal {
-            self.submitting = false;
-        }
-
-        // A fill means the order reached the market — clear any lingering validation errors
-        // so the UI does not keep showing stale warnings.
-        if status_filled && client_order_id.is_some() {
-            self.errors.clear();
-        }
-    }
-
-    /// Apply a balance update event received from the private WebSocket stream.
-    ///
-    /// Parameters match the fields of `digdigdig3::core::types::websocket::BalanceUpdateEvent`.
-    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
-    ///
-    /// - `free`: the new free (available) balance for the asset
-    pub fn apply_balance_update(&mut self, free: f64) {
-        self.available_balance = free;
-        // Recalculate the post-order balance estimate based on the refreshed balance.
-        self.post_order_balance = (self.available_balance - self.estimated_cost).max(0.0);
-    }
 }
 
 fn format_currency(value: f64) -> String {

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sidebar_content::free_slot::PanelId;
+use trading_manager::SharedTradingSnapshot;
 
 use zengeld_panels::panel_trait::TradingPanel;
 use zengeld_panels::trading::order_flow::{
@@ -39,6 +40,7 @@ use sidebar_content::free_slot::FreeItem;
 /// to prevent collisions with persisted ids.
 pub struct TradingPanelsStore {
     next_id: AtomicU64,
+    trading_snapshot: Option<SharedTradingSnapshot>,
     pub dom: HashMap<PanelId, DomState>,
     pub footprint: HashMap<PanelId, FootprintState>,
     pub volume_profile: HashMap<PanelId, VolumeProfileState>,
@@ -58,6 +60,7 @@ impl TradingPanelsStore {
     pub fn new() -> Self {
         Self {
             next_id: AtomicU64::new(1),
+            trading_snapshot: None,
             dom: HashMap::new(),
             footprint: HashMap::new(),
             volume_profile: HashMap::new(),
@@ -75,6 +78,19 @@ impl TradingPanelsStore {
 
     fn alloc_id(&self) -> PanelId {
         PanelId(self.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub fn set_trading_snapshot(&mut self, snap: SharedTradingSnapshot) {
+        for state in self.order_entry.values_mut() {
+            state.set_snapshot(snap.clone());
+        }
+        for state in self.position_manager.values_mut() {
+            state.set_snapshot(snap.clone());
+        }
+        for state in self.trade_log.values_mut() {
+            state.set_snapshot(snap.clone());
+        }
+        self.trading_snapshot = Some(snap);
     }
 
     // -------------------------------------------------------------------------
@@ -143,21 +159,33 @@ impl TradingPanelsStore {
     /// Allocate a new Order Entry panel.
     pub fn create_order_entry(&mut self, symbol: String) -> PanelId {
         let id = self.alloc_id();
-        self.order_entry.insert(id, OrderEntryState::new(symbol));
+        let mut state = OrderEntryState::new(symbol);
+        if let Some(snap) = &self.trading_snapshot {
+            state.set_snapshot(snap.clone());
+        }
+        self.order_entry.insert(id, state);
         id
     }
 
     /// Allocate a new Position Manager panel.
     pub fn create_position_manager(&mut self) -> PanelId {
         let id = self.alloc_id();
-        self.position_manager.insert(id, PositionManagerState::new());
+        let mut state = PositionManagerState::new();
+        if let Some(snap) = &self.trading_snapshot {
+            state.set_snapshot(snap.clone());
+        }
+        self.position_manager.insert(id, state);
         id
     }
 
     /// Allocate a new Trade Log panel.
     pub fn create_trade_log(&mut self) -> PanelId {
         let id = self.alloc_id();
-        self.trade_log.insert(id, TradeLogState::new());
+        let mut state = TradeLogState::new();
+        if let Some(snap) = &self.trading_snapshot {
+            state.set_snapshot(snap.clone());
+        }
+        self.trade_log.insert(id, state);
         id
     }
 
@@ -277,17 +305,29 @@ impl TradingPanelsStore {
             FreeItem::OrderEntry(id) => {
                 let s = self.order_entry.get(id)?;
                 let pid = self.alloc_id();
-                self.order_entry.insert(pid, OrderEntryState::new(s.symbol.clone()));
+                let mut state = OrderEntryState::new(s.symbol.clone());
+                if let Some(snap) = &self.trading_snapshot {
+                    state.set_snapshot(snap.clone());
+                }
+                self.order_entry.insert(pid, state);
                 Some(FreeItem::OrderEntry(pid))
             }
             FreeItem::PositionManager(_) => {
                 let pid = self.alloc_id();
-                self.position_manager.insert(pid, PositionManagerState::new());
+                let mut state = PositionManagerState::new();
+                if let Some(snap) = &self.trading_snapshot {
+                    state.set_snapshot(snap.clone());
+                }
+                self.position_manager.insert(pid, state);
                 Some(FreeItem::PositionManager(pid))
             }
             FreeItem::TradeLog(_) => {
                 let pid = self.alloc_id();
-                self.trade_log.insert(pid, TradeLogState::new());
+                let mut state = TradeLogState::new();
+                if let Some(snap) = &self.trading_snapshot {
+                    state.set_snapshot(snap.clone());
+                }
+                self.trade_log.insert(pid, state);
                 Some(FreeItem::TradeLog(pid))
             }
             FreeItem::RiskCalculator(_) => {

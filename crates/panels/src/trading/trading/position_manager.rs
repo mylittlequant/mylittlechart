@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -18,6 +19,8 @@ pub struct PositionManagerState {
     pub edit_mode: Option<PositionEditMode>,
     /// Total unrealized PnL
     pub total_unrealized_pnl: f64,
+    /// Shared snapshot from TradingManager
+    pub snapshot: Option<SharedTradingSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,7 +55,51 @@ impl PositionManagerState {
             selected: None,
             edit_mode: None,
             total_unrealized_pnl: 0.0,
+            snapshot: None,
         }
+    }
+
+    pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
+        self.snapshot = Some(snap);
+    }
+
+    pub fn sync_from_snapshot(&mut self) {
+        let snap = match &self.snapshot {
+            Some(s) => match s.read() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            },
+            None => return,
+        };
+
+        self.positions.clear();
+        for p in &snap.positions {
+            let side = match p.side {
+                trading_manager::PositionSide::Long => PositionSide::Long,
+                trading_manager::PositionSide::Short => PositionSide::Short,
+                trading_manager::PositionSide::Both => {
+                    if p.quantity >= 0.0 { PositionSide::Long } else { PositionSide::Short }
+                }
+            };
+            self.positions.push(Position {
+                symbol: p.symbol.clone(),
+                side,
+                quantity: p.quantity.abs(),
+                entry_price: p.entry_price,
+                mark_price: p.mark_price.unwrap_or(p.entry_price),
+                unrealized_pnl: p.unrealized_pnl,
+                liquidation_price: p.liquidation_price,
+                leverage: p.leverage,
+            });
+        }
+
+        if let Some(sel) = self.selected {
+            if sel >= self.positions.len() {
+                self.selected = self.positions.len().checked_sub(1);
+            }
+        }
+
+        self.total_unrealized_pnl = self.positions.iter().map(|p| p.unrealized_pnl).sum();
     }
 
     /// Get visible positions for rendering
@@ -91,68 +138,6 @@ impl PositionManagerState {
         } else {
             [0.6, 0.6, 0.7, 1.0] // neutral
         }
-    }
-
-    /// Apply a position update event received from the private WebSocket stream.
-    ///
-    /// Parameters match the fields of `digdigdig3::core::types::websocket::PositionUpdateEvent`.
-    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
-    ///
-    /// - `side_long`: true = Long, false = Short (Both/OneWay mapped by caller)
-    /// - `quantity`: absolute position size; 0.0 means the position is closed
-    pub fn apply_position_update(
-        &mut self,
-        symbol: &str,
-        side_long: bool,
-        quantity: f64,
-        entry_price: f64,
-        mark_price: Option<f64>,
-        unrealized_pnl: f64,
-        liquidation_price: Option<f64>,
-        leverage: Option<u32>,
-    ) {
-        let side = if side_long { PositionSide::Long } else { PositionSide::Short };
-
-        if let Some(existing) = self.positions.iter_mut().find(|p| p.symbol == symbol) {
-            if quantity == 0.0 {
-                // Position closed — will be removed below after this block; mark for removal
-                // by setting quantity to 0 so the retain call handles it.
-                existing.quantity = 0.0;
-            } else {
-                existing.side = side;
-                existing.quantity = quantity;
-                existing.entry_price = entry_price;
-                existing.mark_price = mark_price.unwrap_or(existing.mark_price);
-                existing.unrealized_pnl = unrealized_pnl;
-                existing.liquidation_price = liquidation_price.or(existing.liquidation_price);
-                existing.leverage = leverage.unwrap_or(existing.leverage);
-            }
-        } else if quantity > 0.0 {
-            // New position
-            self.positions.push(Position {
-                symbol: symbol.to_owned(),
-                side,
-                quantity,
-                entry_price,
-                mark_price: mark_price.unwrap_or(entry_price),
-                unrealized_pnl,
-                liquidation_price,
-                leverage: leverage.unwrap_or(1),
-            });
-        }
-
-        // Remove closed positions (quantity == 0).
-        self.positions.retain(|p| p.quantity != 0.0);
-
-        // Keep selected index in bounds after potential removal.
-        if let Some(sel) = self.selected {
-            if sel >= self.positions.len() {
-                self.selected = self.positions.len().checked_sub(1);
-            }
-        }
-
-        // Recompute aggregate unrealized PnL.
-        self.total_unrealized_pnl = self.positions.iter().map(|p| p.unrealized_pnl).sum();
     }
 
     /// Get risk warning level based on position metrics

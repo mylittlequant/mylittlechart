@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -20,6 +21,8 @@ pub struct TradeLogState {
     pub total_pnl: f64,
     /// Sort configuration
     pub sort: (TradeLogColumn, bool),
+    /// Shared trading snapshot (source of truth)
+    pub snapshot: Option<SharedTradingSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -67,7 +70,42 @@ impl TradeLogState {
             symbol_filter: None,
             total_pnl: 0.0,
             sort: (TradeLogColumn::Time, false),
+            snapshot: None,
         }
+    }
+
+    pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
+        self.snapshot = Some(snap);
+    }
+
+    pub fn sync_from_snapshot(&mut self) {
+        let snap = match &self.snapshot {
+            Some(s) => match s.read() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            },
+            None => return,
+        };
+
+        self.trades.clear();
+        for fill in &snap.recent_fills {
+            let side = match fill.side {
+                trading_manager::OrderSide::Buy => OrderSide::Buy,
+                trading_manager::OrderSide::Sell => OrderSide::Sell,
+            };
+            self.trades.push(UserTrade {
+                timestamp: fill.timestamp,
+                symbol: fill.symbol.clone(),
+                side,
+                price: fill.price,
+                quantity: fill.quantity,
+                commission: fill.fee,
+            });
+        }
+
+        self.trades.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        self.total_pnl = snap.pnl.values().map(|p| p.realized).sum();
     }
 
     /// Get visible trades for rendering
@@ -102,58 +140,6 @@ impl TradeLogState {
         } else {
             [0.6, 0.6, 0.7, 1.0] // neutral
         }
-    }
-
-    /// Apply an order update event received from the private WebSocket stream.
-    ///
-    /// Parameters match the fields of `digdigdig3::core::types::websocket::OrderUpdateEvent`.
-    /// Callers extract these values before calling, keeping this crate free of digdigdig3.
-    ///
-    /// Only fill events (status Filled or PartiallyFilled with a non-zero last fill quantity)
-    /// produce a new `UserTrade` entry.
-    ///
-    /// - `side_buy`: true = Buy side, false = Sell side
-    /// - `status_filled`: true when status is Filled or PartiallyFilled
-    /// - `last_fill_price`: fill execution price (None → event is not a fill)
-    /// - `last_fill_quantity`: fill quantity (None or 0.0 → skip)
-    /// - `last_fill_commission`: commission charged on this fill
-    /// - `timestamp`: event timestamp in milliseconds
-    pub fn apply_order_update(
-        &mut self,
-        symbol: &str,
-        side_buy: bool,
-        status_filled: bool,
-        last_fill_price: Option<f64>,
-        last_fill_quantity: Option<f64>,
-        last_fill_commission: Option<f64>,
-        timestamp: i64,
-    ) {
-        // Only record fills with a non-zero fill quantity.
-        if !status_filled {
-            return;
-        }
-        let fill_price = match last_fill_price {
-            Some(p) if p > 0.0 => p,
-            _ => return,
-        };
-        let fill_qty = match last_fill_quantity {
-            Some(q) if q > 0.0 => q,
-            _ => return,
-        };
-
-        let trade = UserTrade {
-            timestamp,
-            symbol: symbol.to_owned(),
-            side: if side_buy { OrderSide::Buy } else { OrderSide::Sell },
-            price: fill_price,
-            quantity: fill_qty,
-            commission: last_fill_commission.unwrap_or(0.0),
-        };
-
-        self.trades.push(trade);
-
-        // Keep the list sorted newest-first so scrolling starts at the most recent trade.
-        self.trades.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     }
 
     /// Get column headers for the trade log table
