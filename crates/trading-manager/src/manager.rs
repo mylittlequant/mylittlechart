@@ -44,9 +44,9 @@ pub struct TradingManager {
     runtime_handle: tokio::runtime::Handle,
     result_tx: std::sync::mpsc::SyncSender<TradingTaskResult>,
     result_rx: std::sync::mpsc::Receiver<TradingTaskResult>,
-    _paper_fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
-    _paper_fill_rx: tokio::sync::mpsc::UnboundedReceiver<Fill>,
-    _data_dir: PathBuf,
+    paper_fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
+    paper_fill_rx: tokio::sync::mpsc::UnboundedReceiver<Fill>,
+    data_dir: PathBuf,
     cached_balances: HashMap<(ExchangeId, AccountType), Vec<Balance>>,
     recent_fills: HashMap<(ExchangeId, AccountType), VecDeque<Fill>>,
     last_error: HashMap<(ExchangeId, AccountType), String>,
@@ -77,9 +77,9 @@ impl TradingManager {
             runtime_handle,
             result_tx,
             result_rx,
-            _paper_fill_tx: paper_fill_tx,
-            _paper_fill_rx: paper_fill_rx,
-            _data_dir: data_dir,
+            paper_fill_tx,
+            paper_fill_rx,
+            data_dir,
             cached_balances: HashMap::new(),
             recent_fills: HashMap::new(),
             last_error: HashMap::new(),
@@ -135,15 +135,21 @@ impl TradingManager {
         req: CancelRequest,
     ) -> TradingResult<()> {
         let key = (exchange_id, account_type);
+
+        if let Some(engine) = self.paper_engines.get_mut(&key) {
+            if let CancelScope::Single { order_id } = &req.scope {
+                engine.cancel_order(order_id)?;
+            }
+            return Ok(());
+        }
+
         let bridge = Arc::clone(&self.bridge);
         let tx = self.result_tx.clone();
-
         self.runtime_handle.spawn(async move {
             let result = bridge.cancel_order(exchange_id, req).await
                 .map_err(TradingError::Exchange);
             let _ = tx.send(TradingTaskResult::OrderCancelled { key, result });
         });
-
         Ok(())
     }
 
@@ -239,39 +245,133 @@ impl TradingManager {
                             time_in_force: TimeInForce::Gtc,
                         };
                         om.upsert(order);
+
+                        if let (Some(fill_price), Some(fill_qty)) = (event.last_fill_price, event.last_fill_quantity) {
+                            if fill_qty > 0.0 {
+                                let fill = Fill {
+                                    order_id: event.order_id.clone(),
+                                    symbol: event.symbol.clone(),
+                                    side: event.side,
+                                    price: fill_price,
+                                    quantity: fill_qty,
+                                    fee: event.last_fill_commission.unwrap_or(0.0),
+                                    fee_asset: event.commission_asset.clone().unwrap_or_default(),
+                                    timestamp: event.timestamp,
+                                    is_paper: false,
+                                };
+                                if let Some(pt) = self.position_trackers.get_mut(&key) {
+                                    pt.apply_fill(&fill);
+                                }
+                                let fills = self.recent_fills.entry(key).or_insert_with(VecDeque::new);
+                                fills.push_back(fill);
+                                if fills.len() > 100 {
+                                    fills.pop_front();
+                                }
+                            }
+                        }
                     }
                 }
                 live_data::LiveUpdate::BalanceUpdate { exchange_id, account_type, event } => {
-                    let _ = (exchange_id, account_type, event);
+                    let key = (*exchange_id, *account_type);
+                    let balances = self.cached_balances.entry(key).or_insert_with(Vec::new);
+                    if let Some(existing) = balances.iter_mut().find(|b| b.asset == event.asset) {
+                        existing.free = event.free;
+                        existing.locked = event.locked;
+                        existing.total = event.total;
+                    } else {
+                        balances.push(Balance {
+                            asset: event.asset.clone(),
+                            free: event.free,
+                            locked: event.locked,
+                            total: event.total,
+                        });
+                    }
                 }
                 live_data::LiveUpdate::PositionUpdate { exchange_id, account_type, event } => {
-                    let _ = (exchange_id, account_type, event);
+                    let key = (*exchange_id, *account_type);
+                    let pt = self.position_trackers.entry(key)
+                        .or_insert_with(|| PositionTracker::new(false));
+                    let pos = Position {
+                        symbol: event.symbol.clone(),
+                        side: event.side,
+                        quantity: event.quantity,
+                        entry_price: event.entry_price,
+                        mark_price: event.mark_price,
+                        unrealized_pnl: event.unrealized_pnl,
+                        realized_pnl: event.realized_pnl,
+                        liquidation_price: event.liquidation_price,
+                        leverage: event.leverage.unwrap_or(1),
+                        margin_type: event.margin_type.unwrap_or(MarginType::Cross),
+                        margin: None,
+                        take_profit: None,
+                        stop_loss: None,
+                    };
+                    pt.update_positions(vec![pos]);
                 }
                 _ => {}
             }
         }
 
-        let keys: Vec<_> = self.sessions.keys().cloned().collect();
-        for key in keys {
+        for engine in self.paper_engines.values_mut() {
+            engine.tick();
+        }
+
+        // Drain paper fills into recent_fills for the first paper session found.
+        // PaperEngine applies fills to positions internally; here we record them
+        // so snapshots can show recent activity.
+        let paper_keys: Vec<_> = self.paper_engines.keys().copied().collect();
+        while let Ok(fill) = self.paper_fill_rx.try_recv() {
+            if let Some(&key) = paper_keys.first() {
+                let fills = self.recent_fills.entry(key).or_insert_with(VecDeque::new);
+                fills.push_back(fill);
+                if fills.len() > 100 {
+                    fills.pop_front();
+                }
+            }
+        }
+
+        let mut all_keys: HashSet<(ExchangeId, AccountType)> = HashSet::new();
+        all_keys.extend(self.sessions.keys().cloned());
+        all_keys.extend(self.paper_engines.keys().cloned());
+        all_keys.extend(self.position_trackers.keys().cloned());
+        for key in all_keys {
             self.publish_snapshot(key);
         }
     }
 
     fn publish_snapshot(&mut self, key: (ExchangeId, AccountType)) {
+        let is_paper = self.paper_engines.contains_key(&key);
+
+        let (open_orders, positions, pnl, balances) = if let Some(engine) = self.paper_engines.get(&key) {
+            let oo: Vec<Order> = engine.orders().open_orders().cloned().collect();
+            let pos: Vec<Position> = engine.positions().all_positions().values().cloned().collect();
+            let p = engine.positions().all_pnl();
+            let bal: Vec<Balance> = engine.balances().iter().map(|(asset, &amount)| {
+                Balance { asset: asset.clone(), free: amount, locked: 0.0, total: amount }
+            }).collect();
+            (oo, pos, p, bal)
+        } else {
+            let oo = self.order_managers.get(&key)
+                .map(|om| om.open_orders().cloned().collect())
+                .unwrap_or_default();
+            let pos = self.position_trackers.get(&key)
+                .map(|pt| pt.all_positions().values().cloned().collect())
+                .unwrap_or_default();
+            let p = self.position_trackers.get(&key)
+                .map(|pt| pt.all_pnl())
+                .unwrap_or_default();
+            let bal = self.cached_balances.get(&key).cloned().unwrap_or_default();
+            (oo, pos, p, bal)
+        };
+
         let new_snap = TradingSnapshot {
             session: self.sessions.get(&key).cloned(),
-            open_orders: self.order_managers.get(&key)
-                .map(|om| om.open_orders().cloned().collect())
-                .unwrap_or_default(),
-            positions: self.position_trackers.get(&key)
-                .map(|pt| pt.all_positions().values().cloned().collect())
-                .unwrap_or_default(),
-            pnl: self.position_trackers.get(&key)
-                .map(|pt| pt.all_pnl())
-                .unwrap_or_default(),
-            balances: self.cached_balances.get(&key).cloned().unwrap_or_default(),
+            open_orders,
+            positions,
+            pnl,
+            balances,
             capabilities: self.capabilities.get(&key).copied(),
-            is_paper: self.paper_engines.contains_key(&key),
+            is_paper,
             recent_fills: self.recent_fills.get(&key).cloned().unwrap_or_default(),
             last_error: self.last_error.get(&key).cloned(),
             order_in_flight: self.orders_in_flight.contains(&key),
@@ -291,7 +391,42 @@ impl TradingManager {
                 if let Some(acaps) = self.bridge.account_capabilities(exchange_id, at) {
                     self.account_caps.insert(key, acaps);
                 }
+
+                let is_paper = self.config.is_paper(exchange_id, at);
+
+                self.sessions.entry(key).or_insert(SessionInfo {
+                    exchange_id,
+                    account_type: at,
+                    is_paper,
+                    is_testnet: false,
+                });
+
+                if !is_paper {
+                    self.order_managers.entry(key).or_insert_with(|| OrderManager::new("live"));
+                }
+
+                self.position_trackers.entry(key).or_insert_with(|| PositionTracker::new(is_paper));
+
+                if is_paper {
+                    let orderbook = self.bridge.orderbook_map();
+                    let initial_balances = self.config.paper_initial_balances.clone();
+                    let fill_tx = self.paper_fill_tx.clone();
+                    self.paper_engines.entry(key).or_insert_with(|| {
+                        PaperEngine::new(
+                            exchange_id,
+                            at,
+                            orderbook,
+                            initial_balances,
+                            fill_tx,
+                        )
+                    });
+                }
             }
         }
+    }
+
+    /// Returns the data directory path (used for config persistence).
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
     }
 }
