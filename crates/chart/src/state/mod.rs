@@ -78,4 +78,4 @@ pub use chart_window::{ChartWindow, ChartId, ConnectionStatus, WindowRect, WINDO
 pub use sub_panel::ChartSubPanel;
 
 // Panel grid — input-aware layout manager
-pub use panel_grid::{ChartPanelGrid, ChartInputTarget, SplitHitResult};
+pub use panel_grid::{ChartPanelGrid, ChartInputTarget, ChartRightClickHit, SplitHitResult};

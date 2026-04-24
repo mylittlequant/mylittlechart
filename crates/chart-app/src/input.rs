@@ -507,179 +507,91 @@ impl ChartApp {
 
         // Right-click on color-tag square: no context menu (the popup has a Remove button).
 
-        // Hit-test primitives — check if click landed on a drawing primitive.
-        // Check main chart first, then sub-panes.
-        let primitive_hit = {
-            let extended = self.build_extended_layout();
-            let chart_rect = extended.main_chart.chart;
-            let local_x = x - chart_rect.x;
-            let local_y = y - chart_rect.y;
+        // Hit-test primitives and indicators, then dispatch to context menu.
+        // Steps 1–5 (geometry + hit-test) live in ChartPanelGrid::handle_right_click.
+        // Step 6 (opening context menu / settings) stays here — it touches panel_app state.
+        let extended = self.build_extended_layout();
 
-            let main_hit = if local_x >= 0.0 && local_x <= chart_rect.width
-                && local_y >= 0.0 && local_y <= chart_rect.height
-            {
-                if let Some(window) = self.panel_app.panel_grid.active_window() {
-                    // Use corrected viewport dimensions from the layout so that
-                    // hit-test coordinate mapping matches the render path exactly.
-                    let mut corrected_vp = window.viewport.clone();
-                    corrected_vp.chart_width = chart_rect.width;
-                    corrected_vp.chart_height = chart_rect.height;
-                    window.drawing_manager.hit_test(
-                        local_x,
-                        local_y,
-                        &corrected_vp,
-                        &window.price_scale,
-                    )
-                } else {
-                    None
-                }
+        // Pre-extract active-window data needed by the indicator closures.
+        // Done before the mutable borrow of panel_grid inside handle_right_click.
+        let (symbol, viewport, price_scale, sub_pane_ranges) = {
+            if let Some(window) = self.panel_app.panel_grid.active_window() {
+                let ranges: Vec<(u64, f64, f64)> = window.sub_panes.iter()
+                    .map(|sp| (sp.instance_id, sp.price_min, sp.price_max))
+                    .collect();
+                (
+                    window.symbol.clone(),
+                    window.viewport.clone(),
+                    window.price_scale.clone(),
+                    ranges,
+                )
             } else {
-                None
-            };
-
-            // If main chart has no hit, check sub-panes.
-            let result = if main_hit.is_some() {
-                main_hit
-            } else {
-                let mut sub_hit = None;
-                for pane_layout in extended.sub_panes.iter() {
-                    let content = pane_layout.content;
-                    let plx = x - content.x;
-                    let ply = y - content.y;
-                    if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
-                        continue;
-                    }
-                    let instance_id = pane_layout.instance_id;
-                    let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                        .and_then(|w| {
-                            w.sub_panes.iter()
-                                .find(|sp| sp.instance_id == instance_id)
-                                .map(|sp| (sp.price_min, sp.price_max))
-                        })
-                        .unwrap_or((0.0, 100.0));
-                    let sub_price_scale = zengeld_chart::PriceScale::new(price_min, price_max);
-                    let sub_viewport = self.panel_app.panel_grid.active_window()
-                        .map(|w| {
-                            let mut vp = w.viewport.clone();
-                            vp.chart_height = content.height;
-                            vp
-                        });
-                    if let (Some(sub_viewport), Some(window)) = (sub_viewport, self.panel_app.panel_grid.active_window()) {
-                        if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
-                            plx, ply, instance_id, &sub_viewport, &sub_price_scale,
-                        ) {
-                            // Set pane context so context menu actions know which pane is active.
-                            if let Some(win) = self.panel_app.panel_grid.active_window_mut() {
-                                win.drawing_manager.set_current_pane(Some(instance_id));
-                            }
-                            sub_hit = Some(prim_idx);
-                            break;
-                        }
-                    }
-                }
-                sub_hit
-            };
-            result
+                (
+                    String::new(),
+                    zengeld_chart::Viewport::default(),
+                    zengeld_chart::PriceScale::new(0.0, 1.0),
+                    Vec::new(),
+                )
+            }
         };
 
-        if let Some(prim_idx) = primitive_hit {
-            // Right-clicked on a primitive — look up info via primitive_list.
-            let (display_name, is_locked, is_visible) = self.panel_app.panel_grid
-                .active_window()
-                .and_then(|win| {
-                    win.drawing_manager.primitive_list()
-                        .into_iter()
-                        .find(|item| item.index == prim_idx)
-                        .map(|item| (item.display_name, item.locked, item.visible))
-                })
-                .unwrap_or_else(|| ("Primitive".to_string(), false, true));
+        let indicator_overlay_hit = |lx: f64, ly: f64, chart_height: f64| {
+            self.indicator_manager.hit_test_overlay(
+                lx, ly, &symbol, &viewport, &price_scale, chart_height, 8.0,
+            )
+        };
+        let indicator_subpane_hit = |instance_id: u64, plx: f64, ply: f64, pane_height: f64| {
+            let (price_min, price_max) = sub_pane_ranges
+                .iter()
+                .find(|(id, _, _)| *id == instance_id)
+                .map(|&(_, mn, mx)| (mn, mx))
+                .unwrap_or((0.0, 100.0));
+            self.indicator_manager.hit_test_sub_pane(
+                instance_id, plx, ply, &viewport, price_min, price_max, pane_height, 8.0,
+            )
+        };
 
-            let items = build_primitive_context_menu(&display_name, is_locked, is_visible);
+        let hit = self.panel_app.panel_grid.handle_right_click(
+            x as f64, y as f64, &extended,
+            indicator_overlay_hit,
+            indicator_subpane_hit,
+        );
 
-            // Select the primitive so it highlights.
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                window.drawing_manager.select_by_index(prim_idx);
-            }
-
-            self.panel_app.context_menu_state.open_smart(
-                x, y,
-                ContextMenuTarget::Primitive(prim_idx),
-                items,
-                w, h,
-            );
-            eprintln!("[ChartApp] Context menu opened for primitive #{}", prim_idx);
-        } else {
-            // Check if right-click landed on an overlay indicator line.
-            let extended = self.build_extended_layout();
-            let chart_rect = extended.main_chart.chart;
-            let local_x = x - chart_rect.x;
-            let local_y = y - chart_rect.y;
-
-            let indicator_hit = if local_x >= 0.0 && local_x <= chart_rect.width
-                && local_y >= 0.0 && local_y <= chart_rect.height
-            {
-                self.panel_app.panel_grid.active_window()
-                    .and_then(|window| {
-                        self.indicator_manager.hit_test_overlay(
-                            local_x,
-                            local_y,
-                            &window.symbol,
-                            &window.viewport,
-                            &window.price_scale,
-                            chart_rect.height,
-                            8.0,
-                        )
+        match hit {
+            zengeld_chart::ChartRightClickHit::Primitive { prim_idx } => {
+                // Right-clicked on a primitive — look up info via primitive_list.
+                let (display_name, is_locked, is_visible) = self.panel_app.panel_grid
+                    .active_window()
+                    .and_then(|win| {
+                        win.drawing_manager.primitive_list()
+                            .into_iter()
+                            .find(|item| item.index == prim_idx)
+                            .map(|item| (item.display_name, item.locked, item.visible))
                     })
-            } else {
-                None
-            };
+                    .unwrap_or_else(|| ("Primitive".to_string(), false, true));
 
-            // If no main-chart indicator hit, try sub-panes.
-            let indicator_hit = if indicator_hit.is_none() {
-                let mut sub_hit = None;
-                for sp in &extended.sub_panes {
-                    let pane_rect = sp.content;
-                    let plx = x - pane_rect.x;
-                    let ply = y - pane_rect.y;
-                    if plx < 0.0 || plx > pane_rect.width || ply < 0.0 || ply > pane_rect.height {
-                        continue;
-                    }
-                    let instance_id = sp.instance_id;
-                    let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                        .and_then(|w| {
-                            w.sub_panes.iter()
-                                .find(|p| p.instance_id == instance_id)
-                                .map(|p| (p.price_min, p.price_max))
-                        })
-                        .unwrap_or((0.0, 100.0));
-                    let hit = self.panel_app.panel_grid.active_window()
-                        .map(|window| {
-                            self.indicator_manager.hit_test_sub_pane(
-                                instance_id,
-                                plx, ply,
-                                &window.viewport,
-                                price_min, price_max,
-                                pane_rect.height,
-                                8.0,
-                            )
-                        })
-                        .unwrap_or(false);
-                    if hit {
-                        sub_hit = Some(instance_id);
-                        break;
-                    }
+                let items = build_primitive_context_menu(&display_name, is_locked, is_visible);
+
+                // Select the primitive so it highlights.
+                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    window.drawing_manager.select_by_index(prim_idx);
                 }
-                sub_hit
-            } else {
-                indicator_hit
-            };
 
-            if let Some(ind_id) = indicator_hit {
+                self.panel_app.context_menu_state.open_smart(
+                    x, y,
+                    ContextMenuTarget::Primitive(prim_idx),
+                    items,
+                    w, h,
+                );
+                eprintln!("[ChartApp] Context menu opened for primitive #{}", prim_idx);
+            }
+            zengeld_chart::ChartRightClickHit::Indicator { indicator_id } => {
                 // Right-clicked on an indicator line — select it and open its settings.
-                self.selected_indicator_id = Some(ind_id);
-                self.panel_app.indicator_settings_state.open(ind_id);
-                eprintln!("[ChartApp] Indicator right-clicked: id={}, settings opened", ind_id);
-            } else {
+                self.selected_indicator_id = Some(indicator_id);
+                self.panel_app.indicator_settings_state.open(indicator_id);
+                eprintln!("[ChartApp] Indicator right-clicked: id={}, settings opened", indicator_id);
+            }
+            zengeld_chart::ChartRightClickHit::Background => {
                 // Right-clicked on empty chart background — build chart background menu.
                 let items = build_chart_background_menu();
                 self.panel_app.context_menu_state.open_smart(
@@ -690,6 +602,7 @@ impl ChartApp {
                 );
                 eprintln!("[ChartApp] Context menu opened for chart background");
             }
+            zengeld_chart::ChartRightClickHit::Miss => {}
         }
     }
 

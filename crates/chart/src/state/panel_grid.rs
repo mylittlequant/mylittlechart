@@ -1232,6 +1232,212 @@ impl ChartPanelGrid {
 }
 
 // =========================================================================
+// Right-click hit-test
+// =========================================================================
+
+/// Result of a right-click hit-test on the chart canvas.
+///
+/// Returned by [`ChartPanelGrid::handle_right_click`].
+/// The caller (`chart-app`) maps each variant to the appropriate context-menu
+/// action without knowing the hit-test internals.
+#[derive(Debug)]
+pub enum ChartRightClickHit {
+    /// Hit a drawing primitive.  Caller should select it and open the
+    /// primitive context menu.
+    Primitive {
+        /// Raw index returned by `DrawingManager::hit_test*`.
+        prim_idx: usize,
+    },
+    /// Hit an indicator line (overlay or sub-pane).  Caller should open the
+    /// indicator settings panel.
+    Indicator {
+        /// Instance ID of the hit indicator.
+        indicator_id: u64,
+    },
+    /// Click landed on the empty chart background.  Caller should open the
+    /// chart background context menu.
+    Background,
+    /// Click did not land on any chart pane (outside all panels).
+    Miss,
+}
+
+impl ChartPanelGrid {
+    /// Perform a right-click hit-test in screen coordinates.
+    ///
+    /// Steps:
+    /// 1. Check drawing primitives on the main chart.
+    /// 2. If no primitive hit, check sub-panes for primitives.
+    /// 3. If still no hit, delegate indicator overlay hit-test to `indicator_overlay_hit`.
+    /// 4. If no overlay hit, delegate sub-pane indicator hit-test to `indicator_subpane_hit`.
+    /// 5. Fall back to [`ChartRightClickHit::Background`] if inside a chart pane,
+    ///    or [`ChartRightClickHit::Miss`] if outside all panes.
+    ///
+    /// The two indicator closures are supplied by `chart-app` (which owns
+    /// `IndicatorManager`).  This keeps the crate boundary clean: `zengeld-chart`
+    /// never depends on `zengeld-terminal-indicators`.
+    ///
+    /// `indicator_overlay_hit(local_x, local_y, chart_height) -> Option<u64>`
+    /// `indicator_subpane_hit(instance_id, local_x, local_y, pane_height) -> bool`
+    pub fn handle_right_click(
+        &mut self,
+        screen_x: f64,
+        screen_y: f64,
+        extended: &crate::layout::ExtendedFrameLayout,
+        indicator_overlay_hit: impl Fn(f64, f64, f64) -> Option<u64>,
+        indicator_subpane_hit: impl Fn(u64, f64, f64, f64) -> bool,
+    ) -> ChartRightClickHit {
+        // ----------------------------------------------------------------
+        // Step 1 & 2: primitive hit-test (main chart then sub-panes).
+        // ----------------------------------------------------------------
+        let chart_rect = extended.main_chart.chart;
+        let main_local_x = screen_x - chart_rect.x;
+        let main_local_y = screen_y - chart_rect.y;
+
+        let primitive_hit: Option<usize> = {
+            // Main chart.
+            let main_hit = if main_local_x >= 0.0
+                && main_local_x <= chart_rect.width
+                && main_local_y >= 0.0
+                && main_local_y <= chart_rect.height
+            {
+                if let Some(window) = self.active_window() {
+                    let mut corrected_vp = window.viewport.clone();
+                    corrected_vp.chart_width = chart_rect.width;
+                    corrected_vp.chart_height = chart_rect.height;
+                    window.drawing_manager.hit_test(
+                        main_local_x,
+                        main_local_y,
+                        &corrected_vp,
+                        &window.price_scale,
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if main_hit.is_some() {
+                main_hit
+            } else {
+                // Sub-panes.
+                let mut sub_hit = None;
+                for pane_layout in extended.sub_panes.iter() {
+                    let content = pane_layout.content;
+                    let plx = screen_x - content.x;
+                    let ply = screen_y - content.y;
+                    if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                        continue;
+                    }
+                    let instance_id = pane_layout.instance_id;
+                    let (price_min, price_max) = self
+                        .active_window()
+                        .and_then(|w| {
+                            w.sub_panes
+                                .iter()
+                                .find(|sp| sp.instance_id == instance_id)
+                                .map(|sp| (sp.price_min, sp.price_max))
+                        })
+                        .unwrap_or((0.0, 100.0));
+                    let sub_price_scale =
+                        crate::PriceScale::new(price_min, price_max);
+                    let sub_viewport = self.active_window().map(|w| {
+                        let mut vp = w.viewport.clone();
+                        vp.chart_height = content.height;
+                        vp
+                    });
+                    if let (Some(sub_viewport), Some(window)) =
+                        (sub_viewport, self.active_window())
+                    {
+                        if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
+                            plx,
+                            ply,
+                            instance_id,
+                            &sub_viewport,
+                            &sub_price_scale,
+                        ) {
+                            // Record active pane so context-menu actions know which pane is active.
+                            if let Some(win) = self.active_window_mut() {
+                                win.drawing_manager.set_current_pane(Some(instance_id));
+                            }
+                            sub_hit = Some(prim_idx);
+                            break;
+                        }
+                    }
+                }
+                sub_hit
+            }
+        };
+
+        if let Some(prim_idx) = primitive_hit {
+            return ChartRightClickHit::Primitive { prim_idx };
+        }
+
+        // ----------------------------------------------------------------
+        // Step 3 & 4: indicator hit-test (overlay then sub-panes).
+        // ----------------------------------------------------------------
+        let indicator_hit: Option<u64> = {
+            // Main chart overlay.
+            let overlay_hit = if main_local_x >= 0.0
+                && main_local_x <= chart_rect.width
+                && main_local_y >= 0.0
+                && main_local_y <= chart_rect.height
+            {
+                indicator_overlay_hit(main_local_x, main_local_y, chart_rect.height)
+            } else {
+                None
+            };
+
+            if overlay_hit.is_some() {
+                overlay_hit
+            } else {
+                // Sub-pane indicators.
+                let mut sub_hit = None;
+                for sp in &extended.sub_panes {
+                    let pane_rect = sp.content;
+                    let plx = screen_x - pane_rect.x;
+                    let ply = screen_y - pane_rect.y;
+                    if plx < 0.0 || plx > pane_rect.width || ply < 0.0 || ply > pane_rect.height {
+                        continue;
+                    }
+                    let instance_id = sp.instance_id;
+                    if indicator_subpane_hit(instance_id, plx, ply, pane_rect.height) {
+                        sub_hit = Some(instance_id);
+                        break;
+                    }
+                }
+                sub_hit
+            }
+        };
+
+        if let Some(ind_id) = indicator_hit {
+            return ChartRightClickHit::Indicator { indicator_id: ind_id };
+        }
+
+        // ----------------------------------------------------------------
+        // Step 5: determine if inside any pane at all.
+        // ----------------------------------------------------------------
+        let inside_main = main_local_x >= 0.0
+            && main_local_x <= chart_rect.width
+            && main_local_y >= 0.0
+            && main_local_y <= chart_rect.height;
+
+        let inside_sub = !inside_main
+            && extended.sub_panes.iter().any(|sp| {
+                let plx = screen_x - sp.content.x;
+                let ply = screen_y - sp.content.y;
+                plx >= 0.0 && plx <= sp.content.width && ply >= 0.0 && ply <= sp.content.height
+            });
+
+        if inside_main || inside_sub {
+            ChartRightClickHit::Background
+        } else {
+            ChartRightClickHit::Miss
+        }
+    }
+}
+
+// =========================================================================
 // Default
 // =========================================================================
 
