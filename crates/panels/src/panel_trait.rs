@@ -46,4 +46,16 @@ pub trait TradingPanel {
         x: f64,
         y: f64,
     ) -> bool;
+
+    /// Handle a hover over a widget belonging to this panel.
+    ///
+    /// `local_id` is the widget ID with the panel prefix already stripped.
+    /// Called each frame when the coordinator reports a hovered widget whose ID
+    /// starts with `"{panel.kind()}:"`.  When no panel widget is hovered, called
+    /// with an empty string so the panel can clear its own hover state.
+    ///
+    /// Returns `true` if the event was consumed.
+    fn handle_hover(&mut self, _local_id: &str) -> bool {
+        false
+    }
 }

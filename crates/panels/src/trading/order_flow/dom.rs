@@ -704,8 +704,8 @@ impl TradingPanel for DomState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
         // Background fill
         ctx.set_fill_color(&theme.panel_bg);
@@ -1114,6 +1114,13 @@ impl TradingPanel for DomState {
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text("▲", bid_ord_col_x as f64, price_y as f64);
             }
+
+            // --- Step 4.8: Register row hover rect ---
+            {
+                let row_rect = uzor::Rect::new(x as f64, row_y as f64, w as f64, row_height as f64);
+                let row_id = format!("{}:dom:row:{}", slot_prefix, price_tick);
+                coordinator.register(row_id.as_str(), row_rect, uzor::input::Sense::HOVER);
+            }
         }
 
         // === STEP 5: Chase Tracker indicator on the spread row ===
@@ -1191,6 +1198,21 @@ impl TradingPanel for DomState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        false
+    }
+
+    fn handle_hover(&mut self, local_id: &str) -> bool {
+        if let Some(tick_str) = local_id.strip_prefix("dom:row:") {
+            if let Ok(price_tick) = tick_str.parse::<i64>() {
+                let price = self.tick_to_price(price_tick);
+                self.hovered_price = Some(price);
+                return true;
+            }
+        }
+        if self.hovered_price.is_some() {
+            self.hovered_price = None;
+            return true;
+        }
         false
     }
 }

@@ -4652,6 +4652,10 @@ impl ChartApp {
         // Reset agent/slot hover highlights each frame; re-set below if still hovering.
         self.sidebar_state.hovered_agent_leaf = None;
         self.sidebar_state.hovered_free_leaf = None;
+        // Clear DOM hovered_price each frame; re-set below if a row widget is still hovered.
+        for dom_state in self.panels_store.dom.values_mut() {
+            dom_state.hovered_price = None;
+        }
 
         // --- Update toolbar hover state from InputCoordinator ---
         // The coordinator's hovered_widget() returns the topmost widget under
@@ -4728,6 +4732,28 @@ impl ChartApp {
                                 let leaf_id = uzor::panels::LeafId(raw);
                                 self.sidebar_state.hovered_free_leaf = Some((idx, leaf_id));
                                 self.sidebar_data_dirty = true;
+                            }
+                        } else if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
+                            // Pattern: "slot:{idx}:leaf:{leaf_id}:{local_id}"
+                            // Dispatch panel hover for registered panel widgets (e.g. dom:row:{tick}).
+                            if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                let leaf_id = uzor::panels::LeafId(raw);
+                                let item_opt = if idx < self.sidebar_state.slot_dockings.len() {
+                                    self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned())
+                                } else {
+                                    None
+                                };
+                                if let Some(item) = item_opt {
+                                    let local_id = local_id.to_string();
+                                    if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                        panel.handle_hover(&local_id);
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
                             }
                         }
                     }
