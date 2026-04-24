@@ -2402,32 +2402,6 @@ impl ChartApp {
             return false;
         }
 
-        // Freehand tool (brush/highlighter) — start stroke on drag start
-        let is_freehand = self.panel_app.panel_grid.active_window()
-            .map(|w| w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
-        if is_freehand {
-            let extended = self.build_extended_layout();
-            let chart_rect = extended.main_chart.chart;
-            let local_x = x - chart_rect.x;
-            let local_y = y - chart_rect.y;
-            if local_x >= 0.0 && local_x <= chart_rect.width
-                && local_y >= 0.0 && local_y <= chart_rect.height
-            {
-                let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                    .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
-                    .unwrap_or((0.0, 1.0));
-                let bar = self.panel_app.panel_grid.active_window()
-                    .map(|w| w.viewport.x_to_bar_f64(local_x))
-                    .unwrap_or(0.0);
-                let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.drawing_manager.start_freehand(bar, price);
-                }
-                return false;
-            }
-        }
-
         // Capture viewport BEFORE drag starts so on_drag_end can record a
         // ViewportChange command if panning or zooming occurred.
         //
@@ -2456,141 +2430,38 @@ impl ChartApp {
         let hit_tester = ExtendedLayoutHitTester::new(&extended)
             .with_overlays(&overlay_results_ds);
 
-        // Check whether the drag starts on a primitive (main chart or sub-pane)
-        // or on a control point of the currently selected primitive.  If so,
-        // pass the resolved DragMode so the input handler does not fall back to
-        // chart-pan, and also emit the appropriate Start*Drag action so
-        // process_output_actions can initialise drawing_manager.start_drag().
-        let primitive_drag_mode: DragMode;
-        let extra_actions: Vec<ChartOutputAction>;
+        // Delegate freehand-start and primitive/control-point hit-test to ChartPanelGrid.
+        // Freehand: drawing_manager.start_freehand() runs inside handle_drag_start.
+        // Background: viewport_before_drag already captured above.
+        use zengeld_chart::state::ChartDragStartHit;
+        let drag_start_hit = self.panel_app.panel_grid.handle_drag_start(x, y, &extended);
 
-        {
-            let chart_rect = extended.main_chart.chart;
-            let local_x = x - chart_rect.x;
-            let local_y = y - chart_rect.y;
-            let in_main = local_x >= 0.0 && local_x <= chart_rect.width
-                && local_y >= 0.0 && local_y <= chart_rect.height;
-
-            let mut found_mode = DragMode::None;
-            let mut found_extra: Vec<ChartOutputAction> = Vec::new();
-
-            if in_main {
-                if let Some(window) = self.panel_app.panel_grid.active_window() {
-                    // Use corrected viewport dimensions from the layout so that
-                    // hit-test coordinate mapping matches the render path exactly.
-                    let mut corrected_vp = window.viewport.clone();
-                    corrected_vp.chart_width = chart_rect.width;
-                    corrected_vp.chart_height = chart_rect.height;
-                    // Control points have higher priority than primitive body.
-                    if let Some(cp_type) = window.drawing_manager.hit_test_control_point(
-                        local_x, local_y, &corrected_vp, &window.price_scale,
-                    ) {
-                        if let Some(selected_idx) = window.drawing_manager.selected() {
-                            let prim_id = window.drawing_manager.primitives()
-                                .get(selected_idx)
-                                .map(|p| p.data().id);
-                            if let Some(id) = prim_id {
-                                found_mode = DragMode::ControlPoint { primitive_id: id, point_index: 0 };
-                                found_extra.push(ChartOutputAction::StartControlPointDrag {
-                                    primitive_id: id,
-                                    control_point: cp_type,
-                                    bar: x,
-                                    price: y,
-                                });
-                            }
-                        }
-                    } else if let Some(prim_idx) = window.drawing_manager.hit_test(
-                        local_x, local_y, &corrected_vp, &window.price_scale,
-                    ) {
-                        let prim_id = window.drawing_manager.primitives()
-                            .get(prim_idx)
-                            .map(|p| p.data().id);
-                        if let Some(id) = prim_id {
-                            found_mode = DragMode::Primitive { id };
-                            found_extra.push(ChartOutputAction::StartPrimitiveDrag {
-                                id,
-                                bar: x,
-                                price: y,
-                            });
-                        }
-                    }
-                }
+        let (drag_start_mode, extra_actions) = match drag_start_hit {
+            ChartDragStartHit::FreehandStarted => {
+                return false;
             }
-
-            // If no hit on main chart, check sub-panes.
-            if found_mode == DragMode::None {
-                'sub_pane_loop: for pane_layout in extended.sub_panes.iter() {
-                    let content = pane_layout.content;
-                    let plx = x - content.x;
-                    let ply = y - content.y;
-                    if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
-                        continue;
-                    }
-                    let instance_id = pane_layout.instance_id;
-                    let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                        .and_then(|w| {
-                            w.sub_panes.iter()
-                                .find(|sp| sp.instance_id == instance_id)
-                                .map(|sp| (sp.price_min, sp.price_max))
-                        })
-                        .unwrap_or((0.0, 100.0));
-                    let sub_price_scale = zengeld_chart::PriceScale::new(price_min, price_max);
-                    let sub_viewport = self.panel_app.panel_grid.active_window()
-                        .map(|w| {
-                            let mut vp = w.viewport.clone();
-                            vp.chart_height = content.height;
-                            vp
-                        });
-                    if let Some(sub_viewport) = sub_viewport {
-                        if let Some(window) = self.panel_app.panel_grid.active_window() {
-                            // Control points first.
-                            if let Some(cp_type) = window.drawing_manager.hit_test_control_point_in_pane(
-                                plx, ply, instance_id, &sub_viewport, &sub_price_scale,
-                            ) {
-                                if let Some(selected_idx) = window.drawing_manager.selected() {
-                                    let prim_id = window.drawing_manager.primitives()
-                                        .get(selected_idx)
-                                        .map(|p| p.data().id);
-                                    if let Some(id) = prim_id {
-                                        found_mode = DragMode::ControlPoint { primitive_id: id, point_index: 0 };
-                                        found_extra.push(ChartOutputAction::StartControlPointDrag {
-                                            primitive_id: id,
-                                            control_point: cp_type,
-                                            bar: x,
-                                            price: y,
-                                        });
-                                        break 'sub_pane_loop;
-                                    }
-                                }
-                            } else if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
-                                plx, ply, instance_id, &sub_viewport, &sub_price_scale,
-                            ) {
-                                let prim_id = window.drawing_manager.primitives()
-                                    .get(prim_idx)
-                                    .map(|p| p.data().id);
-                                if let Some(id) = prim_id {
-                                    found_mode = DragMode::Primitive { id };
-                                    found_extra.push(ChartOutputAction::StartPrimitiveDrag {
-                                        id,
-                                        bar: x,
-                                        price: y,
-                                    });
-                                    break 'sub_pane_loop;
-                                }
-                            }
-                        }
-                    }
-                }
+            ChartDragStartHit::ControlPoint { primitive_id: id, control_point: cp_type } => {
+                let mode = DragMode::ControlPoint { primitive_id: id, point_index: 0 };
+                let action = ChartOutputAction::StartControlPointDrag {
+                    primitive_id: id,
+                    control_point: cp_type,
+                    bar: x,
+                    price: y,
+                };
+                (mode, vec![action])
             }
-
-            primitive_drag_mode = found_mode;
-            extra_actions = found_extra;
-        }
-
-        let drag_start_mode = if primitive_drag_mode != DragMode::None {
-            primitive_drag_mode
-        } else {
-            DragMode::None
+            ChartDragStartHit::Primitive { primitive_id: id } => {
+                let mode = DragMode::Primitive { id };
+                let action = ChartOutputAction::StartPrimitiveDrag {
+                    id,
+                    bar: x,
+                    price: y,
+                };
+                (mode, vec![action])
+            }
+            ChartDragStartHit::Background | ChartDragStartHit::Miss => {
+                (DragMode::None, Vec::new())
+            }
         };
 
         let mut actions = self.input_handler.process_action(

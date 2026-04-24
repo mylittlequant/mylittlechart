@@ -1438,6 +1438,238 @@ impl ChartPanelGrid {
 }
 
 // =========================================================================
+// Drag-start hit-test
+// =========================================================================
+
+/// Result of a drag-start hit-test on the chart canvas.
+///
+/// Returned by [`ChartPanelGrid::handle_drag_start`].
+/// The caller (`chart-app`) maps each variant to the appropriate drag mode
+/// without knowing the hit-test internals.
+#[derive(Debug)]
+pub enum ChartDragStartHit {
+    /// Hit a control point of the currently selected primitive.
+    /// Caller should set `DragMode::ControlPoint` and emit `StartControlPointDrag`.
+    ControlPoint {
+        /// ID of the selected primitive that owns the control point.
+        primitive_id: u64,
+        /// Which control point was hit.
+        control_point: crate::drawing::ControlPointType,
+    },
+    /// Hit a primitive body (no control point).
+    /// Caller should set `DragMode::Primitive` and emit `StartPrimitiveDrag`.
+    Primitive {
+        /// ID of the hit primitive.
+        primitive_id: u64,
+    },
+    /// Freehand drawing tool was active and a stroke was started on the main chart canvas.
+    /// Caller should return early — `drawing_manager.start_freehand()` already ran.
+    FreehandStarted,
+    /// Drag started on the chart background (no primitive, no freehand).
+    /// Caller should capture `viewport_before_drag` for undo, then fall through.
+    Background,
+    /// Drag started outside all chart panes.
+    Miss,
+}
+
+impl ChartPanelGrid {
+    /// Perform a drag-start hit-test in screen coordinates.
+    ///
+    /// Steps (in priority order):
+    /// 1. If freehand tool is active and the point lands on the main chart canvas,
+    ///    call `drawing_manager.start_freehand()` and return [`ChartDragStartHit::FreehandStarted`].
+    /// 2. Control-point hit-test on the main chart (selected primitive only).
+    /// 3. Primitive body hit-test on the main chart.
+    /// 4. Control-point hit-test across all sub-panes.
+    /// 5. Primitive body hit-test across all sub-panes.
+    /// 6. Returns [`ChartDragStartHit::Background`] if inside a pane, or
+    ///    [`ChartDragStartHit::Miss`] if outside all panes.
+    ///
+    /// The `extended` layout is supplied by the caller (already computed for the frame).
+    pub fn handle_drag_start(
+        &mut self,
+        screen_x: f64,
+        screen_y: f64,
+        extended: &crate::layout::ExtendedFrameLayout,
+    ) -> ChartDragStartHit {
+        let chart_rect = extended.main_chart.chart;
+        let local_x = screen_x - chart_rect.x;
+        let local_y = screen_y - chart_rect.y;
+        let in_main = local_x >= 0.0
+            && local_x <= chart_rect.width
+            && local_y >= 0.0
+            && local_y <= chart_rect.height;
+
+        // ----------------------------------------------------------------
+        // Step 1: freehand tool
+        // ----------------------------------------------------------------
+        if in_main {
+            let is_freehand = self
+                .active_window()
+                .map(|w| w.drawing_manager.is_freehand_tool())
+                .unwrap_or(false);
+            if is_freehand {
+                let (price_min, price_max) = self
+                    .active_window()
+                    .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
+                    .unwrap_or((0.0, 1.0));
+                let bar = self
+                    .active_window()
+                    .map(|w| w.viewport.x_to_bar_f64(local_x))
+                    .unwrap_or(0.0);
+                let price =
+                    price_max - (local_y / chart_rect.height) * (price_max - price_min);
+                if let Some(window) = self.active_window_mut() {
+                    window.drawing_manager.start_freehand(bar, price);
+                }
+                return ChartDragStartHit::FreehandStarted;
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Steps 2 & 3: main chart primitive / control-point hit-test
+        // ----------------------------------------------------------------
+        if in_main {
+            if let Some(window) = self.active_window() {
+                let mut corrected_vp = window.viewport.clone();
+                corrected_vp.chart_width = chart_rect.width;
+                corrected_vp.chart_height = chart_rect.height;
+
+                // Control points have higher priority than primitive body.
+                if let Some(cp_type) = window.drawing_manager.hit_test_control_point(
+                    local_x,
+                    local_y,
+                    &corrected_vp,
+                    &window.price_scale,
+                ) {
+                    if let Some(selected_idx) = window.drawing_manager.selected() {
+                        if let Some(id) = window
+                            .drawing_manager
+                            .primitives()
+                            .get(selected_idx)
+                            .map(|p| p.data().id)
+                        {
+                            return ChartDragStartHit::ControlPoint {
+                                primitive_id: id,
+                                control_point: cp_type,
+                            };
+                        }
+                    }
+                }
+
+                if let Some(prim_idx) = window.drawing_manager.hit_test(
+                    local_x,
+                    local_y,
+                    &corrected_vp,
+                    &window.price_scale,
+                ) {
+                    if let Some(id) = window
+                        .drawing_manager
+                        .primitives()
+                        .get(prim_idx)
+                        .map(|p| p.data().id)
+                    {
+                        return ChartDragStartHit::Primitive { primitive_id: id };
+                    }
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Steps 4 & 5: sub-pane primitive / control-point hit-test
+        // ----------------------------------------------------------------
+        let mut sub_pane_hit: Option<ChartDragStartHit> = None;
+        'sub_pane_loop: for pane_layout in extended.sub_panes.iter() {
+            let content = pane_layout.content;
+            let plx = screen_x - content.x;
+            let ply = screen_y - content.y;
+            if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                continue;
+            }
+            let instance_id = pane_layout.instance_id;
+            let (price_min, price_max) = self
+                .active_window()
+                .and_then(|w| {
+                    w.sub_panes
+                        .iter()
+                        .find(|sp| sp.instance_id == instance_id)
+                        .map(|sp| (sp.price_min, sp.price_max))
+                })
+                .unwrap_or((0.0, 100.0));
+            let sub_price_scale = crate::PriceScale::new(price_min, price_max);
+            let sub_viewport = self.active_window().map(|w| {
+                let mut vp = w.viewport.clone();
+                vp.chart_height = content.height;
+                vp
+            });
+
+            if let Some(sub_viewport) = sub_viewport {
+                if let Some(window) = self.active_window() {
+                    // Control points first.
+                    if let Some(cp_type) = window.drawing_manager.hit_test_control_point_in_pane(
+                        plx,
+                        ply,
+                        instance_id,
+                        &sub_viewport,
+                        &sub_price_scale,
+                    ) {
+                        if let Some(selected_idx) = window.drawing_manager.selected() {
+                            if let Some(id) = window
+                                .drawing_manager
+                                .primitives()
+                                .get(selected_idx)
+                                .map(|p| p.data().id)
+                            {
+                                sub_pane_hit = Some(ChartDragStartHit::ControlPoint {
+                                    primitive_id: id,
+                                    control_point: cp_type,
+                                });
+                                break 'sub_pane_loop;
+                            }
+                        }
+                    } else if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
+                        plx,
+                        ply,
+                        instance_id,
+                        &sub_viewport,
+                        &sub_price_scale,
+                    ) {
+                        if let Some(id) = window
+                            .drawing_manager
+                            .primitives()
+                            .get(prim_idx)
+                            .map(|p| p.data().id)
+                        {
+                            sub_pane_hit = Some(ChartDragStartHit::Primitive { primitive_id: id });
+                            break 'sub_pane_loop;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(hit) = sub_pane_hit {
+            return hit;
+        }
+
+        // ----------------------------------------------------------------
+        // Step 6: background or miss
+        // ----------------------------------------------------------------
+        let inside_sub = extended.sub_panes.iter().any(|sp| {
+            let plx = screen_x - sp.content.x;
+            let ply = screen_y - sp.content.y;
+            plx >= 0.0 && plx <= sp.content.width && ply >= 0.0 && ply <= sp.content.height
+        });
+
+        if in_main || inside_sub {
+            ChartDragStartHit::Background
+        } else {
+            ChartDragStartHit::Miss
+        }
+    }
+}
+
+// =========================================================================
 // Default
 // =========================================================================
 
