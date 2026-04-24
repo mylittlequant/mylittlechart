@@ -1279,26 +1279,12 @@ impl ChartApp {
             }
         }
 
-        // Signal group scrollbar drag start + track click
+        // Signal group scrollbar track click (handle drag is dispatched via InputCoordinator above).
         if self.sidebar_state.is_right_open() && !self.ui_drag_active {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
-                for &(instance_id, ref handle_rect, ref track_rect, content_h, viewport_h)
+                for &(instance_id, ref _handle_rect, ref track_rect, content_h, viewport_h)
                     in &sidebar_result.signal_group_scrollbar_rects
                 {
-                    // Handle drag start — 5px tolerance on each side for easy grab.
-                    let hit = x >= handle_rect.x - 5.0
-                        && x <= handle_rect.x + handle_rect.width + 5.0
-                        && y >= handle_rect.y
-                        && y <= handle_rect.y + handle_rect.height;
-                    if hit {
-                        self.sidebar_state
-                            .signal_group_scroll
-                            .entry(instance_id)
-                            .or_default()
-                            .start_drag(y);
-                        self.ui_drag_active = true;
-                        return false;
-                    }
                     // Track click — jump scroll to clicked position.
                     let track_hit = x >= track_rect.x
                         && x <= track_rect.x + track_rect.width
@@ -1322,18 +1308,9 @@ impl ChartApp {
             }
         }
 
-        // Right sidebar scrollbar handle drag + track click
+        // Right sidebar scrollbar track click (handle drag is dispatched via InputCoordinator above).
         if self.sidebar_state.is_right_open() && !self.ui_drag_active {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
-                // Scrollbar handle drag start
-                if let Some(ref handle_rect) = sidebar_result.scrollbar_handle_rect {
-                    let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                        && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                    if hit {
-                        self.sidebar_state.current_right_scroll_mut().start_drag(y);
-                        return false;
-                    }
-                }
                 // Scrollbar track click — jump to position
                 if let Some(ref track_rect) = sidebar_result.scrollbar_track_rect {
                     let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
@@ -1568,6 +1545,53 @@ impl ChartApp {
                     _ => false,
                 };
                 if started {
+                    return false;
+                }
+            }
+
+            // Scrollbar handle drags — dispatched via InputCoordinator DRAG registration.
+            if id.ends_with(":scrollbar_handle") {
+                let prefix = &id[..id.len() - ":scrollbar_handle".len()];
+                let started = if prefix == "sidebar" {
+                    self.sidebar_state.current_right_scroll_mut().start_drag(y);
+                    true
+                } else if let Some(id_str) = prefix.strip_prefix("signal_group:") {
+                    if let Ok(instance_id) = id_str.parse::<u64>() {
+                        self.sidebar_state
+                            .signal_group_scroll
+                            .entry(instance_id)
+                            .or_default()
+                            .start_drag(y);
+                        true
+                    } else {
+                        false
+                    }
+                } else if let Some(id_str) = prefix.strip_prefix("agent:leaf:") {
+                    if let Ok(raw) = id_str.parse::<u64>() {
+                        let leaf_id = uzor::panels::LeafId(raw);
+                        let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
+                            .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                            .unwrap_or(true);
+                        if is_chat {
+                            self.sidebar_state.agent_chat_scrolls
+                                .entry(leaf_id)
+                                .or_default()
+                                .start_drag(y);
+                        } else {
+                            self.sidebar_state.agent_pty_scrolls
+                                .entry(leaf_id)
+                                .or_default()
+                                .start_drag(y);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if started {
+                    self.ui_drag_active = true;
                     return false;
                 }
             }

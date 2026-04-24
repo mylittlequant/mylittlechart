@@ -641,6 +641,15 @@ pub fn render_right_sidebar(
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
 
+    // Register main sidebar scrollbar with InputCoordinator.
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = WidgetRect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register("sidebar:scrollbar_handle", inflated, uzor::input::Sense::DRAG);
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register("sidebar:scrollbar_track", *tr, uzor::input::Sense::CLICK);
+    }
+
     // -------------------------------------------------------------------------
     // Watchlist column-config dropdown overlay (rendered over scrollable area).
     // -------------------------------------------------------------------------
@@ -2549,6 +2558,24 @@ fn render_indicator_signals(
                     total_content_height,
                     viewport_height,
                 ));
+
+                // Register signal group scrollbars with InputCoordinator.
+                let inflated_handle = WidgetRect::new(
+                    handle_rect.x - 5.0, handle_rect.y,
+                    handle_rect.width + 10.0, handle_rect.height,
+                );
+                let sg_handle_id = format!("signal_group:{}:scrollbar_handle", group.instance_id);
+                input_coordinator.register(
+                    sg_handle_id.as_str(),
+                    inflated_handle,
+                    uzor::input::Sense::DRAG,
+                );
+                let sg_track_id = format!("signal_group:{}:scrollbar_track", group.instance_id);
+                input_coordinator.register(
+                    sg_track_id.as_str(),
+                    track_rect,
+                    uzor::input::Sense::CLICK,
+                );
             }
 
             current_y += viewport_height;
@@ -5305,6 +5332,23 @@ fn render_agents_pty_leaf(
                         result.agent_pty_scrollbar_handle_rect = Some(handle_rect);
                         result.agent_pty_scrollbar_track_rect = Some(track_rect);
                     }
+                    // Register PTY leaf scrollbar with InputCoordinator.
+                    let inflated = WidgetRect::new(
+                        handle_rect.x - 5.0, handle_rect.y,
+                        handle_rect.width + 10.0, handle_rect.height,
+                    );
+                    let pty_handle_id = format!("agent:leaf:{}:scrollbar_handle", leaf_id.0);
+                    input_coordinator.register(
+                        pty_handle_id.as_str(),
+                        inflated,
+                        uzor::input::Sense::DRAG,
+                    );
+                    let pty_track_id = format!("agent:leaf:{}:scrollbar_track", leaf_id.0);
+                    input_coordinator.register(
+                        pty_track_id.as_str(),
+                        track_rect,
+                        uzor::input::Sense::CLICK,
+                    );
                 } else {
                     result.agent_leaf_scrollbar_rects.entry(leaf_id).or_insert((None, None));
                 }
@@ -5609,6 +5653,23 @@ fn render_agents_chat_leaf(
             result.agent_chat_scrollbar_handle_rect = Some(handle_rect);
             result.agent_chat_scrollbar_track_rect = Some(track_rect);
         }
+        // Register chat leaf scrollbar with InputCoordinator.
+        let inflated = WidgetRect::new(
+            handle_rect.x - 5.0, handle_rect.y,
+            handle_rect.width + 10.0, handle_rect.height,
+        );
+        let chat_handle_id = format!("agent:leaf:{}:scrollbar_handle", leaf_id.0);
+        input_coordinator.register(
+            chat_handle_id.as_str(),
+            inflated,
+            uzor::input::Sense::DRAG,
+        );
+        let chat_track_id = format!("agent:leaf:{}:scrollbar_track", leaf_id.0);
+        input_coordinator.register(
+            chat_track_id.as_str(),
+            track_rect,
+            uzor::input::Sense::CLICK,
+        );
     } else {
         result.agent_leaf_scrollbar_rects.entry(leaf_id).or_insert((None, None));
     }
