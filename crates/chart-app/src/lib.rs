@@ -6771,6 +6771,29 @@ impl ChartApp {
             );
         }
 
+        // Register panel overlay zones (color tag + gear) on InputCoordinator
+        // so on_click routes through process_click → dispatch_panel_click.
+        for (panel_id, _leaf_id, zones) in &sidebar_result.panel_overlay_zones {
+            let [cx, cy, cw, ch] = zones.color_tag_rect;
+            if cw > 0.0 && ch > 0.0 {
+                self.input_coordinator.borrow_mut().register_on_layer(
+                    format!("panel_overlay:{}:color_tag", panel_id),
+                    uzor::types::Rect::new(cx, cy, cw, ch),
+                    uzor::input::Sense::CLICK,
+                    &uzor::input::LayerId::new("toolbar"),
+                );
+            }
+            let [dx, dy, dw, dh] = zones.dots_rect;
+            if dw > 0.0 && dh > 0.0 {
+                self.input_coordinator.borrow_mut().register_on_layer(
+                    format!("panel_overlay:{}:gear", panel_id),
+                    uzor::types::Rect::new(dx, dy, dw, dh),
+                    uzor::input::Sense::CLICK,
+                    &uzor::input::LayerId::new("toolbar"),
+                );
+            }
+        }
+
         self.last_sidebar_result = Some(sidebar_result);
     }
 

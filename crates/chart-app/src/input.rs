@@ -315,37 +315,7 @@ impl ChartApp {
     /// 1. `input_coordinator.process_click()` — modals, toolbars
     /// 2. Chart-canvas hit testing (crosshair, primitives, zoom)
     pub fn on_click(&mut self, x: f64, y: f64) {
-        // 0. Check panel overlay zones (free-slot leaf overlay tabs) — manual hit-testing,
-        //    not registered with input_coordinator, so must be checked before it.
-        {
-            let overlay_zones: Vec<(u64, uzor::panels::LeafId, zengeld_chart::LeafTabHitZones)> = self
-                .last_sidebar_result
-                .as_ref()
-                .map(|r| r.panel_overlay_zones.clone())
-                .unwrap_or_default();
-            for (panel_id, _leaf_id, zones) in &overlay_zones {
-                if point_in_rect(x, y, zones.color_tag_rect) {
-                    // Open SyncColorGrid for this panel.
-                    self.panel_app.sync_color_grid.open_for_panel(
-                        *panel_id,
-                        zones.color_tag_rect[0],
-                        zones.color_tag_rect[1] + zones.color_tag_rect[3],
-                        self.width as f64,
-                        self.height as f64,
-                    );
-                    eprintln!("[ChartApp] panel overlay: open sync color grid for panel {}", panel_id);
-                    return;
-                }
-                if point_in_rect(x, y, zones.dots_rect) {
-                    // Open the TagsNTabs modal (same as chart tab gear clicks).
-                    self.panel_app.open_tags_tabs();
-                    eprintln!("[ChartApp] panel overlay: opened TagsNTabs for panel {}", panel_id);
-                    return;
-                }
-            }
-        }
-
-        // 1. Check the input coordinator (modals, toolbars, dropdowns).
+        // 1. Check the input coordinator (modals, toolbars, dropdowns, panel overlays).
         // This MUST come before the drawing tool guard so toolbar clicks still work.
         // Drop the RefMut borrow before calling dispatch_panel_click (which needs &mut self).
         let clicked_widget_id = self.input_coordinator.borrow_mut().process_click(x, y)
@@ -13665,6 +13635,37 @@ impl ChartApp {
                 self.on_context_menu_action(action);
                 return;
             }
+        }
+
+        // === Panel overlay zones (free-slot leaf color tag / gear) ===
+        if let Some(rest) = widget_id.strip_prefix("panel_overlay:") {
+            if let Some(colon) = rest.rfind(':') {
+                let panel_id_str = &rest[..colon];
+                let action = &rest[colon + 1..];
+                if let Ok(panel_id) = panel_id_str.parse::<u64>() {
+                    match action {
+                        "color_tag" => {
+                            if let Some(zones) = self.last_sidebar_result.as_ref()
+                                .and_then(|sr| sr.panel_overlay_zones.iter().find(|(pid, _, _)| *pid == panel_id))
+                                .map(|(_, _, z)| z.clone())
+                            {
+                                self.panel_app.sync_color_grid.open_for_panel(
+                                    panel_id,
+                                    zones.color_tag_rect[0],
+                                    zones.color_tag_rect[1] + zones.color_tag_rect[3],
+                                    self.width as f64,
+                                    self.height as f64,
+                                );
+                            }
+                        }
+                        "gear" => {
+                            self.panel_app.open_tags_tabs();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return;
         }
 
         // === Overlay tab clicks — gear menu, color tag, body ===
