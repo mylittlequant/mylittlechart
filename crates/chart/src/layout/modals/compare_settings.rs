@@ -149,6 +149,12 @@ pub fn render_compare_settings_modal(
     // Header
     // -------------------------------------------------------------------------
     draw_header(ctx, modal_x, modal_y, MODAL_W, HEADER_H, toolbar_theme, input_coordinator, &layer_id, &mut result);
+    input_coordinator.register_on_layer(
+        "compare_settings:header",
+        result.header_rect,
+        Sense::DRAG,
+        &layer_id,
+    );
 
     // -------------------------------------------------------------------------
     // Tab bar

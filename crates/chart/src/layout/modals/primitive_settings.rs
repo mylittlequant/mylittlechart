@@ -322,6 +322,12 @@ pub fn render_primitive_settings_modal(
     // === HEADER ===
     let header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
     result.header_rect = header_rect;
+    input_coordinator.register_on_layer(
+        "prim_settings:header",
+        header_rect,
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
 
     // Title (left aligned)
     ctx.set_font("13px sans-serif");

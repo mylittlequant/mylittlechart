@@ -182,6 +182,12 @@ pub fn render_watchlist_modal(
 
     let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
     result.header_rect = header_rect;
+    input_coordinator.register_on_layer(
+        "watchlist_modal:header",
+        uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
 
     // Header background
     ctx.set_fill_color(&frame_theme.toolbar_bg);
@@ -1148,6 +1154,12 @@ pub fn render_wl_group_name_input(
     // Header
     let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
     result.header_rect = header_rect;
+    input_coordinator.register_on_layer(
+        "wl_group_name:header",
+        uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
 
     let title = match state.mode {
         WatchlistGroupNameMode::CreateNew => "New Watchlist",

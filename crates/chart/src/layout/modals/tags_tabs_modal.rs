@@ -119,6 +119,14 @@ pub fn render_tags_tabs_modal(
     // =========================================================================
     let layer_id = ZLayer::Modal.push_named(input_coordinator, "tags_tabs");
 
+    // Register header drag zone
+    input_coordinator.register_on_layer(
+        "tags_tabs:header",
+        WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT),
+        Sense::DRAG,
+        &layer_id,
+    );
+
     // Register modal background as click absorber
     input_coordinator.register_on_layer(
         "tags_tabs:modal_bg",

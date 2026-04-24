@@ -217,6 +217,14 @@ pub fn render_settings_modal(
     // === InputCoordinator Integration ===
     let layer_id = ZLayer::Modal.push_named(input_coordinator, "chart_settings");
 
+    // Register header drag zone
+    input_coordinator.register_on_layer(
+        "chart_settings:header",
+        uzor::types::Rect::new(modal_x, modal_y, modal_width, header_height),
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
+
     // Register modal background catch-all
     input_coordinator.register_on_layer(
         "chart_settings:modal_bg",

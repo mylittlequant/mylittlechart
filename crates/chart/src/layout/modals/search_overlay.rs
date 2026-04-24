@@ -87,6 +87,12 @@ pub fn render_search_overlay(
     render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
 
     result.header_rect = Some(WidgetRect::new(modal_x, modal_y, modal_width, header_height));
+    input_coordinator.register_on_layer(
+        "search_modal:header",
+        uzor::types::Rect::new(modal_x, modal_y, modal_width, header_height),
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
 
     ctx.set_font("13px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);

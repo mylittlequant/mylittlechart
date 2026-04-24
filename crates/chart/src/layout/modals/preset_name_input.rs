@@ -92,6 +92,12 @@ pub fn render_preset_name_input(
     // Header
     let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
     result.header_rect = header_rect;
+    input_coordinator.register_on_layer(
+        "preset_name:header",
+        header_rect,
+        uzor::input::Sense::DRAG,
+        &layer_id,
+    );
 
     let title = match state.mode {
         PresetNameInputMode::SaveAs => "Save As",

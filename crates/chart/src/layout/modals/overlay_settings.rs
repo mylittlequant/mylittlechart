@@ -349,6 +349,14 @@ pub fn render_overlay_settings_modal(
         &layer_id,
     );
 
+    // Register header drag zone
+    input_coordinator.register_on_layer(
+        "overlay_settings:header",
+        WidgetRect::new(modal_x, modal_y, modal_width, header_height),
+        Sense::DRAG,
+        &layer_id,
+    );
+
     // =========================================================================
     // Modal frame
     // =========================================================================

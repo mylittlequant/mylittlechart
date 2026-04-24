@@ -250,7 +250,7 @@ pub fn render_alert_settings_modal(
     input_coordinator.register_on_layer(
         "alert_set:header",
         header_rect,
-        Sense::CLICK,
+        Sense::DRAG,
         &layer_id,
     );
 

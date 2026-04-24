@@ -1480,89 +1480,100 @@ impl ChartApp {
             }
         }
 
-        // Check if drag starts on a modal title bar — if so, start modal drag
-        // instead of blocking. This must be checked BEFORE the modal guard.
+        // Modal header drags — dispatched via InputCoordinator registration.
+        // Each modal registers its header rect with Sense::DRAG during render.
+        if let Some(wid) = self.input_coordinator.borrow_mut().process_drag_start(x, y) {
+            let id = wid.0.clone();
+            if id.ends_with(":header") {
+                let prefix = &id[..id.len() - 7];
+                let started = match prefix {
+                    "prim_settings" => {
+                        if let Some(ref ps) = self.frame_result.as_ref().and_then(|r| r.primitive_settings.as_ref()) {
+                            self.panel_app.primitive_settings_state.start_drag(x, y, ps.header_rect.x, ps.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "chart_settings" => {
+                        if let Some(ref cs) = self.frame_result.as_ref().and_then(|r| r.chart_settings.as_ref()) {
+                            self.panel_app.chart_settings_state.start_drag(x, y, cs.header_rect.x, cs.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "user_settings" => {
+                        if let Some(ref us) = self.frame_result.as_ref().and_then(|r| r.user_settings.as_ref()) {
+                            self.panel_app.user_settings_state.start_drag(x, y, us.header_rect.x, us.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "overlay_settings" => {
+                        if let Some(ref os) = self.frame_result.as_ref().and_then(|r| r.overlay_settings.as_ref()) {
+                            self.panel_app.overlay_settings_state.start_drag(x, y, os.header_rect.x, os.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "tags_tabs" => {
+                        if let Some(ref tt) = self.frame_result.as_ref().and_then(|r| r.tags_tabs.as_ref()) {
+                            self.panel_app.tags_tabs_state.start_drag(x, y, tt.header_rect.x, tt.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "ind_settings" => {
+                        if let Some(ref is) = self.frame_result.as_ref().and_then(|r| r.indicator_settings.as_ref()) {
+                            self.panel_app.indicator_settings_state.start_drag(x, y, is.header_rect.x, is.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "alert_settings" | "alert_set" => {
+                        if let Some(ref ar) = self.frame_result.as_ref().and_then(|r| r.alert_settings.as_ref()) {
+                            self.panel_app.alert_settings_state.start_drag(x, y, ar.header_rect.x, ar.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "compare_settings" => {
+                        if let Some(ref cs) = self.frame_result.as_ref().and_then(|r| r.compare_settings.as_ref()) {
+                            self.panel_app.compare_settings_state.start_drag(x, y, cs.header_rect.x, cs.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "preset_name" => {
+                        if let Some(ref pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
+                            self.panel_app.preset_name_input.start_drag(x, y, pni.modal_rect.x, pni.modal_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "chart_browser" => {
+                        if let Some(ref br) = self.frame_result.as_ref().and_then(|r| r.chart_browser.as_ref()) {
+                            self.panel_app.chart_browser.start_drag(x, y, br.modal_rect.x, br.modal_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "wl_group_name" => {
+                        if let Some(ref gni) = self.last_wl_group_name_result {
+                            self.wl_group_name_input.start_drag(x, y, gni.modal_rect.x, gni.modal_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "watchlist_modal" => {
+                        if let Some(ref wl) = self.last_watchlist_modal_result {
+                            self.watchlist_modal.start_drag(x, y, wl.modal_rect.x, wl.modal_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "search_modal" => {
+                        if let Some(ref smr) = self.search_modal_result {
+                            self.modal_state.start_drag(x, y, smr.modal_rect.x, smr.modal_rect.y);
+                            true
+                        } else { false }
+                    }
+                    _ => false,
+                };
+                if started {
+                    return false;
+                }
+            }
+        }
+
         if let Some(result) = &self.frame_result {
-            // Primitive settings modal header
-            if let Some(ref ps) = result.primitive_settings {
-                if ps.header_rect.contains(x, y) && self.panel_app.primitive_settings_state.is_open() {
-                    let modal_x = ps.header_rect.x;
-                    let modal_y = ps.header_rect.y;
-                    self.panel_app.primitive_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] prim_settings modal drag started");
-                    return false;
-                }
-            }
-            // Chart settings modal header
-            if let Some(ref cs) = result.chart_settings {
-                if cs.header_rect.contains(x, y) && self.panel_app.chart_settings_state.is_open {
-                    let modal_x = cs.header_rect.x;
-                    let modal_y = cs.header_rect.y;
-                    self.panel_app.chart_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] chart_settings modal drag started");
-                    return false;
-                }
-            }
-            // User settings modal header
-            if let Some(ref us) = result.user_settings {
-                if us.header_rect.contains(x, y) && self.panel_app.user_settings_state.is_open {
-                    let modal_x = us.header_rect.x;
-                    let modal_y = us.header_rect.y;
-                    self.panel_app.user_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] user_settings modal drag started");
-                    return false;
-                }
-            }
-            // Overlay settings modal header
-            if let Some(ref os) = result.overlay_settings {
-                if os.header_rect.contains(x, y) && self.panel_app.overlay_settings_state.is_open {
-                    let modal_x = os.header_rect.x;
-                    let modal_y = os.header_rect.y;
-                    self.panel_app.overlay_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] overlay_settings modal drag started");
-                    return false;
-                }
-            }
-            // Tags & Tabs modal header
-            if let Some(ref tt) = result.tags_tabs {
-                if tt.header_rect.contains(x, y) && self.panel_app.tags_tabs_state.is_open {
-                    let modal_x = tt.header_rect.x;
-                    let modal_y = tt.header_rect.y;
-                    self.panel_app.tags_tabs_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] tags_tabs modal drag started");
-                    return false;
-                }
-            }
-            // Indicator settings modal header
-            if let Some(ref is) = result.indicator_settings {
-                if is.header_rect.contains(x, y) && self.panel_app.indicator_settings_state.is_open() {
-                    let modal_x = is.header_rect.x;
-                    let modal_y = is.header_rect.y;
-                    self.panel_app.indicator_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] ind_settings modal drag started");
-                    return false;
-                }
-            }
-            // Alert settings modal header
-            if let Some(ref as_result) = result.alert_settings {
-                if as_result.header_rect.contains(x, y) && self.panel_app.alert_settings_state.is_open() {
-                    let modal_x = as_result.header_rect.x;
-                    let modal_y = as_result.header_rect.y;
-                    self.panel_app.alert_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] alert_settings modal drag started");
-                    return false;
-                }
-            }
-            // Compare settings modal header
-            if let Some(ref cs_result) = result.compare_settings {
-                if cs_result.header_rect.contains(x, y) && self.panel_app.compare_settings_state.is_open() {
-                    let modal_x = cs_result.header_rect.x;
-                    let modal_y = cs_result.header_rect.y;
-                    self.panel_app.compare_settings_state.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] compare_settings modal drag started");
-                    return false;
-                }
-            }
             // Compare settings slider drag start
             if self.panel_app.compare_settings_state.is_open() {
                 if let Some(ref cs_result) = result.compare_settings {
@@ -1761,16 +1772,6 @@ impl ChartApp {
                     return false;
                 }
             }
-            // Preset name input modal header
-            if let Some(ref pni) = result.preset_name_input {
-                if pni.header_rect.contains(x, y) && self.panel_app.preset_name_input.is_open {
-                    let modal_x = pni.modal_rect.x;
-                    let modal_y = pni.modal_rect.y;
-                    self.panel_app.preset_name_input.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] preset_name_input modal drag started");
-                    return false;
-                }
-            }
             // Chart browser — text select drag on the search input field
             if let Some(ref br) = result.chart_browser {
                 if br.search_input_rect.contains(x, y) && self.panel_app.chart_browser.is_open {
@@ -1782,16 +1783,6 @@ impl ChartApp {
                     self.panel_app.chart_browser.search_editing.selection_start = Some(new_cursor);
                     self.panel_app.chart_browser.search_text_select_dragging = true;
                     eprintln!("[ChartApp] chart_browser search text select drag started at char {}", new_cursor);
-                    return false;
-                }
-            }
-            // Chart browser modal header
-            if let Some(ref br) = result.chart_browser {
-                if br.header_rect.contains(x, y) && self.panel_app.chart_browser.is_open {
-                    let modal_x = br.modal_rect.x;
-                    let modal_y = br.modal_rect.y;
-                    self.panel_app.chart_browser.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] chart_browser modal drag started");
                     return false;
                 }
             }
@@ -1894,19 +1885,6 @@ impl ChartApp {
             }
         }
 
-        // Watchlist group name input modal header drag (on top of watchlist modal).
-        if self.wl_group_name_input.is_open() {
-            if let Some(ref gni) = self.last_wl_group_name_result {
-                if gni.header_rect.contains(x, y) {
-                    let modal_x = gni.modal_rect.x;
-                    let modal_y = gni.modal_rect.y;
-                    self.wl_group_name_input.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] wl_group_name_input drag started");
-                    return false;
-                }
-            }
-        }
-
         // Watchlist modal — text select drag on the search input field (Overview tab only).
         if self.watchlist_modal.is_open() {
             use zengeld_chart::ui::modal_settings::WatchlistModalTab;
@@ -1927,16 +1905,9 @@ impl ChartApp {
             }
         }
 
-        // Watchlist modal header drag.
+        // Watchlist modal item row drag — begin drag-to-reorder.
         if self.watchlist_modal.is_open() {
             if let Some(ref wl) = self.last_watchlist_modal_result {
-                if wl.header_rect.contains(x, y) {
-                    let modal_x = wl.modal_rect.x;
-                    let modal_y = wl.modal_rect.y;
-                    self.watchlist_modal.start_drag(x, y, modal_x, modal_y);
-                    eprintln!("[ChartApp] watchlist_modal drag started");
-                    return false;
-                }
                 // Watchlist modal item row drag — begin drag-to-reorder.
                 // Guard: if the pointer is over a delete button, don't start drag — let it be a click.
                 // Check hovered widget AND check delete_btn_rects directly (hovered_widget can lag).
@@ -1988,21 +1959,6 @@ impl ChartApp {
                 }
             }
         }
-        // Search overlay modal (symbol / indicator / compare search) header drag.
-        if self.modal_state.current.is_search_overlay() {
-            if let Some(ref smr) = self.search_modal_result {
-                if let Some(ref hdr) = smr.header_rect {
-                    if hdr.contains(x, y) {
-                        let modal_x = smr.modal_rect.x;
-                        let modal_y = smr.modal_rect.y;
-                        self.modal_state.start_drag(x, y, modal_x, modal_y);
-                        eprintln!("[ChartApp] search_modal modal drag started");
-                        return false;
-                    }
-                }
-            }
-        }
-
         // === Floating inline bar drag start ===
         // Only drag by the name label — other items are clickable buttons.
         if !self.panel_app.toolbar_state.floating_inline_bar.dragging {
