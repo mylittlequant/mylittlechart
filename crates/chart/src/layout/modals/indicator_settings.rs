@@ -208,7 +208,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:tab:{}", tab.id()),
             uzor::types::Rect::new(sidebar_x, tab_y, sidebar_width, tab_button_height),
-            uzor::input::Sense::CLICK,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
             &layer_id,
         );
     }
@@ -1480,7 +1480,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:footer:{}", btn_id),
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::Sense::CLICK,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
             &layer_id,
         );
     }
@@ -1490,7 +1490,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:item:{}", item_id),
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::Sense::CLICK,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
             &layer_id,
         );
     }

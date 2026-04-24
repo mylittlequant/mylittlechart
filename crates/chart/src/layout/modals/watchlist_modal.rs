@@ -797,7 +797,7 @@ fn render_overview_tab(
         input_coordinator.register_on_layer(
             item_id.as_str(),
             uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            uzor::input::Sense::CLICK_AND_DRAG,
+            uzor::input::Sense::CLICK_AND_DRAG | uzor::input::Sense::HOVER,
             layer_id,
         );
     }

@@ -1942,7 +1942,7 @@ pub fn render_primitive_settings_modal(
         let sense = if slider_field_ids.contains(item_id.as_str()) {
             uzor::input::Sense::DRAG
         } else {
-            uzor::input::Sense::CLICK
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER
         };
 
         input_coordinator.register_on_layer(

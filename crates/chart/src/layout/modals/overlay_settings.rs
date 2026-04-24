@@ -136,7 +136,7 @@ fn render_tree_nodes(
         input_coordinator.register_on_layer(
             widget_id.as_str(),
             WidgetRect::new(content_left, *row_y, modal_width - modal_padding * 2.0, row_height),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
@@ -159,7 +159,7 @@ fn render_tree_nodes(
                 let wid = format!("overlay_settings:eliminate:{}", l.id.0);
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
 
             // Button 2: Hide/Show [EyeOff/Eye icon] — only if >1 visible or already hidden
@@ -181,7 +181,7 @@ fn render_tree_nodes(
                 };
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
 
             // Button 1 (leftmost): Expand/Suppress [Collapse/Expand icon] — only if not hidden
@@ -199,7 +199,7 @@ fn render_tree_nodes(
                 let wid = format!("overlay_settings:expand:{}", l.id.0);
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
         }
 
@@ -425,7 +425,7 @@ pub fn render_overlay_settings_modal(
         input_coordinator.register_on_layer(
             wid.as_str(),
             tab_rect,
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             &layer_id,
         );
 
@@ -473,7 +473,7 @@ pub fn render_overlay_settings_modal(
             let root_wid = format!("overlay_settings:select:{}", root.id.0);
             let root_rect = WidgetRect::new(content_left, row_y, modal_width - modal_padding * 2.0, row_height);
             result.content_items.push((root_wid.clone(), root_rect));
-            input_coordinator.register_on_layer(root_wid.as_str(), root_rect, Sense::CLICK, &layer_id);
+            input_coordinator.register_on_layer(root_wid.as_str(), root_rect, Sense::CLICK | Sense::HOVER, &layer_id);
             row_y += row_height + row_gap;
 
             // Recursive tree rendering
@@ -544,7 +544,7 @@ pub fn render_overlay_settings_modal(
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
-                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK, &layer_id);
+                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
                 }
 
                 row_y += row_height + row_gap;
@@ -609,7 +609,7 @@ pub fn render_overlay_settings_modal(
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
-                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK, &layer_id);
+                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
 
                     row_y += row_height + row_gap;
                 }
@@ -706,7 +706,7 @@ pub fn render_overlay_settings_modal(
                     // Register clickable zone
                     let r = WidgetRect::new(mx, my, mw, mh);
                     result.content_items.push((wid_hover.clone(), r));
-                    input_coordinator.register_on_layer(wid_hover.as_str(), r, Sense::CLICK, &layer_id);
+                    input_coordinator.register_on_layer(wid_hover.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
                 }
 
                 // Branch border overlays
@@ -808,7 +808,7 @@ pub fn render_overlay_settings_modal(
                             let wid = format!("overlay_settings:expand:{}", selected_id);
                             let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                             result.content_items.push((wid.clone(), r));
-                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, &layer_id);
+                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
                             btn_x += btn_w + btn_gap;
                         }
 
@@ -835,7 +835,7 @@ pub fn render_overlay_settings_modal(
                             };
                             let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                             result.content_items.push((wid.clone(), r));
-                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, &layer_id);
+                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
                             btn_x += btn_w + btn_gap;
                         }
 
@@ -857,7 +857,7 @@ pub fn render_overlay_settings_modal(
                             let wid = format!("overlay_settings:eliminate:{}", selected_id);
                             let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                             result.content_items.push((wid.clone(), r));
-                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, &layer_id);
+                            input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, &layer_id);
                         }
                     }
                 } else {

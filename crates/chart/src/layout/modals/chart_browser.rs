@@ -449,7 +449,7 @@ pub fn render_chart_browser(
         input_coordinator.register_on_layer(
             item_id.as_str(),
             uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            uzor::input::Sense::CLICK,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
             &layer_id,
         );
 

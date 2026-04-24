@@ -4615,209 +4615,58 @@ impl ChartApp {
             }
         }
 
-        // --- Update modal hover states from frame_result hit zones ---
-        // Always update hover highlights for modals regardless of crosshair visibility.
-        let has_primitive_settings = self.panel_app.primitive_settings_state.is_open();
-        let has_chart_settings = self.panel_app.chart_settings_state.is_open;
-        let has_indicator_settings = self.panel_app.indicator_settings_state.is_open();
+        // --- Update modal hover states via InputCoordinator (Phase 4.1) ---
+        // Clear all modal hovered_item_id fields; re-set below if coordinator reports a hover.
+        self.panel_app.primitive_settings_state.hovered_item_id = None;
+        self.panel_app.chart_settings_state.hovered_item_id = None;
+        self.panel_app.chart_settings_state.hovered_footer_button = None;
+        self.panel_app.indicator_settings_state.hovered_item_id = None;
+        self.panel_app.indicator_settings_state.hovered_footer_button = None;
+        self.panel_app.user_settings_state.hovered_item_id = None;
+        self.panel_app.chart_browser.hovered_preset_id = None;
+        self.watchlist_modal.hovered_item_id = None;
+        self.panel_app.overlay_settings_state.hovered_item_id = None;
 
-        if let Some(result) = &self.frame_result {
-            // Primitive settings modal — update hover highlight
-            if has_primitive_settings {
-                if let Some(ref ps) = result.primitive_settings {
-                    let mut found = false;
-                    for (id, rect) in &ps.content_items {
-                        if rect.contains(x, y) {
-                            self.panel_app.primitive_settings_state.hovered_item_id = Some(id.clone());
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found && ps.modal_rect.contains(x, y) {
-                        self.panel_app.primitive_settings_state.hovered_item_id = None;
-                    }
-                }
-            }
+        {
+            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            if let Some(ref id_str) = hovered {
+                let id = id_str.as_str();
 
-            // Chart settings modal — update hover highlight
-            if has_chart_settings {
-                if let Some(ref cs) = result.chart_settings {
-                    let in_modal = cs.modal_rect.contains(x, y);
-                    let mut found = false;
-                    let mut found_footer = false;
-                    // Footer buttons checked first (includes dropdown items that may extend
-                    // outside the modal rect when the template dropdown is open).
-                    for (id, rect) in &cs.footer_buttons {
-                        if rect.contains(x, y) {
-                            self.panel_app.chart_settings_state.hovered_footer_button = Some(id.clone());
-                            found_footer = true;
-                            break;
-                        }
-                    }
-                    if in_modal {
-                        for (id, rect) in &cs.tab_rects {
-                            if rect.contains(x, y) {
-                                self.panel_app.chart_settings_state.hovered_item_id = Some(id.clone());
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            for (id, rect) in &cs.content_items {
-                                if rect.contains(x, y) {
-                                    let hover_id = if id.starts_with("dropdown_option:") {
-                                        id.split(':').nth(2).unwrap_or(id.as_str()).to_string()
-                                    } else {
-                                        id.clone()
-                                    };
-                                    self.panel_app.chart_settings_state.hovered_item_id = Some(hover_id);
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if !found {
-                            self.panel_app.chart_settings_state.hovered_item_id = None;
-                        }
-                    }
-                    if !found_footer {
-                        self.panel_app.chart_settings_state.hovered_footer_button = None;
-                    }
-                }
-            }
-
-            // Indicator settings modal — update hover highlight
-            if has_indicator_settings {
-                if let Some(ref is) = result.indicator_settings {
-                    let in_modal = is.modal_rect.contains(x, y);
-                    let mut found = false;
-                    let mut found_footer = false;
-                    // Footer buttons checked first (includes dropdown items outside modal rect)
-                    for (id, rect) in &is.footer_buttons {
-                        if rect.contains(x, y) {
-                            self.panel_app.indicator_settings_state.hovered_footer_button = Some(id.clone());
-                            found_footer = true;
-                            break;
-                        }
-                    }
-                    if in_modal {
-                        for (id, rect) in &is.tab_rects {
-                            if rect.contains(x, y) {
-                                self.panel_app.indicator_settings_state.hovered_item_id = Some(id.clone());
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            for (id, rect) in &is.content_items {
-                                if rect.contains(x, y) {
-                                    let field_name = if let Some(s) = id.strip_prefix("input:") {
-                                        s.to_string()
-                                    } else if let Some(s) = id.strip_prefix("color:") {
-                                        s.to_string()
-                                    } else {
-                                        id.clone()
-                                    };
-                                    self.panel_app.indicator_settings_state.hovered_item_id = Some(field_name);
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if !found {
-                            self.panel_app.indicator_settings_state.hovered_item_id = None;
-                        }
-                    }
-                    if !found_footer {
-                        self.panel_app.indicator_settings_state.hovered_footer_button = None;
-                    }
-                }
-            }
-        }
-
-        // User settings modal — update hover highlight for content items.
-        if self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.show_profile_manager {
-            if let Some(ref result) = self.frame_result {
-                if let Some(ref us) = result.user_settings {
-                    if us.modal_rect.contains(x, y) || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.show_profile_manager {
-                        let mut found = false;
-                        for (id, rect) in &us.content_items {
-                            if rect.contains(x, y) {
-                                self.panel_app.user_settings_state.hovered_item_id = Some(id.clone());
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            self.panel_app.user_settings_state.hovered_item_id = None;
-                        }
+                if let Some(local) = id.strip_prefix("prim_settings:item:") {
+                    self.panel_app.primitive_settings_state.hovered_item_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("chart_settings:item:") {
+                    // dropdown_option:{field}:{item_id} → extract item_id (3rd segment)
+                    let actual = if let Some(rest) = local.strip_prefix("dropdown_option:") {
+                        rest.split_once(':').map(|(_, r)| r.to_string()).unwrap_or_else(|| local.to_string())
                     } else {
-                        self.panel_app.user_settings_state.hovered_item_id = None;
-                    }
-                }
-            }
-        } else {
-            self.panel_app.user_settings_state.hovered_item_id = None;
-        }
-
-        // Chart browser modal — update hovered preset for icon visibility
-        if self.panel_app.chart_browser.is_open {
-            if let Some(ref result) = self.frame_result {
-                if let Some(ref br) = result.chart_browser {
-                    if br.list_viewport_rect.contains(x, y) {
-                        let mut found_id: Option<String> = None;
-                        for (preset_id, item_rect, _, _) in &br.item_rects {
-                            if item_rect.contains(x, y) {
-                                found_id = Some(preset_id.clone());
-                                break;
-                            }
-                        }
-                        self.panel_app.chart_browser.hovered_preset_id = found_id;
+                        local.to_string()
+                    };
+                    self.panel_app.chart_settings_state.hovered_item_id = Some(actual);
+                } else if let Some(local) = id.strip_prefix("chart_settings:tab:") {
+                    self.panel_app.chart_settings_state.hovered_item_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("chart_settings:footer:") {
+                    self.panel_app.chart_settings_state.hovered_footer_button = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("ind_settings:item:") {
+                    let actual = if let Some(r) = local.strip_prefix("input:") {
+                        r.to_string()
+                    } else if let Some(r) = local.strip_prefix("color:") {
+                        r.to_string()
                     } else {
-                        self.panel_app.chart_browser.hovered_preset_id = None;
-                    }
-                }
-            }
-        }
-
-        // Watchlist modal — update hovered item for row highlight
-        if self.watchlist_modal.is_open() {
-            if let Some(ref wl) = self.last_watchlist_modal_result {
-                if wl.list_viewport_rect.contains(x, y) {
-                    let mut found_id: Option<String> = None;
-                    for (symbol, item_rect) in &wl.item_rects {
-                        if item_rect.contains(x, y) {
-                            found_id = Some(symbol.clone());
-                            break;
-                        }
-                    }
-                    self.watchlist_modal.hovered_item_id = found_id;
-                } else {
-                    self.watchlist_modal.hovered_item_id = None;
-                }
-            }
-        }
-
-        // Tags & Tabs modal — update hover highlight for content items.
-        // Uses overlay_settings_state.hovered_item_id so the MAP section
-        // can respond to hover on minimap leaves and action buttons.
-        if self.panel_app.tags_tabs_state.is_open {
-            if let Some(ref result) = self.frame_result {
-                if let Some(ref tt) = result.tags_tabs {
-                    let mut found = false;
-                    for (id, rect) in tt.content_items.iter()
-                        .chain(tt.sidebar_rects.iter())
-                        .chain(tt.sub_tab_rects.iter())
-                    {
-                        if rect.contains(x, y) {
-                            self.panel_app.overlay_settings_state.hovered_item_id = Some(id.clone());
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        self.panel_app.overlay_settings_state.hovered_item_id = None;
-                    }
+                        local.to_string()
+                    };
+                    self.panel_app.indicator_settings_state.hovered_item_id = Some(actual);
+                } else if let Some(local) = id.strip_prefix("ind_settings:tab:") {
+                    self.panel_app.indicator_settings_state.hovered_item_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("ind_settings:footer:") {
+                    self.panel_app.indicator_settings_state.hovered_footer_button = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("user_settings:") {
+                    self.panel_app.user_settings_state.hovered_item_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("chart_browser:item:") {
+                    self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
+                } else if let Some(local) = id.strip_prefix("wl_modal:item:") {
+                    self.watchlist_modal.hovered_item_id = Some(local.to_string());
+                } else if id.starts_with("tags_tabs:") || id.starts_with("overlay_settings:") {
+                    self.panel_app.overlay_settings_state.hovered_item_id = Some(id_str.clone());
                 }
             }
         }

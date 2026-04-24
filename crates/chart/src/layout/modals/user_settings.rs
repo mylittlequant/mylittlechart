@@ -380,7 +380,7 @@ fn render_general_tab(
         input_coordinator.register_on_layer(
             "user_settings:open_dashboard",
             uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
         cy += btn_h + 8.0;
@@ -405,7 +405,7 @@ fn render_general_tab(
         input_coordinator.register_on_layer(
             "user_settings:logout",
             uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
         cy += btn_h + 24.0;
@@ -438,7 +438,7 @@ fn render_general_tab(
         input_coordinator.register_on_layer(
             "user_settings:sign_in",
             uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
         cy += btn_h + 24.0;
@@ -491,7 +491,7 @@ fn render_general_tab(
             input_coordinator.register_on_layer(
                 hit_id.as_str(),
                 uzor::types::Rect::new(*rx, *ry, *rw, *rh),
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
         }
@@ -532,7 +532,7 @@ fn render_general_tab(
     input_coordinator.register_on_layer(
         "user_settings:show_wizard",
         uzor::types::Rect::new(x, cy, btn_w, btn_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
     cy += btn_h + 8.0;
@@ -757,7 +757,7 @@ fn render_profile_section(
             input_coordinator.register_on_layer(
                 "user_settings:profile_rename_confirm",
                 uzor::types::Rect::new(confirm_btn_x, btn_y, small_btn_w, btn_h),
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
 
@@ -778,7 +778,7 @@ fn render_profile_section(
             input_coordinator.register_on_layer(
                 "user_settings:profile_rename_cancel",
                 uzor::types::Rect::new(cancel_btn_x, btn_y, small_btn_w, btn_h),
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
         } else {
@@ -823,7 +823,7 @@ fn render_profile_section(
                 input_coordinator.register_on_layer(
                     rename_hit_id.as_str(),
                     uzor::types::Rect::new(rename_btn_x, btn_y, small_btn_w, btn_h),
-                    Sense::CLICK,
+                    Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
             }
@@ -850,7 +850,7 @@ fn render_profile_section(
                 input_coordinator.register_on_layer(
                     avatar_hit_id.as_str(),
                     uzor::types::Rect::new(avatar_btn_x, btn_y, small_btn_w, btn_h),
-                    Sense::CLICK,
+                    Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
             }
@@ -877,7 +877,7 @@ fn render_profile_section(
                 input_coordinator.register_on_layer(
                     delete_hit_id.as_str(),
                     uzor::types::Rect::new(delete_btn_x, btn_y, small_btn_w, btn_h),
-                    Sense::CLICK,
+                    Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
 
@@ -888,7 +888,7 @@ fn render_profile_section(
                 input_coordinator.register_on_layer(
                     switch_hit_id.as_str(),
                     uzor::types::Rect::new(x, cy, row_click_w, profile_row_h),
-                    Sense::CLICK,
+                    Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
             }
@@ -937,7 +937,7 @@ fn render_profile_section(
                 input_coordinator.register_on_layer(
                     hit_id.as_str(),
                     uzor::types::Rect::new(cell_x, picker_y, cell_size, picker_h),
-                    Sense::CLICK,
+                    Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
             }
@@ -1012,7 +1012,7 @@ fn render_profile_section(
             input_coordinator.register_on_layer(
                 "user_settings:profile_new_cancel",
                 uzor::types::Rect::new(cancel_x, cy, 24.0, input_h),
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
         }
@@ -1036,7 +1036,7 @@ fn render_profile_section(
         input_coordinator.register_on_layer(
             "user_settings:profile_new_confirm",
             uzor::types::Rect::new(x, cy, available_w, input_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
@@ -1063,7 +1063,7 @@ fn render_profile_section(
         input_coordinator.register_on_layer(
             "user_settings:profile_new",
             uzor::types::Rect::new(x, cy, new_btn_w, new_btn_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
@@ -1353,7 +1353,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             hit_id.as_str(),
             uzor::types::Rect::new(*rx, *ry, *rw, *rh),
-            uzor::input::Sense::CLICK,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
             layer_id,
         );
     }
@@ -1413,7 +1413,7 @@ fn render_performance_tab(
     input_coordinator.register_on_layer(
         "user_settings:diagnostics_toggle",
         uzor::types::Rect::new(cb_x, cb_y_offset, available_w, row_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
@@ -1461,7 +1461,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             "user_settings:data_bg_bars",
             uzor::types::Rect::new(x, cy, content_w, slider_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1499,7 +1499,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             "user_settings:data_max_bars",
             uzor::types::Rect::new(x, cy, content_w, slider_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1537,7 +1537,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             "user_settings:data_store_size_mb",
             uzor::types::Rect::new(x, cy, content_w, slider_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1575,7 +1575,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             "user_settings:data_cleanup_days",
             uzor::types::Rect::new(x, cy, content_w, slider_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
     }
@@ -1677,7 +1677,7 @@ fn render_server_tab(
     input_coordinator.register_on_layer(
         "user_settings:server_toggle",
         uzor::types::Rect::new(cb_x, cy, available_w, row_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
     cy += row_h + 8.0;
@@ -1830,7 +1830,7 @@ fn render_local_agent_keys_section(
     input_coordinator.register_on_layer(
         "user_settings:server_key_label_input",
         uzor::types::Rect::new(label_input_x, cursor_y, label_input_w, form_row_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
@@ -1860,7 +1860,7 @@ fn render_local_agent_keys_section(
     input_coordinator.register_on_layer(
         "user_settings:server_key_tier_toggle",
         uzor::types::Rect::new(tier_btn_x, cursor_y, tier_btn_w, form_row_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
@@ -1890,7 +1890,7 @@ fn render_local_agent_keys_section(
     input_coordinator.register_on_layer(
         "user_settings:server_key_create",
         uzor::types::Rect::new(create_btn_x, cursor_y, create_btn_w, form_row_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
@@ -1944,7 +1944,7 @@ fn render_local_agent_keys_section(
         input_coordinator.register_on_layer(
             "user_settings:server_key_copy_new",
             uzor::types::Rect::new(copy_x, copy_y, copy_w, row_h),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
@@ -2052,7 +2052,7 @@ fn render_local_agent_keys_section(
             input_coordinator.register_on_layer(
                 format!("user_settings:{}", del_item_id).as_str(),
                 uzor::types::Rect::new(delete_btn_x, del_btn_y, delete_btn_w, row_h),
-                Sense::CLICK,
+                Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
         }
@@ -2127,7 +2127,7 @@ fn render_disconnect_dialog(
     input_coordinator.register_on_layer(
         "user_settings:disconnect_confirm",
         uzor::types::Rect::new(x, cy, half_w, btn_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
 
@@ -2148,7 +2148,7 @@ fn render_disconnect_dialog(
     input_coordinator.register_on_layer(
         "user_settings:disconnect_cancel",
         uzor::types::Rect::new(cancel_x, cy, half_w, btn_h),
-        Sense::CLICK,
+        Sense::CLICK | Sense::HOVER,
         layer_id,
     );
     cy += btn_h;

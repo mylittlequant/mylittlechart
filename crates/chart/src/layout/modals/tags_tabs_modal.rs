@@ -236,7 +236,7 @@ pub fn render_tags_tabs_modal(
         input_coordinator.register_on_layer(
             sidebar_wid.as_str(),
             item_rect,
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             &layer_id,
         );
 
@@ -461,7 +461,7 @@ fn render_tree_nodes(
         input_coordinator.register_on_layer(
             widget_id.as_str(),
             WidgetRect::new(content_left, *row_y, modal_width - modal_padding * 2.0, row_height),
-            Sense::CLICK,
+            Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
@@ -487,7 +487,7 @@ fn render_tree_nodes(
                 draw_svg_icon(ctx, Icon::Close.svg(), icon_x, icon_y, icon_size, icon_size, icon_color);
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
 
             // Button 2: Hide/Show [EyeOff/Eye icon] — only if >1 visible or already hidden
@@ -512,7 +512,7 @@ fn render_tree_nodes(
                 draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, icon_color);
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
 
             // Button 1 (leftmost): Expand/Suppress [Collapse/Expand icon] — only if not hidden
@@ -542,7 +542,7 @@ fn render_tree_nodes(
                 draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, icon_color);
                 let r = WidgetRect::new(btn_x, btn_y, btn_size, btn_size);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
             }
         }
 
@@ -632,7 +632,7 @@ fn render_tabs_section(
         );
 
         result.sub_tab_rects.push((wid.clone(), tab_rect));
-        input_coordinator.register_on_layer(wid.as_str(), tab_rect, Sense::CLICK, layer_id);
+        input_coordinator.register_on_layer(wid.as_str(), tab_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
         tab_x += tab_w + tab_gap;
     }
@@ -706,7 +706,7 @@ fn render_tabs_section(
             let root_wid = format!("tags_tabs:select:{}", root.id.0);
             let root_rect = WidgetRect::new(content_left, row_y, content_width - MODAL_PADDING * 2.0, ROW_HEIGHT);
             result.content_items.push((root_wid.clone(), root_rect));
-            input_coordinator.register_on_layer(root_wid.as_str(), root_rect, Sense::CLICK, layer_id);
+            input_coordinator.register_on_layer(root_wid.as_str(), root_rect, Sense::CLICK | Sense::HOVER, layer_id);
             row_y += ROW_HEIGHT + ROW_GAP;
 
             // Recursive tree rendering
@@ -780,7 +780,7 @@ fn render_tabs_section(
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
-                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                 }
 
                 row_y += ROW_HEIGHT + ROW_GAP;
@@ -848,7 +848,7 @@ fn render_tabs_section(
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
-                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid_str.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
 
                     row_y += ROW_HEIGHT + ROW_GAP;
                 }
@@ -1018,7 +1018,7 @@ fn render_map_section(
             // Register clickable zone
             let r = WidgetRect::new(mx, my, mw, mh);
             result.content_items.push((wid_hover.clone(), r));
-            input_coordinator.register_on_layer(wid_hover.as_str(), r, Sense::CLICK, layer_id);
+            input_coordinator.register_on_layer(wid_hover.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
         }
 
         // Branch border overlays
@@ -1150,7 +1150,7 @@ fn render_map_section(
 
                 let r = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
                 result.content_items.push((wid.clone(), r));
-                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
 
                 row_y += 22.0;
             }
@@ -1230,7 +1230,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                     btn_x += btn_w + btn_gap;
                 }
 
@@ -1258,7 +1258,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                     btn_x += btn_w + btn_gap;
                 }
 
@@ -1282,7 +1282,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                     btn_x += btn_w + btn_gap;
                 }
 
@@ -1306,7 +1306,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                     btn_x += btn_w + btn_gap;
                 }
 
@@ -1332,7 +1332,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                 }
 
                 row_y += btn_h + btn_gap;
@@ -1370,7 +1370,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                     btn_x += btn_w + btn_gap;
                 }
 
@@ -1396,7 +1396,7 @@ fn render_map_section(
 
                     let r = WidgetRect::new(btn_x, row_y, btn_w, btn_h);
                     result.content_items.push((wid.clone(), r));
-                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(wid.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
                 }
             }
         } else {
@@ -1481,7 +1481,7 @@ fn render_tags_section(
 
         let wid = format!("tags_tabs:tags_tab:{}", id);
         result.sub_tab_rects.push((wid.clone(), tab_rect));
-        input_coordinator.register_on_layer(wid.as_str(), tab_rect, Sense::CLICK, layer_id);
+        input_coordinator.register_on_layer(wid.as_str(), tab_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
         tab_x += tab_w + tab_gap;
     }
@@ -1631,12 +1631,12 @@ fn render_tags_section(
                     ctx.fill_text("Delete", del_x + del_w / 2.0, del_y + del_h / 2.0);
                     let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
                     result.content_items.push((del_wid.clone(), del_rect));
-                    input_coordinator.register_on_layer(del_wid.as_str(), del_rect, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(del_wid.as_str(), del_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
                     // Row click → select group
                     let select_wid = format!("tags_tabs:tags:select_group:{}", gid);
                     result.content_items.push((select_wid.clone(), row_rect));
-                    input_coordinator.register_on_layer(select_wid.as_str(), row_rect, Sense::CLICK, layer_id);
+                    input_coordinator.register_on_layer(select_wid.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
                     row_y += row_h + ROW_GAP;
                 }
@@ -1729,7 +1729,7 @@ fn render_tags_section(
                         input_coordinator.register_on_layer(
                             wid.as_str(),
                             toggle_rect,
-                            Sense::CLICK,
+                            Sense::CLICK | Sense::HOVER,
                             layer_id,
                         );
 
