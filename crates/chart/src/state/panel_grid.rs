@@ -2031,6 +2031,87 @@ impl ChartPanelGrid {
             }
         }
     }
+
+    /// Update sub-pane overlay visibility + button hover for cursor at (screen_x, screen_y).
+    ///
+    /// Operates on the active window's `sub_pane_overlay_states`.
+    /// `extended` supplies the sub-pane layout rects; `overlay_results` are the
+    /// cached button rects produced by the last render frame.
+    ///
+    /// Returns `true` when the cursor is over an overlay button (caller should
+    /// suppress crosshair in that case).
+    pub fn update_sub_pane_overlay_hover(
+        &mut self,
+        screen_x: f64,
+        screen_y: f64,
+        extended: &crate::ExtendedFrameLayout,
+        overlay_results: &[crate::layout::SubPaneOverlayResult],
+    ) -> bool {
+        use crate::ui::modal_settings::SubPaneButton;
+
+        let mut hide_crosshair = false;
+        if let Some(window) = self.active_window_mut() {
+            // Hide all overlays first.
+            for state in window.sub_pane_overlay_states.iter_mut() {
+                state.visible = false;
+                state.hovered_button = None;
+                state.hovered_left_button = None;
+            }
+            // Show overlay for the pane the cursor is inside.
+            for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
+                if pane_layout.content.contains(screen_x, screen_y) {
+                    // Find the real position in window.sub_panes by instance_id.
+                    // During maximized mode, extended.sub_panes has only 1 entry
+                    // but window.sub_panes may have the pane at a different index.
+                    let real_idx = window
+                        .sub_panes
+                        .iter()
+                        .position(|p| p.instance_id == pane_layout.instance_id)
+                        .unwrap_or(layout_idx);
+                    while window.sub_pane_overlay_states.len() <= real_idx {
+                        window.sub_pane_overlay_states.push(Default::default());
+                    }
+                    window.sub_pane_overlay_states[real_idx].visible = true;
+                    // Determine which button (if any) is hovered.
+                    // overlay_results is indexed by layout position (not window.sub_panes position).
+                    if layout_idx < overlay_results.len() {
+                        let overlay = &overlay_results[layout_idx];
+                        let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::Delete)
+                        } else if overlay.hide_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::Hide)
+                        } else if overlay.move_up_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::MoveUp)
+                        } else if overlay.move_down_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::MoveDown)
+                        } else if overlay.expand_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::Expand)
+                        } else if overlay.restore_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::Restore)
+                        } else {
+                            None
+                        };
+                        let hovered_left = if overlay.left_eye_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::IndicatorEye)
+                        } else if overlay.left_alert_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::IndicatorAlert)
+                        } else if overlay.left_settings_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::IndicatorSettings)
+                        } else if overlay.left_delete_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                            Some(SubPaneButton::IndicatorDelete)
+                        } else {
+                            None
+                        };
+                        hide_crosshair = hovered.is_some() || hovered_left.is_some();
+                        window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                        window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
+                    }
+                    break; // cursor can only be in one pane
+                }
+            }
+        }
+        hide_crosshair
+    }
 }
 
 // =========================================================================
