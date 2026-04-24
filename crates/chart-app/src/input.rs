@@ -142,11 +142,6 @@ fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
 // Helpers
 // =============================================================================
 
-/// Returns `true` if the point `(px, py)` falls inside the rect `[x, y, w, h]`.
-#[inline]
-fn point_in_rect(px: f64, py: f64, r: [f64; 4]) -> bool {
-    px >= r[0] && px <= r[0] + r[2] && py >= r[1] && py <= r[1] + r[3]
-}
 
 // =============================================================================
 // ChartApp input methods
@@ -4728,33 +4723,9 @@ impl ChartApp {
     pub fn on_mouse_move(&mut self, x: f64, y: f64) {
         self.last_mouse_pos = (x, y);
 
-        // --- Update overlay tab hover state ---
-        {
-            let mut found_hover = false;
-            for (&leaf_id, zones) in &self.leaf_tab_hit_zones {
-                let [tx, ty, tw, th] = zones.tab_rect;
-                if x >= tx && x < tx + tw && y >= ty && y < ty + th {
-                    // Inside this tab — determine which sub-zone
-                    let [dx, dy, dw, dh] = zones.dots_rect;
-                    let [cx, cy, cw, ch] = zones.color_tag_rect;
-                    let zone = if x >= dx && x < dx + dw && y >= dy && y < dy + dh {
-                        zengeld_chart::LeafTabHoverZone::GearMenu
-                    } else if x >= cx && x < cx + cw && y >= cy && y < cy + ch {
-                        zengeld_chart::LeafTabHoverZone::ColorTag
-                    } else {
-                        zengeld_chart::LeafTabHoverZone::Body
-                    };
-                    self.leaf_tab_hover = zone;
-                    self.leaf_tab_hovered_leaf = Some(leaf_id);
-                    found_hover = true;
-                    break;
-                }
-            }
-            if !found_hover {
-                self.leaf_tab_hover = zengeld_chart::LeafTabHoverZone::None;
-                self.leaf_tab_hovered_leaf = None;
-            }
-        }
+        // --- Overlay tab hover state is derived from InputCoordinator below ---
+        self.leaf_tab_hover = zengeld_chart::LeafTabHoverZone::None;
+        self.leaf_tab_hovered_leaf = None;
 
         // --- Update panel overlay tab hover state (free-slot leaves) ---
         {
@@ -4832,9 +4803,19 @@ impl ChartApp {
                 self.hovered_context_menu_item_id = Some(rest.to_string());
             } else if id_str == "context_menu:bg" {
                 self.hovered_context_menu_item_id = None;
-            } else if id_str.starts_with("leaf_tab:") {
-                // Overlay tab hover is handled separately via leaf_tab_hit_zones.
-                // Registration only exists to suppress crosshair and set cursor to default.
+            } else if let Some(rest) = id_str.strip_prefix("leaf_tab:") {
+                if let Some(colon) = rest.find(':') {
+                    let leaf_id_str = &rest[..colon];
+                    let sub_zone = &rest[colon + 1..];
+                    if let Ok(lid) = leaf_id_str.parse::<u64>() {
+                        self.leaf_tab_hovered_leaf = Some(zengeld_chart::LeafId(lid));
+                        self.leaf_tab_hover = match sub_zone {
+                            "gear" => zengeld_chart::LeafTabHoverZone::GearMenu,
+                            "color_tag" => zengeld_chart::LeafTabHoverZone::ColorTag,
+                            _ => zengeld_chart::LeafTabHoverZone::Body,
+                        };
+                    }
+                }
             } else if id_str.starts_with("wl_modal:") || id_str.starts_with("wl_group_name:") {
                 self.watchlist_modal.hovered_widget = Some(id_str.to_string());
             } else if let Some(rest) = id_str.strip_prefix("ind_search:") {
@@ -13669,36 +13650,34 @@ impl ChartApp {
         }
 
         // === Overlay tab clicks — gear menu, color tag, body ===
-        if widget_id.starts_with("leaf_tab:") {
-            match self.leaf_tab_hover {
-                zengeld_chart::LeafTabHoverZone::GearMenu => {
-                    if let Some(leaf_id) = self.leaf_tab_hovered_leaf {
-                        self.panel_app.open_tags_tabs_for_leaf(leaf_id);
-                    } else {
-                        self.panel_app.open_tags_tabs();
-                    }
-                }
-                zengeld_chart::LeafTabHoverZone::ColorTag => {
-                    if let Some(leaf_id) = self.leaf_tab_hovered_leaf {
-                        if let Some(zones) = self.leaf_tab_hit_zones.get(&leaf_id).cloned() {
-                            let anchor = zones.color_tag_rect;
-                            self.panel_app.sync_color_grid.open(
-                                leaf_id,
-                                anchor[0],
-                                // Position below the color tag square
-                                anchor[1] + anchor[3],
-                                self.width as f64,
-                                self.height as f64,
-                            );
+        if let Some(rest) = widget_id.strip_prefix("leaf_tab:") {
+            if let Some(colon) = rest.find(':') {
+                let leaf_id_str = &rest[..colon];
+                let sub_zone = &rest[colon + 1..];
+                if let Ok(lid) = leaf_id_str.parse::<u64>() {
+                    let leaf_id = zengeld_chart::LeafId(lid);
+                    match sub_zone {
+                        "gear" => {
+                            self.panel_app.open_tags_tabs_for_leaf(leaf_id);
+                        }
+                        "color_tag" => {
+                            if let Some(zones) = self.leaf_tab_hit_zones.get(&leaf_id).cloned() {
+                                let anchor = zones.color_tag_rect;
+                                self.panel_app.sync_color_grid.open(
+                                    leaf_id,
+                                    anchor[0],
+                                    // Position below the color tag square
+                                    anchor[1] + anchor[3],
+                                    self.width as f64,
+                                    self.height as f64,
+                                );
+                            }
+                        }
+                        _ => {
+                            self.panel_app.panel_grid.set_active_leaf(leaf_id);
                         }
                     }
                 }
-                zengeld_chart::LeafTabHoverZone::Body => {
-                    if let Some(leaf_id) = self.leaf_tab_hovered_leaf {
-                        self.panel_app.panel_grid.set_active_leaf(leaf_id);
-                    }
-                }
-                zengeld_chart::LeafTabHoverZone::None => {}
             }
             return;
         }

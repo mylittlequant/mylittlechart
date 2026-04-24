@@ -4971,16 +4971,37 @@ impl ChartApp {
                     &leaf_tab_toolbar_theme,
                 );
                 let tab_rect = hit_zones.tab_rect;
+                let dots_rect = hit_zones.dots_rect;
+                let color_tag_rect = hit_zones.color_tag_rect;
                 out_leaf_tab_hit_zones.insert(leaf_id, hit_zones);
 
-                // Register overlay tab as a UI widget so crosshair hides and cursor is default.
+                // Register overlay tab sub-zones so crosshair hides, cursor is default,
+                // and hover state can be derived from InputCoordinator hovered_widget().
                 {
+                    use uzor::input::Sense;
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    // Body registered first — sub-zones registered after win overlaps.
                     let [rx, ry, rw, rh] = tab_rect;
                     if rw > 0.0 && rh > 0.0 {
-                        use uzor::input::Sense;
-                        self.input_coordinator.borrow_mut().register(
-                            format!("leaf_tab:{}", leaf_id.0),
+                        coord.register(
+                            format!("leaf_tab:{}:body", leaf_id.0),
                             uzor::Rect::new(rx, ry, rw, rh),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [dx, dy, dw, dh] = dots_rect;
+                    if dw > 0.0 && dh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:gear", leaf_id.0),
+                            uzor::Rect::new(dx, dy, dw, dh),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [cx, cy, cw, ch] = color_tag_rect;
+                    if cw > 0.0 && ch > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:color_tag", leaf_id.0),
+                            uzor::Rect::new(cx, cy, cw, ch),
                             Sense::CLICK,
                         );
                     }
@@ -5452,16 +5473,37 @@ impl ChartApp {
                     &leaf_tab_toolbar_theme,
                 );
                 let tab_rect = hit_zones.tab_rect;
+                let dots_rect = hit_zones.dots_rect;
+                let color_tag_rect = hit_zones.color_tag_rect;
                 out_leaf_tab_hit_zones.insert(single_leaf_id, hit_zones);
 
-                // Register overlay tab as a UI widget so crosshair hides and cursor is default.
+                // Register overlay tab sub-zones so crosshair hides, cursor is default,
+                // and hover state can be derived from InputCoordinator hovered_widget().
                 {
+                    use uzor::input::Sense;
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    // Body registered first — sub-zones registered after win overlaps.
                     let [rx, ry, rw, rh] = tab_rect;
                     if rw > 0.0 && rh > 0.0 {
-                        use uzor::input::Sense;
-                        self.input_coordinator.borrow_mut().register(
-                            format!("leaf_tab:{}", single_leaf_id.0),
+                        coord.register(
+                            format!("leaf_tab:{}:body", single_leaf_id.0),
                             uzor::Rect::new(rx, ry, rw, rh),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [dx, dy, dw, dh] = dots_rect;
+                    if dw > 0.0 && dh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:gear", single_leaf_id.0),
+                            uzor::Rect::new(dx, dy, dw, dh),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [cx, cy, cw, ch] = color_tag_rect;
+                    if cw > 0.0 && ch > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:color_tag", single_leaf_id.0),
+                            uzor::Rect::new(cx, cy, cw, ch),
                             Sense::CLICK,
                         );
                     }
