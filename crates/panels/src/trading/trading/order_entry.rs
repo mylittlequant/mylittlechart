@@ -329,9 +329,16 @@ impl TradingPanel for OrderEntryState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        // Register base body layer so the coordinator recognises this panel as hovered.
+        coordinator.register(
+            format!("{}:oe:body", slot_prefix).as_str(),
+            uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+            uzor::input::Sense::CLICK,
+        );
+
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
@@ -356,9 +363,16 @@ impl TradingPanel for OrderEntryState {
         cursor_y += OE_TITLE_HEIGHT;
 
         let half_w = w / 2.0;
+
+        // BUY toggle button.
         let buy_bg = if self.side == OrderSide::Buy { &theme.oe_buy_button } else { &theme.oe_tab_inactive };
         ctx.set_fill_color(buy_bg);
         ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+        coordinator.register(
+            format!("{}:oe:buy", slot_prefix).as_str(),
+            uzor::Rect::new(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64),
+            uzor::input::Sense::CLICK,
+        );
 
         ctx.set_fill_color(&theme.oe_buy_button_text);
         ctx.set_font("12px sans-serif");
@@ -366,9 +380,15 @@ impl TradingPanel for OrderEntryState {
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("BUY", (x + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
 
+        // SELL toggle button.
         let sell_bg = if self.side == OrderSide::Sell { &theme.oe_sell_button } else { &theme.oe_tab_inactive };
         ctx.set_fill_color(sell_bg);
         ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+        coordinator.register(
+            format!("{}:oe:sell", slot_prefix).as_str(),
+            uzor::Rect::new((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64),
+            uzor::input::Sense::CLICK,
+        );
 
         ctx.set_fill_color(&theme.oe_sell_button_text);
         ctx.fill_text("SELL", (x + half_w + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
@@ -390,6 +410,11 @@ impl TradingPanel for OrderEntryState {
             let tab_bg = if is_active { &theme.oe_tab_active } else { &theme.oe_tab_inactive };
             ctx.set_fill_color(tab_bg);
             ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64);
+            coordinator.register(
+                format!("{}:oe:tab:{}", slot_prefix, i).as_str(),
+                uzor::Rect::new(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
 
             if is_active {
                 let accent = match self.side {
@@ -440,6 +465,11 @@ impl TradingPanel for OrderEntryState {
                 .map(|p| format!("{:.4}", p))
                 .unwrap_or_else(|| "\u{2014}".to_string());
             draw_field(ctx, cursor_y, "Price:", &price_str);
+            coordinator.register(
+                format!("{}:oe:price", slot_prefix).as_str(),
+                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
             cursor_y += OE_FIELD_HEIGHT;
         }
 
@@ -448,10 +478,20 @@ impl TradingPanel for OrderEntryState {
                 .map(|p| format!("{:.4}", p))
                 .unwrap_or_else(|| "\u{2014}".to_string());
             draw_field(ctx, cursor_y, "Stop:", &stop_str);
+            coordinator.register(
+                format!("{}:oe:stop_price", slot_prefix).as_str(),
+                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
             cursor_y += OE_FIELD_HEIGHT;
         }
 
         draw_field(ctx, cursor_y, "Quantity:", &self.format_quantity());
+        coordinator.register(
+            format!("{}:oe:qty", slot_prefix).as_str(),
+            uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+            uzor::input::Sense::CLICK,
+        );
         cursor_y += OE_FIELD_HEIGHT;
 
         if let Some(lev) = self.leverage {
@@ -488,6 +528,11 @@ impl TradingPanel for OrderEntryState {
 
             ctx.set_fill_color(submit_color);
             ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64);
+            coordinator.register(
+                format!("{}:oe:submit", slot_prefix).as_str(),
+                uzor::Rect::new((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
 
             let submit_label = if self.submitting {
                 "..."
@@ -526,7 +571,55 @@ impl TradingPanel for OrderEntryState {
         let _ = cursor_y;
     }
 
-    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+    fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        match local_id {
+            "oe:buy" => {
+                self.side = OrderSide::Buy;
+                true
+            }
+            "oe:sell" => {
+                self.side = OrderSide::Sell;
+                true
+            }
+            s if s.starts_with("oe:tab:") => {
+                if let Ok(idx) = s["oe:tab:".len()..].parse::<usize>() {
+                    self.order_type = match idx {
+                        0 => OrderType::Limit,
+                        1 => OrderType::Market,
+                        2 => OrderType::StopLimit,
+                        3 => OrderType::StopMarket,
+                        _ => self.order_type,
+                    };
+                }
+                true
+            }
+            "oe:price" => {
+                self.editing_field = Some(OrderEntryElement::PriceInput);
+                self.editing_text = self.price.map(|p| format!("{:.4}", p)).unwrap_or_default();
+                self.editing_cursor = self.editing_text.len();
+                true
+            }
+            "oe:stop_price" => {
+                self.editing_field = Some(OrderEntryElement::StopPriceInput);
+                self.editing_text = self.stop_price.map(|p| format!("{:.4}", p)).unwrap_or_default();
+                self.editing_cursor = self.editing_text.len();
+                true
+            }
+            "oe:qty" => {
+                self.editing_field = Some(OrderEntryElement::QuantityInput);
+                self.editing_text = self.format_quantity();
+                self.editing_cursor = self.editing_text.len();
+                true
+            }
+            "oe:submit" => {
+                self.submitting = true;
+                true
+            }
+            // Base body layer — consumed to prevent click-through, but no action.
+            "oe:body" => false,
+            _ => false,
+        }
+    }
 }
 
 /// OrderEntry panel configuration

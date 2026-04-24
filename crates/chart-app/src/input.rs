@@ -11325,6 +11325,33 @@ impl ChartApp {
                             return;
                         }
 
+                        // --- slot:{idx}:leaf:{leaf_id}:oe:* — OrderEntry interactive widgets ---
+                        // Widget IDs registered by OrderEntryState::render follow the pattern
+                        // "{slot_prefix}:oe:{local}" where slot_prefix = "slot:{idx}:leaf:{leaf_id}".
+                        // Split leaf_rest on the first ':' to get (leaf_id_str, local_id).
+                        // local_id will be e.g. "oe:buy", "oe:tab:0", "oe:submit", etc.
+                        if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
+                            if local_id.starts_with("oe:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    if let Some(sidebar_content::free_slot::FreeItem::OrderEntry(pid)) = item_opt {
+                                        use zengeld_panels::panel_trait::TradingPanel;
+                                        if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
+                                            if state.handle_click(local_id, x, y) {
+                                                self.sidebar_data_dirty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                return;
+                            }
+                        }
+
                         // --- slot:{idx}:leaf:{leaf_id}:focus_content — click inside panel body ---
                         if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus_content") {
                             if let Ok(raw) = leaf_id_str.parse::<u64>() {
