@@ -21,6 +21,8 @@ pub struct PositionManagerState {
     pub total_unrealized_pnl: f64,
     /// Shared snapshot from TradingManager
     pub snapshot: Option<SharedTradingSnapshot>,
+    /// Scroll offset (rows scrolled down from top)
+    pub scroll_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +58,7 @@ impl PositionManagerState {
             edit_mode: None,
             total_unrealized_pnl: 0.0,
             snapshot: None,
+            scroll_offset: 0,
         }
     }
 
@@ -193,9 +196,18 @@ impl TradingPanel for PositionManagerState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        {
+            let body_id = format!("{}:position_manager:body", slot_prefix);
+            coordinator.register(
+                body_id.as_str(),
+                uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+                uzor::input::Sense::SCROLL,
+            );
+        }
+
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
@@ -245,7 +257,7 @@ impl TradingPanel for PositionManagerState {
 
         let content_h = h - PM_HEADER_HEIGHT - PM_SUMMARY_HEIGHT;
         let max_rows  = (content_h / PM_ROW_HEIGHT).floor() as usize;
-        let visible   = self.visible_positions(0, max_rows);
+        let visible   = self.visible_positions(self.scroll_offset, max_rows);
 
         for (row_idx, pos) in visible.iter().enumerate() {
             let row_y     = y + PM_HEADER_HEIGHT + (row_idx as f32 * PM_ROW_HEIGHT);
@@ -325,6 +337,18 @@ impl TradingPanel for PositionManagerState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
+        if local_id == "position_manager:body" {
+            let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
+            let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
+            let max = self.positions.len().saturating_sub(1);
+            self.scroll_offset = new_offset.min(max);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// PositionManager panel configuration

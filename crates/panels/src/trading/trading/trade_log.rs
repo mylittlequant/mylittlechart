@@ -23,6 +23,8 @@ pub struct TradeLogState {
     pub sort: (TradeLogColumn, bool),
     /// Shared trading snapshot (source of truth)
     pub snapshot: Option<SharedTradingSnapshot>,
+    /// Scroll offset (rows scrolled down from top)
+    pub scroll_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -71,6 +73,7 @@ impl TradeLogState {
             total_pnl: 0.0,
             sort: (TradeLogColumn::Time, false),
             snapshot: None,
+            scroll_offset: 0,
         }
     }
 
@@ -173,9 +176,18 @@ impl TradingPanel for TradeLogState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        {
+            let body_id = format!("{}:trade_log:body", slot_prefix);
+            coordinator.register(
+                body_id.as_str(),
+                uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+                uzor::input::Sense::SCROLL,
+            );
+        }
+
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
@@ -210,7 +222,7 @@ impl TradingPanel for TradeLogState {
 
         let content_h = h - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
         let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
-        let trades = self.visible_trades(0, max_rows);
+        let trades = self.visible_trades(self.scroll_offset, max_rows);
 
         if trades.is_empty() {
             ctx.set_font("11px sans-serif");
@@ -294,6 +306,18 @@ impl TradingPanel for TradeLogState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
+        if local_id == "trade_log:body" {
+            let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
+            let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
+            let max = self.trades.len().saturating_sub(1);
+            self.scroll_offset = new_offset.min(max);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// TradeLog panel configuration

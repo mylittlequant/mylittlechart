@@ -6565,13 +6565,17 @@ impl ChartApp {
                                     | Some(item @ FreeItem::L2Tape(_))
                                     | Some(item @ FreeItem::Footprint(_))
                                     | Some(item @ FreeItem::LiquidityHeatmap(_))
-                                    | Some(item @ FreeItem::VolumeProfile(_)) => {
+                                    | Some(item @ FreeItem::VolumeProfile(_))
+                                    | Some(item @ FreeItem::PositionManager(_))
+                                    | Some(item @ FreeItem::TradeLog(_)) => {
                                         let local_id = match &item {
                                             FreeItem::BigTrades(_) => "bigtrades:body",
                                             FreeItem::L2Tape(_) => "l2tape:body",
                                             FreeItem::Footprint(_) => "footprint:body",
                                             FreeItem::LiquidityHeatmap(_) => "heatmap:body",
                                             FreeItem::VolumeProfile(_) => "volprofile:body",
+                                            FreeItem::PositionManager(_) => "position_manager:body",
+                                            FreeItem::TradeLog(_) => "trade_log:body",
                                             _ => unreachable!(),
                                         };
                                         if let Some(panel) = self.panels_store.get_panel_mut(&item) {
