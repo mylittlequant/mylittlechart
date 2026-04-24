@@ -502,10 +502,19 @@ impl TradingPanel for LiquidityHeatmapState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
         let config = LiquidityHeatmapConfig::default();
+
+        {
+            let body_id = format!("{}:heatmap:body", slot_prefix);
+            coordinator.register(
+                body_id.as_str(),
+                uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+                uzor::input::Sense::SCROLL | uzor::input::Sense::DRAG | uzor::input::Sense::DOUBLE_CLICK,
+            );
+        }
 
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
@@ -721,6 +730,41 @@ impl TradingPanel for LiquidityHeatmapState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
+        if local_id == "heatmap:body" {
+            LiquidityHeatmapState::handle_scroll(self, dy * 3.0);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_drag_start(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        local_id == "heatmap:body"
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, dy: f64) -> bool {
+        if local_id == "heatmap:body" {
+            LiquidityHeatmapState::handle_drag(self, dx, dy);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_drag_end(&mut self, _local_id: &str) -> bool {
+        true
+    }
+
+    fn handle_double_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        if local_id == "heatmap:body" {
+            LiquidityHeatmapState::handle_double_click(self);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// LiquidityHeatmap panel configuration

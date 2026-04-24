@@ -581,20 +581,10 @@ pub struct ChartApp {
     /// `(slot_index, leaf_id, dom_panel_id, last_y, row_height)`.
     pub(crate) slot_dom_drag: Option<(usize, uzor::panels::LeafId, sidebar_content::free_slot::PanelId, f64, f64)>,
 
-    /// Active LiquidityHeatmap drag-to-pan.
+    /// Active coordinator-routed panel drag (L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
     ///
-    /// `(heatmap_panel_id, last_x, last_y)`.
-    pub(crate) slot_heatmap_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
-
-    /// Active coordinator-routed panel drag (L2Tape, Footprint, BigTrades).
-    ///
-    /// `(free_item, local_id, last_x, last_y)` — replaces the three per-panel fields.
+    /// `(free_item, local_id, last_x, last_y)` — replaces per-panel fields.
     pub(crate) active_drag_panel: Option<(sidebar_content::free_slot::FreeItem, String, f64, f64)>,
-
-    /// Active VolumeProfile drag-to-pan.
-    ///
-    /// `(panel_id, last_x, last_y)`.
-    pub(crate) slot_volprofile_drag: Option<(sidebar_content::free_slot::PanelId, f64, f64)>,
 
     /// Active TradeTape drag-to-scroll.
     ///
@@ -943,9 +933,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            slot_heatmap_drag: None,
             active_drag_panel: None,
-            slot_volprofile_drag: None,
             slot_tradetape_drag: None,
             trading_manager: trading_manager::TradingManager::new(
                 bridge.clone(),
@@ -1252,9 +1240,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            slot_heatmap_drag: None,
             active_drag_panel: None,
-            slot_volprofile_drag: None,
             slot_tradetape_drag: None,
             trading_manager: None,
         };
@@ -1449,9 +1435,7 @@ impl ChartApp {
             agent_sep_drag: None,
             slot_sep_drag: None,
             slot_dom_drag: None,
-            slot_heatmap_drag: None,
             active_drag_panel: None,
-            slot_volprofile_drag: None,
             slot_tradetape_drag: None,
             trading_manager: None,
         };
