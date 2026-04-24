@@ -4463,88 +4463,22 @@ impl ChartApp {
                 | ChartInputTarget::PriceScale { leaf_id }
                 | ChartInputTarget::TimeScale { leaf_id }
                 | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
-                    // Build layout for the hovered leaf.
+                    // Build layout for the hovered leaf and delegate crosshair
+                    // update to ChartPanelGrid::update_crosshair_split.
                     let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
                     if let Some(leaf_rect) = leaf_rect_opt {
                         let extended_opt = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect);
                         if let Some(extended) = extended_opt {
-                            // Hide crosshair when hovering over a sub-pane separator.
-                            let is_over_sub_separator = matches!(
-                                ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
-                                zengeld_chart::engine::input::HitResult::PaneSeparator { .. }
-                            );
-                            if is_over_sub_separator {
-                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                                    window.crosshair.visible = false;
-                                }
-                            } else {
-                                // Update crosshair on hovered leaf.
-                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
-                                    window.update_crosshair_from_global(x, y, &extended, None);
-                                }
+                            if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
+                                .update_crosshair_split(x, y, leaf_id, &extended)
+                            {
+                                // Propagate to sync-group peers (handles order-flow panels too).
+                                self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
                             }
                         }
                     }
-
-                    // Collect crosshair state for sync propagation before any
-                    // further mutable borrows.
-                    let (crosshair_timestamp, crosshair_price, crosshair_visible, crosshair_pane_index) = self.panel_app
-                        .panel_grid
-                        .window_for_leaf(leaf_id)
-                        .map(|w| {
-                            let bar_f64 = w.crosshair.bar_f64;
-                            let bar_idx = bar_f64 as usize;
-                            let timestamp = if bar_idx < w.bars.len() {
-                                w.bars[bar_idx].timestamp
-                            } else if w.bars.len() >= 2 {
-                                let last = w.bars[w.bars.len() - 1].timestamp;
-                                let prev = w.bars[w.bars.len() - 2].timestamp;
-                                let interval = last - prev;
-                                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                                last + (bars_past * interval as f64).round() as i64
-                            } else if !w.bars.is_empty() {
-                                w.bars[0].timestamp
-                            } else {
-                                0
-                            };
-                            (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
-                        })
-                        .unwrap_or((0, 0.0, false, None));
-
-                    // Determine which leaves are in the same sync group as the
-                    // hovered leaf so they receive crosshair sync instead of hiding.
-                    let source_color = self.panel_app.leaf_color_tags.get(&leaf_id).copied();
-                    // Check whether the source leaf's sync group has crosshair sync enabled.
-                    let crosshair_sync_enabled = self.panel_app.panel_grid
-                        .chart_id_for_leaf(leaf_id)
-                        .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
-                        .and_then(|gid| self.panel_app.tag_manager.group(gid))
-                        .map(|g| g.sync_flags.sync_crosshair)
-                        .unwrap_or(true);
-                    let all_ids: Vec<zengeld_chart::LeafId> = self.panel_app
-                        .panel_grid
-                        .panel_rects()
-                        .keys()
-                        .copied()
-                        .filter(|&id| id != leaf_id)
-                        .collect();
-                    for other_id in all_ids {
-                        let in_sync_group = source_color
-                            .and_then(|sc| self.panel_app.leaf_color_tags.get(&other_id).copied()
-                                .map(|c| sync_colors_match(sc, c)))
-                            .unwrap_or(false);
-                        if in_sync_group && crosshair_sync_enabled {
-                            // Sync group peer — mirror crosshair bar position.
-                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
-                                window.set_crosshair_from_timestamp(crosshair_timestamp, crosshair_price, crosshair_visible, crosshair_pane_index);
-                            }
-                        } else {
-                            // Not in sync group or crosshair sync disabled — hide crosshair.
-                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
-                                window.crosshair.visible = false;
-                            }
-                        }
-                    }
+                    // Hide crosshair on leaves outside the sync group.
+                    self.hide_crosshairs_outside_sync_group(leaf_id);
                 }
                 ChartInputTarget::Separator { .. } | ChartInputTarget::None => {
                     self.hide_all_split_crosshairs();
@@ -7975,6 +7909,37 @@ impl ChartApp {
         for leaf_id in leaf_ids {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.crosshair.visible = false;
+            }
+        }
+    }
+
+    /// Hide crosshairs on all split leaves that are NOT in the same sync group
+    /// as `source_leaf`.  Sync-group peers are updated by
+    /// `propagate_crosshair_to_sync_group`; this covers the non-peer leaves.
+    fn hide_crosshairs_outside_sync_group(&mut self, source_leaf: zengeld_chart::LeafId) {
+        let source_color = self.panel_app.leaf_color_tags.get(&source_leaf).copied();
+        let crosshair_sync_enabled = self.panel_app.panel_grid
+            .chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_crosshair)
+            .unwrap_or(true);
+        let all_ids: Vec<zengeld_chart::LeafId> = self.panel_app
+            .panel_grid
+            .panel_rects()
+            .keys()
+            .copied()
+            .filter(|&id| id != source_leaf)
+            .collect();
+        for other_id in all_ids {
+            let in_sync_group = source_color
+                .and_then(|sc| self.panel_app.leaf_color_tags.get(&other_id).copied()
+                    .map(|c| sync_colors_match(sc, c)))
+                .unwrap_or(false);
+            if !(in_sync_group && crosshair_sync_enabled) {
+                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(other_id) {
+                    window.crosshair.visible = false;
+                }
             }
         }
     }

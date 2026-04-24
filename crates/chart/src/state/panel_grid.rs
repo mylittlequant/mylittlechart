@@ -1847,6 +1847,57 @@ impl ChartPanelGrid {
             (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
         })
     }
+
+    /// Update the crosshair for one leaf in split mode.
+    ///
+    /// Checks whether `(x, y)` is over a sub-pane separator for `leaf_id` using
+    /// `extended`; if so, hides that leaf's crosshair.  Otherwise calls
+    /// `update_crosshair_from_global` on the leaf window.
+    ///
+    /// Returns `(timestamp, price, visible, pane_index)` so the caller can
+    /// propagate to sync-group peers.  Returns `None` when no window exists for
+    /// the leaf.
+    pub fn update_crosshair_split(
+        &mut self,
+        x: f64,
+        y: f64,
+        leaf_id: LeafId,
+        extended: &crate::layout::ExtendedFrameLayout,
+    ) -> Option<(i64, f64, bool, Option<usize>)> {
+        use crate::layout::ExtendedLayoutHitTester;
+
+        let is_over_sub_separator = matches!(
+            ExtendedLayoutHitTester::new(extended).hit_test(x, y),
+            crate::engine::input::HitResult::PaneSeparator { .. }
+        );
+
+        if is_over_sub_separator {
+            if let Some(window) = self.window_for_leaf_mut(leaf_id) {
+                window.crosshair.visible = false;
+            }
+        } else if let Some(window) = self.window_for_leaf_mut(leaf_id) {
+            window.update_crosshair_from_global(x, y, extended, None);
+        }
+
+        self.window_for_leaf(leaf_id).map(|w| {
+            let bar_f64 = w.crosshair.bar_f64;
+            let bar_idx = bar_f64 as usize;
+            let timestamp = if bar_idx < w.bars.len() {
+                w.bars[bar_idx].timestamp
+            } else if w.bars.len() >= 2 {
+                let last = w.bars[w.bars.len() - 1].timestamp;
+                let prev = w.bars[w.bars.len() - 2].timestamp;
+                let interval = last - prev;
+                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                last + (bars_past * interval as f64).round() as i64
+            } else if !w.bars.is_empty() {
+                w.bars[0].timestamp
+            } else {
+                0
+            };
+            (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+        })
+    }
 }
 
 // =========================================================================
