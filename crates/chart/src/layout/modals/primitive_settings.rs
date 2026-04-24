@@ -304,7 +304,7 @@ pub fn render_primitive_settings_modal(
     input_coordinator.register_on_layer(
         "prim_settings:modal_bg",
         uzor::types::Rect::new(result.modal_rect.x, result.modal_rect.y, result.modal_rect.width, result.modal_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -347,7 +347,7 @@ pub fn render_primitive_settings_modal(
     input_coordinator.register_on_layer(
         "prim_settings:close",
         uzor::types::Rect::new(close_rect.x, close_rect.y, close_rect.width, close_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -398,7 +398,7 @@ pub fn render_primitive_settings_modal(
         input_coordinator.register_on_layer(
             format!("prim_settings:tab:{}", tab_id),
             uzor::types::Rect::new(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
 
@@ -1817,7 +1817,7 @@ pub fn render_primitive_settings_modal(
             input_coordinator.register_on_layer(
                 "prim_settings:item:template_dropdown_menu".to_string(),
                 uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 &layer_id,
             );
 
@@ -1934,9 +1934,9 @@ pub fn render_primitive_settings_modal(
             continue;
         }
         let sense = if slider_field_ids.contains(item_id.as_str()) {
-            uzor::input::sense::Sense::DRAG
+            uzor::input::Sense::DRAG
         } else {
-            uzor::input::sense::Sense::CLICK
+            uzor::input::Sense::CLICK
         };
 
         input_coordinator.register_on_layer(

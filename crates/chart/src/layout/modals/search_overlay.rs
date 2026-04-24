@@ -73,7 +73,7 @@ pub fn render_search_overlay(
     input_coordinator.register_on_layer(
         "modal_search:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -109,7 +109,7 @@ pub fn render_search_overlay(
     input_coordinator.register_on_layer(
         "modal_search:close",
         uzor::types::Rect::new(close_x, close_y, close_btn_size, close_btn_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -173,7 +173,7 @@ pub fn render_search_overlay(
             input_coordinator.register_on_layer(
                 cat_wid.as_str(),
                 uzor::types::Rect::new(sidebar_x, tab_y, sidebar_width, tab_button_height),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 &layer_id,
             );
         }
@@ -202,7 +202,7 @@ pub fn render_search_overlay(
         input_coordinator.register_on_layer(
             "ind_search:sets_tab",
             uzor::types::Rect::new(sidebar_x, sets_btn_y, sidebar_width, tab_button_height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -246,7 +246,7 @@ pub fn render_search_overlay(
     input_coordinator.register_on_layer(
         "modal_search:search_input",
         uzor::types::Rect::new(input_x, input_y, input_width, input_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -367,7 +367,7 @@ pub fn render_search_overlay(
         input_coordinator.register_on_layer(
             "modal_search:scrollbar_track",
             uzor::types::Rect::new(track_rect.x, track_rect.y, track_rect.width, track_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -379,7 +379,7 @@ pub fn render_search_overlay(
             input_coordinator.register_on_layer(
                 format!("modal_search:item:{}", item_id),
                 uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 &layer_id,
             );
         }
@@ -391,7 +391,7 @@ pub fn render_search_overlay(
         input_coordinator.register_on_layer(
             format!("modal_search:star:{}", symbol),
             uzor::types::Rect::new(star_rect.x, star_rect.y, star_rect.width, star_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -613,7 +613,7 @@ fn render_indicator_sets_scrollable(
     input_coordinator.register_on_layer(
         "ind_search:set_create",
         uzor::types::Rect::new(x, y - scroll_offset, width, create_btn_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         layer_id,
     );
 
@@ -701,7 +701,7 @@ fn render_indicator_sets_scrollable(
         input_coordinator.register_on_layer(
             zone_id.as_str(),
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
     }
@@ -713,7 +713,7 @@ fn render_indicator_sets_scrollable(
         input_coordinator.register_on_layer(
             delete_zone_id.as_str(),
             uzor::types::Rect::new(delete_btn_x, delete_btn_y, delete_btn_size, delete_btn_size),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
     }

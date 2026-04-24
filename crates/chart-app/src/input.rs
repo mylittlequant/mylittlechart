@@ -102,6 +102,41 @@ use zengeld_chart::ui::context_menu::{
 use zengeld_chart::ui::modal_state::{OpenModal, IndicatorCategoryFilter};
 use zengeld_chart::ui::modal_settings::DualSliderHandle;
 use zengeld_chart::drawing::TimeframeVisibilityConfig;
+use uzor::input::TextAction;
+use uzor::WidgetId;
+
+/// Convert chart-app's `KeyPress` to the uzor `KeyPress` understood by `TextFieldStore`.
+///
+/// Only the variants that `TextFieldStore` acts on are mapped; everything
+/// else becomes `None` and the caller skips forwarding to the store.
+fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
+    use uzor::input::KeyPress as UK;
+    Some(match key {
+        KeyPress::Delete      => UK::Delete,
+        KeyPress::ArrowLeft   => UK::ArrowLeft,
+        KeyPress::ArrowRight  => UK::ArrowRight,
+        KeyPress::ArrowUp     => UK::ArrowUp,
+        KeyPress::ArrowDown   => UK::ArrowDown,
+        KeyPress::Enter       => UK::Enter,
+        KeyPress::Escape      => UK::Escape,
+        KeyPress::Tab         => UK::Tab,
+        KeyPress::Backspace   => UK::Backspace,
+        KeyPress::CtrlC       => UK::CtrlC,
+        KeyPress::PageUp      => UK::PageUp,
+        KeyPress::PageDown    => UK::PageDown,
+        KeyPress::Home        => UK::Home,
+        KeyPress::End         => UK::End,
+        KeyPress::SelectAll   => UK::SelectAll,
+        KeyPress::ShiftLeft   => UK::ShiftLeft,
+        KeyPress::ShiftRight  => UK::ShiftRight,
+        KeyPress::ShiftHome   => UK::ShiftHome,
+        KeyPress::ShiftEnd    => UK::ShiftEnd,
+        KeyPress::Copy        => UK::Copy,
+        KeyPress::Paste(s)    => UK::Paste(s.clone()),
+        KeyPress::Undo        => UK::Undo,
+        KeyPress::Redo        => UK::Redo,
+    })
+}
 
 // =============================================================================
 // Helpers
@@ -129,7 +164,8 @@ impl ChartApp {
     /// True when the Agent PTY field currently owns keyboard focus — used by the
     /// platform runner to short-circuit named-key and char routing straight to the PTY.
     pub fn is_agent_pty_focused(&self) -> bool {
-        self.text_input.is_focused(crate::text_input::FieldId::AgentPty)
+        let pty_id = WidgetId::new(crate::text_input::AGENT_PTY);
+        self.input_coordinator.borrow().text_fields().is_focused(&pty_id)
     }
 
     /// Clear any active host-side PTY selection for the focused leaf.
@@ -330,7 +366,7 @@ impl ChartApp {
                 .unwrap_or(false);
             if x >= rx && x < rx + rw && y >= ry && y < ry + rh && is_pty_leaf {
                 eprintln!("[gate4agent::pty] click in terminal rect — focusing AgentPty");
-                self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                 self.agent_pty_hover_focused = true;
                 // A plain click (no drag) clears any previous selection.
                 // But keep non-empty selections that were just produced by a
@@ -774,7 +810,7 @@ impl ChartApp {
                     }).unwrap_or(false);
                     if hit {
                         eprintln!("[ChartApp] agent leaf chat input focused");
-                        self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                         self.sidebar_data_dirty = true;
                         return;
                     }
@@ -1051,7 +1087,8 @@ impl ChartApp {
                     if leaf_mode == Some(gate4agent::InstanceMode::Chat) {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&hovered_leaf_id).map(|s| s.as_str()).unwrap_or("");
-                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                     self.sidebar_data_dirty = true;
                 }
@@ -1085,7 +1122,7 @@ impl ChartApp {
                     }
                     self.agent_pty_drag_active = true;
                     // Also focus PTY so keyboard events still route to it.
-                    self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                     self.sidebar_data_dirty = true;
                     // Return false — NOT dismissed. We want subsequent drag_move
                     // events and the eventual drag_end. Returning true tells the
@@ -1127,7 +1164,7 @@ impl ChartApp {
                     .unwrap_or(false);
                 if in_content {
                     // Focus chat input immediately on mousedown (like PTY does).
-                    self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                     self.sidebar_data_dirty = true;
 
                     if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
@@ -1178,10 +1215,10 @@ impl ChartApp {
             }
         }
 
-        // Let the TextInputManager claim the drag if (x, y) falls inside a registered
+        // Let the text-field store claim the drag if (x, y) falls inside a registered
         // text field (e.g. the HexColor field when the L2 color picker is visible).
         // This must run BEFORE the sidebar-separator check so early returns don't miss it.
-        self.text_input.on_drag_start(x, y);
+        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
 
         // Dismiss color picker on drag-start outside the popup.
         // This treats on_drag_start as a click for popup dismissal purposes,
@@ -1201,28 +1238,28 @@ impl ChartApp {
             let mut dismissed = false;
             if outside_popup(&self.panel_app.primitive_settings_state.color_picker, x, y) {
                 self.panel_app.primitive_settings_state.close_color_picker();
-                self.text_input.blur();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
             if outside_popup(&self.panel_app.indicator_settings_state.color_picker, x, y) {
                 self.panel_app.indicator_settings_state.close_color_picker();
-                self.text_input.blur();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
             if outside_popup(&self.panel_app.chart_settings_state.color_picker, x, y) {
                 self.panel_app.chart_settings_state.close_color_picker();
-                self.text_input.blur();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
             if outside_popup(&self.panel_app.compare_settings_state.color_picker, x, y) {
                 self.panel_app.compare_settings_state.close_color_picker();
-                self.text_input.blur();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
             if outside_popup(&self.panel_app.panel_color_picker, x, y) {
                 self.panel_app.panel_color_picker.close();
                 self.panel_app.sync_color_grid.adding_custom_color = false;
-                self.text_input.blur();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
             if dismissed {
@@ -3060,8 +3097,8 @@ impl ChartApp {
             return;
         }
 
-        // Forward to TextInputManager for text-selection drag (e.g. HexColor field).
-        self.text_input.on_drag_move(x);
+        // Forward to text-field store for text-selection drag (e.g. HexColor field).
+        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_move(x);
 
         if self.drag_dismissed_popup {
             return;
@@ -4055,8 +4092,8 @@ impl ChartApp {
             return;
         }
 
-        // Notify TextInputManager that drag selection has ended.
-        self.text_input.on_drag_end();
+        // Notify text-field store that drag selection has ended.
+        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
 
         if self.drag_dismissed_popup {
             self.drag_dismissed_popup = false;
@@ -7029,21 +7066,22 @@ impl ChartApp {
             }
         }
 
-        // Handle color picker hex input editing — delegated to TextInputManager.
+        // Handle color picker hex input editing.
         // Check all color picker instances; the first one with hex_editing=true consumes the event.
-        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
-            let action = self.text_input.on_char(ch);
+        let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+        if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
             match action {
-                crate::text_input::FieldAction::Commit(_) | crate::text_input::FieldAction::Cancel => {
+                TextAction::Commit(_) | TextAction::Cancel => {
                     // Close hex editing on all pickers.
                     self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
                     self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
                     self.panel_app.chart_settings_state.color_picker.hex_editing = false;
                     self.panel_app.compare_settings_state.color_picker.hex_editing = false;
                     self.panel_app.panel_color_picker.hex_editing = false;
-                    self.text_input.blur();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                crate::text_input::FieldAction::TextChanged(ref new_hex) => {
+                TextAction::TextChanged(ref new_hex) => {
                     // Live-apply: sync the new hex text to the active picker.
                     let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
                         (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
@@ -7059,17 +7097,18 @@ impl ChartApp {
                         }
                     }
                 }
-                crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(_) => {
+                TextAction::None => {}
+                TextAction::RawInput(_) => {
                     // RawInput is for AgentPty, not HexColor — ignore here.
                 }
             }
             return;
         }
         // Agent PTY input — route raw characters directly to the focused leaf's PTY.
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentPty) {
-            let action = self.text_input.on_char(ch);
-            if let crate::text_input::FieldAction::RawInput(bytes) = action {
+        let pty_id = WidgetId::new(crate::text_input::AGENT_PTY);
+        if self.input_coordinator.borrow().text_fields().is_focused(&pty_id) {
+            let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
+            if let TextAction::RawInput(bytes) = action {
                 if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                     if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                         if desc.mode == gate4agent::InstanceMode::Pty {
@@ -7083,12 +7122,16 @@ impl ChartApp {
             return;
         }
         // Agent chat input — route printable characters and Enter to the focused leaf's chat.
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             if ch == '\r' || ch == '\n' {
                 if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
-                        let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                        let text = {
+                            let coord = self.input_coordinator.borrow();
+                            coord.text_fields().text(&chat_id).to_string()
+                        };
                         eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
                         if !text.is_empty() {
                             let id = desc.instance_id;
@@ -7097,7 +7140,7 @@ impl ChartApp {
                                     let buf = self.sidebar_state.agent_input_buffers
                                         .entry(leaf_id).or_default();
                                     buf.clear();
-                                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
                                     eprintln!("[gate4agent::chat] Enter via on_char OK");
                                 }
                                 Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
@@ -7106,9 +7149,12 @@ impl ChartApp {
                     }
                 }
             } else {
-                let _action = self.text_input.on_char(ch);
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
                 if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                    let new_text = {
+                        let coord = self.input_coordinator.borrow();
+                        coord.text_fields().text(&chat_id).to_string()
+                    };
                     self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
                 }
             }
@@ -8290,36 +8336,39 @@ impl ChartApp {
             return;
         }
 
-        // ── Hex color picker key routing — delegated to TextInputManager ─────
-        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
-            let action = self.text_input.on_key(key.clone());
-            match action {
-                crate::text_input::FieldAction::Commit(_) | crate::text_input::FieldAction::Cancel => {
-                    self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.chart_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.compare_settings_state.color_picker.hex_editing = false;
-                    self.panel_app.panel_color_picker.hex_editing = false;
-                    self.text_input.blur();
-                }
-                crate::text_input::FieldAction::TextChanged(ref new_hex) => {
-                    let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
-                        (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
-                        (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
-                        (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
-                        (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
-                        (&mut self.panel_app.panel_color_picker, "panel"),
-                    ];
-                    for (picker, _src) in pickers {
-                        if picker.hex_editing {
-                            picker.hex_set_text(new_hex);
-                            break;
+        // ── Hex color picker key routing ──────────────────────────────────────
+        let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+        if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                match action {
+                    TextAction::Commit(_) | TextAction::Cancel => {
+                        self.panel_app.primitive_settings_state.color_picker.hex_editing = false;
+                        self.panel_app.indicator_settings_state.color_picker.hex_editing = false;
+                        self.panel_app.chart_settings_state.color_picker.hex_editing = false;
+                        self.panel_app.compare_settings_state.color_picker.hex_editing = false;
+                        self.panel_app.panel_color_picker.hex_editing = false;
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    TextAction::TextChanged(ref new_hex) => {
+                        let pickers: [(&mut zengeld_chart::ui::color_picker_state::ColorPickerState, &str); 5] = [
+                            (&mut self.panel_app.primitive_settings_state.color_picker, "primitive"),
+                            (&mut self.panel_app.indicator_settings_state.color_picker, "indicator"),
+                            (&mut self.panel_app.chart_settings_state.color_picker, "chart"),
+                            (&mut self.panel_app.compare_settings_state.color_picker, "compare"),
+                            (&mut self.panel_app.panel_color_picker, "panel"),
+                        ];
+                        for (picker, _src) in pickers {
+                            if picker.hex_editing {
+                                picker.hex_set_text(new_hex);
+                                break;
+                            }
                         }
                     }
-                }
-                crate::text_input::FieldAction::None => {}
-                crate::text_input::FieldAction::RawInput(_) => {
-                    // RawInput is for AgentPty, not HexColor — ignore here.
+                    TextAction::None => {}
+                    TextAction::RawInput(_) => {
+                        // RawInput is for AgentPty, not HexColor — ignore here.
+                    }
                 }
             }
             return;
@@ -8327,14 +8376,16 @@ impl ChartApp {
 
         // ── Agent PTY key routing — sends to focused leaf's PTY instance ─────────
         if self.is_agent_pty_focused() {
-            let action = self.text_input.on_key(key);
-            if let crate::text_input::FieldAction::RawInput(bytes) = action {
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
-                        if desc.mode == gate4agent::InstanceMode::Pty {
-                            let text = String::from_utf8_lossy(&bytes).to_string();
-                            let id = desc.instance_id;
-                            let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+                if let TextAction::RawInput(bytes) = action {
+                    if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
+                        if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
+                            if desc.mode == gate4agent::InstanceMode::Pty {
+                                let text = String::from_utf8_lossy(&bytes).to_string();
+                                let id = desc.instance_id;
+                                let _ = self.bridge.runtime().block_on(self.agent.write_pty_instance(id, &text));
+                            }
                         }
                     }
                 }
@@ -8343,10 +8394,16 @@ impl ChartApp {
         }
 
         // ── Agent chat key routing — syncs focused leaf's input buffer ────────
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
-            let _action = self.text_input.on_key(key);
+        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
+            if let Some(uzor_key) = to_uzor_key(&key) {
+                let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
+            }
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                let new_text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                let new_text = {
+                    let coord = self.input_coordinator.borrow();
+                    coord.text_fields().text(&chat_id).to_string()
+                };
                 self.sidebar_state.agent_input_buffers.insert(leaf_id, new_text);
             }
             return;
@@ -8578,8 +8635,8 @@ impl ChartApp {
             Some(editing.text[start_byte..end_byte].to_string())
         }
 
-        // TextInputManager handles all migrated fields (HexColor for Phase 1).
-        if let Some(text) = self.text_input.copy_selection() {
+        // Text-field store handles HexColor, AgentPty, AgentChat selections.
+        if let Some(text) = self.input_coordinator.borrow().text_fields().copy_selection() {
             return Some(text);
         }
 
@@ -10012,14 +10069,15 @@ impl ChartApp {
                 self.sidebar_state.focused_agent_leaf = next;
                 if let Some(next_id) = next {
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
-                    // Sync the chat text_input buffer to the newly focused leaf.
+                    // Sync the chat text-field buffer to the newly focused leaf.
                     if self.sidebar_state.agent_leaves.get(&next_id)
                         .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                         .unwrap_or(false)
                     {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&next_id).map(|s| s.as_str()).unwrap_or("");
-                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                 }
                 self.sidebar_data_dirty = true;
@@ -10035,7 +10093,7 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    // Sync the chat text_input buffer to the newly focused leaf so
+                    // Sync the chat text-field buffer to the newly focused leaf so
                     // keystrokes go to the correct leaf's buffer.
                     if self.sidebar_state.agent_leaves.get(&leaf_id)
                         .map(|d| d.mode == gate4agent::InstanceMode::Chat)
@@ -10043,7 +10101,8 @@ impl ChartApp {
                     {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                        self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                     self.sidebar_data_dirty = true;
                 }
@@ -10057,17 +10116,18 @@ impl ChartApp {
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
                     // Focus the appropriate input field for this leaf type and sync
-                    // the chat text_input buffer to prevent text leaking between leaves.
+                    // the chat text-field buffer to prevent text leaking between leaves.
                     match self.sidebar_state.agent_leaves.get(&leaf_id).map(|d| d.mode) {
                         Some(gate4agent::InstanceMode::Pty) => {
-                            self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                             self.agent_pty_hover_focused = true;
                         }
                         Some(gate4agent::InstanceMode::Chat) => {
                             let buf = self.sidebar_state.agent_input_buffers
                                 .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                            self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
-                            self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                            let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                         }
                         None => {}
                     }
@@ -10097,14 +10157,15 @@ impl ChartApp {
                         self.sidebar_state.focused_agent_leaf = next;
                         if let Some(next_id) = next {
                             self.sidebar_state.agent_docking.inner_mut().set_active_leaf(next_id);
-                            // Sync the chat text_input buffer to the newly focused leaf.
+                            // Sync the chat text-field buffer to the newly focused leaf.
                             if self.sidebar_state.agent_leaves.get(&next_id)
                                 .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                                 .unwrap_or(false)
                             {
                                 let buf = self.sidebar_state.agent_input_buffers
                                     .get(&next_id).map(|s| s.as_str()).unwrap_or("");
-                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
+                                let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                                self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                             }
                         }
                     }
@@ -10295,7 +10356,7 @@ impl ChartApp {
                                 match self.bridge.runtime().block_on(self.agent.start_pty_instance(id, config)) {
                                     Ok(()) => {
                                         eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
-                                        self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                                         self.agent_pty_hover_focused = true;
                                     }
                                     Err(e) => eprintln!("[ChartApp] start PTY error: {}", e),
@@ -10306,9 +10367,10 @@ impl ChartApp {
                                 // Sync buffer first to avoid leaking previous leaf's text.
                                 let buf = self.sidebar_state.agent_input_buffers
                                     .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                                self.text_input.set_text(crate::text_input::FieldId::AgentChat, buf);
-                                self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
-                                self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                                let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                                self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
+                                self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&chat_id);
+                                self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                                 self.agent.load_latest_history_instance(id);
                             }
                         }
@@ -10322,11 +10384,12 @@ impl ChartApp {
             // --- Per-leaf: agent:leaf:{id}:input (chat input focus) ---
             if let Some(id_str) = rest.strip_suffix(":input") {
                 if let Ok(_raw) = id_str.parse::<u64>() {
-                    if !self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
-                        self.text_input.begin_edit(crate::text_input::FieldId::AgentChat);
-                        self.text_input.focus(crate::text_input::FieldId::AgentChat);
+                    let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                    if !self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
+                        self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&chat_id);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                     }
-                    self.text_input.on_drag_start(x, y);
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     eprintln!("[ChartApp] agent leaf chat input focused");
                 }
                 return;
@@ -10338,7 +10401,8 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
-                        let from_field = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
+                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        let from_field = self.input_coordinator.borrow().text_fields().text(&chat_id).to_string();
                         let from_buffer = self.sidebar_state.agent_input_buffers
                             .get(&leaf_id).cloned().unwrap_or_default();
                         let text = if !from_field.is_empty() { from_field } else { from_buffer };
@@ -10348,7 +10412,7 @@ impl ChartApp {
                             match self.bridge.runtime().block_on(self.agent.send_chat_instance(id, &text)) {
                                 Ok(()) => {
                                     self.sidebar_state.agent_input_buffers.remove(&leaf_id);
-                                    self.text_input.set_text(crate::text_input::FieldId::AgentChat, "");
+                                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
                                     eprintln!("[gate4agent::chat] send button OK");
                                 }
                                 Err(e) => eprintln!("[gate4agent::chat] send button error: {}", e),
@@ -16827,9 +16891,10 @@ impl ChartApp {
                     // without requiring an extra click to warm up geometry.
                     picker.hex_editing = true;
                     let hex = picker.hex_input.clone();
-                    self.text_input.set_text(crate::text_input::FieldId::HexColor, &hex);
-                    self.text_input.begin_edit(crate::text_input::FieldId::HexColor);
-                    self.text_input.focus(crate::text_input::FieldId::HexColor);
+                    let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&hex_id, &hex);
+                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&hex_id);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::HEX_COLOR);
                 }
             }
             ColorPickerL1HitResult::OpacitySlider(opacity) => {
@@ -17097,8 +17162,8 @@ impl ChartApp {
             }
             ColorPickerL2HitResult::HexInput => {
                 // hex_editing is already true (set when L2 opens).
-                // Reposition cursor at click x via manager.
-                self.text_input.on_drag_start(x, y);
+                // Reposition cursor at click x via text-field store.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
             }
             ColorPickerL2HitResult::Inside => {} // absorb
             ColorPickerL2HitResult::Outside => {

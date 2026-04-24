@@ -19,7 +19,7 @@ use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme};
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
 
 // =============================================================================

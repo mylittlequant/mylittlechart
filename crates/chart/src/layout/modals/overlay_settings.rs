@@ -22,7 +22,7 @@ use crate::state::panel_grid::ChartPanelGrid;
 use crate::state::sub_panel::ChartSubPanel;
 use crate::theme::ThemeManager;
 use uzor::types::Rect as WidgetRect;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 
 // =============================================================================
@@ -82,7 +82,7 @@ fn render_tree_nodes(
     theme_manager: &ThemeManager,
     result: &mut OverlaySettingsResult,
     input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::coordinator::LayerId,
+    layer_id: &uzor::input::LayerId,
     target_leaf_id: Option<LeafId>,
     selected_node_id: Option<u64>,
     expanded_leaf_id: Option<LeafId>,

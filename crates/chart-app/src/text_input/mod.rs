@@ -1,11 +1,15 @@
-//! Centralized text-input manager for `ChartApp`.
+//! String IDs for text fields managed by `InputCoordinator::text_fields`.
 //!
-//! All text-field state (text, cursor, selection) is owned here.
-//! Renderers register field geometry each frame; input handlers call
-//! the manager's methods instead of touching scattered per-field state copies.
+//! These constants are the canonical identifiers passed to the uzor
+//! `TextFieldStore` API.  They replace the former `FieldId` enum now that
+//! `TextInputManager` has been removed in favour of the coordinator-owned
+//! `TextFieldStore`.
 
-mod manager;
-mod types;
+/// Hex-color field in the L2 color-picker popup.
+pub const HEX_COLOR: &str = "hex_color";
 
-pub use manager::TextInputManager;
-pub use types::{FieldAction, FieldConfig, FieldId, InputCapability};
+/// Raw PTY input field for the agent terminal pane.
+pub const AGENT_PTY: &str = "agent_pty";
+
+/// Text chat input field for the agent chat pane.
+pub const AGENT_CHAT: &str = "agent_chat";

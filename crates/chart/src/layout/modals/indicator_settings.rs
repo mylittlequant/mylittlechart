@@ -104,7 +104,7 @@ pub fn render_indicator_settings_modal(
     input_coordinator.register_on_layer(
         "ind_settings:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -141,7 +141,7 @@ pub fn render_indicator_settings_modal(
     input_coordinator.register_on_layer(
         "ind_settings:close",
         uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -200,7 +200,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:tab:{}", tab.id()),
             uzor::types::Rect::new(sidebar_x, tab_y, sidebar_width, tab_button_height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -1359,7 +1359,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             "ind_settings:footer:template_dropdown_menu".to_string(),
             uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
 
@@ -1472,7 +1472,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:footer:{}", btn_id),
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -1482,7 +1482,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             format!("ind_settings:item:{}", item_id),
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -1492,7 +1492,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             "ind_settings:signals_toggle",
             uzor::types::Rect::new(toggle_rect.x, toggle_rect.y, toggle_rect.width, toggle_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -1502,7 +1502,7 @@ pub fn render_indicator_settings_modal(
         input_coordinator.register_on_layer(
             "ind_settings:scrollbar_track",
             uzor::types::Rect::new(track_rect.x, track_rect.y, track_rect.width, track_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }

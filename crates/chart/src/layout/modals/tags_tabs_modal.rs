@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use uzor::types::Rect as WidgetRect;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
@@ -392,7 +392,7 @@ fn render_tree_nodes(
     overlay_state: &OverlaySettingsState,
     result: &mut TagsTabsResult,
     input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::coordinator::LayerId,
+    layer_id: &uzor::input::LayerId,
     target_leaf_id: Option<LeafId>,
     selected_node_id: Option<u64>,
     expanded_leaf_id: Option<LeafId>,
@@ -574,7 +574,7 @@ fn render_tabs_section(
     content_height: f64,
     tabs_scroll: &ScrollState,
     scroll_widget_theme: &WidgetTheme,
-    layer_id: &uzor::input::coordinator::LayerId,
+    layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut TagsTabsResult,
 ) {
@@ -887,7 +887,7 @@ fn render_map_section(
     content_y: f64,
     content_width: f64,
     _content_height: f64,
-    layer_id: &uzor::input::coordinator::LayerId,
+    layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut TagsTabsResult,
 ) {
@@ -1410,7 +1410,7 @@ fn render_tags_section(
     content_height: f64,
     tags_scroll: &ScrollState,
     scroll_widget_theme: &WidgetTheme,
-    layer_id: &uzor::input::coordinator::LayerId,
+    layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut TagsTabsResult,
 ) {

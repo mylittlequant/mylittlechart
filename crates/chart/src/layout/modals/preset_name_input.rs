@@ -85,7 +85,7 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -117,7 +117,7 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:close",
         uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -159,7 +159,7 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:input",
         uzor::types::Rect::new(input_rect.x, input_rect.y, input_rect.width, input_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -202,7 +202,7 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:save",
         uzor::types::Rect::new(save_rect.x, save_rect.y, save_rect.width, save_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -221,7 +221,7 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:cancel",
         uzor::types::Rect::new(cancel_rect.x, cancel_rect.y, cancel_rect.width, cancel_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 

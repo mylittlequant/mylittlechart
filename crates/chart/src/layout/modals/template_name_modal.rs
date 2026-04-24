@@ -98,7 +98,7 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:modal_bg", ns_prefix),
         WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -120,7 +120,7 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:close", ns_prefix),
         close_rect,
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -161,7 +161,7 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:input", ns_prefix),
         input_rect,
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -204,7 +204,7 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:save", ns_prefix),
         save_rect,
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -223,7 +223,7 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:cancel", ns_prefix),
         cancel_rect,
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 

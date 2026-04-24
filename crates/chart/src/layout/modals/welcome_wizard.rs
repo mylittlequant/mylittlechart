@@ -12,7 +12,7 @@
 use crate::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use crate::ui::modal_settings::UserSettingsState;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;

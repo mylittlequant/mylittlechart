@@ -21,6 +21,8 @@ pub mod panels_store;
 pub mod preset_cache;
 pub mod scroll_dispatch;
 pub mod text_input;
+use uzor::input::TextFieldConfig;
+use uzor::WidgetId;
 pub mod workspace;
 
 pub use panels_store::TradingPanelsStore;
@@ -517,14 +519,6 @@ pub struct ChartApp {
     /// Format: `window_id → Vec<instance_id>`.  Cleared after applied.
     pub(crate) pending_sub_pane_order: std::collections::HashMap<u64, Vec<u64>>,
 
-    /// Central text-input manager — owns text/cursor/selection for all fields.
-    ///
-    /// All text fields in the application delegate their state to this manager.
-    /// Renderers register field geometry each frame via `update_field`; input
-    /// handlers call `on_char` / `on_key` / `on_drag_*` instead of touching
-    /// scattered per-field state copies.
-    pub text_input: text_input::TextInputManager,
-
     /// Agent session manager — owns PTY and pipe sessions.
     ///
     /// Call `drain_events` each frame (in `tick`) to process incoming terminal
@@ -945,7 +939,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
-            text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,
@@ -1129,6 +1122,17 @@ impl ChartApp {
             }
         }
 
+        // Register text fields on the InputCoordinator's TextFieldStore.
+        {
+            let mut coord = app.input_coordinator.borrow_mut();
+            let tf = coord.text_fields_mut();
+            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
+                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
+                .with_max_len(9));
+            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
+            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+        }
+
         // Populate sub_panes from the real indicator_manager.
         app.sync_sub_panes_from_manager();
 
@@ -1246,7 +1250,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
-            text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,
@@ -1316,6 +1319,17 @@ impl ChartApp {
             Some(app.panel_app.user_manager.profile.bar_count as usize),
             false,
         );
+
+        // Register text fields on the InputCoordinator's TextFieldStore.
+        {
+            let mut coord = app.input_coordinator.borrow_mut();
+            let tf = coord.text_fields_mut();
+            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
+                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
+                .with_max_len(9));
+            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
+            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+        }
 
         app.needs_initial_viewport_fit = true;
         app.sync_sub_panes_from_manager();
@@ -1435,7 +1449,6 @@ impl ChartApp {
             pending_sub_pane_order: std::collections::HashMap::new(),
             series_handles: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
-            text_input: text_input::TextInputManager::new(),
             agent: agent::AgentSessionManager::default(),
             agent_pty_hover_focused: false,
             agent_pty_drag_active: false,
@@ -1702,6 +1715,17 @@ impl ChartApp {
                     bridge.subscribe_mini_ticker(ws_exchange, &ws.symbol, ws_at);
                 }
             }
+        }
+
+        // Register text fields on the InputCoordinator's TextFieldStore.
+        {
+            let mut coord = app.input_coordinator.borrow_mut();
+            let tf = coord.text_fields_mut();
+            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
+                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
+                .with_max_len(9));
+            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
+            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
         }
 
         app.sync_sub_panes_from_manager();
@@ -3604,22 +3628,30 @@ impl ChartApp {
     /// - Alert-settings modal sync
     /// - Sidebar data rebuild (when `sidebar_data_dirty` is set)
     pub fn prepare_frame(&mut self, width: f64, height: f64) {
-        // Advance the text-input manager's frame counter so stale field geometry
+        // Advance the text-field store's frame counter so stale field geometry
         // from a previous frame is expired before new update_field calls arrive.
-        self.text_input.begin_frame();
+        // NOTE: render_to_scene also calls coordinator.begin_frame() which calls
+        // text_fields.begin_frame() internally.  We call it here too so that
+        // prepare_frame (called before render) stamps the correct frame on
+        // update_field calls that follow render.
+        self.input_coordinator.borrow_mut().text_fields_mut().begin_frame();
 
-        // Sync TextInputManager cursor → picker.hex_cursor before rendering.
-        // The renderer reads hex_cursor from ColorPickerState, but TextInputManager
-        // owns the authoritative cursor position after mouse/keyboard events.
-        if self.text_input.is_focused(crate::text_input::FieldId::HexColor) {
-            let cursor = self.text_input.cursor(crate::text_input::FieldId::HexColor);
-            let text = self.text_input.text(crate::text_input::FieldId::HexColor).to_string();
-            let sel = self.text_input.selection_range(crate::text_input::FieldId::HexColor);
+        // Sync text-field cursor → picker.hex_cursor before rendering.
+        // The renderer reads hex_cursor from ColorPickerState, but the text-field
+        // store owns the authoritative cursor position after mouse/keyboard events.
+        let hex_id = WidgetId::new(text_input::HEX_COLOR);
+        if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
+            let coord = self.input_coordinator.borrow();
+            let tf = coord.text_fields();
+            let cursor = tf.cursor(&hex_id);
+            let text = tf.text(&hex_id).to_string();
+            let sel = tf.selection_range(&hex_id);
+            drop(coord);
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            let cursor_vis = self.text_input.cursor_visible(now_ms);
+            let cursor_vis = self.input_coordinator.borrow().text_fields().cursor_visible(now_ms);
             for picker in [
                 &mut self.panel_app.primitive_settings_state.color_picker,
                 &mut self.panel_app.indicator_settings_state.color_picker,
@@ -3637,16 +3669,20 @@ impl ChartApp {
             }
         }
 
-        // Sync TextInputManager → sidebar_state for agent chat input rendering.
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
-            let cursor = self.text_input.cursor(crate::text_input::FieldId::AgentChat);
-            let text = self.text_input.text(crate::text_input::FieldId::AgentChat).to_string();
-            let sel = self.text_input.selection_range(crate::text_input::FieldId::AgentChat);
+        // Sync text-field store → sidebar_state for agent chat input rendering.
+        let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
+            let coord = self.input_coordinator.borrow();
+            let tf = coord.text_fields();
+            let cursor = tf.cursor(&chat_id);
+            let text = tf.text(&chat_id).to_string();
+            let sel = tf.selection_range(&chat_id);
+            drop(coord);
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            let cursor_vis = self.text_input.cursor_visible(now_ms);
+            let cursor_vis = self.input_coordinator.borrow().text_fields().cursor_visible(now_ms);
             self.sidebar_state.agent_input_cursor_visible = cursor_vis;
             self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_agent_leaf;
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
@@ -6320,30 +6356,32 @@ impl ChartApp {
                 window.sub_pane_overlay_results = overlays;
             }
         }
-        // Update TextInputManager geometry for the HexColor field whenever the
+        // Update text-field geometry for the HexColor field whenever the
         // L2 color picker is visible.  This gives on_drag_start accurate rect +
         // char positions so cursor-from-click works correctly.
         if let Some(ref fr) = self.frame_result {
             if let Some(ref cp) = fr.color_picker {
                 if let Some(ref l2) = cp.l2_result {
                     let r = &l2.hex_input_rect;
-                    self.text_input.update_field(
-                        crate::text_input::FieldId::HexColor,
+                    let hex_id = WidgetId::new(text_input::HEX_COLOR);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &hex_id,
                         (r.x, r.y, r.width, r.height),
                         l2.hex_char_positions.clone(),
                     );
                 }
             }
         }
-        // Update TextInputManager geometry for the agent chat input field so
+        // Update text-field geometry for the agent chat input field so
         // on_drag_start can compute cursor-from-click correctly.
         if let Some(ref sidebar_result) = self.last_sidebar_result {
             if let (Some(rect), Some(char_positions)) = (
                 sidebar_result.agent_input_rect,
                 sidebar_result.agent_input_char_positions.clone(),
             ) {
-                self.text_input.update_field(
-                    crate::text_input::FieldId::AgentChat,
+                let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &chat_id,
                     (rect.x, rect.y, rect.width, rect.height),
                     char_positions,
                 );
@@ -6510,12 +6548,14 @@ impl ChartApp {
 
         // Sync cursor blink state — render() does this in prepare_frame,
         // but render_sidebar_only() skips prepare_frame so we must do it here.
-        if self.text_input.is_focused(crate::text_input::FieldId::AgentChat) {
+        let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+        if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            self.sidebar_state.agent_input_cursor_visible = self.text_input.cursor_visible(now_ms);
+            self.sidebar_state.agent_input_cursor_visible =
+                self.input_coordinator.borrow().text_fields().cursor_visible(now_ms);
             self.sidebar_state.agent_input_focused_leaf = self.sidebar_state.focused_agent_leaf;
         }
 
@@ -6718,13 +6758,14 @@ impl ChartApp {
             }
         }
 
-        // Update TextInputManager geometry for agent chat input field.
+        // Update text-field geometry for agent chat input field.
         if let (Some(rect), Some(char_positions)) = (
             sidebar_result.agent_input_rect,
             sidebar_result.agent_input_char_positions.clone(),
         ) {
-            self.text_input.update_field(
-                crate::text_input::FieldId::AgentChat,
+            let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &chat_id,
                 (rect.x, rect.y, rect.width, rect.height),
                 char_positions,
             );
@@ -6819,7 +6860,7 @@ impl ChartApp {
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
                 .unwrap_or(false);
             if inside && is_pty_leaf {
-                self.text_input.focus(crate::text_input::FieldId::AgentPty);
+                self.input_coordinator.borrow_mut().text_fields_mut().focus(text_input::AGENT_PTY);
             }
             // Do NOT blur on cursor-leave — blur only on click outside. Otherwise
             // any tiny mouse movement during typing steals PTY focus mid-keystroke.

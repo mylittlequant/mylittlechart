@@ -15,7 +15,7 @@ const MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mascot.svg")
 use crate::ui::Icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use crate::ui::modal_settings::{UserSettingsState, ProfileManagerPage};
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;

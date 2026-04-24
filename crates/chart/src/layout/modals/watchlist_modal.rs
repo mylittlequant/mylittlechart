@@ -172,7 +172,7 @@ pub fn render_watchlist_modal(
     input_coordinator.register_on_layer(
         "wl_modal:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -216,7 +216,7 @@ pub fn render_watchlist_modal(
     input_coordinator.register_on_layer(
         "wl_modal:close",
         uzor::types::Rect::new(close_x, close_y, icon_size, icon_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -232,7 +232,7 @@ pub fn render_watchlist_modal(
     input_coordinator.register_on_layer(
         "wl_modal:header_drag",
         uzor::types::Rect::new(modal_x, modal_y, modal_w - icon_size - 14.0, header_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -280,7 +280,7 @@ pub fn render_watchlist_modal(
         input_coordinator.register_on_layer(
             *widget_id,
             uzor::types::Rect::new(tab_x, tab_bar_y, tab_w, tab_bar_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -491,7 +491,7 @@ fn render_overview_tab(
     input_coordinator.register_on_layer(
         "wl_modal:search_input",
         uzor::types::Rect::new(search_input_x, search_input_y, search_input_w, input_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         layer_id,
     );
 
@@ -766,7 +766,7 @@ fn render_overview_tab(
     input_coordinator.register_on_layer(
         "wl_modal:list_scroll",
         uzor::types::Rect::new(modal_x, list_top, modal_w, list_h),
-        uzor::input::sense::Sense::DRAG,
+        uzor::input::Sense::DRAG,
         layer_id,
     );
 
@@ -775,7 +775,7 @@ fn render_overview_tab(
         input_coordinator.register_on_layer(
             item_id.as_str(),
             uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            uzor::input::sense::Sense::CLICK_AND_DRAG,
+            uzor::input::Sense::CLICK_AND_DRAG,
             layer_id,
         );
     }
@@ -785,7 +785,7 @@ fn render_overview_tab(
         input_coordinator.register_on_layer(
             delete_id.as_str(),
             uzor::types::Rect::new(delete_rect.x, delete_rect.y, delete_rect.width, delete_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
     }
@@ -850,7 +850,7 @@ fn render_groups_tab(
     input_coordinator.register_on_layer(
         "wl_modal:group_add",
         uzor::types::Rect::new(btn_x, btn_top, btn_w, btn_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         layer_id,
     );
 
@@ -950,7 +950,7 @@ fn render_groups_tab(
         input_coordinator.register_on_layer(
             rename_id.as_str(),
             uzor::types::Rect::new(rename_icon_x - 4.0, row_y, icon_size + 8.0, row_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
 
@@ -967,7 +967,7 @@ fn render_groups_tab(
             input_coordinator.register_on_layer(
                 del_id.as_str(),
                 uzor::types::Rect::new(del_icon_x - 4.0, row_y, icon_size + 8.0, row_h),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 layer_id,
             );
         }
@@ -978,7 +978,7 @@ fn render_groups_tab(
         input_coordinator.register_on_layer(
             row_id.as_str(),
             uzor::types::Rect::new(modal_x, row_y, row_clickable_w.max(0.0), row_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
 
@@ -1141,7 +1141,7 @@ pub fn render_wl_group_name_input(
     input_coordinator.register_on_layer(
         "wl_group_name:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -1171,7 +1171,7 @@ pub fn render_wl_group_name_input(
     input_coordinator.register_on_layer(
         "wl_group_name:close",
         uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -1213,7 +1213,7 @@ pub fn render_wl_group_name_input(
     input_coordinator.register_on_layer(
         "wl_group_name:input",
         uzor::types::Rect::new(input_rect.x, input_rect.y, input_rect.width, input_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -1256,7 +1256,7 @@ pub fn render_wl_group_name_input(
     input_coordinator.register_on_layer(
         "wl_group_name:save",
         uzor::types::Rect::new(save_rect.x, save_rect.y, save_rect.width, save_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -1275,7 +1275,7 @@ pub fn render_wl_group_name_input(
     input_coordinator.register_on_layer(
         "wl_group_name:cancel",
         uzor::types::Rect::new(cancel_rect.x, cancel_rect.y, cancel_rect.width, cancel_rect.height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 

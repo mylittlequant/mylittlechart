@@ -221,7 +221,7 @@ pub fn render_settings_modal(
     input_coordinator.register_on_layer(
         "chart_settings:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -257,7 +257,7 @@ pub fn render_settings_modal(
     input_coordinator.register_on_layer(
         "chart_settings:close",
         uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -476,7 +476,7 @@ pub fn render_settings_modal(
         input_coordinator.register_on_layer(
             format!("chart_settings:tab:{}", tab.id()),
             uzor::types::Rect::new(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -494,7 +494,7 @@ pub fn render_settings_modal(
         input_coordinator.register_on_layer(
             format!("chart_settings:footer:{}", btn_id),
             uzor::types::Rect::new(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -523,7 +523,7 @@ pub fn render_settings_modal(
         input_coordinator.register_on_layer(
             "chart_settings:footer:template_dropdown_menu",
             uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
 
@@ -546,7 +546,7 @@ pub fn render_settings_modal(
             input_coordinator.register_on_layer(
                 "chart_settings:footer:template_save_as",
                 uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 &layer_id,
             );
         }
@@ -569,7 +569,7 @@ pub fn render_settings_modal(
             input_coordinator.register_on_layer(
                 "chart_settings:footer:template_default",
                 uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-                uzor::input::sense::Sense::CLICK,
+                uzor::input::Sense::CLICK,
                 &layer_id,
             );
         }
@@ -623,13 +623,13 @@ pub fn render_settings_modal(
                     input_coordinator.register_on_layer(
                         format!("chart_settings:footer:{}", row_id),
                         uzor::types::Rect::new(row_rect.x, row_rect.y, row_rect.width, row_rect.height),
-                        uzor::input::sense::Sense::CLICK,
+                        uzor::input::Sense::CLICK,
                         &layer_id,
                     );
                     input_coordinator.register_on_layer(
                         format!("chart_settings:footer:{}", del_id),
                         uzor::types::Rect::new(del_rect.x, del_rect.y, del_rect.width, del_rect.height),
-                        uzor::input::sense::Sense::CLICK,
+                        uzor::input::Sense::CLICK,
                         &layer_id,
                     );
                 }
@@ -793,7 +793,7 @@ pub fn render_settings_modal(
         input_coordinator.register_on_layer(
             format!("chart_settings:item:{}", item_id),
             uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }

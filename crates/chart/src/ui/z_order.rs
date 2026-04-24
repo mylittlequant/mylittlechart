@@ -3,7 +3,7 @@
 //! All UI layers and their z-order values are defined here.
 //! Higher values render on top and receive input events first.
 
-use uzor::input::coordinator::{InputCoordinator, LayerId};
+use uzor::input::{InputCoordinator, LayerId};
 
 /// Named rendering layers with centralized z-order values.
 ///

@@ -8,7 +8,7 @@
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
-use uzor::widgets::text_input::state::TextInputState;
+use uzor::app_context::TextInputState;
 use alert_delivery::NotificationSettings;
 
 // =============================================================================

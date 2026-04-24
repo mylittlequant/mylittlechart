@@ -13,7 +13,8 @@
 //! Tab close icons and the action buttons use SVG icons from the chart icon set.
 
 use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
-use uzor::{TooltipState, WidgetId, calculate_tooltip_position};
+use uzor::WidgetId;
+use crate::tooltip::{TooltipState, calculate_tooltip_position};
 use uzor::i18n::{TooltipKey, current_language};
 use zengeld_chart::ui::icons::icon_svg;
 

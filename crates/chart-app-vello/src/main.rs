@@ -7,6 +7,7 @@
 
 mod chrome;
 pub mod keychain;
+mod tooltip;
 
 /// Win32 cursor position polling helpers.
 ///
@@ -321,7 +322,7 @@ struct PerWindowState {
     /// Reference instant used to compute monotonic milliseconds for chrome tooltip timing.
     chrome_tooltip_start: std::time::Instant,
     /// Tooltip state for toolbar button hover tooltips (left/top/right/bottom strips).
-    toolbar_tooltip: uzor::TooltipState,
+    toolbar_tooltip: tooltip::TooltipState,
     /// True when the window was minimized (detected via Resized with 0x0 size).
     /// Cleared on the first non-zero resize after minimization, which triggers
     /// a snap-to-end so the viewport is back at the latest bar after restore.
@@ -2972,7 +2973,7 @@ impl App<'_> {
             gpu_hybrid_ctx: None,
             visible_set: false,
             chrome_tooltip_start: std::time::Instant::now(),
-            toolbar_tooltip: uzor::TooltipState::with_delay(700.0),
+            toolbar_tooltip: tooltip::TooltipState::with_delay(700.0),
             was_minimized: false,
         };
 

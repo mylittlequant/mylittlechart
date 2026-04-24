@@ -138,7 +138,7 @@ pub fn render_context_menu(
     input_coordinator.register_on_layer(
         "context_menu:bg",
         uzor::types::Rect::new(menu_x, menu_y, menu_width, menu_height),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -148,7 +148,7 @@ pub fn render_context_menu(
         input_coordinator.register_on_layer(
             widget_id,
             uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }

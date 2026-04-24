@@ -108,7 +108,7 @@ pub fn render_chart_browser(
     input_coordinator.register_on_layer(
         "chart_browser:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -141,7 +141,7 @@ pub fn render_chart_browser(
     input_coordinator.register_on_layer(
         "chart_browser:close",
         uzor::types::Rect::new(close_x, close_y, icon_size, icon_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -188,7 +188,7 @@ pub fn render_chart_browser(
     input_coordinator.register_on_layer(
         "chart_browser:search_input",
         uzor::types::Rect::new(search_input_x, search_input_y, search_input_w, input_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -427,7 +427,7 @@ pub fn render_chart_browser(
         input_coordinator.register_on_layer(
             item_id.as_str(),
             uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
 
@@ -436,7 +436,7 @@ pub fn render_chart_browser(
         input_coordinator.register_on_layer(
             rename_id.as_str(),
             uzor::types::Rect::new(rename_rect.x, rename_rect.y, rename_rect.width, rename_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
 
@@ -445,7 +445,7 @@ pub fn render_chart_browser(
         input_coordinator.register_on_layer(
             delete_id.as_str(),
             uzor::types::Rect::new(delete_rect.x, delete_rect.y, delete_rect.width, delete_rect.height),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }

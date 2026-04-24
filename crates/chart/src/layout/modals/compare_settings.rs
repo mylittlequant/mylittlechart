@@ -22,7 +22,7 @@ use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use crate::drawing::TimeframeVisibilityConfig;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
 

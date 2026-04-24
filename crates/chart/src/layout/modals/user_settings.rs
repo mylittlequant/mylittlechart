@@ -8,7 +8,7 @@ use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
-use uzor::input::sense::Sense;
+use uzor::input::Sense;
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
@@ -68,7 +68,7 @@ pub fn render_user_settings_modal(
     input_coordinator.register_on_layer(
         "user_settings:modal_bg",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -81,7 +81,7 @@ pub fn render_user_settings_modal(
     input_coordinator.register_on_layer(
         "user_settings:header",
         uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
-        uzor::input::sense::Sense::DRAG,
+        uzor::input::Sense::DRAG,
         &layer_id,
     );
 
@@ -104,7 +104,7 @@ pub fn render_user_settings_modal(
     input_coordinator.register_on_layer(
         "user_settings:close",
         uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::sense::Sense::CLICK,
+        uzor::input::Sense::CLICK,
         &layer_id,
     );
 
@@ -166,7 +166,7 @@ pub fn render_user_settings_modal(
         input_coordinator.register_on_layer(
             hit_id.as_str(),
             uzor::types::Rect::new(sidebar_x, tab_y, sidebar_w, tab_button_h),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             &layer_id,
         );
     }
@@ -1319,7 +1319,7 @@ fn render_performance_tab(
         input_coordinator.register_on_layer(
             hit_id.as_str(),
             uzor::types::Rect::new(*rx, *ry, *rw, *rh),
-            uzor::input::sense::Sense::CLICK,
+            uzor::input::Sense::CLICK,
             layer_id,
         );
     }

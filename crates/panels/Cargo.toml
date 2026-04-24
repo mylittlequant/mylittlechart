@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-uzor = "=1.0.43"
+uzor = "=1.1.0"
 zengeld-chart = { path = "../chart" }
 trade-service = { path = "../trade-service" }
 orderbook-service = { path = "../orderbook-service" }
