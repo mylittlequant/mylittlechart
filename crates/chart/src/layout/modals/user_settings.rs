@@ -562,6 +562,14 @@ fn render_general_tab(
             layer_id,
         );
     }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 // =============================================================================
@@ -1258,6 +1266,14 @@ fn render_sync_tab(
             layer_id,
         );
     }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1613,6 +1629,14 @@ fn render_performance_tab(
             layer_id,
         );
     }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1743,6 +1767,14 @@ fn render_server_tab(
             "user_settings:scrollbar_track",
             uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
             uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
             layer_id,
         );
     }

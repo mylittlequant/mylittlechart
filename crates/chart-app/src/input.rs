@@ -5637,6 +5637,50 @@ impl ChartApp {
                             }
                             return;
                         }
+                        "tags_tabs:scroll_viewport" => {
+                            if let Some(ref tt) = self.frame_result
+                                .as_ref()
+                                .and_then(|r| r.tags_tabs.as_ref())
+                                .cloned()
+                            {
+                                use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
+                                let info = ScrollableInfo {
+                                    handle_rect:     tt.scrollbar_handle_rect,
+                                    track_rect:      tt.scrollbar_track_rect,
+                                    content_height:  tt.scroll_content_height,
+                                    viewport_height: tt.scroll_viewport_height,
+                                    viewport_rect:   tt.scroll_viewport_rect,
+                                };
+                                let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                                let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
+                            }
+                            return;
+                        }
+                        "user_settings:scroll_viewport" => {
+                            if let Some(ref us) = self.frame_result
+                                .as_ref()
+                                .and_then(|r| r.user_settings.as_ref())
+                                .cloned()
+                            {
+                                use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
+                                use zengeld_chart::ui::modal_settings::UserSettingsTab;
+                                let info = ScrollableInfo {
+                                    handle_rect: us.scrollbar_handle_rect,
+                                    track_rect: us.scrollbar_track_rect,
+                                    content_height: us.scroll_content_height,
+                                    viewport_height: us.scroll_viewport_height,
+                                    viewport_rect: us.scroll_viewport_rect,
+                                };
+                                let scroll_state = match self.panel_app.user_settings_state.active_tab {
+                                    UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
+                                    UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                                    UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                                    UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
+                                };
+                                let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
+                            }
+                            return;
+                        }
                         _ => {}
                     }
                 }
@@ -5886,63 +5930,6 @@ impl ChartApp {
                         eprintln!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
                     }
                     CmpScrollAction::Swallow => {}
-                }
-                return;
-            }
-
-            // Tags & Tabs modal — scroll the active content area.
-            if self.panel_app.tags_tabs_state.is_open {
-                if let Some(ref tt) = self.frame_result
-                    .as_ref()
-                    .and_then(|r| r.tags_tabs.as_ref())
-                    .cloned()
-                {
-                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
-                    let info = ScrollableInfo {
-                        handle_rect:     tt.scrollbar_handle_rect,
-                        track_rect:      tt.scrollbar_track_rect,
-                        content_height:  tt.scroll_content_height,
-                        viewport_height: tt.scroll_viewport_height,
-                        viewport_rect:   tt.scroll_viewport_rect,
-                    };
-                    let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
-                    if try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]) {
-                        return;
-                    }
-                }
-                return; // swallow scroll even if outside list area when modal is open
-            }
-
-            // User settings modal — scroll the active tab content.
-            if self.panel_app.user_settings_state.is_open
-                && !self.panel_app.user_settings_state.show_profile_manager
-            {
-                if let Some(ref us) = self.frame_result
-                    .as_ref()
-                    .and_then(|r| r.user_settings.as_ref())
-                    .cloned()
-                {
-                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_wheel};
-                    use zengeld_chart::ui::modal_settings::UserSettingsTab;
-
-                    let info = ScrollableInfo {
-                        handle_rect: us.scrollbar_handle_rect,
-                        track_rect: us.scrollbar_track_rect,
-                        content_height: us.scroll_content_height,
-                        viewport_height: us.scroll_viewport_height,
-                        viewport_rect: us.scroll_viewport_rect,
-                    };
-
-                    let scroll_state = match self.panel_app.user_settings_state.active_tab {
-                        UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
-                        UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
-                        UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
-                    };
-
-                    if try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]) {
-                        return;
-                    }
                 }
                 return;
             }

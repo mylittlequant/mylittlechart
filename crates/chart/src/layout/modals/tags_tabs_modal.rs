@@ -890,6 +890,14 @@ fn render_tabs_section(
             layer_id,
         );
     }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "tags_tabs:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 // =============================================================================
