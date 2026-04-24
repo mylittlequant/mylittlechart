@@ -4933,6 +4933,63 @@ impl ChartApp {
                         );
                     }
                     main_chart_y = extended.main_chart.chart.y;
+
+                    // Phase 7.3: register sub-pane separators, scales on InputCoordinator.
+                    {
+                        use uzor::input::Sense;
+                        const SUB_SEP_TOLERANCE: f64 = 6.0;
+
+                        // Sub-pane separators (±6 px around centre, matching find_separator_at_y).
+                        for pane in &extended.sub_panes {
+                            if pane.separator.height == 0.0 {
+                                continue; // maximized overlay — no interactive separator
+                            }
+                            let sep_center_y = pane.separator.y + pane.separator.height * 0.5;
+                            let sep_rect = uzor::Rect::new(
+                                pane.separator.x,
+                                sep_center_y - SUB_SEP_TOLERANCE,
+                                pane.separator.width,
+                                SUB_SEP_TOLERANCE * 2.0,
+                            );
+                            self.input_coordinator.borrow_mut().register(
+                                format!("chart:sub_sep:{}:{}", leaf_id.0, pane.instance_id),
+                                sep_rect,
+                                Sense::DRAG | Sense::HOVER,
+                            );
+                        }
+
+                        // Main price scale.
+                        let (psx, psy, psw, psh) = extended.main_chart.price_scale_rect_tuple();
+                        if psw > 0.0 && psh > 0.0 {
+                            self.input_coordinator.borrow_mut().register(
+                                format!("chart:price_scale:{}", leaf_id.0),
+                                uzor::Rect::new(psx, psy, psw, psh),
+                                Sense::DRAG | Sense::HOVER,
+                            );
+                        }
+
+                        // Main time scale.
+                        let (tsx, tsy, tsw, tsh) = extended.main_chart.time_scale_rect_tuple();
+                        if tsw > 0.0 && tsh > 0.0 {
+                            self.input_coordinator.borrow_mut().register(
+                                format!("chart:time_scale:{}", leaf_id.0),
+                                uzor::Rect::new(tsx, tsy, tsw, tsh),
+                                Sense::DRAG | Sense::HOVER,
+                            );
+                        }
+
+                        // Sub-pane price scales.
+                        for pane in &extended.sub_panes {
+                            let ps = &pane.price_scale;
+                            if ps.width > 0.0 && ps.height > 0.0 {
+                                self.input_coordinator.borrow_mut().register(
+                                    format!("chart:sub_price_scale:{}:{}", leaf_id.0, pane.instance_id),
+                                    uzor::Rect::new(ps.x, ps.y, ps.width, ps.height),
+                                    Sense::DRAG | Sense::HOVER,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // Reset render scope after this leaf is done.

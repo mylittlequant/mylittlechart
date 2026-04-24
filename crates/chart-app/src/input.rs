@@ -4732,18 +4732,18 @@ impl ChartApp {
             return;
         }
 
-        // Universal UI check: any registered widget hovered = hide crosshair.
-        // Since the chart canvas is NOT a registered widget, is_over_ui() returns
-        // true only when the pointer is over a toolbar, modal, context menu,
-        // dropdown, color picker, or any other registered UI element.
-        if self.input_coordinator.borrow_mut().is_over_ui() {
-            // When actively drawing, keep updating the crosshair so the
-            // preview line stays visible even when the cursor drifts over the
-            // toolbar or sidebar.  Fall through to the crosshair update below.
+        // Phase 7.3: crosshair gate — show only when hovered widget is chart:pane:*.
+        // Hovering price/time scale, sub-pane separator, toolbar, modal, etc. all
+        // suppress the crosshair.  drawing_active bypasses the gate so the preview
+        // line stays visible when the cursor drifts outside the chart pane.
+        {
+            let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
+                .map(|w| w.0.starts_with("chart:pane:"))
+                .unwrap_or(false);
             let is_drawing = self.panel_app.panel_grid.active_window()
                 .map(|w| w.drawing_manager.is_drawing())
                 .unwrap_or(false);
-            if !is_drawing {
+            if !hovered_chart_pane && !is_drawing {
                 if self.panel_app.panel_grid.is_split() {
                     self.hide_all_split_crosshairs();
                 } else {
