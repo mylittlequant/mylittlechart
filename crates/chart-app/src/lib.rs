@@ -4724,6 +4724,29 @@ impl ChartApp {
                 .map(|(&leaf_id, &sub_rect)| (leaf_id, sub_rect))
                 .collect();
 
+            // Register chart panes on InputCoordinator (lowest layer — all UI above).
+            {
+                use uzor::input::Sense;
+                for &(leaf_id, sub_rect) in &leaf_rects {
+                    if sub_rect.width > 0.0 && sub_rect.height > 0.0 {
+                        self.input_coordinator.borrow_mut().register(
+                            format!("chart:pane:{}", leaf_id.0),
+                            uzor::Rect::new(
+                                content_rect.x + sub_rect.x as f64,
+                                content_rect.y + sub_rect.y as f64,
+                                sub_rect.width as f64,
+                                sub_rect.height as f64,
+                            ),
+                            Sense::CLICK
+                                | Sense::DRAG
+                                | Sense::SCROLL
+                                | Sense::RIGHT_CLICK
+                                | Sense::DOUBLE_CLICK,
+                        );
+                    }
+                }
+            }
+
             let chart_theme = self.panel_app.chart_theme_for_render();
             let no_toolbar = zengeld_chart::ToolbarConfig::minimal();
 
@@ -5180,7 +5203,7 @@ impl ChartApp {
                 .collect();
 
             use zengeld_chart::SeparatorOrientation;
-            for (orientation, position, start, length, thickness) in separators {
+            for (idx, (orientation, position, start, length, thickness)) in separators.iter().copied().enumerate() {
                 let color: &str = &frame_theme.toolbar_border;
                 // Convert content-relative separator coords to absolute screen coords.
                 let (rect_x, rect_y, rect_w, rect_h) = match orientation {
@@ -5199,6 +5222,31 @@ impl ChartApp {
                 };
                 ctx.set_fill_color(color);
                 ctx.fill_rect(rect_x, rect_y, rect_w, rect_h);
+
+                // Register separator as a draggable hit zone (wider than visual for easier grab).
+                {
+                    use uzor::input::Sense;
+                    const HIT_EXPAND: f64 = 4.0;
+                    let (hit_x, hit_y, hit_w, hit_h) = match orientation {
+                        SeparatorOrientation::Vertical => (
+                            rect_x - HIT_EXPAND,
+                            rect_y,
+                            rect_w + HIT_EXPAND * 2.0,
+                            rect_h,
+                        ),
+                        SeparatorOrientation::Horizontal => (
+                            rect_x,
+                            rect_y - HIT_EXPAND,
+                            rect_w,
+                            rect_h + HIT_EXPAND * 2.0,
+                        ),
+                    };
+                    self.input_coordinator.borrow_mut().register(
+                        format!("chart:separator:{}", idx),
+                        uzor::Rect::new(hit_x, hit_y, hit_w, hit_h),
+                        Sense::DRAG,
+                    );
+                }
             }
 
             ScaleCornerHitZones::default()
@@ -5425,6 +5473,25 @@ impl ChartApp {
                 main_chart_y_single = content_rect.y;
                 ScaleCornerHitZones::default()
             };
+
+            // Register single chart pane on InputCoordinator (lowest layer).
+            if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                use uzor::input::Sense;
+                self.input_coordinator.borrow_mut().register(
+                    format!("chart:pane:{}", active_leaf.0),
+                    uzor::Rect::new(
+                        content_rect.x,
+                        content_rect.y,
+                        content_rect.width,
+                        content_rect.height,
+                    ),
+                    Sense::CLICK
+                        | Sense::DRAG
+                        | Sense::SCROLL
+                        | Sense::RIGHT_CLICK
+                        | Sense::DOUBLE_CLICK,
+                );
+            }
 
             // Collect single-window sub-pane ranges for writeback via RenderOutput.
             if !single_sub_pane_ranges.is_empty() {
