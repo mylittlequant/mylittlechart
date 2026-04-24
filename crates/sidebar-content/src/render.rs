@@ -1017,6 +1017,12 @@ fn render_watchlist_column_header(
     ctx.set_fill_color(&theme.background);
     ctx.fill_rect(rect.x, header_y, content_width, header_row_h);
 
+    input_coordinator.register(
+        "watchlist:column_header",
+        WidgetRect::new(rect.x, header_y, content_width, header_row_h),
+        uzor::input::Sense::DOUBLE_CLICK,
+    );
+
     // Sort-by-color button in column header — 10px wide rect.
     // Always filled with hover color so it's visible against the header bg.
     {

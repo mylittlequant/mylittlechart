@@ -783,19 +783,15 @@ impl ChartApp {
             }
         }
 
-        // Double-click on watchlist column header area → reset separators to equal widths.
-        if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Watchlist {
-            if let Some(ref sidebar_result) = self.last_sidebar_result {
-                let sr = &sidebar_result.content_rect;
-                let header_y = sr.y + 12.0; // content_padding from render.rs
-                let header_h = 22.0;        // header_row_h from render.rs
-                if x >= sr.x && x <= sr.x + sr.width && y >= header_y && y <= header_y + header_h {
-                    self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
-                    self.watchlists_dirty = true;
-                    self.persist_watchlists();
-                    return;
-                }
-            }
+        // Double-click on watchlist column header → reset separators to equal widths.
+        let header_hit = self.input_coordinator.borrow_mut().process_double_click(x, y)
+            .map(|wid| wid.0 == "watchlist:column_header")
+            .unwrap_or(false);
+        if header_hit {
+            self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
+            self.watchlists_dirty = true;
+            self.persist_watchlists();
+            return;
         }
 
         // Double-click inside a free-slot leaf body → DOM center on market price.
