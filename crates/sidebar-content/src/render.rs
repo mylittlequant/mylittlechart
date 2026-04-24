@@ -5172,7 +5172,7 @@ fn render_agents_pane(
         // Scroll area for wheel routing.
         let scroll_wid = format!("agent:leaf:{}:sessions_scroll_area", leaf_id.0);
         let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
-        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER | uzor::input::Sense::SCROLL);
         result.item_rects.push((scroll_wid, scroll_rect));
 
         let now_ts = std::time::SystemTime::now()
@@ -5305,7 +5305,7 @@ fn render_agents_pty_leaf(
     // Click-to-focus: the entire content area focuses this leaf.
     let focus_wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
     let focus_rect = WidgetRect::new(x, y, w, h);
-    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK);
+    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK | uzor::input::Sense::SCROLL);
     result.item_rects.push((focus_wid, focus_rect));
 
     match snapshot {
@@ -5678,7 +5678,7 @@ fn render_agents_chat_leaf(
     // Click-to-focus: chat area registers focus.
     let focus_wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
     let focus_rect = WidgetRect::new(x, y, w, h);
-    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
+    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK | uzor::input::Sense::SCROLL);
     result.item_rects.push((focus_wid, focus_rect));
 
     // ── Input panel (Claude Code style) ──────────────────────────────────────
@@ -5954,7 +5954,7 @@ fn render_agents_chat_leaf(
         // Register scroll area for wheel routing.
         let scroll_wid = format!("agent:leaf:{}:model_scroll_area", leaf_id.0);
         let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
-        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER | uzor::input::Sense::SCROLL);
         result.item_rects.push((scroll_wid, scroll_rect));
 
         ctx.save();
@@ -6044,7 +6044,7 @@ fn render_agents_chat_leaf(
         // Scroll area for wheel routing.
         let scroll_wid = format!("agent:leaf:{}:perm_scroll_area", leaf_id.0);
         let scroll_rect = WidgetRect::new(drop_x, drop_y, drop_w, drop_h);
-        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER);
+        input_coordinator.register(scroll_wid.as_str(), scroll_rect, uzor::input::Sense::HOVER | uzor::input::Sense::SCROLL);
         result.item_rects.push((scroll_wid, scroll_rect));
 
         ctx.save();

@@ -5986,117 +5986,107 @@ impl ChartApp {
                         return;
                     }
 
-                    // Agents panel: route wheel to the leaf the mouse is hovering over,
-                    // not the focused leaf.  This lets the user scroll any visible pane
-                    // without first clicking to focus it.
+                    // Phase 6.2a: agent scroll surfaces via coordinator dispatch.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
-                        // --- Popup dropdown scroll routing (model/perm/sessions) ---
-                        // If mouse is over an open popup's scroll area, scroll it instead of the leaf.
-                        let popup_scroll_handled = {
-                            let mut handled = false;
-                            let scroll_step = -dy; // normalised: positive = scroll down
+                        let hovered_id = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        if let Some(ref id) = hovered_id {
+                            let scroll_step = -dy;
 
-                            // Helper: check if cursor is in a named scroll_area widget rect.
-                            // Returns (LeafId, rect_height) — rect_height is the real
-                            // viewport after leaf-size clamping.
-                            let check_popup = |suffix: &str| -> Option<(uzor::panels::LeafId, f64)> {
-                                for (wid, wrect) in &sidebar_result.item_rects {
-                                    if wid.ends_with(suffix)
-                                        && x >= wrect.x && x < wrect.x + wrect.width
-                                        && y >= wrect.y && y < wrect.y + wrect.height
-                                    {
-                                        let rest = wid.strip_prefix("agent:leaf:")?;
-                                        let id_str = rest.strip_suffix(suffix)?;
-                                        let raw: u64 = id_str.parse().ok()?;
-                                        return Some((uzor::panels::LeafId(raw), wrect.height));
+                            if let Some(rest) = id.strip_suffix(":model_scroll_area") {
+                                if let Some(lid_str) = rest.strip_prefix("agent:leaf:") {
+                                    if let Ok(raw) = lid_str.parse::<u64>() {
+                                        let lid = uzor::panels::LeafId(raw);
+                                        let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
+                                            Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                            Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
+                                            Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
+                                            Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
+                                            None => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                        };
+                                        let item_h = 24.0;
+                                        let total_h = caps2.available_models.len() as f64 * item_h + 6.0;
+                                        // viewport_h: sourced from item_rects rect.height (same as original check_popup)
+                                        let viewport_h = sidebar_result.item_rects.iter()
+                                            .find(|(wid, _)| wid.as_str() == id.as_str())
+                                            .map(|(_, r)| r.height)
+                                            .unwrap_or(total_h);
+                                        self.sidebar_state.agent_model_scroll
+                                            .entry(lid).or_default()
+                                            .handle_wheel(scroll_step, total_h, viewport_h);
+                                        return;
                                     }
                                 }
-                                None
-                            };
-
-                            if let Some((lid, viewport_h)) = check_popup(":model_scroll_area") {
-                                let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
-                                    Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
-                                    Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
-                                    Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
-                                    Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
-                                    None => gate4agent::CliTool::ClaudeCode.capabilities(),
-                                };
-                                let item_h = 24.0;
-                                let total_h = caps2.available_models.len() as f64 * item_h + 6.0;
-                                self.sidebar_state.agent_model_scroll
-                                    .entry(lid).or_default()
-                                    .handle_wheel(scroll_step, total_h, viewport_h);
-                                handled = true;
-                            } else if let Some((lid, viewport_h)) = check_popup(":perm_scroll_area") {
-                                let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
-                                    Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
-                                    Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
-                                    Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
-                                    Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
-                                    None => gate4agent::CliTool::ClaudeCode.capabilities(),
-                                };
-                                let item_h = 24.0;
-                                let total_h = caps2.permission_modes.len() as f64 * item_h + 6.0;
-                                self.sidebar_state.agent_perm_scroll
-                                    .entry(lid).or_default()
-                                    .handle_wheel(scroll_step, total_h, viewport_h);
-                                handled = true;
-                            } else if let Some((lid, viewport_h)) = check_popup(":sessions_scroll_area") {
-                                let item_h = 22.0;
-                                let n = self.sidebar_state.agent_past_sessions.get(&lid)
-                                    .map(|v| v.len()).unwrap_or(0);
-                                let total_h = (n as f64 * item_h + 4.0).max(28.0);
-                                let _ = viewport_h; // use real rect height
-                                let real_vh = viewport_h.max(28.0);
-                                self.sidebar_state.agent_sessions_scroll
-                                    .entry(lid).or_default()
-                                    .handle_wheel(scroll_step, total_h, real_vh);
-                                handled = true;
-                            }
-                            handled
-                        };
-                        if popup_scroll_handled {
-                            return;
-                        }
-
-                        // Hit-test all leaf content rects registered during the last render.
-                        let hovered = sidebar_result.item_rects.iter()
-                            .filter_map(|(wid, wrect)| {
-                                let id_str = wid.strip_prefix("agent:leaf:")?.strip_suffix(":focus_content")?;
-                                let raw: u64 = id_str.parse().ok()?;
-                                let lid = uzor::panels::LeafId(raw);
-                                if x >= wrect.x && x < wrect.x + wrect.width
-                                    && y >= wrect.y && y < wrect.y + wrect.height
-                                {
-                                    Some((lid, wrect.height))
-                                } else {
-                                    None
+                            } else if let Some(rest) = id.strip_suffix(":perm_scroll_area") {
+                                if let Some(lid_str) = rest.strip_prefix("agent:leaf:") {
+                                    if let Ok(raw) = lid_str.parse::<u64>() {
+                                        let lid = uzor::panels::LeafId(raw);
+                                        let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
+                                            Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                            Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
+                                            Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
+                                            Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
+                                            None => gate4agent::CliTool::ClaudeCode.capabilities(),
+                                        };
+                                        let item_h = 24.0;
+                                        let total_h = caps2.permission_modes.len() as f64 * item_h + 6.0;
+                                        let viewport_h = sidebar_result.item_rects.iter()
+                                            .find(|(wid, _)| wid.as_str() == id.as_str())
+                                            .map(|(_, r)| r.height)
+                                            .unwrap_or(total_h);
+                                        self.sidebar_state.agent_perm_scroll
+                                            .entry(lid).or_default()
+                                            .handle_wheel(scroll_step, total_h, viewport_h);
+                                        return;
+                                    }
                                 }
-                            })
-                            .next();
-
-                        if let Some((hover_leaf_id, rect_h)) = hovered {
-                            let leaf_mode = self.sidebar_state.agent_leaves.get(&hover_leaf_id)
-                                .map(|d| d.mode);
-                            // Use per-leaf dimensions stored during the render pass.
-                            // This is correct for all leaves, not just the focused one.
-                            let (total_h, vp_h) = sidebar_result.agent_leaf_content_heights
-                                .get(&hover_leaf_id)
-                                .copied()
-                                .unwrap_or((0.0, rect_h));
-                            match leaf_mode {
-                                Some(gate4agent::InstanceMode::Chat) => {
-                                    self.sidebar_state.agent_chat_scrolls
-                                        .entry(hover_leaf_id).or_default()
-                                        .handle_wheel(-dy, total_h, vp_h);
+                            } else if let Some(rest) = id.strip_suffix(":sessions_scroll_area") {
+                                if let Some(lid_str) = rest.strip_prefix("agent:leaf:") {
+                                    if let Ok(raw) = lid_str.parse::<u64>() {
+                                        let lid = uzor::panels::LeafId(raw);
+                                        let item_h = 22.0;
+                                        let n = self.sidebar_state.agent_past_sessions.get(&lid)
+                                            .map(|v| v.len()).unwrap_or(0);
+                                        let total_h = (n as f64 * item_h + 4.0).max(28.0);
+                                        let viewport_h = sidebar_result.item_rects.iter()
+                                            .find(|(wid, _)| wid.as_str() == id.as_str())
+                                            .map(|(_, r)| r.height.max(28.0))
+                                            .unwrap_or(28.0);
+                                        self.sidebar_state.agent_sessions_scroll
+                                            .entry(lid).or_default()
+                                            .handle_wheel(scroll_step, total_h, viewport_h);
+                                        return;
+                                    }
                                 }
-                                Some(gate4agent::InstanceMode::Pty) => {
-                                    self.sidebar_state.agent_pty_scrolls
-                                        .entry(hover_leaf_id).or_default()
-                                        .handle_wheel(-dy, total_h, vp_h);
+                            } else if let Some(rest) = id.strip_suffix(":focus_content") {
+                                if let Some(lid_str) = rest.strip_prefix("agent:leaf:") {
+                                    if let Ok(raw) = lid_str.parse::<u64>() {
+                                        let lid = uzor::panels::LeafId(raw);
+                                        let leaf_mode = self.sidebar_state.agent_leaves.get(&lid).map(|d| d.mode);
+                                        let rect_h = sidebar_result.item_rects.iter()
+                                            .find(|(wid, _)| wid.as_str() == id.as_str())
+                                            .map(|(_, r)| r.height)
+                                            .unwrap_or(0.0);
+                                        let (total_h, vp_h) = sidebar_result.agent_leaf_content_heights
+                                            .get(&lid)
+                                            .copied()
+                                            .unwrap_or((0.0, rect_h));
+                                        match leaf_mode {
+                                            Some(gate4agent::InstanceMode::Chat) => {
+                                                self.sidebar_state.agent_chat_scrolls
+                                                    .entry(lid).or_default()
+                                                    .handle_wheel(-dy, total_h, vp_h);
+                                            }
+                                            Some(gate4agent::InstanceMode::Pty) => {
+                                                self.sidebar_state.agent_pty_scrolls
+                                                    .entry(lid).or_default()
+                                                    .handle_wheel(-dy, total_h, vp_h);
+                                            }
+                                            None => {}
+                                        }
+                                        // Always swallow wheel events in the Agents panel.
+                                        return;
+                                    }
                                 }
-                                None => {}
                             }
                         }
                         // Always swallow wheel events in the Agents panel (no outer sidebar scroll).
