@@ -321,35 +321,6 @@ impl ChartApp {
             return;
         }
 
-        // 1b. Click on PTY terminal area → focus AgentPty (no widget owns the
-        //     terminal grid itself).
-        if let Some((rx, ry, rw, rh)) = self.sidebar_state.agent_terminal_rect {
-            let (rx, ry, rw, rh) = (rx as f64, ry as f64, rw as f64, rh as f64);
-            let is_pty_leaf = self.sidebar_state.focused_agent_leaf
-                .and_then(|id| self.sidebar_state.agent_leaves.get(&id))
-                .map(|d| d.mode == gate4agent::InstanceMode::Pty)
-                .unwrap_or(false);
-            if x >= rx && x < rx + rw && y >= ry && y < ry + rh && is_pty_leaf {
-                eprintln!("[gate4agent::pty] click in terminal rect — focusing AgentPty");
-                self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
-                self.agent_pty_hover_focused = true;
-                // A plain click (no drag) clears any previous selection.
-                // But keep non-empty selections that were just produced by a
-                // drag — drag_end fires before click, and selection is already
-                // finalized by then.
-                if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                    let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
-                        .map(|s| s.is_empty())
-                        .unwrap_or(true);
-                    if is_empty {
-                        self.sidebar_state.agent_pty_selections.remove(&leaf_id);
-                        self.sidebar_data_dirty = true;
-                    }
-                }
-                return;
-            }
-        }
-
         // 1c. Click inside a free-slot order-flow panel — route to the active panel.
         //     Panels currently receive the click but have no built-in behavior.
         //     Infrastructure is wired so behavior can be added per-panel later.
@@ -10078,6 +10049,12 @@ impl ChartApp {
                         Some(gate4agent::InstanceMode::Pty) => {
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                             self.agent_pty_hover_focused = true;
+                            let is_empty = self.sidebar_state.agent_pty_selections.get(&leaf_id)
+                                .map(|s| s.is_empty())
+                                .unwrap_or(true);
+                            if is_empty {
+                                self.sidebar_state.agent_pty_selections.remove(&leaf_id);
+                            }
                         }
                         Some(gate4agent::InstanceMode::Chat) => {
                             let buf = self.sidebar_state.agent_input_buffers
