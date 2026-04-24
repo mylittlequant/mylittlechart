@@ -2152,7 +2152,7 @@ pub fn render_primitive_color_picker_popup(
             input_coordinator.register_on_layer(
                 "color_picker_primitive:opacity_slider",
                 Rect { x: slider_rect.x, y: slider_rect.y, width: slider_rect.width, height: slider_rect.height },
-                Sense::DRAG,
+                Sense::DRAG | Sense::SCROLL,
                 &layer_id,
             );
         }

@@ -83,7 +83,7 @@ pub fn render_panel_color_tag_picker_popup(
             input_coordinator.register_on_layer(
                 "color_picker_panel:opacity_slider",
                 Rect { x: slider_rect.x, y: slider_rect.y, width: slider_rect.width, height: slider_rect.height },
-                Sense::CLICK | Sense::DRAG,
+                Sense::CLICK | Sense::DRAG | Sense::SCROLL,
                 &layer_id,
             );
         }

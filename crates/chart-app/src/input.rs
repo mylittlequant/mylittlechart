@@ -5489,73 +5489,55 @@ impl ChartApp {
             // (content moves up), so negate to convert to "scroll offset increase".
             let scroll_step = -dy;
 
-            // Color picker opacity slider scroll (works for both L1 and L2, and all sources).
-            // Each scroll notch changes opacity by 1% (0.01).
+            // Phase 6.1c-color: route opacity slider wheel via coordinator.
+            // Each scroll notch changes opacity by 1% (0.01). Scroll up = more opaque.
             {
-                let opacity_step = 0.01 * -dy.signum(); // scroll up = more opaque
-                enum OpacityScrollAction {
-                    Apply(String), // source name
-                    None,
-                }
-                let action: OpacityScrollAction = if let Some(ref fr) = self.frame_result {
-                    if let Some(ref cp) = fr.color_picker {
-                        let slider_hit = if let Some(ref l1) = cp.l1_result {
-                            l1.opacity_slider_rect.as_ref().is_some_and(|r| r.contains(x, y))
-                        } else if let Some(ref l2) = cp.l2_result {
-                            l2.opacity_slider_rect.contains(x, y)
-                        } else {
-                            false
-                        };
-                        if slider_hit {
-                            if self.panel_app.primitive_settings_state.is_color_picker_open() {
-                                OpacityScrollAction::Apply("primitive".to_string())
-                            } else if self.panel_app.indicator_settings_state.is_color_picker_open() {
-                                OpacityScrollAction::Apply("indicator".to_string())
-                            } else if self.panel_app.chart_settings_state.is_color_picker_open() {
-                                OpacityScrollAction::Apply("chart".to_string())
-                            } else {
-                                OpacityScrollAction::None
-                            }
-                        } else {
-                            OpacityScrollAction::None
+                let opacity_step = 0.01 * -dy.signum();
+                let source = self.input_coordinator.borrow().hovered_widget().and_then(|wid| {
+                    wid.0.strip_prefix("color_picker_")
+                        .and_then(|s| s.strip_suffix(":opacity_slider"))
+                        .map(|s| s.to_string())
+                });
+                if let Some(src) = source {
+                    match src.as_str() {
+                        "primitive" => {
+                            let current = self.panel_app.primitive_settings_state.color_picker.get_opacity();
+                            let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
+                            self.panel_app.primitive_settings_state.color_picker.set_opacity(new_opacity);
+                            let color = self.panel_app.primitive_settings_state.color_picker.get_final_color();
+                            self.apply_primitive_color(&color);
                         }
-                    } else {
-                        OpacityScrollAction::None
-                    }
-                } else {
-                    OpacityScrollAction::None
-                };
-                match action {
-                    OpacityScrollAction::Apply(src) => {
-                        match src.as_str() {
-                            "primitive" => {
-                                let current = self.panel_app.primitive_settings_state.color_picker.get_opacity();
-                                let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
-                                self.panel_app.primitive_settings_state.color_picker.set_opacity(new_opacity);
-                                let color = self.panel_app.primitive_settings_state.color_picker.get_final_color();
-                                self.apply_primitive_color(&color);
-                            }
-                            "indicator" => {
-                                let current = self.panel_app.indicator_settings_state.color_picker.get_opacity();
-                                let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
-                                self.panel_app.indicator_settings_state.color_picker.set_opacity(new_opacity);
-                                let color = self.panel_app.indicator_settings_state.color_picker.get_final_color();
-                                let field = self.panel_app.indicator_settings_state.color_picker_field.clone();
-                                if let Some(ref f) = field { self.apply_indicator_color(f, &color); }
-                            }
-                            "chart" => {
-                                let current = self.panel_app.chart_settings_state.color_picker.get_opacity();
-                                let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
-                                self.panel_app.chart_settings_state.color_picker.set_opacity(new_opacity);
-                                let color = self.panel_app.chart_settings_state.color_picker.get_final_color();
-                                let field = self.panel_app.chart_settings_state.color_picker_field.clone();
-                                if let Some(ref f) = field { self.apply_chart_settings_color(f, &color); }
-                            }
-                            _ => {}
+                        "indicator" => {
+                            let current = self.panel_app.indicator_settings_state.color_picker.get_opacity();
+                            let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
+                            self.panel_app.indicator_settings_state.color_picker.set_opacity(new_opacity);
+                            let color = self.panel_app.indicator_settings_state.color_picker.get_final_color();
+                            let field = self.panel_app.indicator_settings_state.color_picker_field.clone();
+                            if let Some(ref f) = field { self.apply_indicator_color(f, &color); }
                         }
-                        return;
+                        "chart" => {
+                            let current = self.panel_app.chart_settings_state.color_picker.get_opacity();
+                            let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
+                            self.panel_app.chart_settings_state.color_picker.set_opacity(new_opacity);
+                            let color = self.panel_app.chart_settings_state.color_picker.get_final_color();
+                            let field = self.panel_app.chart_settings_state.color_picker_field.clone();
+                            if let Some(ref f) = field { self.apply_chart_settings_color(f, &color); }
+                        }
+                        "compare" => {
+                            let current = self.panel_app.compare_settings_state.color_picker.get_opacity();
+                            let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
+                            self.panel_app.compare_settings_state.color_picker.set_opacity(new_opacity);
+                            let color = self.panel_app.compare_settings_state.color_picker.get_final_color();
+                            self.apply_compare_color(&color);
+                        }
+                        "panel" => {
+                            let current = self.panel_app.panel_color_picker.get_opacity();
+                            let new_opacity = (current + opacity_step).clamp(0.0, 1.0);
+                            self.panel_app.panel_color_picker.set_opacity(new_opacity);
+                        }
+                        _ => {}
                     }
-                    OpacityScrollAction::None => {}
+                    return;
                 }
             }
 
