@@ -168,6 +168,8 @@ impl TradingPanel for TradingContainerState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        _coordinator: &mut uzor::InputCoordinator,
+        _slot_prefix: &str,
     ) {
         // Background
         ctx.set_fill_color(&theme.tc_bg);
@@ -218,22 +220,22 @@ impl TradingContainerState {
             SubPanelSlot::None => {}
             SubPanelSlot::Footprint => {
                 if let Some(ref fp) = state.footprint {
-                    fp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
+                    fp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme, &mut uzor::InputCoordinator::new(), "");
                 }
             }
             SubPanelSlot::VolumeProfile => {
                 if let Some(ref vp) = state.volume_profile {
-                    vp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
+                    vp.render(ctx, x as f32, y as f32, w as f32, h as f32, theme, &mut uzor::InputCoordinator::new(), "");
                 }
             }
             SubPanelSlot::BigTrades => {
                 if let Some(ref bt) = state.big_trades {
-                    bt.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
+                    bt.render(ctx, x as f32, y as f32, w as f32, h as f32, theme, &mut uzor::InputCoordinator::new(), "");
                 }
             }
             SubPanelSlot::L2Tape => {
                 if let Some(ref tape) = state.l2_tape {
-                    tape.render(ctx, x as f32, y as f32, w as f32, h as f32, theme);
+                    tape.render(ctx, x as f32, y as f32, w as f32, h as f32, theme, &mut uzor::InputCoordinator::new(), "");
                 }
             }
         }

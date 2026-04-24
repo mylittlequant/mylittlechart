@@ -704,6 +704,8 @@ impl TradingPanel for DomState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        _coordinator: &mut uzor::InputCoordinator,
+        _slot_prefix: &str,
     ) {
         // Background fill
         ctx.set_fill_color(&theme.panel_bg);

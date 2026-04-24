@@ -477,6 +477,8 @@ impl TradingPanel for FootprintState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        _coordinator: &mut uzor::InputCoordinator,
+        _slot_prefix: &str,
     ) {
         let config = FootprintConfig::default();
 

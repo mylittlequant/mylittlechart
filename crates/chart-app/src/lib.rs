@@ -6064,7 +6064,8 @@ impl ChartApp {
                 &sidebar_toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
                 &mut |item, rect, ctx| {
-                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme);
+                    let mut panel_coord = uzor::InputCoordinator::new();
+                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, &mut panel_coord, "");
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                     use sidebar_content::free_slot::FreeItem;
@@ -6642,7 +6643,8 @@ impl ChartApp {
             &sidebar_toolbar_theme,
             &mut self.input_coordinator.borrow_mut(),
             &mut |item, rect, ctx| {
-                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme);
+                let mut panel_coord = uzor::InputCoordinator::new();
+                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, &mut panel_coord, "");
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;

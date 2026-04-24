@@ -370,6 +370,8 @@ impl TradingPanel for TradeTapeState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        _coordinator: &mut uzor::InputCoordinator,
+        _slot_prefix: &str,
     ) {
         // ── background ───────────────────────────────────────────────────
         ctx.set_fill_color(&theme.panel_bg);

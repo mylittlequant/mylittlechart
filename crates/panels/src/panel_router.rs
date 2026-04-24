@@ -18,8 +18,10 @@ pub fn try_render(
     w: f32,
     h: f32,
     theme: &PanelTheme,
+    coordinator: &mut uzor::InputCoordinator,
+    slot_prefix: &str,
 ) -> bool {
-    panel.render(ctx, x, y, w, h, theme);
+    panel.render(ctx, x, y, w, h, theme, coordinator, slot_prefix);
     true
 }
 

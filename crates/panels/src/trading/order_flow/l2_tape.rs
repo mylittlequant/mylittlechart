@@ -214,6 +214,8 @@ impl TradingPanel for L2TapeState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        _coordinator: &mut uzor::InputCoordinator,
+        _slot_prefix: &str,
     ) {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);

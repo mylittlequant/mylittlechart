@@ -30,6 +30,8 @@ pub trait TradingPanel {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     );
 
     /// Handle a click on a widget belonging to this panel.

@@ -7,6 +7,7 @@
 //! All 11 trading panels are wired through `get_panel()`.
 
 use sidebar_content::free_slot::FreeItem;
+use uzor::InputCoordinator;
 use zengeld_chart::render::RenderContext;
 
 use zengeld_panels::panel_theme::PanelTheme;
@@ -223,8 +224,10 @@ pub fn render_free_item(
     h: f32,
     ctx: &mut dyn RenderContext,
     theme: &PanelTheme,
+    coordinator: &mut InputCoordinator,
+    slot_prefix: &str,
 ) {
     if let Some(panel) = store.get_panel(item) {
-        panel.render(ctx, x, y, w, h, theme);
+        panel.render(ctx, x, y, w, h, theme, coordinator, slot_prefix);
     }
 }
