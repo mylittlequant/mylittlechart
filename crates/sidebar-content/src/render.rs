@@ -3954,7 +3954,7 @@ fn render_slot_panel(
         // Register body focus_content widget (for scroll routing and click-to-focus).
         let focus_content_id = format!("slot:{}:leaf:{}:focus_content", slot_idx, leaf_id.0);
         let focus_content_rect = WidgetRect::new(r.x as f64, body_y as f64, r.width as f64, body_h as f64);
-        input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK);
+        input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK);
         result.item_rects.push((focus_content_id, focus_content_rect));
 
         // Delegate actual panel content to the caller-supplied renderer.
@@ -5277,7 +5277,7 @@ fn render_agents_pty_leaf(
     // Click-to-focus: the entire content area focuses this leaf.
     let focus_wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
     let focus_rect = WidgetRect::new(x, y, w, h);
-    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK);
+    input_coordinator.register(focus_wid.as_str(), focus_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK);
     result.item_rects.push((focus_wid, focus_rect));
 
     match snapshot {

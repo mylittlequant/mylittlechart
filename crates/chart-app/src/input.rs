@@ -728,125 +728,94 @@ impl ChartApp {
             }
         }
 
-        // Double-click inside a Chat agent leaf → focus the chat input field.
-        // Use focus_content item_rects for hit-test (agent_terminal_rect may
-        // still hold the previous PTY leaf's rect when switching PTY→Chat).
-        if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
-            if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
-                let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
-                    .map(|d| d.mode == gate4agent::InstanceMode::Chat)
-                    .unwrap_or(false);
-                if is_chat {
-                    let hit = self.last_sidebar_result.as_ref().map(|sr| {
-                        let wid = format!("agent:leaf:{}:focus_content", leaf_id.0);
-                        sr.item_rects.iter().any(|(w, r)| {
-                            w == &wid && x >= r.x && x < r.x + r.width
-                                && y >= r.y && y < r.y + r.height
-                        })
-                    }).unwrap_or(false);
-                    if hit {
-                        eprintln!("[ChartApp] agent leaf chat input focused");
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
-                        self.sidebar_data_dirty = true;
-                        return;
-                    }
-                }
+        let double_click_wid: Option<String> = self.input_coordinator.borrow_mut().process_double_click(x, y).map(|w| w.0.clone());
+        if let Some(wid) = double_click_wid {
+            let id_str = &wid;
+            if id_str == "watchlist:column_header" {
+                self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
+                self.watchlists_dirty = true;
+                self.persist_watchlists();
+                return;
             }
-        }
-
-        // Double-click on watchlist column header → reset separators to equal widths.
-        let header_hit = self.input_coordinator.borrow_mut().process_double_click(x, y)
-            .map(|wid| wid.0 == "watchlist:column_header")
-            .unwrap_or(false);
-        if header_hit {
-            self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
-            self.watchlists_dirty = true;
-            self.persist_watchlists();
-            return;
-        }
-
-        // Double-click inside a free-slot leaf body → DOM center on market price.
-        {
-            use sidebar_content::state::RightSidebarPanel;
-            let slot_idx_opt = match self.sidebar_state.right_panel {
-                RightSidebarPanel::Slot1 => Some(0usize),
-                RightSidebarPanel::Slot2 => Some(1),
-                RightSidebarPanel::Slot3 => Some(2),
-                RightSidebarPanel::Slot4 => Some(3),
-                _ => None,
-            };
-            if let Some(idx) = slot_idx_opt {
-                // Check if double-click hit any leaf's focus_content rect
-                if let Some(ref sr) = self.last_sidebar_result {
-                    for (wid, wr) in &sr.item_rects {
-                        if wid.starts_with(&format!("slot:{}:leaf:", idx))
-                            && wid.ends_with(":focus_content")
-                            && x >= wr.x && x < wr.x + wr.width
-                            && y >= wr.y && y < wr.y + wr.height
-                        {
-                            // Extract leaf_id from widget id: "slot:{idx}:leaf:{leaf_id}:focus_content"
-                            let parts: Vec<&str> = wid.split(':').collect();
-                            if parts.len() >= 4 {
-                                if let Ok(raw) = parts[3].parse::<u64>() {
-                                    let leaf_id = uzor::panels::LeafId(raw);
-                                    let item_opt = self.sidebar_state.slot_dockings[idx]
-                                        .inner()
-                                        .tree()
-                                        .leaf(leaf_id)
-                                        .and_then(|l| l.active_panel().cloned());
-                                    use sidebar_content::free_slot::FreeItem;
-                                    match item_opt {
-                                        Some(FreeItem::Dom(pid)) => {
-                                            if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                                state.auto_center = true;
-                                                state.center_price = state.market_price;
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::L2Tape(pid)) => {
-                                            if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::TradeTape(pid)) => {
-                                            if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::Footprint(pid)) => {
-                                            if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::LiquidityHeatmap(pid)) => {
-                                            if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::BigTrades(pid)) => {
-                                            if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        Some(FreeItem::VolumeProfile(pid)) => {
-                                            if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
-                                                state.handle_double_click();
-                                                self.sidebar_data_dirty = true;
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                            return;
+            if let Some(rest) = id_str.strip_prefix("agent:leaf:") {
+                if let Some(id_part) = rest.strip_suffix(":focus_content") {
+                    if let Ok(raw) = id_part.parse::<u64>() {
+                        let leaf_id = uzor::panels::LeafId(raw);
+                        let is_chat = self.sidebar_state.agent_leaves.get(&leaf_id)
+                            .map(|d| d.mode == gate4agent::InstanceMode::Chat)
+                            .unwrap_or(false);
+                        if is_chat {
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
+                            self.sidebar_data_dirty = true;
                         }
                     }
                 }
+                return;
+            }
+            // slot:{idx}:leaf:{leaf_id}:focus_content
+            if id_str.starts_with("slot:") && id_str.ends_with(":focus_content") {
+                let parts: Vec<&str> = id_str.split(':').collect();
+                // parts: ["slot", idx, "leaf", leaf_id, "focus_content"]
+                if parts.len() >= 5 {
+                    if let (Ok(idx), Ok(raw)) = (parts[1].parse::<usize>(), parts[3].parse::<u64>()) {
+                        let leaf_id = uzor::panels::LeafId(raw);
+                        if idx < self.sidebar_state.slot_dockings.len() {
+                            let item_opt = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaf(leaf_id)
+                                .and_then(|l| l.active_panel().cloned());
+                            use sidebar_content::free_slot::FreeItem;
+                            match item_opt {
+                                Some(FreeItem::Dom(pid)) => {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.auto_center = true;
+                                        state.center_price = state.market_price;
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::L2Tape(pid)) => {
+                                    if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::TradeTape(pid)) => {
+                                    if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::Footprint(pid)) => {
+                                    if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::LiquidityHeatmap(pid)) => {
+                                    if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::BigTrades(pid)) => {
+                                    if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                Some(FreeItem::VolumeProfile(pid)) => {
+                                    if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                                        state.handle_double_click();
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                return;
             }
         }
 
