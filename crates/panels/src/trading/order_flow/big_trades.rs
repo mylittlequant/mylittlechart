@@ -307,9 +307,18 @@ impl TradingPanel for BigTradesState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        // Register interactive body rect for scroll / drag / double-click dispatch.
+        {
+            let body_id = format!("{}:bigtrades:body", slot_prefix);
+            coordinator.register(
+                body_id.as_str(),
+                uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+                uzor::input::Sense::SCROLL | uzor::input::Sense::DRAG | uzor::input::Sense::DOUBLE_CLICK,
+            );
+        }
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
@@ -437,6 +446,41 @@ impl TradingPanel for BigTradesState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
+        if local_id == "bigtrades:body" {
+            BigTradesState::handle_scroll(self, dy);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_drag_start(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        local_id == "bigtrades:body"
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, dy: f64) -> bool {
+        if local_id == "bigtrades:body" {
+            BigTradesState::handle_drag(self, dx, dy);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_drag_end(&mut self, _local_id: &str) -> bool {
+        true
+    }
+
+    fn handle_double_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        if local_id == "bigtrades:body" {
+            BigTradesState::handle_double_click(self);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// BigTrades panel configuration

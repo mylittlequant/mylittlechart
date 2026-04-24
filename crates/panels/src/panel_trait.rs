@@ -58,4 +58,52 @@ pub trait TradingPanel {
     fn handle_hover(&mut self, _local_id: &str) -> bool {
         false
     }
+
+    /// Handle a scroll event on a widget belonging to this panel.
+    ///
+    /// `local_id` is the widget ID after the `"{slot_prefix}:"` prefix is stripped.
+    /// `dx` and `dy` are scroll deltas in raw units (positive = scroll right/down).
+    ///
+    /// Returns `true` if the event was consumed.
+    fn handle_scroll(&mut self, _local_id: &str, _dx: f64, _dy: f64) -> bool {
+        false
+    }
+
+    /// Handle a drag-start event on a widget belonging to this panel.
+    ///
+    /// `local_id` is the widget ID after the `"{slot_prefix}:"` prefix is stripped.
+    /// `x` and `y` are the cursor coordinates at drag start.
+    ///
+    /// Returns `true` if the panel claims this drag (i.e. it should receive
+    /// subsequent `handle_drag_move` / `handle_drag_end` calls).
+    fn handle_drag_start(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        false
+    }
+
+    /// Handle an incremental drag-move event on a widget belonging to this panel.
+    ///
+    /// `local_id` is the widget ID after the `"{slot_prefix}:"` prefix is stripped.
+    /// `dx` and `dy` are the delta from the previous drag position.
+    ///
+    /// Returns `true` if the event was consumed.
+    fn handle_drag_move(&mut self, _local_id: &str, _dx: f64, _dy: f64) -> bool {
+        false
+    }
+
+    /// Handle the end of a drag gesture on a widget belonging to this panel.
+    ///
+    /// Returns `true` if the event was consumed.
+    fn handle_drag_end(&mut self, _local_id: &str) -> bool {
+        false
+    }
+
+    /// Handle a double-click event on a widget belonging to this panel.
+    ///
+    /// `local_id` is the widget ID after the `"{slot_prefix}:"` prefix is stripped.
+    /// `x` and `y` are the cursor coordinates.
+    ///
+    /// Returns `true` if the event was consumed.
+    fn handle_double_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        false
+    }
 }

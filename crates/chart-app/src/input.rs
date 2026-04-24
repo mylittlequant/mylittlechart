@@ -774,9 +774,17 @@ impl ChartApp {
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
-                                Some(FreeItem::L2Tape(pid)) => {
-                                    if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                        state.handle_double_click();
+                                Some(item @ FreeItem::L2Tape(_))
+                                | Some(item @ FreeItem::Footprint(_))
+                                | Some(item @ FreeItem::BigTrades(_)) => {
+                                    let local_id = match &item {
+                                        FreeItem::L2Tape(_) => "l2tape:body",
+                                        FreeItem::Footprint(_) => "footprint:body",
+                                        FreeItem::BigTrades(_) => "bigtrades:body",
+                                        _ => unreachable!(),
+                                    };
+                                    if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                        panel.handle_double_click(local_id, x, y);
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
@@ -786,20 +794,8 @@ impl ChartApp {
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
-                                Some(FreeItem::Footprint(pid)) => {
-                                    if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                                        state.handle_double_click();
-                                        self.sidebar_data_dirty = true;
-                                    }
-                                }
                                 Some(FreeItem::LiquidityHeatmap(pid)) => {
                                     if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
-                                        state.handle_double_click();
-                                        self.sidebar_data_dirty = true;
-                                    }
-                                }
-                                Some(FreeItem::BigTrades(pid)) => {
-                                    if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                         state.handle_double_click();
                                         self.sidebar_data_dirty = true;
                                     }
@@ -1398,23 +1394,25 @@ impl ChartApp {
                                             self.ui_drag_active = true;
                                             return false;
                                         }
-                                        Some(FreeItem::L2Tape(pid)) => {
-                                            self.slot_l2tape_drag = Some((pid, x, y));
-                                            self.ui_drag_active = true;
-                                            return false;
+                                        Some(item @ FreeItem::L2Tape(_))
+                                        | Some(item @ FreeItem::Footprint(_))
+                                        | Some(item @ FreeItem::BigTrades(_)) => {
+                                            let local_id = match &item {
+                                                FreeItem::L2Tape(_) => "l2tape:body",
+                                                FreeItem::Footprint(_) => "footprint:body",
+                                                FreeItem::BigTrades(_) => "bigtrades:body",
+                                                _ => unreachable!(),
+                                            };
+                                            if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                                if panel.handle_drag_start(local_id, x, y) {
+                                                    self.active_drag_panel = Some((item, local_id.to_string(), x, y));
+                                                    self.ui_drag_active = true;
+                                                    return false;
+                                                }
+                                            }
                                         }
                                         Some(FreeItem::TradeTape(pid)) => {
                                             self.slot_tradetape_drag = Some((pid, x, y));
-                                            self.ui_drag_active = true;
-                                            return false;
-                                        }
-                                        Some(FreeItem::Footprint(pid)) => {
-                                            self.slot_footprint_drag = Some((pid, x, y));
-                                            self.ui_drag_active = true;
-                                            return false;
-                                        }
-                                        Some(FreeItem::BigTrades(pid)) => {
-                                            self.slot_bigtrades_drag = Some((pid, x, y));
                                             self.ui_drag_active = true;
                                             return false;
                                         }
@@ -2818,17 +2816,21 @@ impl ChartApp {
             return;
         }
 
-        // ── L2Tape drag-to-scroll ────────────────────────────────────────────
-        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_l2tape_drag {
+        // ── Coordinator-routed panel drag (L2Tape, Footprint, BigTrades) ─────
+        if let Some((ref item, ref local_id, ref mut last_x, ref mut last_y)) = self.active_drag_panel {
             let dx = x - *last_x;
             let dy = y - *last_y;
             if dx.abs() > 0.5 || dy.abs() > 0.5 {
-                if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                    state.handle_drag(dx, dy);
+                let local_id = local_id.clone();
+                let item = item.clone();
+                if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                    panel.handle_drag_move(&local_id, dx, dy);
                     self.sidebar_data_dirty = true;
                 }
-                *last_x = x;
-                *last_y = y;
+                if let Some((_, _, ref mut lx, ref mut ly)) = self.active_drag_panel {
+                    *lx = x;
+                    *ly = y;
+                }
             }
             return;
         }
@@ -2839,36 +2841,6 @@ impl ChartApp {
             let dy = y - *last_y;
             if dx.abs() > 0.5 || dy.abs() > 0.5 {
                 if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
-                    state.handle_drag(dx, dy);
-                    self.sidebar_data_dirty = true;
-                }
-                *last_x = x;
-                *last_y = y;
-            }
-            return;
-        }
-
-        // ── Footprint drag-to-pan ────────────────────────────────────────────
-        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_footprint_drag {
-            let dx = x - *last_x;
-            let dy = y - *last_y;
-            if dx.abs() > 0.5 || dy.abs() > 0.5 {
-                if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                    state.handle_drag(dx, dy);
-                    self.sidebar_data_dirty = true;
-                }
-                *last_x = x;
-                *last_y = y;
-            }
-            return;
-        }
-
-        // ── BigTrades drag-to-scroll ─────────────────────────────────────────
-        if let Some((pid, ref mut last_x, ref mut last_y)) = self.slot_bigtrades_drag {
-            let dx = x - *last_x;
-            let dy = y - *last_y;
-            if dx.abs() > 0.5 || dy.abs() > 0.5 {
-                if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                     state.handle_drag(dx, dy);
                     self.sidebar_data_dirty = true;
                 }
@@ -3888,26 +3860,17 @@ impl ChartApp {
             return;
         }
 
-        // ── End L2Tape drag-to-scroll ────────────────────────────────────────
-        if self.slot_l2tape_drag.take().is_some() {
+        // ── End coordinator-routed panel drag (L2Tape, Footprint, BigTrades) ─
+        if let Some((item, local_id, _, _)) = self.active_drag_panel.take() {
+            if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                panel.handle_drag_end(&local_id);
+            }
             self.sidebar_data_dirty = true;
             return;
         }
 
         // ── End TradeTape drag-to-scroll ─────────────────────────────────────
         if self.slot_tradetape_drag.take().is_some() {
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
-        // ── End Footprint drag-to-pan ────────────────────────────────────────
-        if self.slot_footprint_drag.take().is_some() {
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
-        // ── End BigTrades drag-to-scroll ─────────────────────────────────────
-        if self.slot_bigtrades_drag.take().is_some() {
             self.sidebar_data_dirty = true;
             return;
         }
@@ -6654,23 +6617,22 @@ impl ChartApp {
                                             }
                                         }
                                     }
-                                    Some(FreeItem::BigTrades(pid)) => {
-                                        if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                            state.handle_scroll(scroll_step);
-                                        }
-                                    }
-                                    Some(FreeItem::L2Tape(pid)) => {
-                                        if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                            state.handle_scroll(scroll_step * 3.0);
+                                    Some(item @ FreeItem::BigTrades(_))
+                                    | Some(item @ FreeItem::L2Tape(_))
+                                    | Some(item @ FreeItem::Footprint(_)) => {
+                                        let local_id = match &item {
+                                            FreeItem::BigTrades(_) => "bigtrades:body",
+                                            FreeItem::L2Tape(_) => "l2tape:body",
+                                            FreeItem::Footprint(_) => "footprint:body",
+                                            _ => unreachable!(),
+                                        };
+                                        if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                            panel.handle_scroll(local_id, 0.0, scroll_step);
+                                            self.sidebar_data_dirty = true;
                                         }
                                     }
                                     Some(FreeItem::TradeTape(pid)) => {
                                         if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
-                                            state.handle_scroll(scroll_step * 3.0);
-                                        }
-                                    }
-                                    Some(FreeItem::Footprint(pid)) => {
-                                        if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                             state.handle_scroll(scroll_step * 3.0);
                                         }
                                     }
