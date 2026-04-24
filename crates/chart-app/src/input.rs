@@ -1208,8 +1208,18 @@ impl ChartApp {
                             return false;
                         }
                     }
-                    // Even if no chat line was hit (e.g. empty area), we still
-                    // activated the pane and focused input — don't fall through.
+                    // No chat line was hit — check if drag started inside the
+                    // input field rect so TextFieldStore can begin a text selection.
+                    if let Some(ref sr) = self.last_sidebar_result {
+                        if let Some(ref rect) = sr.agent_input_rect {
+                            if x >= rect.x && x < rect.x + rect.width
+                                && y >= rect.y && y < rect.y + rect.height
+                            {
+                                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                                return false;
+                            }
+                        }
+                    }
                     return false;
                 }
             }
