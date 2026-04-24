@@ -5943,47 +5943,43 @@ impl ChartApp {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
                 let sr = &sidebar_result.sidebar_rect;
                 if x >= sr.x && x <= sr.x + sr.width && y >= sr.y && y <= sr.y + sr.height {
-                    // First check per-group signal content rects — they have priority over
-                    // the outer sidebar scroller when the mouse is inside one of them.
-                    let mut handled_by_group = false;
-                    for (instance_id, group_rect) in &sidebar_result.signal_group_content_rects {
-                        if x >= group_rect.x
-                            && x <= group_rect.x + group_rect.width
-                            && y >= group_rect.y
-                            && y <= group_rect.y + group_rect.height
-                        {
-                            let iid = *instance_id;
-                            let row_height = 24.0_f64; // signal_row_height
-                            let max_visible = 8usize;
-                            let signal_count = self
-                                .sidebar_state
-                                .indicator_signals
-                                .groups
-                                .iter()
-                                .find(|g| g.instance_id == iid)
-                                .map(|g| g.signals.len())
-                                .unwrap_or(0);
-                            let viewport_h = (signal_count.min(max_visible)) as f64 * row_height;
-                            let total_h = signal_count as f64 * row_height;
-                            let max_offset = (total_h - viewport_h).max(0.0);
-                            let current_offset = self
-                                .sidebar_state
-                                .signal_group_scroll
-                                .get(&iid)
-                                .map(|s| s.offset)
-                                .unwrap_or(0.0);
-                            let new_offset = (current_offset - dy * 30.0).clamp(0.0, max_offset);
-                            self.sidebar_state
-                                .signal_group_scroll
-                                .entry(iid)
-                                .or_default()
-                                .offset = new_offset;
-                            handled_by_group = true;
-                            break;
+                    // Phase 6.2b: signal group viewport scroll via coordinator dispatch.
+                    // Replaces the manual loop above — the coordinator hit-test resolves
+                    // which group is under the cursor, so no geometry iteration needed here.
+                    {
+                        let sg_hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        if let Some(ref sg_id) = sg_hovered {
+                            if let Some(iid_str) = sg_id.strip_prefix("signal_group:").and_then(|r| r.strip_suffix(":viewport")) {
+                                if let Ok(iid) = iid_str.parse::<u64>() {
+                                    let row_height = 24.0_f64;
+                                    let max_visible = 8usize;
+                                    let signal_count = self
+                                        .sidebar_state
+                                        .indicator_signals
+                                        .groups
+                                        .iter()
+                                        .find(|g| g.instance_id == iid)
+                                        .map(|g| g.signals.len())
+                                        .unwrap_or(0);
+                                    let viewport_h = signal_count.min(max_visible) as f64 * row_height;
+                                    let total_h = signal_count as f64 * row_height;
+                                    let max_offset = (total_h - viewport_h).max(0.0);
+                                    let current_offset = self
+                                        .sidebar_state
+                                        .signal_group_scroll
+                                        .get(&iid)
+                                        .map(|s| s.offset)
+                                        .unwrap_or(0.0);
+                                    let new_offset = (current_offset - dy * 30.0).clamp(0.0, max_offset);
+                                    self.sidebar_state
+                                        .signal_group_scroll
+                                        .entry(iid)
+                                        .or_default()
+                                        .offset = new_offset;
+                                    return;
+                                }
+                            }
                         }
-                    }
-                    if handled_by_group {
-                        return;
                     }
 
                     // Phase 6.2a: agent scroll surfaces via coordinator dispatch.
@@ -6195,13 +6191,18 @@ impl ChartApp {
                         }
                     }
 
-                    // Scroll down (dy > 0) increases offset; scroll up (dy < 0) decreases it.
-                    let content_h = sidebar_result.content_height;
-                    let viewport_h = sidebar_result.content_rect.height;
-                    let max_offset = (content_h - viewport_h).max(0.0);
-                    let scroll = self.sidebar_state.current_right_scroll_mut();
-                    scroll.offset = (scroll.offset - dy * 30.0).clamp(0.0, max_offset);
-                    return;
+                    // Phase 6.2b: main right sidebar body scroll via coordinator dispatch.
+                    {
+                        let sidebar_hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        if sidebar_hovered.as_deref() == Some("right_sidebar:viewport") {
+                            let content_h = sidebar_result.content_height;
+                            let viewport_h = sidebar_result.content_rect.height;
+                            let max_offset = (content_h - viewport_h).max(0.0);
+                            let scroll = self.sidebar_state.current_right_scroll_mut();
+                            scroll.offset = (scroll.offset - dy * 30.0).clamp(0.0, max_offset);
+                            return;
+                        }
+                    }
                 }
             }
         }

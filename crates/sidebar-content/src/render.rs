@@ -494,6 +494,16 @@ pub fn render_right_sidebar(
         );
     }
 
+    // Register main sidebar scroll viewport BEFORE panel-specific widgets so that
+    // more-specific widgets (signal_group:*:viewport, slot focus_content, etc.)
+    // registered later win the hit-test within the same layer (last-registered = top).
+    // Phase 6.2b: coordinator-dispatch scroll for the outer sidebar body.
+    input_coordinator.register(
+        "right_sidebar:viewport",
+        viewport_rect,
+        uzor::input::Sense::SCROLL,
+    );
+
     scrollable.begin(ctx);
 
     let content_y = scrollable.content_y();
@@ -2437,6 +2447,14 @@ fn render_indicator_signals(
 
             // Record the content rect so input.rs can route wheel events here.
             result.signal_group_content_rects.push((group.instance_id, group_viewport));
+
+            // Register viewport for coordinator-dispatch scroll (Phase 6.2b).
+            let sg_viewport_id = format!("signal_group:{}:viewport", group.instance_id);
+            input_coordinator.register(
+                sg_viewport_id.as_str(),
+                group_viewport,
+                uzor::input::Sense::SCROLL,
+            );
 
             // Subtle container background (drawn before clip, covers full viewport).
             ctx.set_fill_color(&format!("{}20", theme.item_bg_hover));
