@@ -1505,7 +1505,16 @@ pub fn render_indicator_settings_modal(
         );
     }
 
-    // Register scrollbar track if present
+    // Register scrollbar handle (inflated ±5px X) and track
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "ind_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            &layer_id,
+        );
+    }
     if let Some(ref track_rect) = result.scrollbar_track_rect {
         input_coordinator.register_on_layer(
             "ind_settings:scrollbar_track",

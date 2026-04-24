@@ -1587,6 +1587,41 @@ impl ChartApp {
                     } else {
                         false
                     }
+                } else if prefix == "chart_settings" {
+                    self.panel_app.chart_settings_state.scroll.start_drag(y);
+                    true
+                } else if prefix == "tags_tabs" {
+                    let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                    scroll_state.start_drag(y);
+                    true
+                } else if prefix == "user_settings" {
+                    use zengeld_chart::ui::modal_settings::UserSettingsTab;
+                    let scroll = match self.panel_app.user_settings_state.active_tab {
+                        UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
+                        UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
+                    };
+                    scroll.start_drag(y);
+                    true
+                } else if prefix == "user_settings:profile_list" {
+                    self.panel_app.user_settings_state.profile_list_scroll.start_drag(y);
+                    true
+                } else if prefix == "ind_settings" {
+                    self.panel_app.indicator_settings_state.scroll.start_drag(y);
+                    true
+                } else if prefix == "alert_settings" {
+                    self.panel_app.alert_settings_state.list_scroll.start_drag(y);
+                    true
+                } else if prefix == "search_modal" {
+                    self.modal_state.scroll.start_drag(y);
+                    true
+                } else if prefix == "watchlist_modal" {
+                    self.watchlist_modal.scroll.start_drag(y);
+                    true
+                } else if prefix == "chart_browser" {
+                    self.panel_app.chart_browser.scroll.start_drag(y);
+                    true
                 } else {
                     false
                 };
@@ -2000,24 +2035,15 @@ impl ChartApp {
             }
         }
 
-        // === Scrollbar and Slider drag start — must come BEFORE the modal guard ===
-        // These are legitimate drags that begin inside a modal area; the guard
-        // would swallow them without these early-return checks.
+        // === Slider drag start — must come BEFORE the modal guard ===
+        // Scrollbar handle drags are now handled via InputCoordinator registration.
+        // Track clicks remain manual (need geometry from frame_result).
         if let Some(result) = &self.frame_result {
-            // Chart settings scrollbar / slider drag start
+            // Chart settings slider drag start
             if self.panel_app.chart_settings_state.is_open {
                 if let Some(ref cs) = result.chart_settings {
-                    if let Some(ref handle_rect) = cs.scrollbar_handle_rect {
-                        // Inflate scrollbar handle ±5px horizontally for easier grab.
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            self.panel_app.chart_settings_state.scroll.start_drag(y);
-                            eprintln!("[ChartApp] chart_settings scrollbar drag started");
-                            return false;
-                        }
-                    }
                     // Track click — click on empty scrollbar track to jump position
+                    // Handle drag via InputCoordinator (chart_settings:scrollbar_handle).
                     if let Some(ref track_rect) = cs.scrollbar_track_rect {
                         let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                             && y >= track_rect.y && y <= track_rect.y + track_rect.height;
@@ -2054,10 +2080,10 @@ impl ChartApp {
                     }
                 }
             }
-            // Tags & Tabs scrollbar drag start
+            // Tags & Tabs scrollbar track click (handle drag via InputCoordinator)
             if self.panel_app.tags_tabs_state.is_open {
                 if let Some(ref tt) = result.tags_tabs {
-                    use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
+                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_track_click};
                     let info = ScrollableInfo {
                         handle_rect:     tt.scrollbar_handle_rect,
                         track_rect:      tt.scrollbar_track_rect,
@@ -2066,18 +2092,15 @@ impl ChartApp {
                         viewport_rect:   tt.scroll_viewport_rect,
                     };
                     let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
-                    if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
-                        return false;
-                    }
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
                         return false;
                     }
                 }
             }
-            // User settings scrollbar drag start
+            // User settings scrollbar track click (handle drag via InputCoordinator)
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
-                    use crate::scroll_dispatch::{ScrollableInfo, try_start_scrollbar_drag, try_handle_track_click};
+                    use crate::scroll_dispatch::{ScrollableInfo, try_handle_track_click};
                     use zengeld_chart::ui::modal_settings::UserSettingsTab;
 
                     let info = ScrollableInfo {
@@ -2095,9 +2118,6 @@ impl ChartApp {
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
 
-                    if try_start_scrollbar_drag(x, y, &mut [(&info, scroll_state)]) {
-                        return false;
-                    }
                     // Track click (jump to position)
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
                         return false;
@@ -2130,17 +2150,9 @@ impl ChartApp {
                     }
                 }
             }
-            // Profile list scrollbar drag start + track click
+            // Profile list scrollbar track click (handle drag via InputCoordinator)
             if self.panel_app.user_settings_state.show_profile_manager {
                 if let Some(ref us) = result.user_settings {
-                    if let Some(ref handle_rect) = us.profile_list_handle_rect {
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            self.panel_app.user_settings_state.profile_list_scroll.start_drag(y);
-                            return false;
-                        }
-                    }
                     // Track click — click on empty scrollbar track to jump position
                     if let Some(ref track_rect) = us.profile_list_track_rect {
                         let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
@@ -2163,17 +2175,8 @@ impl ChartApp {
                 && !self.panel_app.indicator_settings_state.is_color_picker_open()
             {
                 if let Some(ref is) = result.indicator_settings {
-                    if let Some(ref handle_rect) = is.scrollbar_handle_rect {
-                        // Inflate scrollbar handle ±5px horizontally for easier grab.
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            self.panel_app.indicator_settings_state.scroll.start_drag(y);
-                            eprintln!("[ChartApp] ind_settings scrollbar drag started");
-                            return false;
-                        }
-                    }
                     // Track click — click on empty scrollbar track to jump position
+                    // Handle drag via InputCoordinator (ind_settings:scrollbar_handle).
                     if let Some(ref track_rect) = is.scrollbar_track_rect {
                         let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                             && y >= track_rect.y && y <= track_rect.y + track_rect.height;
@@ -2432,19 +2435,10 @@ impl ChartApp {
             }
         }
 
-        // Alert settings scrollbar drag start + track click
+        // Alert settings scrollbar track click (handle drag via InputCoordinator)
         if self.panel_app.alert_settings_state.is_open() {
             if let Some(ref result) = &self.frame_result {
                 if let Some(ref asr) = result.alert_settings {
-                    if let Some(ref handle_rect) = asr.scrollbar_handle_rect {
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            self.panel_app.alert_settings_state.list_scroll.start_drag(y);
-                            eprintln!("[ChartApp] alert_settings scrollbar drag started");
-                            return false;
-                        }
-                    }
                     if let Some(ref track_rect) = asr.scrollbar_track_rect {
                         let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                             && y >= track_rect.y && y <= track_rect.y + track_rect.height;
@@ -2465,19 +2459,9 @@ impl ChartApp {
             }
         }
 
-        // Search / compare / indicator-search modal scrollbar drag start
+        // Search / compare / indicator-search modal scrollbar track click (handle drag via InputCoordinator)
         if self.modal_state.is_open() {
             if let Some(ref smr) = self.search_modal_result {
-                if let Some(ref handle_rect) = smr.scrollbar_handle_rect {
-                    // Inflate scrollbar handle ±4px horizontally for easier grab.
-                    let hit = x >= handle_rect.x - 4.0 && x <= handle_rect.x + handle_rect.width + 4.0
-                        && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                    if hit {
-                        self.modal_state.scroll.start_drag(y);
-                        eprintln!("[ChartApp] search_modal scrollbar drag started");
-                        return false;
-                    }
-                }
                 // Track click — click on empty scrollbar track to jump position
                 if let Some(ref track_rect) = smr.scrollbar_track_rect {
                     let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
@@ -2496,17 +2480,9 @@ impl ChartApp {
             }
         }
 
-        // Watchlist modal scrollbar drag start + track click
+        // Watchlist modal scrollbar track click (handle drag via InputCoordinator)
         if self.watchlist_modal.is_open() {
             if let Some(ref wmr) = self.last_watchlist_modal_result {
-                if let Some(ref handle_rect) = wmr.scrollbar_handle_rect {
-                    let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                        && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                    if hit {
-                        self.watchlist_modal.scroll.start_drag(y);
-                        return false;
-                    }
-                }
                 if let Some(ref track_rect) = wmr.scrollbar_track_rect {
                     let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                         && y >= track_rect.y && y <= track_rect.y + track_rect.height;
@@ -2522,19 +2498,10 @@ impl ChartApp {
             }
         }
 
-        // Chart browser scrollbar drag start + track click
+        // Chart browser scrollbar track click (handle drag via InputCoordinator)
         if self.panel_app.chart_browser.is_open {
             if let Some(ref frame_r) = self.frame_result {
                 if let Some(ref cbr) = frame_r.chart_browser {
-                    if let Some(ref handle_rect) = cbr.scrollbar_handle_rect {
-                        let hit = x >= handle_rect.x - 5.0 && x <= handle_rect.x + handle_rect.width + 5.0
-                            && y >= handle_rect.y && y <= handle_rect.y + handle_rect.height;
-                        if hit {
-                            self.panel_app.chart_browser.scroll.start_drag(y);
-                            eprintln!("[ChartApp] chart_browser scrollbar drag started");
-                            return false;
-                        }
-                    }
                     if let Some(ref track_rect) = cbr.scrollbar_track_rect {
                         let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
                             && y >= track_rect.y && y <= track_rect.y + track_rect.height;

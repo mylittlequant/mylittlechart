@@ -840,6 +840,20 @@ fn render_page_profile_list(
         let handle_rect = WidgetRect::new(track_x, thumb_y, scrollbar_w, thumb_h);
         result.profile_list_handle_rect = Some(handle_rect);
         result.profile_list_track_rect = Some(track_rect);
+
+        let inflated = uzor::types::Rect::new(handle_rect.x - 5.0, handle_rect.y, handle_rect.width + 10.0, handle_rect.height);
+        input_coordinator.register_on_layer(
+            "user_settings:profile_list:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+        input_coordinator.register_on_layer(
+            "user_settings:profile_list:scrollbar_track",
+            uzor::types::Rect::new(track_rect.x, track_rect.y, track_rect.width, track_rect.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
     }
 
 }

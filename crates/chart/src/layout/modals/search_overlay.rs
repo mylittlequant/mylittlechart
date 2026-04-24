@@ -369,6 +369,15 @@ pub fn render_search_overlay(
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
 
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 4.0, hr.y, hr.width + 8.0, hr.height);
+        input_coordinator.register_on_layer(
+            "search_modal:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            &layer_id,
+        );
+    }
     if let Some(track_rect) = result.scrollbar_track_rect {
         input_coordinator.register_on_layer(
             "modal_search:scrollbar_track",

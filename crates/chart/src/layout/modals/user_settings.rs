@@ -545,6 +545,23 @@ fn render_general_tab(
     result.scrollbar_track_rect = scroll_result.track_rect;
     result.scroll_viewport_height = scroll_result.viewport_height;
 
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
 }
 
 // =============================================================================
@@ -1070,8 +1087,8 @@ fn render_sync_tab(
     state: &UserSettingsState,
     text_color: &str,
     scroll_widget_theme: &WidgetTheme,
-    _input_coordinator: &mut uzor::input::InputCoordinator,
-    _layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
     let container = ScrollableContainer::new(
@@ -1224,6 +1241,23 @@ fn render_sync_tab(
     result.scrollbar_track_rect = scroll_result.track_rect;
     result.scroll_viewport_height = scroll_result.viewport_height;
 
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1561,6 +1595,24 @@ fn render_performance_tab(
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
     result.scroll_viewport_height = scroll_result.viewport_height;
+
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1676,6 +1728,24 @@ fn render_server_tab(
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
     result.scroll_viewport_height = scroll_result.viewport_height;
+
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
 }
 
 /// Render the unified API KEYS section:

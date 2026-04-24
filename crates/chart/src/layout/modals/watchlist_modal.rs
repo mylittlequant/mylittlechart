@@ -762,6 +762,22 @@ fn render_overview_tab(
         let sb_result = draw_scrollbar(ctx, &sb_config, sb_state, sb_rect, &widget_theme, None);
         result.scrollbar_handle_rect = Some(sb_result.handle_rect);
         result.scrollbar_track_rect = Some(sb_result.track_rect);
+
+        let hr = sb_result.handle_rect;
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "watchlist_modal:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+        let tr = sb_result.track_rect;
+        input_coordinator.register_on_layer(
+            "watchlist_modal:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
     }
 
     // -------------------------------------------------------------------------
