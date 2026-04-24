@@ -1614,96 +1614,135 @@ impl ChartApp {
                     return false;
                 }
             }
-        }
 
-        if let Some(result) = &self.frame_result {
-            // Compare settings slider drag start
-            if self.panel_app.compare_settings_state.is_open() {
-                if let Some(ref cs_result) = result.compare_settings {
-                    // Dual-handle tf_*_slider tracks (Visibility tab) — check before line_width
-                    let tf_slider_tracks = cs_result.tf_slider_tracks.clone();
-                    let mut tf_drag_started = false;
-                    for track in &tf_slider_tracks {
-                        let handle_r = 6.0;
-                        let hit = x >= track.track_x - handle_r
-                            && x <= track.track_x + track.track_width + handle_r
-                            && y >= track.track_y
-                            && y <= track.track_y + track.track_height;
-                        if hit {
-                            let field_id = track.field_id.clone();
-                            let track_x = track.track_x;
-                            let track_width = track.track_width;
-                            let min_val = track.min_val;
-                            let max_val = track.max_val;
-
-                            // Determine which handle (Min/Max) is closer to click position.
-                            let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
-                            let tf_config = self.panel_app.compare_settings_state
-                                .cached_timeframe_visibility.clone()
-                                .unwrap_or_else(TimeframeVisibilityConfig::all);
-                            let handle = if let Some(tf_idx) = field_id.strip_prefix("tf_")
-                                .and_then(|s| s.strip_suffix("_slider"))
-                                .and_then(|s| s.parse::<usize>().ok())
-                            {
-                                let (cur_min, cur_max): (u32, u32) = match tf_idx {
-                                    1 => tf_config.seconds.unwrap_or((1, 59)),
-                                    2 => tf_config.minutes.unwrap_or((1, 59)),
-                                    3 => tf_config.hours.unwrap_or((1, 24)),
-                                    4 => tf_config.days.unwrap_or((1, 366)),
-                                    5 => tf_config.weeks.unwrap_or((1, 52)),
-                                    6 => tf_config.months.unwrap_or((1, 12)),
-                                    _ => {
-                                        if t <= 0.5 { (min_val as u32, min_val as u32) }
-                                        else { (max_val as u32, max_val as u32) }
-                                    }
-                                };
-                                let min_pos = (cur_min as f64 - min_val) / (max_val - min_val);
-                                let max_pos = (cur_max as f64 - min_val) / (max_val - min_val);
-                                if (t - min_pos).abs() <= (t - max_pos).abs() {
-                                    DualSliderHandle::Min
-                                } else {
-                                    DualSliderHandle::Max
-                                }
-                            } else if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max };
-
-                            self.panel_app.compare_settings_state.start_dual_slider_drag(
-                                &field_id, track_x, track_width, min_val, max_val, handle, x,
-                            );
-                            eprintln!("[ChartApp] compare_settings tf slider drag started {:?}", handle);
-                            tf_drag_started = true;
-                            break;
-                        }
-                    }
-                    if tf_drag_started {
+            // Compare settings TF dual-handle sliders (Visibility tab) and line_width slider (Style tab).
+            if id.starts_with("cmp_settings:item:") {
+                let field_id = &id["cmp_settings:item:".len()..];
+                if field_id.starts_with("tf_") && field_id.ends_with("_slider")
+                    && self.panel_app.compare_settings_state.is_open()
+                {
+                    let frame_ref = self.frame_result.as_ref();
+                    let track_data = frame_ref
+                        .and_then(|r| r.compare_settings.as_ref())
+                        .and_then(|cs| cs.tf_slider_tracks.iter().find(|t| t.field_id == field_id))
+                        .map(|t| (t.field_id.clone(), t.track_x, t.track_width, t.min_val, t.max_val));
+                    if let Some((fid, track_x, track_width, min_val, max_val)) = track_data {
+                        let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
+                        let tf_config = self.panel_app.compare_settings_state
+                            .cached_timeframe_visibility.clone()
+                            .unwrap_or_else(TimeframeVisibilityConfig::all);
+                        let handle = if let Some(tf_idx) = fid.strip_prefix("tf_")
+                            .and_then(|s| s.strip_suffix("_slider"))
+                            .and_then(|s| s.parse::<usize>().ok())
+                        {
+                            let (cur_min, cur_max): (u32, u32) = match tf_idx {
+                                1 => tf_config.seconds.unwrap_or((1, 59)),
+                                2 => tf_config.minutes.unwrap_or((1, 59)),
+                                3 => tf_config.hours.unwrap_or((1, 24)),
+                                4 => tf_config.days.unwrap_or((1, 366)),
+                                5 => tf_config.weeks.unwrap_or((1, 52)),
+                                6 => tf_config.months.unwrap_or((1, 12)),
+                                _ => if t <= 0.5 { (min_val as u32, min_val as u32) } else { (max_val as u32, max_val as u32) },
+                            };
+                            let min_pos = (cur_min as f64 - min_val) / (max_val - min_val);
+                            let max_pos = (cur_max as f64 - min_val) / (max_val - min_val);
+                            if (t - min_pos).abs() <= (t - max_pos).abs() { DualSliderHandle::Min } else { DualSliderHandle::Max }
+                        } else if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max };
+                        self.panel_app.compare_settings_state.start_dual_slider_drag(
+                            &fid, track_x, track_width, min_val, max_val, handle, x,
+                        );
                         return false;
-                    }
-
-                    // Line-width single-handle slider (Style tab)
-                    if let Some(ref track) = cs_result.line_width_slider {
-                        let handle_r = 6.0;
-                        // Check if drag starts within the actual slider track rect (both X and Y),
-                        // not the entire modal rect, to avoid false positives elsewhere in the modal.
-                        let hit = x >= track.track_x - handle_r
-                            && x <= track.track_x + track.track_width + handle_r
-                            && y >= track.track_y
-                            && y <= track.track_y + track.track_height;
-                        if hit {
-                            let field_id = track.field_id.clone();
-                            let track_x = track.track_x;
-                            let track_width = track.track_width;
-                            let min_val = track.min_val;
-                            let max_val = track.max_val;
-                            self.panel_app.compare_settings_state.start_slider_drag(
-                                &field_id, track_x, track_width, min_val, max_val,
-                            );
-                            // Jump handle to click position immediately.
-                            self.panel_app.compare_settings_state.update_slider_drag(x);
-                            eprintln!("[ChartApp] compare_settings line_width slider drag started");
-                            return false;
-                        }
                     }
                 }
             }
+
+            if id == "cmp_settings:line_width_slider" && self.panel_app.compare_settings_state.is_open() {
+                let track_data = self.frame_result.as_ref()
+                    .and_then(|r| r.compare_settings.as_ref())
+                    .and_then(|cs| cs.line_width_slider.as_ref())
+                    .map(|t| (t.field_id.clone(), t.track_x, t.track_width, t.min_val, t.max_val));
+                if let Some((fid, track_x, track_width, min_val, max_val)) = track_data {
+                    self.panel_app.compare_settings_state.start_slider_drag(
+                        &fid, track_x, track_width, min_val, max_val,
+                    );
+                    self.panel_app.compare_settings_state.update_slider_drag(x);
+                    return false;
+                }
+            }
+
+            // Primitive settings sliders — routed via prim_settings:item:{field_id} DRAG registration.
+            if id.starts_with("prim_settings:item:")
+                && self.panel_app.primitive_settings_state.is_open()
+                && !self.panel_app.primitive_settings_state.is_color_picker_open()
+            {
+                let field_id = id["prim_settings:item:".len()..].to_string();
+                let track_data = self.frame_result.as_ref()
+                    .and_then(|r| r.primitive_settings.as_ref())
+                    .and_then(|ps| ps.slider_tracks.iter().find(|s| s.field_id == field_id))
+                    .map(|s| (s.field_id.clone(), s.track_x, s.track_width, s.min_val, s.max_val));
+                if let Some((fid, track_x, track_width, min_val, max_val)) = track_data {
+                    if fid.starts_with("tf_") && fid.ends_with("_slider") {
+                        let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
+                        let handle = if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                            if let Some(data) = self.panel_app.panel_grid.active_window()
+                                .and_then(|w| w.drawing_manager.get_data_at(idx))
+                            {
+                                if let Some(tf_idx) = fid.strip_prefix("tf_")
+                                    .and_then(|s| s.strip_suffix("_slider"))
+                                    .and_then(|s| s.parse::<usize>().ok())
+                                {
+                                    let tf_config = data.timeframe_visibility.clone()
+                                        .unwrap_or_else(TimeframeVisibilityConfig::all);
+                                    let (current_min, current_max): (u32, u32) = match tf_idx {
+                                        1 => tf_config.seconds.unwrap_or((1, 59)),
+                                        2 => tf_config.minutes.unwrap_or((1, 59)),
+                                        3 => tf_config.hours.unwrap_or((1, 24)),
+                                        4 => tf_config.days.unwrap_or((1, 366)),
+                                        5 => tf_config.weeks.unwrap_or((1, 52)),
+                                        6 => tf_config.months.unwrap_or((1, 12)),
+                                        _ => if t <= 0.5 { (min_val as u32, min_val as u32) } else { (max_val as u32, max_val as u32) },
+                                    };
+                                    let min_pos = (current_min as f64 - min_val) / (max_val - min_val);
+                                    let max_pos = (current_max as f64 - min_val) / (max_val - min_val);
+                                    if let Some(ref edit) = self.panel_app.primitive_settings_state.editing_text {
+                                        if edit.field_id == format!("tf_{}_min", tf_idx) {
+                                            DualSliderHandle::Min
+                                        } else if edit.field_id == format!("tf_{}_max", tf_idx) {
+                                            DualSliderHandle::Max
+                                        } else if (t - min_pos).abs() <= (t - max_pos).abs() {
+                                            DualSliderHandle::Min
+                                        } else {
+                                            DualSliderHandle::Max
+                                        }
+                                    } else if (t - min_pos).abs() <= (t - max_pos).abs() {
+                                        DualSliderHandle::Min
+                                    } else {
+                                        DualSliderHandle::Max
+                                    }
+                                } else {
+                                    if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
+                                }
+                            } else {
+                                if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
+                            }
+                        } else {
+                            if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
+                        };
+                        self.panel_app.primitive_settings_state.start_dual_slider_drag_from_track(
+                            &fid, track_x, track_width, min_val, max_val, handle, x,
+                        );
+                        return false;
+                    }
+                    self.panel_app.primitive_settings_state.start_slider_drag_from_track(
+                        &fid, track_x, track_width, min_val, max_val,
+                    );
+                    self.panel_app.primitive_settings_state.update_slider_drag_float(x);
+                    return false;
+                }
+            }
+        }
+
+        if let Some(result) = &self.frame_result {
             // Profile manager / wizard inputs — text select drag on any active profile manager or wizard input.
             if self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard {
                 if let Some(ref us) = result.user_settings {
@@ -2248,103 +2287,6 @@ impl ChartApp {
                     }
                 }
             }
-            // Primitive settings slider drag start (skip when color picker is open above)
-            if self.panel_app.primitive_settings_state.is_open()
-                && !self.panel_app.primitive_settings_state.is_color_picker_open()
-            {
-                if let Some(ref ps) = result.primitive_settings {
-                    for track in &ps.slider_tracks {
-                        if let Some((_, item_rect)) = ps.content_items.iter().find(|(id, _)| id == &track.field_id) {
-                            // Inflate hit area ±2px horizontally for easier handle grab.
-                            let hit = x >= item_rect.x - 2.0 && x <= item_rect.x + item_rect.width + 2.0
-                                && y >= item_rect.y && y <= item_rect.y + item_rect.height;
-                            if hit {
-                                let field_id = track.field_id.clone();
-                                let track_x = track.track_x;
-                                let track_width = track.track_width;
-                                let min_val = track.min_val;
-                                let max_val = track.max_val;
-                                // For dual-handle sliders (tf_*_slider), determine which
-                                // handle (min or max) is closest to the click position.
-                                if field_id.starts_with("tf_") && field_id.ends_with("_slider") {
-                                    let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
-
-                                    // Try to determine handle by proximity to current min/max positions.
-                                    let handle = if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                        if let Some(data) = self.panel_app.panel_grid.active_window()
-                                            .and_then(|w| w.drawing_manager.get_data_at(idx))
-                                        {
-                                            if let Some(tf_idx) = field_id.strip_prefix("tf_")
-                                                .and_then(|s| s.strip_suffix("_slider"))
-                                                .and_then(|s| s.parse::<usize>().ok())
-                                            {
-                                                let tf_config = data.timeframe_visibility.clone()
-                                                    .unwrap_or_else(TimeframeVisibilityConfig::all);
-
-                                                let (current_min, current_max): (u32, u32) = match tf_idx {
-                                                    1 => tf_config.seconds.unwrap_or((1, 59)),
-                                                    2 => tf_config.minutes.unwrap_or((1, 59)),
-                                                    3 => tf_config.hours.unwrap_or((1, 24)),
-                                                    4 => tf_config.days.unwrap_or((1, 366)),
-                                                    5 => tf_config.weeks.unwrap_or((1, 52)),
-                                                    6 => tf_config.months.unwrap_or((1, 12)),
-                                                    _ => {
-                                                        // Unknown tf_idx — fallback to positional heuristic.
-                                                        if t <= 0.5 { (min_val as u32, min_val as u32) }
-                                                        else { (max_val as u32, max_val as u32) }
-                                                    }
-                                                };
-
-                                                let min_pos = (current_min as f64 - min_val) / (max_val - min_val);
-                                                let max_pos = (current_max as f64 - min_val) / (max_val - min_val);
-
-                                                // If a min/max field is being edited, follow that handle.
-                                                if let Some(ref edit) = self.panel_app.primitive_settings_state.editing_text {
-                                                    if edit.field_id == format!("tf_{}_min", tf_idx) {
-                                                        DualSliderHandle::Min
-                                                    } else if edit.field_id == format!("tf_{}_max", tf_idx) {
-                                                        DualSliderHandle::Max
-                                                    } else if (t - min_pos).abs() <= (t - max_pos).abs() {
-                                                        DualSliderHandle::Min
-                                                    } else {
-                                                        DualSliderHandle::Max
-                                                    }
-                                                } else if (t - min_pos).abs() <= (t - max_pos).abs() {
-                                                    DualSliderHandle::Min
-                                                } else {
-                                                    DualSliderHandle::Max
-                                                }
-                                            } else {
-                                                // Could not parse tf_idx — use positional fallback.
-                                                if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
-                                            }
-                                        } else {
-                                            // No data — positional fallback.
-                                            if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
-                                        }
-                                    } else {
-                                        // No primitive selected — positional fallback.
-                                        if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
-                                    };
-
-                                    self.panel_app.primitive_settings_state.start_dual_slider_drag_from_track(
-                                        &field_id, track_x, track_width, min_val, max_val, handle, x,
-                                    );
-                                    return false;
-                                }
-                                // Regular single-handle slider.
-                                self.panel_app.primitive_settings_state.start_slider_drag_from_track(
-                                    &field_id, track_x, track_width, min_val, max_val,
-                                );
-                                // Set initial floating value so handle jumps to click position.
-                                self.panel_app.primitive_settings_state.update_slider_drag_float(x);
-                                return false;
-                            }
-                        }
-                    }
-                }
-            }
-
             // Color picker drag start (SV square, hue bar, or opacity slider)
             if let Some(ref cp) = result.color_picker {
                 let source = if self.panel_app.primitive_settings_state.is_color_picker_open() {
