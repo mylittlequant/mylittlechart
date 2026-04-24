@@ -1850,6 +1850,190 @@ impl ChartPanelGrid {
 }
 
 // =========================================================================
+// Drag-move / drag-end helpers (Phase 7.4e)
+// =========================================================================
+
+/// Data returned by [`ChartPanelGrid::complete_freehand`] so the caller can
+/// push an undo record without needing access to `ChartPanelGrid` internals.
+pub struct FreehandCompleteResult {
+    /// Index of the newly completed primitive inside the active window's
+    /// `drawing_manager`.  Needed to build `Command::CreatePrimitive`.
+    pub index: usize,
+    /// Primitive type identifier.
+    pub type_id: String,
+    /// Coordinate points of the primitive.
+    pub points: Vec<(f64, f64)>,
+    /// Full primitive data (id, color, style, etc.).
+    pub data: crate::drawing::PrimitiveData,
+}
+
+impl ChartPanelGrid {
+    /// Extend the active freehand stroke by one screen point.
+    ///
+    /// `chart_rect` is the main-chart canvas rect (from `ExtendedFrameLayout`).
+    /// Returns `true` when a freehand stroke was active and the point was added
+    /// (so the caller can `return` early without running other drag logic).
+    pub fn extend_freehand(
+        &mut self,
+        screen_x: f64,
+        screen_y: f64,
+        chart_rect: crate::layout::LayoutRect,
+    ) -> bool {
+        let is_active = self
+            .active_window()
+            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
+            .unwrap_or(false);
+
+        if !is_active {
+            return false;
+        }
+
+        let local_x = screen_x - chart_rect.x;
+        let local_y = screen_y - chart_rect.y;
+
+        let (price_min, price_max) = self
+            .active_window()
+            .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
+            .unwrap_or((0.0, 1.0));
+
+        let bar = self
+            .active_window()
+            .map(|w| w.viewport.x_to_bar_f64(local_x))
+            .unwrap_or(0.0);
+
+        let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
+
+        if let Some(window) = self.active_window_mut() {
+            window.drawing_manager.add_freehand_point(bar, price);
+        }
+
+        true
+    }
+
+    /// Complete the active freehand stroke.
+    ///
+    /// Calls `complete_freehand` and `update_all_timestamps_from_bars` on the
+    /// active window's drawing manager, then returns the primitive data needed
+    /// for the caller to push an undo record.
+    ///
+    /// Returns `None` when no freehand stroke was active.
+    pub fn complete_freehand(&mut self) -> Option<FreehandCompleteResult> {
+        let is_active = self
+            .active_window()
+            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
+            .unwrap_or(false);
+
+        if !is_active {
+            return None;
+        }
+
+        if let Some(window) = self.active_window_mut() {
+            window.drawing_manager.complete_freehand();
+            let bars = window.bars.clone();
+            window.drawing_manager.update_all_timestamps_from_bars(&bars);
+        }
+
+        let result = self.active_window().and_then(|window| {
+            let idx = window.drawing_manager.last_index()?;
+            let type_id = window.drawing_manager.get_type_id_at(idx)?;
+            let points = window.drawing_manager.get_points_at(idx)?;
+            let data = window.drawing_manager.get_data_at(idx)?;
+            Some(FreehandCompleteResult { index: idx, type_id, points, data })
+        });
+
+        result
+    }
+
+    /// Apply a pane-separator drag delta to the sub-pane identified by
+    /// `instance_id` in the active window.
+    ///
+    /// `available_h` is the pixel height of the leaf rect (from
+    /// `get_leaf_absolute_rect`).  `rendered_heights` maps each pane's
+    /// `instance_id` to its last rendered pixel height (from
+    /// `build_extended_layout_for_leaf`); used to avoid drift when
+    /// `height_ratio * available_h` diverges from the renderer's clamped value.
+    pub fn drag_pane_separator(
+        &mut self,
+        instance_id: u64,
+        delta_y: f64,
+        available_h: f64,
+        rendered_heights: &std::collections::HashMap<u64, f64>,
+    ) {
+        const DEFAULT_H: f64 = 100.0;
+        let min_h = 80.0_f64;
+
+        let window = match self.active_window_mut() {
+            Some(w) => w,
+            None => return,
+        };
+
+        let pane_idx = match window.sub_panes.iter().position(|p| p.instance_id == instance_id) {
+            Some(i) => i,
+            None => return,
+        };
+
+        let pane_count = window.sub_panes.len();
+
+        let actual_h = |id: u64| -> f64 {
+            rendered_heights
+                .get(&id)
+                .copied()
+                .filter(|&h| h > 0.0)
+                .unwrap_or_else(|| {
+                    let ratio = window.sub_panes.iter()
+                        .find(|p| p.instance_id == id)
+                        .map(|p| p.height_ratio as f64)
+                        .unwrap_or(0.0);
+                    if ratio > 0.0 { (ratio * available_h).max(min_h) } else { DEFAULT_H }
+                })
+        };
+
+        if window.sub_panes[pane_idx].above_main {
+            let current_h = actual_h(instance_id);
+            let other_panes_h: f64 = window.sub_panes.iter()
+                .filter(|p| p.instance_id != instance_id)
+                .map(|p| actual_h(p.instance_id))
+                .sum();
+            let max_h = (available_h - min_h - other_panes_h).max(min_h);
+            let new_h = (current_h + delta_y).clamp(min_h, max_h);
+            window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+            return;
+        }
+
+        let prev_below_idx = window.sub_panes[..pane_idx]
+            .iter()
+            .rposition(|p| !p.above_main);
+
+        match prev_below_idx {
+            None => {
+                let current_h = actual_h(instance_id);
+                let other_panes_h: f64 = (0..pane_count)
+                    .filter(|&i| i != pane_idx)
+                    .map(|i| actual_h(window.sub_panes[i].instance_id))
+                    .sum();
+                let max_h = (available_h - min_h - other_panes_h).max(min_h);
+                let new_h = (current_h - delta_y).clamp(min_h, max_h);
+                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
+            }
+            Some(above_idx) => {
+                let id_above = window.sub_panes[above_idx].instance_id;
+                let id_below = instance_id;
+
+                let h_above = actual_h(id_above);
+                let h_below = actual_h(id_below);
+
+                let total = h_above + h_below;
+                let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
+                let new_below = total - new_above;
+
+                window.sub_panes[above_idx].height_ratio = (new_above / available_h) as f32;
+                window.sub_panes[pane_idx].height_ratio = (new_below / available_h) as f32;
+            }
+        }
+    }
+}
+
+// =========================================================================
 // Default
 // =========================================================================
 

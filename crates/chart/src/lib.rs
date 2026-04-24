@@ -339,7 +339,7 @@ pub use state::{
     DEFAULT_SNAP_MARGIN,
     // Chart-internal split/expand system
     ChartPanelGrid, ChartSubPanel, SplitHitResult, ChartInputTarget, ChartRightClickHit,
-    ChartDragStartHit,
+    ChartDragStartHit, FreehandCompleteResult,
     // ChartId for the chart crate's ChartWindow
     generate_chart_id, bump_chart_id_past,
     // Unified chart action executor (operates on ChartWindow, returns external events)

@@ -3376,25 +3376,12 @@ impl ChartApp {
         }
 
         // PRIORITY: Freehand drawing (brush/highlighter) — add points during drag
-        let is_freehand_drawing = self.panel_app.panel_grid.active_window()
-            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
-        if is_freehand_drawing {
+        {
             let extended = self.build_extended_layout();
             let chart_rect = extended.main_chart.chart;
-            let local_x = x - chart_rect.x;
-            let local_y = y - chart_rect.y;
-            let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
-                .unwrap_or((0.0, 1.0));
-            let bar = self.panel_app.panel_grid.active_window()
-                .map(|w| w.viewport.x_to_bar_f64(local_x))
-                .unwrap_or(0.0);
-            let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                window.drawing_manager.add_freehand_point(bar, price);
+            if self.panel_app.panel_grid.extend_freehand(x, y, chart_rect) {
+                return;
             }
-            return;
         }
 
         let drag_mode = self.input_handler.state.drag_mode;
@@ -3403,7 +3390,26 @@ impl ChartApp {
         // separator by the vertical delta.  This updates height_ratio on the
         // sub-pane so that compute_from_chart_panel picks it up next frame.
         if let zengeld_chart::engine::input::DragMode::PaneSeparator { instance_id } = drag_mode {
-            self.handle_pane_separator_drag(instance_id, dy);
+            // Pre-compute layout data that requires &self methods before taking &mut self.
+            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+            if let Some(leaf) = active_leaf {
+                if let Some(leaf_rect) = self.get_leaf_absolute_rect(leaf) {
+                    let available_h = leaf_rect.height.max(1.0);
+                    let rendered_heights: std::collections::HashMap<u64, f64> =
+                        match self.build_extended_layout_for_leaf(leaf, &leaf_rect) {
+                            Some(ext) => ext.sub_panes.iter()
+                                .map(|sp| (sp.instance_id, sp.content.height))
+                                .collect(),
+                            None => std::collections::HashMap::new(),
+                        };
+                    self.panel_app.panel_grid.drag_pane_separator(
+                        instance_id,
+                        dy,
+                        available_h,
+                        &rendered_heights,
+                    );
+                }
+            }
             return;
         }
 
@@ -4045,34 +4051,17 @@ impl ChartApp {
         }
 
         // Freehand drawing (brush/highlighter) — complete stroke on drag end
-        let is_freehand_drawing = self.panel_app.panel_grid.active_window()
-            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
-        if is_freehand_drawing {
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                window.drawing_manager.complete_freehand();
-            }
-            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                let bars = window.bars.clone();
-                window.drawing_manager.update_all_timestamps_from_bars(&bars);
-            }
+        if let Some(freehand) = self.panel_app.panel_grid.complete_freehand() {
             // For grouped windows: move the completed freehand primitive to TagManager.
             // For standalone windows: record undo and propagate to color-tag peers.
             if !self.intercept_completed_primitive_to_group() {
                 // Standalone path.
-                if let Some(window) = self.panel_app.panel_grid.active_window() {
-                    if let Some(idx) = window.drawing_manager.last_index() {
-                        if let (Some(type_id), Some(points), Some(data)) = (
-                            window.drawing_manager.get_type_id_at(idx),
-                            window.drawing_manager.get_points_at(idx),
-                            window.drawing_manager.get_data_at(idx),
-                        ) {
-                            self.push_undo_command(zengeld_chart::Command::CreatePrimitive {
-                                index: idx, type_id, points, data,
-                            });
-                        }
-                    }
-                }
+                self.push_undo_command(zengeld_chart::Command::CreatePrimitive {
+                    index: freehand.index,
+                    type_id: freehand.type_id,
+                    points: freehand.points,
+                    data: freehand.data,
+                });
                 // Propagate completed freehand primitive to sync group peers.
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     self.propagate_new_primitive_to_sync_group(active_leaf);
@@ -8032,138 +8021,6 @@ impl ChartApp {
             width: sub_rect.width as f64,
             height: sub_rect.height as f64,
         })
-    }
-
-    /// Adjust sub-pane heights when the user drags a pane separator.
-    ///
-    /// `instance_id` identifies the sub-pane whose separator is being dragged.
-    /// The separator sits at the top edge of that pane (between the previous
-    /// pane or the main chart and this pane).
-    ///
-    /// The delta is distributed by shrinking the pane above and growing the
-    /// pane below (or vice-versa when dragging up).  Both panes are clamped to
-    /// a minimum of 15% of the available leaf height (absolute floor: 20 px).
-    fn handle_pane_separator_drag(&mut self, instance_id: u64, delta_y: f64) {
-        const DEFAULT_H: f64 = 100.0;
-
-        // Get the active leaf and its absolute rect first (immutable borrows).
-        let active_leaf = match self.panel_app.panel_grid.docking().active_leaf() {
-            Some(l) => l,
-            None => return,
-        };
-        let leaf_rect = match self.get_leaf_absolute_rect(active_leaf) {
-            Some(r) => r,
-            None => return,
-        };
-        let available_h = leaf_rect.height.max(1.0);
-
-        // Build the extended layout to get ACTUAL rendered heights (after scale_factor
-        // clamping inside compute_from_chart_panel).  This prevents the mismatch where
-        // height_ratio * available_h diverges from what the renderer actually drew.
-        // We build a HashMap<instance_id → rendered_height> before taking &mut self.
-        let rendered_heights: std::collections::HashMap<u64, f64> = {
-            match self.build_extended_layout_for_leaf(active_leaf, &leaf_rect) {
-                Some(ext) => ext.sub_panes.iter()
-                    .map(|sp| (sp.instance_id, sp.content.height))
-                    .collect(),
-                None => std::collections::HashMap::new(),
-            }
-        };
-
-        // Minimum pane height — large enough to keep the price scale labels
-        // legible and prevent panes from collapsing into / overlapping each other.
-        let min_h = 80.0_f64;
-
-        let window = match self.panel_app.panel_grid.active_window_mut() {
-            Some(w) => w,
-            None => return,
-        };
-
-        // Find the storage index of the pane identified by instance_id.
-        let pane_idx = match window.sub_panes.iter().position(|p| p.instance_id == instance_id) {
-            Some(i) => i,
-            None => return,
-        };
-
-        let pane_count = window.sub_panes.len();
-
-        // Helper: resolve the actual rendered height for a pane by instance_id,
-        // falling back to height_ratio or DEFAULT_H when the layout hasn't been
-        // computed yet.
-        let actual_h = |id: u64| -> f64 {
-            rendered_heights.get(&id)
-                .copied()
-                .filter(|&h| h > 0.0)
-                .unwrap_or_else(|| {
-                    let ratio = window.sub_panes.iter()
-                        .find(|p| p.instance_id == id)
-                        .map(|p| p.height_ratio as f64)
-                        .unwrap_or(0.0);
-                    if ratio > 0.0 { (ratio * available_h).max(min_h) } else { DEFAULT_H }
-                })
-        };
-
-        // Check if the pane at pane_idx is an above-main pane.
-        // For above-main panes the separator is at the BOTTOM of the pane (between the
-        // above-pane and the main chart), so dragging it resizes only this single pane.
-        if window.sub_panes[pane_idx].above_main {
-            // delta_y > 0 → dragging DOWN → above pane grows.
-            // delta_y < 0 → dragging UP   → above pane shrinks.
-            let current_h = actual_h(instance_id);
-            let other_panes_h: f64 = window.sub_panes.iter()
-                .filter(|p| p.instance_id != instance_id)
-                .map(|p| actual_h(p.instance_id))
-                .sum();
-            let max_h = (available_h - min_h - other_panes_h).max(min_h);
-            let new_h = (current_h + delta_y).clamp(min_h, max_h);
-            window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
-            return;
-        }
-
-        // Below-main pane: find the previous below-main pane in storage order.
-        // The separator is between this pane and either:
-        //   a) a previous below-main pane  → resize both
-        //   b) the main chart              → resize only this pane (like old pane_index==0)
-        let prev_below_idx = window.sub_panes[..pane_idx]
-            .iter()
-            .rposition(|p| !p.above_main);
-
-        match prev_below_idx {
-            None => {
-                // This is the first below-main pane — separator is between main chart and this pane.
-                // delta_y > 0 → dragging DOWN → this pane shrinks.
-                // delta_y < 0 → dragging UP   → this pane grows.
-                let current_h = actual_h(instance_id);
-
-                // Upper bound: leave at least min_h for the main chart and every OTHER sub-pane.
-                let other_panes_h: f64 = (0..pane_count)
-                    .filter(|&i| i != pane_idx)
-                    .map(|i| actual_h(window.sub_panes[i].instance_id))
-                    .sum();
-                let max_h = (available_h - min_h - other_panes_h).max(min_h);
-                let new_h = (current_h - delta_y).clamp(min_h, max_h);
-
-                window.sub_panes[pane_idx].height_ratio = (new_h / available_h) as f32;
-            }
-            Some(above_idx) => {
-                // General case: separator between sub-panes at above_idx and pane_idx.
-                let id_above = window.sub_panes[above_idx].instance_id;
-                let id_below = instance_id;
-
-                let h_above = actual_h(id_above);
-                let h_below = actual_h(id_below);
-
-                // Apply delta while preserving the combined height so neither pane
-                // can steal space from the total.  Each pane is clamped to [min_h,
-                // total - min_h] so the sibling always retains at least min_h.
-                let total = h_above + h_below;
-                let new_above = (h_above + delta_y).clamp(min_h, total - min_h);
-                let new_below = total - new_above;
-
-                window.sub_panes[above_idx].height_ratio = (new_above / available_h) as f32;
-                window.sub_panes[pane_idx].height_ratio = (new_below / available_h) as f32;
-            }
-        }
     }
 
     /// Hide the crosshair on all split leaves.
