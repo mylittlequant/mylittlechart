@@ -401,7 +401,7 @@ fn draw_style_tab(
     input_coordinator.register_on_layer(
         "cmp_settings:line_width_slider",
         slider_hit,
-        Sense::click_and_drag(),
+        Sense::click_and_drag() | Sense::SCROLL,
         layer_id,
     );
     result.line_width_slider = Some(SliderTrackInfo {
@@ -773,7 +773,7 @@ fn draw_visibility_tab(
 
     for (item_id, item_rect) in &result.tf_content_items {
         let sense = if slider_field_ids.contains(item_id.as_str()) {
-            Sense::DRAG
+            Sense::DRAG | Sense::SCROLL
         } else {
             Sense::CLICK
         };

@@ -5683,237 +5683,214 @@ impl ChartApp {
                 return;
             }
 
-            // Primitive settings modal — check slider tracks first
-            if self.panel_app.primitive_settings_state.is_open() {
-                // +1 or -1 per scroll notch (scrolling "down" = delta_y positive = decrease value)
-                let delta = dy.signum();
-                let hit_slider = if let Some(ref result) = self.frame_result {
-                    if let Some(ref ps) = result.primitive_settings {
-                        let mut found = false;
-                        for track in &ps.slider_tracks {
-                            if let Some((_, item_rect)) = ps.content_items.iter().find(|(id, _)| id == &track.field_id) {
-                                if item_rect.contains(x, y) {
-                                    let field_id = track.field_id.clone();
-                                    let min_val = track.min_val;
-                                    let max_val = track.max_val;
-                                    if field_id == "stroke_width" {
+            // Phase 6.1c-sliders: route prim_settings and compare_settings slider
+            // wheel events via coordinator. Sense::SCROLL was added to their registrations
+            // so hovered_widget() resolves them by the same hit-test path used for clicks.
+            {
+                let hovered_wid = self.input_coordinator.borrow().hovered_widget().map(|w| w.0.clone());
+
+                // prim_settings sliders — guard: modal must be open
+                if self.panel_app.primitive_settings_state.is_open() {
+                    if let Some(ref wid) = hovered_wid {
+                        if let Some(field_id) = wid.strip_prefix("prim_settings:item:").map(|s| s.to_string()) {
+                            let delta = dy.signum();
+                            // Locate matching track for min/max bounds
+                            let track_opt = self.frame_result.as_ref()
+                                .and_then(|r| r.primitive_settings.as_ref())
+                                .and_then(|ps| ps.slider_tracks.iter().find(|t| t.field_id == field_id).cloned());
+                            let item_rect_opt = self.frame_result.as_ref()
+                                .and_then(|r| r.primitive_settings.as_ref())
+                                .and_then(|ps| ps.content_items.iter().find(|(id, _)| id == &field_id).map(|(_, r)| *r));
+
+                            if let Some(track) = track_opt {
+                                let min_val = track.min_val;
+                                let max_val = track.max_val;
+
+                                if field_id == "stroke_width" {
+                                    if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                                        if let Some(data) = self.panel_app.panel_grid.active_window()
+                                            .and_then(|w| w.drawing_manager.get_data_at(idx))
+                                        {
+                                            let new_value = (data.width + delta).clamp(min_val, max_val);
+                                            self.apply_slider_value(&field_id, new_value);
+                                        }
+                                    }
+                                } else if let Some(prop_id_owned) = field_id.strip_prefix("style_prop:").map(|s| s.to_string()) {
+                                    if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
+                                        if let Some(window) = self.panel_app.panel_grid.active_window() {
+                                            let prims = window.drawing_manager.primitives();
+                                            if idx < prims.len() {
+                                                let style_props = prims[idx].style_properties();
+                                                if let Some(prop) = style_props.iter().find(|p| p.id == prop_id_owned.as_str()) {
+                                                    if let Some(current) = prop.value.as_number() {
+                                                        let new_value = (current + delta).clamp(min_val, max_val);
+                                                        self.apply_slider_value(&field_id, new_value);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if field_id.starts_with("tf_") && field_id.ends_with("_slider") {
+                                    if let Some(tf_idx) = field_id.strip_prefix("tf_")
+                                        .and_then(|s| s.strip_suffix("_slider"))
+                                        .and_then(|s| s.parse::<usize>().ok())
+                                    {
                                         if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
                                             if let Some(data) = self.panel_app.panel_grid.active_window()
                                                 .and_then(|w| w.drawing_manager.get_data_at(idx))
                                             {
-                                                let new_value = (data.width + delta).clamp(min_val, max_val);
-                                                self.apply_slider_value(&field_id, new_value);
-                                            }
-                                        }
-                                    } else if let Some(prop_id_owned) = field_id.strip_prefix("style_prop:").map(|s| s.to_string()) {
-                                        if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                            if let Some(window) = self.panel_app.panel_grid.active_window() {
-                                                let prims = window.drawing_manager.primitives();
-                                                if idx < prims.len() {
-                                                    let style_props = prims[idx].style_properties();
-                                                    if let Some(prop) = style_props.iter().find(|p| p.id == prop_id_owned.as_str()) {
-                                                        if let Some(current) = prop.value.as_number() {
-                                                            let new_value = (current + delta).clamp(min_val, max_val);
-                                                            self.apply_slider_value(&field_id, new_value);
-                                                        }
-                                                    }
+                                                let mut new_data = data.clone();
+                                                let mut tf_config = new_data.timeframe_visibility.clone()
+                                                    .unwrap_or_else(TimeframeVisibilityConfig::all);
+                                                let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
+                                                    1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
+                                                    4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
+                                                    _ => { return; }
+                                                };
+                                                let (current_min, current_max) = match tf_idx {
+                                                    1 => tf_config.seconds.unwrap_or((1, 59)),
+                                                    2 => tf_config.minutes.unwrap_or((1, 59)),
+                                                    3 => tf_config.hours.unwrap_or((1, 24)),
+                                                    4 => tf_config.days.unwrap_or((1, 366)),
+                                                    5 => tf_config.weeks.unwrap_or((1, 52)),
+                                                    6 => tf_config.months.unwrap_or((1, 12)),
+                                                    _ => { return; }
+                                                };
+                                                let item_rect = item_rect_opt.unwrap_or_default();
+                                                let t = if item_rect.width > 0.0 {
+                                                    ((x - item_rect.x) / item_rect.width).clamp(0.0, 1.0)
+                                                } else {
+                                                    0.5
+                                                };
+                                                let min_pos = (current_min - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
+                                                let max_pos = (current_max - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
+                                                let delta_i = delta as i32;
+                                                let new_range = if (t - min_pos).abs() < (t - max_pos).abs() {
+                                                    let new_min = ((current_min as i32 + delta_i) as u32).clamp(min_allowed, current_max);
+                                                    (new_min, current_max)
+                                                } else {
+                                                    let new_max = ((current_max as i32 + delta_i) as u32).clamp(current_min, max_allowed);
+                                                    (current_min, new_max)
+                                                };
+                                                match tf_idx {
+                                                    1 => tf_config.seconds = Some(new_range),
+                                                    2 => tf_config.minutes = Some(new_range),
+                                                    3 => tf_config.hours = Some(new_range),
+                                                    4 => tf_config.days = Some(new_range),
+                                                    5 => tf_config.weeks = Some(new_range),
+                                                    6 => tf_config.months = Some(new_range),
+                                                    _ => {}
                                                 }
-                                            }
-                                        }
-                                    } else if field_id.starts_with("tf_") && field_id.ends_with("_slider") {
-                                        if let Some(tf_idx) = field_id.strip_prefix("tf_")
-                                            .and_then(|s| s.strip_suffix("_slider"))
-                                            .and_then(|s| s.parse::<usize>().ok())
-                                        {
-                                            if let Some(idx) = self.panel_app.primitive_settings_state.primitive_idx {
-                                                if let Some(data) = self.panel_app.panel_grid.active_window()
-                                                    .and_then(|w| w.drawing_manager.get_data_at(idx))
-                                                {
-                                                    let mut new_data = data.clone();
-                                                    let mut tf_config = new_data.timeframe_visibility.clone()
-                                                        .unwrap_or_else(TimeframeVisibilityConfig::all);
-                                                    let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
-                                                        1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
-                                                        4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
-                                                        _ => { found = true; break; }
-                                                    };
-                                                    let (current_min, current_max) = match tf_idx {
-                                                        1 => tf_config.seconds.unwrap_or((1, 59)),
-                                                        2 => tf_config.minutes.unwrap_or((1, 59)),
-                                                        3 => tf_config.hours.unwrap_or((1, 24)),
-                                                        4 => tf_config.days.unwrap_or((1, 366)),
-                                                        5 => tf_config.weeks.unwrap_or((1, 52)),
-                                                        6 => tf_config.months.unwrap_or((1, 12)),
-                                                        _ => { found = true; break; }
-                                                    };
-                                                    let t = ((x - item_rect.x) / item_rect.width).clamp(0.0, 1.0);
-                                                    let min_pos = (current_min - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                                                    let max_pos = (current_max - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                                                    let delta_i = delta as i32;
-                                                    let new_range = if (t - min_pos).abs() < (t - max_pos).abs() {
-                                                        let new_min = ((current_min as i32 + delta_i) as u32).clamp(min_allowed, current_max);
-                                                        (new_min, current_max)
-                                                    } else {
-                                                        let new_max = ((current_max as i32 + delta_i) as u32).clamp(current_min, max_allowed);
-                                                        (current_min, new_max)
-                                                    };
-                                                    match tf_idx {
-                                                        1 => tf_config.seconds = Some(new_range),
-                                                        2 => tf_config.minutes = Some(new_range),
-                                                        3 => tf_config.hours = Some(new_range),
-                                                        4 => tf_config.days = Some(new_range),
-                                                        5 => tf_config.weeks = Some(new_range),
-                                                        6 => tf_config.months = Some(new_range),
-                                                        _ => {}
-                                                    }
-                                                    new_data.timeframe_visibility = Some(tf_config);
-                                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                                        window.drawing_manager.set_data_at(idx, &new_data);
-                                                    }
-                                                    self.sync_drawing_back_to_group();
+                                                new_data.timeframe_visibility = Some(tf_config);
+                                                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                                    window.drawing_manager.set_data_at(idx, &new_data);
                                                 }
+                                                self.sync_drawing_back_to_group();
                                             }
                                         }
                                     }
-                                    found = true;
-                                    break;
                                 }
                             }
                         }
-                        found
-                    } else {
-                        false
                     }
-                } else {
-                    false
-                };
-                let _ = hit_slider;
-                return;
-            }
-
-            // Compare settings modal — check tf_ dual sliders and line_width slider first
-            if self.panel_app.compare_settings_state.is_open() {
-                use zengeld_chart::ui::modal_settings::CompareSettingsTab;
-                let delta = dy.signum();
-
-                enum CmpScrollAction {
-                    TfSlider { _field_id: String, tf_idx: usize, x_pos: f64, item_rect_x: f64, item_rect_w: f64 },
-                    LineWidth { current: f64, min_val: f64, max_val: f64 },
-                    Swallow,
+                    // prim_settings always swallows wheel (modal eats scroll even when no slider hit)
+                    return;
                 }
 
-                let action: CmpScrollAction = if let Some(ref result) = self.frame_result {
-                    if let Some(ref cs) = result.compare_settings {
-                        // Only check dual sliders when visibility tab is active
-                        let mut found = CmpScrollAction::Swallow;
-                        if self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Visibility {
-                            'cmp_tf_loop: for track in &cs.tf_slider_tracks {
-                                if let Some((_, item_rect)) = cs.tf_content_items.iter()
-                                    .find(|(id, _)| id == &track.field_id)
+                // compare_settings sliders — guard: modal must be open
+                if self.panel_app.compare_settings_state.is_open() {
+                    use zengeld_chart::ui::modal_settings::CompareSettingsTab;
+                    let delta = dy.signum();
+
+                    if let Some(ref wid) = hovered_wid {
+                        // tf_*_slider — dual-handle, only on Visibility tab
+                        if let Some(field_id) = wid.strip_prefix("cmp_settings:item:").map(|s| s.to_string()) {
+                            if field_id.starts_with("tf_") && field_id.ends_with("_slider")
+                                && self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Visibility
+                            {
+                                if let Some(tf_idx) = field_id.strip_prefix("tf_")
+                                    .and_then(|s| s.strip_suffix("_slider"))
+                                    .and_then(|s| s.parse::<usize>().ok())
                                 {
-                                    if item_rect.contains(x, y) {
-                                        if let Some(tf_idx) = track.field_id.strip_prefix("tf_")
-                                            .and_then(|s| s.strip_suffix("_slider"))
-                                            .and_then(|s| s.parse::<usize>().ok())
-                                        {
-                                            found = CmpScrollAction::TfSlider {
-                                                _field_id: track.field_id.clone(),
-                                                tf_idx,
-                                                x_pos: x,
-                                                item_rect_x: item_rect.x,
-                                                item_rect_w: item_rect.width,
-                                            };
-                                        }
-                                        break 'cmp_tf_loop;
-                                    }
-                                }
-                            }
-                        }
-                        // Check line_width slider when style tab is active
-                        if matches!(found, CmpScrollAction::Swallow)
-                            && self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Style {
-                                if let Some(ref lw_track) = cs.line_width_slider {
-                                    let hit_x0 = lw_track.track_x - 6.0;
-                                    let hit_x1 = lw_track.track_x + lw_track.track_width + 6.0;
-                                    let hit_y0 = lw_track.track_y;
-                                    let hit_y1 = lw_track.track_y + lw_track.track_height;
-                                    if x >= hit_x0 && x <= hit_x1 && y >= hit_y0 && y <= hit_y1 {
-                                        found = CmpScrollAction::LineWidth {
-                                            current: self.panel_app.compare_settings_state.cached_line_width as f64,
-                                            min_val: lw_track.min_val,
-                                            max_val: lw_track.max_val,
-                                        };
-                                    }
-                                }
-                            }
-                        found
-                    } else {
-                        CmpScrollAction::Swallow
-                    }
-                } else {
-                    CmpScrollAction::Swallow
-                };
+                                    let item_rect_opt = self.frame_result.as_ref()
+                                        .and_then(|r| r.compare_settings.as_ref())
+                                        .and_then(|cs| cs.tf_content_items.iter().find(|(id, _)| id == &field_id).map(|(_, r)| *r));
 
-                match action {
-                    CmpScrollAction::TfSlider { _field_id: _, tf_idx, x_pos, item_rect_x, item_rect_w } => {
-                        use zengeld_chart::drawing::TimeframeVisibilityConfig;
-                        let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
-                            1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
-                            4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
-                            _ => { return; }
-                        };
-                        let mut tf_config = self.panel_app.compare_settings_state
-                            .cached_timeframe_visibility.clone()
-                            .unwrap_or_else(TimeframeVisibilityConfig::all);
-                        let (current_min, current_max) = match tf_idx {
-                            1 => tf_config.seconds.unwrap_or((1, 59)),
-                            2 => tf_config.minutes.unwrap_or((1, 59)),
-                            3 => tf_config.hours.unwrap_or((1, 24)),
-                            4 => tf_config.days.unwrap_or((1, 366)),
-                            5 => tf_config.weeks.unwrap_or((1, 52)),
-                            6 => tf_config.months.unwrap_or((1, 12)),
-                            _ => { return; }
-                        };
-                        let t = if item_rect_w > 0.0 { ((x_pos - item_rect_x) / item_rect_w).clamp(0.0, 1.0) } else { 0.5 };
-                        let min_pos = (current_min - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                        let max_pos = (current_max - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                        let delta_i = delta as i32;
-                        let new_range = if (t - min_pos).abs() <= (t - max_pos).abs() {
-                            let new_min = ((current_min as i32 + delta_i) as u32).clamp(min_allowed, current_max);
-                            (new_min, current_max)
-                        } else {
-                            let new_max = ((current_max as i32 + delta_i) as u32).clamp(current_min, max_allowed);
-                            (current_min, new_max)
-                        };
-                        match tf_idx {
-                            1 => tf_config.seconds = Some(new_range),
-                            2 => tf_config.minutes = Some(new_range),
-                            3 => tf_config.hours   = Some(new_range),
-                            4 => tf_config.days    = Some(new_range),
-                            5 => tf_config.weeks   = Some(new_range),
-                            6 => tf_config.months  = Some(new_range),
-                            _ => {}
+                                    use zengeld_chart::drawing::TimeframeVisibilityConfig;
+                                    let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
+                                        1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
+                                        4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
+                                        _ => { return; }
+                                    };
+                                    let mut tf_config = self.panel_app.compare_settings_state
+                                        .cached_timeframe_visibility.clone()
+                                        .unwrap_or_else(TimeframeVisibilityConfig::all);
+                                    let (current_min, current_max) = match tf_idx {
+                                        1 => tf_config.seconds.unwrap_or((1, 59)),
+                                        2 => tf_config.minutes.unwrap_or((1, 59)),
+                                        3 => tf_config.hours.unwrap_or((1, 24)),
+                                        4 => tf_config.days.unwrap_or((1, 366)),
+                                        5 => tf_config.weeks.unwrap_or((1, 52)),
+                                        6 => tf_config.months.unwrap_or((1, 12)),
+                                        _ => { return; }
+                                    };
+                                    let item_rect = item_rect_opt.unwrap_or_default();
+                                    let t = if item_rect.width > 0.0 {
+                                        ((x - item_rect.x) / item_rect.width).clamp(0.0, 1.0)
+                                    } else {
+                                        0.5
+                                    };
+                                    let min_pos = (current_min - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
+                                    let max_pos = (current_max - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
+                                    let delta_i = delta as i32;
+                                    let new_range = if (t - min_pos).abs() <= (t - max_pos).abs() {
+                                        let new_min = ((current_min as i32 + delta_i) as u32).clamp(min_allowed, current_max);
+                                        (new_min, current_max)
+                                    } else {
+                                        let new_max = ((current_max as i32 + delta_i) as u32).clamp(current_min, max_allowed);
+                                        (current_min, new_max)
+                                    };
+                                    match tf_idx {
+                                        1 => tf_config.seconds = Some(new_range),
+                                        2 => tf_config.minutes = Some(new_range),
+                                        3 => tf_config.hours   = Some(new_range),
+                                        4 => tf_config.days    = Some(new_range),
+                                        5 => tf_config.weeks   = Some(new_range),
+                                        6 => tf_config.months  = Some(new_range),
+                                        _ => {}
+                                    }
+                                    let series_idx = self.panel_app.compare_settings_state.series_index;
+                                    self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
+                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                        window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
+                                    }
+                                    eprintln!("[ChartApp] cmp_settings scroll on tf_{}_slider", tf_idx);
+                                }
+                            }
                         }
-                        let series_idx = self.panel_app.compare_settings_state.series_index;
-                        self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
+
+                        // line_width_slider — single-handle, step=0.5, only on Style tab
+                        if wid.as_str() == "cmp_settings:line_width_slider"
+                            && self.panel_app.compare_settings_state.active_tab == CompareSettingsTab::Style
+                        {
+                            let (min_val, max_val) = self.frame_result.as_ref()
+                                .and_then(|r| r.compare_settings.as_ref())
+                                .and_then(|cs| cs.line_width_slider.as_ref())
+                                .map(|t| (t.min_val, t.max_val))
+                                .unwrap_or((0.5, 10.0));
+                            let current = self.panel_app.compare_settings_state.cached_line_width as f64;
+                            let new_val = (current + delta * 0.5).clamp(min_val, max_val) as f32;
+                            let series_idx = self.panel_app.compare_settings_state.series_index;
+                            self.panel_app.compare_settings_state.cached_line_width = new_val;
+                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                window.compare_overlay.set_series_line_width_by_index(series_idx, new_val);
+                            }
+                            eprintln!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
                         }
-                        eprintln!("[ChartApp] cmp_settings scroll on tf_{}_slider", tf_idx);
                     }
-                    CmpScrollAction::LineWidth { current, min_val, max_val } => {
-                        let step = 0.5_f64;
-                        let new_val = (current + delta * step).clamp(min_val, max_val) as f32;
-                        let series_idx = self.panel_app.compare_settings_state.series_index;
-                        self.panel_app.compare_settings_state.cached_line_width = new_val;
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            window.compare_overlay.set_series_line_width_by_index(series_idx, new_val);
-                        }
-                        eprintln!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
-                    }
-                    CmpScrollAction::Swallow => {}
+                    // compare_settings always swallows wheel
+                    return;
                 }
-                return;
             }
 
             // Any other modal or widget layer — swallow the event.

@@ -1940,7 +1940,7 @@ pub fn render_primitive_settings_modal(
             continue;
         }
         let sense = if slider_field_ids.contains(item_id.as_str()) {
-            uzor::input::Sense::DRAG
+            uzor::input::Sense::DRAG | uzor::input::Sense::SCROLL
         } else {
             uzor::input::Sense::CLICK | uzor::input::Sense::HOVER
         };
