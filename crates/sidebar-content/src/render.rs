@@ -247,7 +247,7 @@ pub fn render_right_sidebar(
     sidebar_state: &mut SidebarState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
-    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
+    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
     panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
@@ -3507,7 +3507,7 @@ fn render_slot_panel(
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
-    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext),
+    free_item_renderer: &mut dyn FnMut(&crate::free_slot::FreeItem, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
     _panel_source_label_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<[f32; 4]>,
@@ -3985,7 +3985,8 @@ fn render_slot_panel(
         result.item_rects.push((focus_content_id, focus_content_rect));
 
         // Delegate actual panel content to the caller-supplied renderer.
-        free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx);
+        let slot_prefix = format!("slot:{}:leaf:{}", slot_idx, leaf_id.0);
+        free_item_renderer(&item, (r.x, body_y, r.width, body_h), ctx, input_coordinator, &slot_prefix);
 
         // ── Level 1: Overlay tab — painted AFTER content so it floats on top ──
         // Determine hover zone from stored per-leaf hover state.

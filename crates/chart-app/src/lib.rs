@@ -6130,9 +6130,8 @@ impl ChartApp {
                 &mut self.sidebar_state,
                 &sidebar_toolbar_theme,
                 &mut self.input_coordinator.borrow_mut(),
-                &mut |item, rect, ctx| {
-                    let mut panel_coord = uzor::InputCoordinator::new();
-                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, &mut panel_coord, "");
+                &mut |item, rect, ctx, coord, slot_prefix| {
+                    panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
                 },
                 &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                     use sidebar_content::free_slot::FreeItem;
@@ -6709,9 +6708,8 @@ impl ChartApp {
             &mut self.sidebar_state,
             &sidebar_toolbar_theme,
             &mut self.input_coordinator.borrow_mut(),
-            &mut |item, rect, ctx| {
-                let mut panel_coord = uzor::InputCoordinator::new();
-                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, &mut panel_coord, "");
+            &mut |item, rect, ctx, coord, slot_prefix| {
+                panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
             },
             &|item: &sidebar_content::free_slot::FreeItem| -> Option<String> {
                 use sidebar_content::free_slot::FreeItem;
