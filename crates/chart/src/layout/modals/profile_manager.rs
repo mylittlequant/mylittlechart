@@ -576,6 +576,14 @@ fn render_page_profile_list(
     );
     result.profile_list_total_content_h = total_content_h;
 
+    // Phase 6.1a: register scrollable profile list for coordinator dispatch
+    input_coordinator.register_on_layer(
+        "user_settings:profile_list_viewport",
+        WidgetRect::new(inner_x, scroll_viewport_y, inner_w, scroll_viewport_h),
+        Sense::SCROLL,
+        layer_id,
+    );
+
     // Apply clip rect — all profile rows and cloud section render inside.
     ctx.save();
     ctx.clip_rect(inner_x, scroll_viewport_y, inner_w, scroll_viewport_h);

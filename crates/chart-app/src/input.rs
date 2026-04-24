@@ -5559,6 +5559,89 @@ impl ChartApp {
                 }
             }
 
+            // Phase 6.1a: route 6 simple modals via coordinator scroll surface registrations.
+            // hovered_widget() returns the topmost registered widget under (x, y) within the
+            // active modal layer — meaning hit detection is already done by the coordinator.
+            {
+                let hovered_id = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                if let Some(ref id) = hovered_id {
+                    match id.as_str() {
+                        "chart_settings:scroll_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref cs) = result.chart_settings {
+                                    self.panel_app.chart_settings_state.scroll.handle_wheel(
+                                        scroll_step,
+                                        cs.total_content_height,
+                                        cs.viewport_height,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        "ind_settings:scroll_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref is) = result.indicator_settings {
+                                    self.panel_app.indicator_settings_state.scroll.handle_wheel(
+                                        scroll_step,
+                                        is.total_content_height,
+                                        is.viewport_height,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        "alert_settings:list_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref asr) = result.alert_settings {
+                                    if let Some(ref vp) = asr.list_viewport_rect {
+                                        self.panel_app.alert_settings_state.list_scroll.handle_wheel(
+                                            scroll_step,
+                                            asr.list_total_content_height,
+                                            vp.height,
+                                        );
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        "user_settings:profile_list_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref us) = result.user_settings {
+                                    let viewport_h = us.profile_list_viewport_rect.height;
+                                    let total_h = us.profile_list_total_content_h;
+                                    self.panel_app.user_settings_state.profile_list_scroll
+                                        .handle_wheel(scroll_step, total_h, viewport_h);
+                                }
+                            }
+                            return;
+                        }
+                        "watchlist:list_viewport" => {
+                            if let Some(ref wl) = self.last_watchlist_modal_result {
+                                self.watchlist_modal.scroll.handle_wheel(
+                                    -dy,
+                                    wl.total_content_height,
+                                    wl.list_viewport_rect.height,
+                                );
+                            }
+                            return;
+                        }
+                        "chart_browser:list_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref br) = result.chart_browser {
+                                    self.panel_app.chart_browser.scroll.handle_wheel(
+                                        dy,
+                                        br.total_content_height,
+                                        br.list_viewport_rect.height,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             // Search / indicator / compare modal (modal_state)
             if self.modal_state.is_open() {
                 // Use real content/viewport heights from the last render result when
@@ -5679,84 +5762,6 @@ impl ChartApp {
                     false
                 };
                 let _ = hit_slider;
-                return;
-            }
-
-            // Chart settings modal — check slider tracks first, then content scroll
-            if self.panel_app.chart_settings_state.is_open {
-                let delta = dy.signum();
-
-                // Collect slider action outside of frame_result borrow scope.
-                // Returns (field_id, new_value) if a slider was hit, or None.
-                enum CsScrollAction {
-                    Slider(String, f64),
-                    ContentScroll(f64, f64), // total_content_height, viewport_height
-                    Swallow,
-                }
-                let action: CsScrollAction = if let Some(ref result) = self.frame_result {
-                    if let Some(ref cs) = result.chart_settings {
-                        let mut found_action = None;
-                        'track_loop: for track in &cs.slider_tracks {
-                            if let Some((_, item_rect)) = cs.content_items.iter().find(|(id, _)| id == &track.field_id) {
-                                if item_rect.contains(x, y) {
-                                    let field_id = track.field_id.clone();
-                                    let min_val = track.min_val;
-                                    let max_val = track.max_val;
-                                    if let Some(param_id) = field_id.strip_prefix("appearance:style_") {
-                                        let param_id = param_id.to_string();
-                                        let params = &self.panel_app.theme_manager.current().style_params;
-                                        let current_value = match param_id.as_str() {
-                                            "toolbar_opacity"         => params.toolbar_bg_opacity as f64,
-                                            "modal_opacity"           => params.modal_bg_opacity as f64,
-                                            "sidebar_opacity"         => params.sidebar_bg_opacity as f64,
-                                            "menu_opacity"            => params.menu_bg_opacity as f64,
-                                            "scale_opacity"           => params.scale_bg_opacity as f64,
-                                            "hover_opacity"           => params.hover_bg_opacity as f64,
-                                            "crosshair_label_opacity" => params.crosshair_label_bg_opacity as f64,
-                                            "blur_radius"             => params.blur_radius as f64,
-                                            _ => break 'track_loop,
-                                        };
-                                        let step = if param_id == "blur_radius" { 1.0 } else { 0.05 };
-                                        let new_value = (current_value + delta * step).clamp(min_val, max_val);
-                                        found_action = Some(CsScrollAction::Slider(field_id, new_value));
-                                    } else if field_id.starts_with("scales:") {
-                                        let current_value = if let Some(window) = self.panel_app.panel_grid.active_window() {
-                                            match field_id.as_str() {
-                                                "scales:price_width_slider"   => window.scale_settings.price_scale_width,
-                                                "scales:time_height_slider"   => window.scale_settings.time_scale_height,
-                                                "scales:crosshair_line_width" => window.crosshair_options.vert_line.width,
-                                                _ => break 'track_loop,
-                                            }
-                                        } else { break 'track_loop; };
-                                        let step = if field_id == "scales:crosshair_line_width" { 0.1 } else { 1.0 };
-                                        let new_value = (current_value + delta * step).clamp(min_val, max_val);
-                                        found_action = Some(CsScrollAction::Slider(field_id, new_value));
-                                    }
-                                    break 'track_loop;
-                                }
-                            }
-                        }
-                        if found_action.is_none() && cs.content_rect.contains(x, y) {
-                            found_action = Some(CsScrollAction::ContentScroll(cs.total_content_height, cs.viewport_height));
-                        }
-                        found_action.unwrap_or(CsScrollAction::Swallow)
-                    } else {
-                        CsScrollAction::Swallow
-                    }
-                } else {
-                    CsScrollAction::Swallow
-                };
-                match action {
-                    CsScrollAction::Slider(field_id, new_value) => {
-                        self.apply_slider_value(&field_id, new_value);
-                    }
-                    CsScrollAction::ContentScroll(total_h, viewport_h) => {
-                        self.panel_app.chart_settings_state.scroll.handle_wheel(scroll_step, total_h, viewport_h);
-                    }
-                    CsScrollAction::Swallow => {
-                        self.panel_app.chart_settings_state.scroll.handle_wheel(scroll_step, 3000.0, 500.0);
-                    }
-                }
                 return;
             }
 
@@ -5885,122 +5890,6 @@ impl ChartApp {
                 return;
             }
 
-            // Indicator settings modal — check tf_ dual sliders first, then content scroll
-            if self.panel_app.indicator_settings_state.is_open() {
-                use zengeld_chart::ui::modal_settings::IndicatorSettingsTab;
-                let delta = dy.signum();
-
-                // Check slider tracks first when visibility tab is active
-                let hit_slider = if self.panel_app.indicator_settings_state.active_tab
-                    == IndicatorSettingsTab::Visibility
-                {
-                    if let Some(ref result) = self.frame_result {
-                        if let Some(ref is) = result.indicator_settings {
-                            let mut found = false;
-                            'ind_tf_loop: for track in &is.slider_tracks {
-                                if let Some((_, item_rect)) = is.content_items.iter()
-                                    .find(|(id, _)| id == &track.field_id)
-                                {
-                                    if item_rect.contains(x, y) {
-                                        if let Some(tf_idx) = track.field_id.strip_prefix("tf_")
-                                            .and_then(|s| s.strip_suffix("_slider"))
-                                            .and_then(|s| s.parse::<usize>().ok())
-                                        {
-                                            use zengeld_chart::drawing::TimeframeVisibilityConfig;
-                                            let (min_allowed, max_allowed): (u32, u32) = match tf_idx {
-                                                1 => (1, 59), 2 => (1, 59), 3 => (1, 24),
-                                                4 => (1, 366), 5 => (1, 52), 6 => (1, 12),
-                                                _ => { break 'ind_tf_loop; }
-                                            };
-                                            if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-                                                if let Some(inst) = self.indicator_manager.get_instance_mut(ind_id) {
-                                                    let mut tf_config = inst.timeframe_visibility.clone()
-                                                        .unwrap_or_else(TimeframeVisibilityConfig::all);
-                                                    let (current_min, current_max) = match tf_idx {
-                                                        1 => tf_config.seconds.unwrap_or((1, 59)),
-                                                        2 => tf_config.minutes.unwrap_or((1, 59)),
-                                                        3 => tf_config.hours.unwrap_or((1, 24)),
-                                                        4 => tf_config.days.unwrap_or((1, 366)),
-                                                        5 => tf_config.weeks.unwrap_or((1, 52)),
-                                                        6 => tf_config.months.unwrap_or((1, 12)),
-                                                        _ => { break 'ind_tf_loop; }
-                                                    };
-                                                    let t = if item_rect.width > 0.0 {
-                                                        ((x - item_rect.x) / item_rect.width).clamp(0.0, 1.0)
-                                                    } else { 0.5 };
-                                                    let min_pos = (current_min - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                                                    let max_pos = (current_max - min_allowed) as f64 / (max_allowed - min_allowed) as f64;
-                                                    let delta_i = delta as i32;
-                                                    let new_range = if (t - min_pos).abs() <= (t - max_pos).abs() {
-                                                        let new_min = ((current_min as i32 + delta_i) as u32).clamp(min_allowed, current_max);
-                                                        (new_min, current_max)
-                                                    } else {
-                                                        let new_max = ((current_max as i32 + delta_i) as u32).clamp(current_min, max_allowed);
-                                                        (current_min, new_max)
-                                                    };
-                                                    match tf_idx {
-                                                        1 => tf_config.seconds = Some(new_range),
-                                                        2 => tf_config.minutes = Some(new_range),
-                                                        3 => tf_config.hours   = Some(new_range),
-                                                        4 => tf_config.days    = Some(new_range),
-                                                        5 => tf_config.weeks   = Some(new_range),
-                                                        6 => tf_config.months  = Some(new_range),
-                                                        _ => {}
-                                                    }
-                                                    inst.timeframe_visibility = Some(tf_config);
-                                                    eprintln!("[ChartApp] ind_settings scroll on tf_{}_slider", tf_idx);
-                                                }
-                                            }
-                                            found = true;
-                                        }
-                                        break 'ind_tf_loop;
-                                    }
-                                }
-                            }
-                            found
-                        } else { false }
-                    } else { false }
-                } else { false };
-
-                if hit_slider {
-                    return;
-                }
-
-                if let Some(ref result) = self.frame_result {
-                    if let Some(ref is) = result.indicator_settings {
-                        if is.content_rect.contains(x, y) {
-                            self.panel_app.indicator_settings_state.scroll.handle_wheel(
-                                scroll_step,
-                                is.total_content_height,
-                                is.viewport_height,
-                            );
-                            return;
-                        }
-                    }
-                }
-                self.panel_app.indicator_settings_state.scroll.handle_wheel(scroll_step, 3000.0, 500.0);
-                return;
-            }
-
-            // Alert settings modal — scroll the AlertsList tab list area.
-            if self.panel_app.alert_settings_state.is_open() {
-                if let Some(ref result) = self.frame_result {
-                    if let Some(ref asr) = result.alert_settings {
-                        if let Some(ref vp) = asr.list_viewport_rect {
-                            if x >= vp.x && x <= vp.x + vp.width && y >= vp.y && y <= vp.y + vp.height {
-                                self.panel_app.alert_settings_state.list_scroll.handle_wheel(
-                                    scroll_step,
-                                    asr.list_total_content_height,
-                                    vp.height,
-                                );
-                                return;
-                            }
-                        }
-                    }
-                }
-                return;
-            }
-
             // Tags & Tabs modal — scroll the active content area.
             if self.panel_app.tags_tabs_state.is_open {
                 if let Some(ref tt) = self.frame_result
@@ -6055,63 +5944,6 @@ impl ChartApp {
                         return;
                     }
                 }
-                return;
-            }
-
-            // Profile manager — scroll the profile list viewport.
-            if self.panel_app.user_settings_state.show_profile_manager {
-                use zengeld_chart::ui::modal_settings::ProfileManagerPage;
-                if matches!(
-                    self.panel_app.user_settings_state.profile_manager_page,
-                    ProfileManagerPage::ProfileList
-                ) {
-                    if let Some(ref us) = self.frame_result
-                        .as_ref()
-                        .and_then(|r| r.user_settings.as_ref())
-                        .cloned()
-                    {
-                        if us.profile_list_viewport_rect.contains(x, y) {
-                            let viewport_h = us.profile_list_viewport_rect.height;
-                            let total_h = us.profile_list_total_content_h;
-                            self.panel_app.user_settings_state.profile_list_scroll
-                                .handle_wheel(scroll_step, total_h, viewport_h);
-                        }
-                    }
-                }
-                return;
-            }
-
-            // Watchlist modal list scroll
-            if self.watchlist_modal.is_open() {
-                if let Some(ref wl) = self.last_watchlist_modal_result {
-                    if wl.list_viewport_rect.contains(x, y) {
-                        self.watchlist_modal.scroll.handle_wheel(
-                            -dy,
-                            wl.total_content_height,
-                            wl.list_viewport_rect.height,
-                        );
-                        return;
-                    }
-                }
-                // Swallow scroll when watchlist modal is open even outside list area.
-                return;
-            }
-
-            // Chart browser modal list scroll
-            if self.panel_app.chart_browser.is_open {
-                if let Some(ref result) = self.frame_result {
-                    if let Some(ref br) = result.chart_browser {
-                        if br.list_viewport_rect.contains(x, y) {
-                            self.panel_app.chart_browser.scroll.handle_wheel(
-                                dy,
-                                br.total_content_height,
-                                br.list_viewport_rect.height,
-                            );
-                            return;
-                        }
-                    }
-                }
-                // Swallow scroll when browser is open even outside list area.
                 return;
             }
 

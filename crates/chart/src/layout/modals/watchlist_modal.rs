@@ -584,6 +584,14 @@ fn render_overview_tab(
     let total_h = filtered.len() as f64 * item_h;
     result.total_content_height = total_h;
 
+    // Phase 6.1a: register scrollable list area for coordinator dispatch
+    input_coordinator.register_on_layer(
+        "watchlist:list_viewport",
+        WidgetRect::new(modal_x, list_top, modal_w, list_h),
+        uzor::input::Sense::SCROLL,
+        layer_id,
+    );
+
     // Clip rendering to the viewport
     ctx.save();
     ctx.clip_rect(modal_x, list_top, modal_w, list_h);

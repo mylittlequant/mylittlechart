@@ -1229,6 +1229,14 @@ fn render_alerts_list_tab(
 
     result.list_viewport_rect = Some(WidgetRect::new(content_x, list_top, content_w, list_h));
 
+    // Phase 6.1a: register scrollable list area for coordinator dispatch
+    input_coordinator.register_on_layer(
+        "alert_settings:list_viewport",
+        WidgetRect::new(content_x, list_top, content_w, list_h),
+        Sense::SCROLL,
+        layer_id,
+    );
+
     if filtered.is_empty() {
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_font("12px sans-serif");

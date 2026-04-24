@@ -1461,6 +1461,14 @@ pub fn render_indicator_settings_modal(
     result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
     result.content_rect = WidgetRect::new(content_x, content_y, content_width, content_height);
 
+    // Phase 6.1a: register scrollable content area for coordinator dispatch
+    input_coordinator.register_on_layer(
+        "ind_settings:scroll_viewport",
+        uzor::types::Rect::new(content_x, content_y, content_width, content_height),
+        uzor::input::Sense::SCROLL,
+        &layer_id,
+    );
+
     // Tab rects
     for (i, tab) in IndicatorSettingsTab::all().iter().enumerate() {
         let tab_y = sidebar_y + i as f64 * tab_button_height;
