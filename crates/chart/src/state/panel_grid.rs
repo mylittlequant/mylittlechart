@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use uzor::panels::{DockingManager, DockingTree, LeafId, PanelRect, SplitKind, SeparatorOrientation};
 
+use crate::ChartHitTester;
 use crate::state::{ChartWindow, ChartId, Timeframe};
 use crate::state::generate_chart_id;
 use super::sub_panel::ChartSubPanel;
@@ -1666,6 +1667,185 @@ impl ChartPanelGrid {
         } else {
             ChartDragStartHit::Miss
         }
+    }
+
+    // =========================================================================
+    // Crosshair
+    // =========================================================================
+
+    /// Update the crosshair for the active window from screen-space cursor coords.
+    ///
+    /// Handles three modes:
+    /// - `drawing_active = true`: unclamped bar/price so the preview rubber-band
+    ///   extends beyond chart boundaries.
+    /// - `drag_mode` is a pane-locked mode: crosshair stays in the originating
+    ///   sub-pane coordinate system even when the cursor leaves that pane.
+    /// - hover (no drag, no drawing): hides crosshair when over a pane separator,
+    ///   otherwise updates via `update_crosshair_from_global`.
+    ///
+    /// Returns the crosshair state `(timestamp, price, visible, pane_index)` that
+    /// the caller should forward to sync-group propagation.  Returns `None` when
+    /// no active window exists.
+    pub fn update_crosshair(
+        &mut self,
+        x: f64,
+        y: f64,
+        drag_mode: crate::engine::input::DragMode,
+        drawing_active: bool,
+        extended: &crate::layout::ExtendedFrameLayout,
+    ) -> Option<(i64, f64, bool, Option<usize>)> {
+        use crate::engine::input::DragMode;
+        use crate::layout::ExtendedLayoutHitTester;
+
+        if drawing_active {
+            // Unclamped crosshair — preview must extend beyond chart area.
+            let current_pane = self.active_window()
+                .and_then(|w| w.drawing_manager.current_pane());
+
+            match current_pane {
+                Some(instance_id) => {
+                    if let Some(sp_layout) = extended.sub_panes.iter()
+                        .find(|sp| sp.instance_id == instance_id)
+                    {
+                        let local_x = x - sp_layout.content.x;
+                        let local_y = y - sp_layout.content.y;
+                        let pane_height = sp_layout.content.height;
+                        let pane_idx = extended.sub_panes.iter()
+                            .position(|sp| sp.instance_id == instance_id);
+                        let (price_min, price_max) = self.active_window()
+                            .and_then(|w| {
+                                w.sub_panes.iter()
+                                    .find(|sp| sp.instance_id == instance_id)
+                                    .map(|sp| (sp.price_min, sp.price_max))
+                            })
+                            .unwrap_or((0.0, 100.0));
+                        if let Some(window) = self.active_window_mut() {
+                            let bar_f64 = window.viewport.x_to_bar_f64(local_x);
+                            let bar_idx = window.viewport.x_to_bar(local_x);
+                            let price_range = price_max - price_min;
+                            let price = if pane_height > 0.0 {
+                                price_max - (local_y / pane_height) * price_range
+                            } else {
+                                price_min
+                            };
+                            window.crosshair.visible = true;
+                            window.crosshair.pane_index = pane_idx;
+                            window.crosshair.x = local_x;
+                            window.crosshair.y = local_y;
+                            window.crosshair.bar_idx = bar_idx;
+                            window.crosshair.bar_f64 = bar_f64;
+                            window.crosshair.price = price;
+                            window.crosshair.snapped_y = local_y;
+                            window.crosshair.snapped_price = price;
+                        }
+                    }
+                }
+                None => {
+                    let chart_rect = extended.main_chart.chart;
+                    let local_x = x - chart_rect.x;
+                    let local_y = y - chart_rect.y;
+                    if let Some(window) = self.active_window_mut() {
+                        let bar_f64 = window.viewport.x_to_bar_f64(local_x);
+                        let bar_idx = window.viewport.x_to_bar(local_x);
+                        let price_range = window.price_scale.price_max - window.price_scale.price_min;
+                        let price = if chart_rect.height > 0.0 {
+                            window.price_scale.price_max - (local_y / chart_rect.height) * price_range
+                        } else {
+                            window.price_scale.price_min
+                        };
+                        window.crosshair.visible = true;
+                        window.crosshair.pane_index = None;
+                        window.crosshair.x = local_x;
+                        window.crosshair.y = local_y;
+                        window.crosshair.bar_idx = bar_idx;
+                        window.crosshair.bar_f64 = bar_f64;
+                        window.crosshair.price = price;
+                        if window.crosshair.is_magnet() {
+                            let (snapped_price, snapped_y) = window.calculate_magnet_snap(
+                                bar_idx, price, chart_rect.height,
+                                window.price_scale.price_min, window.price_scale.price_max,
+                            );
+                            window.crosshair.set_snapped(snapped_price, snapped_y);
+                        } else {
+                            window.crosshair.snapped_y = local_y;
+                            window.crosshair.snapped_price = price;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Resolve pane-lock from drag mode (same logic for drag-move and hover).
+            let primitive_drag_pane: Option<Option<usize>> = match drag_mode {
+                DragMode::Primitive { id } => {
+                    let pane_id = self.active_window()
+                        .and_then(|w| w.drawing_manager.primitives().iter()
+                            .find(|p| p.data().id == id)
+                            .and_then(|p| p.data().pane_id));
+                    let pane_index = pane_id.and_then(|instance_id| {
+                        extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
+                    });
+                    Some(pane_index)
+                }
+                DragMode::ControlPoint { primitive_id, .. } => {
+                    let pane_id = self.active_window()
+                        .and_then(|w| w.drawing_manager.primitives().iter()
+                            .find(|p| p.data().id == primitive_id)
+                            .and_then(|p| p.data().pane_id));
+                    let pane_index = pane_id.and_then(|instance_id| {
+                        extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
+                    });
+                    Some(pane_index)
+                }
+                _ => None,
+            };
+
+            let drag_pane = match drag_mode {
+                DragMode::SubPaneChart { pane_index }
+                | DragMode::SubPanePriceScale { pane_index } => Some(Some(pane_index)),
+                DragMode::Chart
+                | DragMode::PriceScale
+                | DragMode::TimeScale => Some(None),
+                DragMode::Primitive { .. }
+                | DragMode::ControlPoint { .. } => primitive_drag_pane,
+                DragMode::PaneSeparator { .. }
+                | DragMode::Selection
+                | DragMode::None => None,
+            };
+
+            // Hide crosshair when cursor is over a pane separator.
+            let is_over_separator = matches!(
+                ExtendedLayoutHitTester::new(extended).hit_test(x, y),
+                crate::engine::input::HitResult::PaneSeparator { .. }
+            );
+
+            if is_over_separator {
+                if let Some(window) = self.active_window_mut() {
+                    window.crosshair.visible = false;
+                }
+            } else if let Some(window) = self.active_window_mut() {
+                window.update_crosshair_from_global(x, y, extended, drag_pane);
+            }
+        }
+
+        // Collect crosshair state for the caller to propagate to sync peers.
+        self.active_window().map(|w| {
+            let bar_f64 = w.crosshair.bar_f64;
+            let bar_idx = bar_f64 as usize;
+            let timestamp = if bar_idx < w.bars.len() {
+                w.bars[bar_idx].timestamp
+            } else if w.bars.len() >= 2 {
+                let last = w.bars[w.bars.len() - 1].timestamp;
+                let prev = w.bars[w.bars.len() - 2].timestamp;
+                let interval = last - prev;
+                let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
+                last + (bars_past * interval as f64).round() as i64
+            } else if !w.bars.is_empty() {
+                w.bars[0].timestamp
+            } else {
+                0
+            };
+            (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
+        })
     }
 }
 

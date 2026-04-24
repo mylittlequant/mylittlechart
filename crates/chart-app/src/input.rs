@@ -3419,96 +3419,16 @@ impl ChartApp {
         );
         self.process_output_actions(actions);
 
-        // Always update crosshair from global coordinates during drag.
-        // process_output_actions handles UpdateCrosshair for main chart only;
-        // update_crosshair_from_global correctly detects sub-pane areas and
-        // sets pane_index + sub-pane price range.
-        //
-        // Lock the crosshair to the originating pane so it cannot jump to a
-        // different coordinate system when the cursor leaves that pane's rect.
+        // Update crosshair during drag via ChartPanelGrid.
         let extended2 = self.build_extended_layout();
-        // For Primitive/ControlPoint drag modes, look up the primitive's pane_id
-        // so the crosshair locks to the correct sub-pane rather than always the
-        // main chart.
-        let primitive_drag_pane: Option<Option<usize>> =
-            match self.input_handler.state.drag_mode {
-                zengeld_chart::engine::input::DragMode::Primitive { id } => {
-                    let pane_id = self.panel_app.panel_grid.active_window()
-                        .and_then(|w| w.drawing_manager.primitives().iter()
-                            .find(|p| p.data().id == id)
-                            .and_then(|p| p.data().pane_id));
-                    let pane_index = pane_id.and_then(|instance_id| {
-                        extended2.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
-                    });
-                    match pane_index {
-                        Some(idx) => Some(Some(idx)),
-                        None => Some(None),
-                    }
-                }
-                zengeld_chart::engine::input::DragMode::ControlPoint { primitive_id, .. } => {
-                    let pane_id = self.panel_app.panel_grid.active_window()
-                        .and_then(|w| w.drawing_manager.primitives().iter()
-                            .find(|p| p.data().id == primitive_id)
-                            .and_then(|p| p.data().pane_id));
-                    let pane_index = pane_id.and_then(|instance_id| {
-                        extended2.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
-                    });
-                    match pane_index {
-                        Some(idx) => Some(Some(idx)),
-                        None => Some(None),
-                    }
-                }
-                _ => None,
-            };
-        let drag_pane = match self.input_handler.state.drag_mode {
-            zengeld_chart::engine::input::DragMode::SubPaneChart { pane_index }
-            | zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } => {
-                Some(Some(pane_index))
+        let drag_mode = self.input_handler.state.drag_mode;
+        if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
+            .update_crosshair(x, y, drag_mode, false, &extended2)
+        {
+            let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+            if let Some(active_leaf) = active_leaf_opt {
+                self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
             }
-            zengeld_chart::engine::input::DragMode::Chart
-            | zengeld_chart::engine::input::DragMode::PriceScale
-            | zengeld_chart::engine::input::DragMode::TimeScale => {
-                Some(None) // locked to main chart
-            }
-            zengeld_chart::engine::input::DragMode::Primitive { .. }
-            | zengeld_chart::engine::input::DragMode::ControlPoint { .. } => {
-                primitive_drag_pane
-            }
-            zengeld_chart::engine::input::DragMode::PaneSeparator { .. }
-            | zengeld_chart::engine::input::DragMode::Selection
-            | zengeld_chart::engine::input::DragMode::None => {
-                None // no crosshair lock — hover mode
-            }
-        };
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-            window.update_crosshair_from_global(x, y, &extended2, drag_pane);
-        }
-        // Propagate crosshair to sync group peers during drag.
-        let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
-        if let Some(active_leaf) = active_leaf_opt {
-            let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
-                .panel_grid
-                .active_window()
-                .map(|w| {
-                    let bar_f64 = w.crosshair.bar_f64;
-                    let bar_idx = bar_f64 as usize;
-                    let timestamp = if bar_idx < w.bars.len() {
-                        w.bars[bar_idx].timestamp
-                    } else if w.bars.len() >= 2 {
-                        let last = w.bars[w.bars.len() - 1].timestamp;
-                        let prev = w.bars[w.bars.len() - 2].timestamp;
-                        let interval = last - prev;
-                        let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                        last + (bars_past * interval as f64).round() as i64
-                    } else if !w.bars.is_empty() {
-                        w.bars[0].timestamp
-                    } else {
-                        0
-                    };
-                    (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
-                })
-                .unwrap_or((0, 0.0, false, None));
-            self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
         }
     }
 
@@ -4749,216 +4669,17 @@ impl ChartApp {
             .map(|w| w.drawing_manager.is_drawing())
             .unwrap_or(false);
 
-        if is_drawing {
-            // When actively drawing, compute bar/price from raw screen coords
-            // WITHOUT clamping — the preview must extend in the direction of
-            // the cursor even when it's outside the chart area.
-            let current_pane = self.panel_app.panel_grid.active_window()
-                .and_then(|w| w.drawing_manager.current_pane());
-
-            match current_pane {
-                Some(instance_id) => {
-                    // Drawing on a sub-pane.
-                    if let Some(sp_layout) = extended.sub_panes.iter()
-                        .find(|sp| sp.instance_id == instance_id)
-                    {
-                        let local_x = x - sp_layout.content.x;
-                        let local_y = y - sp_layout.content.y;
-                        let pane_height = sp_layout.content.height;
-                        let pane_idx = extended.sub_panes.iter()
-                            .position(|sp| sp.instance_id == instance_id);
-                        let (price_min, price_max) = self.panel_app.panel_grid.active_window()
-                            .and_then(|w| {
-                                w.sub_panes.iter()
-                                    .find(|sp| sp.instance_id == instance_id)
-                                    .map(|sp| (sp.price_min, sp.price_max))
-                            })
-                            .unwrap_or((0.0, 100.0));
-                        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                            let bar_f64 = window.viewport.x_to_bar_f64(local_x);
-                            let bar_idx = window.viewport.x_to_bar(local_x);
-                            let price_range = price_max - price_min;
-                            let price = if pane_height > 0.0 {
-                                price_max - (local_y / pane_height) * price_range
-                            } else {
-                                price_min
-                            };
-                            window.crosshair.visible = true;
-                            window.crosshair.pane_index = pane_idx;
-                            window.crosshair.x = local_x;
-                            window.crosshair.y = local_y;
-                            window.crosshair.bar_idx = bar_idx;
-                            window.crosshair.bar_f64 = bar_f64;
-                            window.crosshair.price = price;
-                            window.crosshair.snapped_y = local_y;
-                            window.crosshair.snapped_price = price;
-                        }
-                    }
-                }
-                None => {
-                    // Drawing on main chart.
-                    let chart_rect = extended.main_chart.chart;
-                    let local_x = x - chart_rect.x;
-                    let local_y = y - chart_rect.y;
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        let bar_f64 = window.viewport.x_to_bar_f64(local_x);
-                        let bar_idx = window.viewport.x_to_bar(local_x);
-                        let price_range = window.price_scale.price_max - window.price_scale.price_min;
-                        let price = if chart_rect.height > 0.0 {
-                            window.price_scale.price_max - (local_y / chart_rect.height) * price_range
-                        } else {
-                            window.price_scale.price_min
-                        };
-                        window.crosshair.visible = true;
-                        window.crosshair.pane_index = None;
-                        window.crosshair.x = local_x;
-                        window.crosshair.y = local_y;
-                        window.crosshair.bar_idx = bar_idx;
-                        window.crosshair.bar_f64 = bar_f64;
-                        window.crosshair.price = price;
-                        if window.crosshair.is_magnet() {
-                            let (snapped_price, snapped_y) = window.calculate_magnet_snap(
-                                bar_idx, price, chart_rect.height,
-                                window.price_scale.price_min, window.price_scale.price_max,
-                            );
-                            window.crosshair.set_snapped(snapped_price, snapped_y);
-                        } else {
-                            window.crosshair.snapped_y = local_y;
-                            window.crosshair.snapped_price = price;
-                        }
-                    }
-                }
-            }
-            // Propagate crosshair to sync group peers during drawing so the
-            // preview rubber-band line follows on peer windows.
+        // Hide crosshair during separator drag — resize cursor is sufficient feedback.
+        if matches!(self.input_handler.state.drag_mode, DragMode::PaneSeparator { .. }) {
+            self.hide_crosshair();
+            return;
+        }
+        let drag_mode = self.input_handler.state.drag_mode;
+        if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
+            .update_crosshair(x, y, drag_mode, is_drawing, &extended)
+        {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
-                let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
-                    .panel_grid
-                    .active_window()
-                    .map(|w| {
-                        let bar_f64 = w.crosshair.bar_f64;
-                        let bar_idx = bar_f64 as usize;
-                        let timestamp = if bar_idx < w.bars.len() {
-                            w.bars[bar_idx].timestamp
-                        } else if w.bars.len() >= 2 {
-                            let last = w.bars[w.bars.len() - 1].timestamp;
-                            let prev = w.bars[w.bars.len() - 2].timestamp;
-                            let interval = last - prev;
-                            let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                            last + (bars_past * interval as f64).round() as i64
-                        } else if !w.bars.is_empty() {
-                            w.bars[0].timestamp
-                        } else {
-                            0
-                        };
-                        (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
-                    })
-                    .unwrap_or((0, 0.0, false, None));
-                self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
-            }
-        } else {
-            // Compute drag_pane from current drag mode so the crosshair stays
-            // locked to the originating pane during drag (clips to sub-pane
-            // boundary, not main chart boundary).
-            let is_dragging = self.input_handler.state.drag_mode != zengeld_chart::engine::input::DragMode::None;
-            // Hide crosshair during separator drag — the resize cursor is sufficient feedback.
-            if matches!(self.input_handler.state.drag_mode, DragMode::PaneSeparator { .. }) {
-                self.hide_crosshair();
-                return;
-            }
-            // For Primitive/ControlPoint drag modes, look up the primitive's pane_id
-            // so the crosshair locks to the correct sub-pane rather than always the
-            // main chart.
-            let primitive_drag_pane: Option<Option<usize>> =
-                match self.input_handler.state.drag_mode {
-                    zengeld_chart::engine::input::DragMode::Primitive { id } => {
-                        let pane_id = self.panel_app.panel_grid.active_window()
-                            .and_then(|w| w.drawing_manager.primitives().iter()
-                                .find(|p| p.data().id == id)
-                                .and_then(|p| p.data().pane_id));
-                        let pane_index = pane_id.and_then(|instance_id| {
-                            extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
-                        });
-                        match pane_index {
-                            Some(idx) => Some(Some(idx)),
-                            None => Some(None),
-                        }
-                    }
-                    zengeld_chart::engine::input::DragMode::ControlPoint { primitive_id, .. } => {
-                        let pane_id = self.panel_app.panel_grid.active_window()
-                            .and_then(|w| w.drawing_manager.primitives().iter()
-                                .find(|p| p.data().id == primitive_id)
-                                .and_then(|p| p.data().pane_id));
-                        let pane_index = pane_id.and_then(|instance_id| {
-                            extended.sub_panes.iter().position(|sp| sp.instance_id == instance_id)
-                        });
-                        match pane_index {
-                            Some(idx) => Some(Some(idx)),
-                            None => Some(None),
-                        }
-                    }
-                    _ => None,
-                };
-            let drag_pane = if is_dragging {
-                match self.input_handler.state.drag_mode {
-                    zengeld_chart::engine::input::DragMode::SubPaneChart { pane_index }
-                    | zengeld_chart::engine::input::DragMode::SubPanePriceScale { pane_index } => {
-                        Some(Some(pane_index))
-                    }
-                    zengeld_chart::engine::input::DragMode::Chart
-                    | zengeld_chart::engine::input::DragMode::PriceScale
-                    | zengeld_chart::engine::input::DragMode::TimeScale => {
-                        Some(None)
-                    }
-                    zengeld_chart::engine::input::DragMode::Primitive { .. }
-                    | zengeld_chart::engine::input::DragMode::ControlPoint { .. } => {
-                        primitive_drag_pane
-                    }
-                    zengeld_chart::engine::input::DragMode::PaneSeparator { .. }
-                    | zengeld_chart::engine::input::DragMode::Selection
-                    | zengeld_chart::engine::input::DragMode::None => {
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            // Hide crosshair when hovering over a pane separator — show resize cursor only.
-            let is_over_separator = matches!(
-                ExtendedLayoutHitTester::new(&extended).hit_test(x, y),
-                zengeld_chart::engine::input::HitResult::PaneSeparator { .. }
-            );
-            if is_over_separator {
-                self.hide_crosshair();
-            } else if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                window.update_crosshair_from_global(x, y, &extended, drag_pane);
-            }
-            // Propagate crosshair to sync group peers (non-split path).
-            let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
-            if let Some(active_leaf) = active_leaf_opt {
-                let (timestamp, price, crosshair_visible, pane_index) = self.panel_app
-                    .panel_grid
-                    .active_window()
-                    .map(|w| {
-                        let bar_f64 = w.crosshair.bar_f64;
-                        let bar_idx = bar_f64 as usize;
-                        let timestamp = if bar_idx < w.bars.len() {
-                            w.bars[bar_idx].timestamp
-                        } else if w.bars.len() >= 2 {
-                            let last = w.bars[w.bars.len() - 1].timestamp;
-                            let prev = w.bars[w.bars.len() - 2].timestamp;
-                            let interval = last - prev;
-                            let bars_past = bar_f64 - (w.bars.len() - 1) as f64;
-                            last + (bars_past * interval as f64).round() as i64
-                        } else if !w.bars.is_empty() {
-                            w.bars[0].timestamp
-                        } else {
-                            0
-                        };
-                        (timestamp, w.crosshair.price, w.crosshair.visible, w.crosshair.pane_index)
-                    })
-                    .unwrap_or((0, 0.0, false, None));
                 self.propagate_crosshair_to_sync_group(active_leaf, timestamp, price, crosshair_visible, pane_index);
             }
         }
