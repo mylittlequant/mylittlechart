@@ -2292,34 +2292,33 @@ impl ChartApp {
                 .map(|(&leaf_id, &sub_rect)| (leaf_id, sub_rect))
                 .collect();
 
-            // Register chart panes on InputCoordinator at the lowest z-layer
-            // (ChartCanvas, z=0) so any UI widget above (sidebar, modals, toolbars)
-            // wins hover/click and the canvas only receives events that "fall through".
-            //
-            // Sense flags: NO Sense::CLICK — left-clicks go through the canvas to
-            // `handle_canvas_click` via the on_click fallback (drawing tool placement,
-            // primitive selection). Including CLICK here would route them through
-            // dispatch_panel_click which has no chart:pane arm and would swallow them.
+            // Register chart panes on InputCoordinator as BlackboxPanel widgets.
+            // BlackboxPanel makes is_over_ui() return false while the cursor is over
+            // the chart canvas, so ui_drag_active no longer blocks scrollbar drags.
+            // Chart-internal input (scales, sub-pane separators, drawing tools) is
+            // dispatched by the chart's own hit-tester via panel_grid.resolve_input.
             {
-                use uzor::input::Sense;
+                use uzor::input::{Sense, WidgetKind};
                 use zengeld_chart::ui::z_order::ZLayer;
-                let layer_id = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
+                let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
                 for &(leaf_id, sub_rect) in &leaf_rects {
                     if sub_rect.width > 0.0 && sub_rect.height > 0.0 {
-                        self.input_coordinator.borrow_mut().register_on_layer(
+                        self.input_coordinator.borrow_mut().register_composite(
                             format!("chart:pane:{}", leaf_id.0),
+                            WidgetKind::BlackboxPanel,
                             uzor::Rect::new(
                                 content_rect.x + sub_rect.x as f64,
                                 content_rect.y + sub_rect.y as f64,
                                 sub_rect.width as f64,
                                 sub_rect.height as f64,
                             ),
-                            Sense::DRAG
+                            Sense::CLICK
+                                | Sense::DRAG
                                 | Sense::SCROLL
                                 | Sense::RIGHT_CLICK
                                 | Sense::DOUBLE_CLICK
                                 | Sense::HOVER,
-                            &layer_id,
+                            &chart_layer,
                         );
                     }
                 }
@@ -2544,75 +2543,10 @@ impl ChartApp {
                     }
                     main_chart_y = extended.main_chart.chart.y;
 
-                    // Phase 7.3: register sub-pane separators, scales on InputCoordinator.
-                    {
-                        use uzor::input::Sense;
-                        const SUB_SEP_TOLERANCE: f64 = 6.0;
-
-                        // All chart-internal widgets (sub-pane separators, scales)
-                        // live on ChartCanvas layer (z=0). They are above chart:pane
-                        // within that layer (registered later) but below all UI
-                        // (sidebar, modals, toolbars). Click on them does NOT route
-                        // through dispatch_panel_click — handle_canvas_click consumes
-                        // canvas-area clicks via the on_click fallback path.
-                        use zengeld_chart::ui::z_order::ZLayer;
-                        let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
-
-                        // Sub-pane separators (±6 px around centre, matching find_separator_at_y).
-                        for pane in &extended.sub_panes {
-                            if pane.separator.height == 0.0 {
-                                continue; // maximized overlay — no interactive separator
-                            }
-                            let sep_center_y = pane.separator.y + pane.separator.height * 0.5;
-                            let sep_rect = uzor::Rect::new(
-                                pane.separator.x,
-                                sep_center_y - SUB_SEP_TOLERANCE,
-                                pane.separator.width,
-                                SUB_SEP_TOLERANCE * 2.0,
-                            );
-                            self.input_coordinator.borrow_mut().register_on_layer(
-                                format!("chart:sub_sep:{}:{}", leaf_id.0, pane.instance_id),
-                                sep_rect,
-                                Sense::DRAG | Sense::HOVER,
-                                &chart_layer,
-                            );
-                        }
-
-                        // Main price scale.
-                        let (psx, psy, psw, psh) = extended.main_chart.price_scale_rect_tuple();
-                        if psw > 0.0 && psh > 0.0 {
-                            self.input_coordinator.borrow_mut().register_on_layer(
-                                format!("chart:price_scale:{}", leaf_id.0),
-                                uzor::Rect::new(psx, psy, psw, psh),
-                                Sense::DRAG | Sense::HOVER,
-                                &chart_layer,
-                            );
-                        }
-
-                        // Main time scale.
-                        let (tsx, tsy, tsw, tsh) = extended.main_chart.time_scale_rect_tuple();
-                        if tsw > 0.0 && tsh > 0.0 {
-                            self.input_coordinator.borrow_mut().register_on_layer(
-                                format!("chart:time_scale:{}", leaf_id.0),
-                                uzor::Rect::new(tsx, tsy, tsw, tsh),
-                                Sense::DRAG | Sense::HOVER,
-                                &chart_layer,
-                            );
-                        }
-
-                        // Sub-pane price scales.
-                        for pane in &extended.sub_panes {
-                            let ps = &pane.price_scale;
-                            if ps.width > 0.0 && ps.height > 0.0 {
-                                self.input_coordinator.borrow_mut().register_on_layer(
-                                    format!("chart:sub_price_scale:{}:{}", leaf_id.0, pane.instance_id),
-                                    uzor::Rect::new(ps.x, ps.y, ps.width, ps.height),
-                                    Sense::DRAG | Sense::HOVER,
-                                    &chart_layer,
-                                );
-                            }
-                        }
-                    }
+                    // chart:price_scale, chart:time_scale, chart:sub_sep, chart:sub_price_scale
+                    // registrations removed — chart is now a BlackboxPanel and its
+                    // internal hit-tester (ExtendedLayoutHitTester / panel_grid.resolve_input)
+                    // handles these interactions without coordinator involvement.
                 }
 
                 // Reset render scope after this leaf is done.
@@ -3122,26 +3056,27 @@ impl ChartApp {
                 ScaleCornerHitZones::default()
             };
 
-            // Register single chart pane on InputCoordinator at ChartCanvas (z=0)
-            // — see split-mode registration above for rationale.
+            // Register single chart pane as BlackboxPanel — see split-mode comment above.
             if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                use uzor::input::Sense;
+                use uzor::input::{Sense, WidgetKind};
                 use zengeld_chart::ui::z_order::ZLayer;
-                let layer_id = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
-                self.input_coordinator.borrow_mut().register_on_layer(
+                let chart_layer = ZLayer::ChartCanvas.push(&mut self.input_coordinator.borrow_mut());
+                self.input_coordinator.borrow_mut().register_composite(
                     format!("chart:pane:{}", active_leaf.0),
+                    WidgetKind::BlackboxPanel,
                     uzor::Rect::new(
                         content_rect.x,
                         content_rect.y,
                         content_rect.width,
                         content_rect.height,
                     ),
-                    Sense::DRAG
+                    Sense::CLICK
+                        | Sense::DRAG
                         | Sense::SCROLL
                         | Sense::RIGHT_CLICK
                         | Sense::DOUBLE_CLICK
                         | Sense::HOVER,
-                    &layer_id,
+                    &chart_layer,
                 );
             }
 

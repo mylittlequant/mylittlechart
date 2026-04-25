@@ -4418,6 +4418,14 @@ impl ChartApp {
             return;
         }
 
+        // chart:pane BlackboxPanel — click landed on the chart canvas.
+        // Route to the chart's own dispatcher which handles drawing tool placement,
+        // primitive selection, scale corner buttons, and scales via panel_grid.resolve_input.
+        if widget_id.starts_with("chart:pane:") {
+            self.handle_canvas_click(x, y);
+            return;
+        }
+
         eprintln!("[ChartApp] unhandled widget click: {}", widget_id);
     }
 

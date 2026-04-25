@@ -6,7 +6,7 @@ description = "VelloGpuRenderContext — chart-aware wrapper delegating to uzor-
 
 [dependencies]
 zengeld-chart = { path = "../chart" }
-uzor = "=1.1.1"
-uzor-backend-vello-gpu = "=1.1.1"
+uzor = "=1.1.2"
+uzor-backend-vello-gpu = "=1.1.2"
 vello = "0.7"
 skrifa = "0.37"
