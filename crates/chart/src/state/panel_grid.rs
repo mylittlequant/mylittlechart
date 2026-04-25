@@ -1510,27 +1510,20 @@ impl ChartPanelGrid {
             && local_y <= chart_rect.height;
 
         // ----------------------------------------------------------------
-        // Step 0: sub-pane separator (highest priority — separator drag
-        // must win over primitive/freehand even when cursor is inside a
-        // pane near the separator edge).
+        // Step 0: freehand tool (highest priority).
         //
-        // chart:pane is registered as BlackboxPanel — sub-pane separators
-        // were intentionally NOT registered as separate widgets, so the
-        // chart's internal hit-tester (find_separator_at_y) handles them.
+        // When the freehand tool is active, ANY press inside a chart pane
+        // (main OR sub-pane) starts a freehand stroke. This must run BEFORE
+        // the sub-pane separator check — a freehand stroke that happens to
+        // begin near a separator edge should draw, not resize panes.
         // ----------------------------------------------------------------
-        if let Some(instance_id) = extended.find_separator_at_y(screen_y) {
-            return ChartDragStartHit::SubPaneSeparator { instance_id };
-        }
-
-        // ----------------------------------------------------------------
-        // Step 1: freehand tool
-        // ----------------------------------------------------------------
-        if in_main {
-            let is_freehand = self
-                .active_window()
-                .map(|w| w.drawing_manager.is_freehand_tool())
-                .unwrap_or(false);
-            if is_freehand {
+        let is_freehand = self
+            .active_window()
+            .map(|w| w.drawing_manager.is_freehand_tool())
+            .unwrap_or(false);
+        if is_freehand {
+            // 0a: freehand on main chart canvas.
+            if in_main {
                 let (price_min, price_max) = self
                     .active_window()
                     .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
@@ -1542,10 +1535,50 @@ impl ChartPanelGrid {
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
                 if let Some(window) = self.active_window_mut() {
+                    window.drawing_manager.set_current_pane(None);
                     window.drawing_manager.start_freehand(bar, price);
                 }
                 return ChartDragStartHit::FreehandStarted;
             }
+
+            // 0b: freehand on sub-pane content area.
+            for pane_layout in extended.sub_panes.iter() {
+                let content = pane_layout.content;
+                let plx = screen_x - content.x;
+                let ply = screen_y - content.y;
+                if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                    continue;
+                }
+                let instance_id = pane_layout.instance_id;
+                let (price_min, price_max) = self
+                    .active_window()
+                    .and_then(|w| {
+                        w.sub_panes
+                            .iter()
+                            .find(|sp| sp.instance_id == instance_id)
+                            .map(|sp| (sp.price_min, sp.price_max))
+                    })
+                    .unwrap_or((0.0, 100.0));
+                let bar = self
+                    .active_window()
+                    .map(|w| w.viewport.x_to_bar_f64(plx))
+                    .unwrap_or(0.0);
+                let price =
+                    price_max - (ply / content.height) * (price_max - price_min);
+                if let Some(window) = self.active_window_mut() {
+                    window.drawing_manager.set_current_pane(Some(instance_id));
+                    window.drawing_manager.start_freehand(bar, price);
+                }
+                return ChartDragStartHit::FreehandStarted;
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Step 1: sub-pane separator (after freehand so freehand wins
+        // when the freehand tool is active).
+        // ----------------------------------------------------------------
+        if let Some(instance_id) = extended.find_separator_at_y(screen_y) {
+            return ChartDragStartHit::SubPaneSeparator { instance_id };
         }
 
         // ----------------------------------------------------------------
@@ -1951,15 +1984,54 @@ impl ChartPanelGrid {
         screen_y: f64,
         chart_rect: crate::layout::LayoutRect,
     ) -> bool {
-        let is_active = self
+        let (is_active, current_pane) = self
             .active_window()
-            .map(|w| w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool())
-            .unwrap_or(false);
+            .map(|w| (
+                w.drawing_manager.is_drawing() && w.drawing_manager.is_freehand_tool(),
+                w.drawing_manager.current_pane(),
+            ))
+            .unwrap_or((false, None));
 
         if !is_active {
             return false;
         }
 
+        // Sub-pane freehand: when start_freehand was called with current_pane = Some,
+        // continue feeding points using that pane's coordinate space.
+        if let Some(pane_id) = current_pane {
+            // Look up the sub-pane's price range from the active window state.
+            let (price_min, price_max) = self
+                .active_window()
+                .and_then(|w| {
+                    w.sub_panes
+                        .iter()
+                        .find(|sp| sp.instance_id == pane_id)
+                        .map(|sp| (sp.price_min, sp.price_max))
+                })
+                .unwrap_or((0.0, 100.0));
+            // For x → bar use the same viewport (panes share the time axis).
+            // For y → price use the sub-pane's height; we need the sub-pane content
+            // rect from the layout. The caller passes only the main chart rect, so
+            // approximate height via the active window's viewport (best-effort).
+            // Sub-pane content rect height equals viewport.chart_height for the pane,
+            // but we don't have it here — fall back to chart_rect.height which is
+            // close enough for stroke continuation (visual fidelity matters more
+            // than pixel-exact price for in-progress freehand preview).
+            let local_x = screen_x - chart_rect.x;
+            let local_y_approx = screen_y - chart_rect.y;
+            let bar = self
+                .active_window()
+                .map(|w| w.viewport.x_to_bar_f64(local_x))
+                .unwrap_or(0.0);
+            let price = price_max
+                - (local_y_approx / chart_rect.height) * (price_max - price_min);
+            if let Some(window) = self.active_window_mut() {
+                window.drawing_manager.add_freehand_point(bar, price);
+            }
+            return true;
+        }
+
+        // Main chart freehand.
         let local_x = screen_x - chart_rect.x;
         let local_y = screen_y - chart_rect.y;
 

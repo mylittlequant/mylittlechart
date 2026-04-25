@@ -4448,7 +4448,9 @@ impl ChartApp {
                 let tester = ExtendedLayoutHitTester::new(&extended).with_overlays(&overlays);
                 matches!(
                     tester.hit_test(x, y),
-                    HitResult::Chart | HitResult::SubPaneChart { .. }
+                    HitResult::Chart
+                        | HitResult::SubPaneChart { .. }
+                        | HitResult::SubPanePriceScale { .. }
                 )
             } else {
                 false
