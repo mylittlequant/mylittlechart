@@ -4425,9 +4425,17 @@ impl ChartApp {
         // route to the chart's own dispatcher which handles drawing tool
         // placement, primitive selection, scale corner buttons, and scales
         // via panel_grid.resolve_input.
+        //
+        // GUARD: when a click-based drawing tool is active, canvas placement
+        // already happens on mouse-press via on_drag_start. Skipping the
+        // release-path call here prevents the same point from being
+        // registered twice (which collapses 2-click primitives into
+        // zero-length shapes — invisible on the canvas).
         if widget_id.starts_with("chart:pane:") {
             self.close_transient_overlays();
-            self.handle_canvas_click(x, y);
+            if !self.has_click_drawing_tool() {
+                self.handle_canvas_click(x, y);
+            }
             return;
         }
 
