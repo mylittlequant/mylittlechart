@@ -8,6 +8,7 @@ use uzor::input::{InputCoordinator, LayerId};
 /// Named rendering layers with centralized z-order values.
 ///
 /// Ordered bottom-to-top:
+/// - z=0: Chart canvas (panes, scales, sub-pane separators) — below all UI
 /// - z=1: Base UI (panel headers, toolbars, sidebars)
 /// - z=2: Popups (dropdowns, submenus, indicator overlay)
 /// - z=3: Modals (search, settings, clock popup) — block lower layers
@@ -15,6 +16,9 @@ use uzor::input::{InputCoordinator, LayerId};
 /// - z=6: Color pickers (topmost interactive)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ZLayer {
+    // z=0 — chart canvas (must be below sidebar/toolbars so UI widgets win hover)
+    ChartCanvas,
+
     // z=1 — base UI
     PanelHeaders,
     Toolbar,
@@ -46,6 +50,7 @@ impl ZLayer {
     /// Z-order value for InputCoordinator. Higher = on top.
     pub const fn z_order(self) -> u32 {
         match self {
+            Self::ChartCanvas => 0,
             Self::PanelHeaders | Self::Toolbar | Self::Sidebar => 1,
             Self::Dropdown | Self::Submenu | Self::IndicatorOverlay => 2,
             Self::Modal | Self::ClockPopup => 3,
@@ -63,6 +68,7 @@ impl ZLayer {
     /// Default LayerId string for this layer.
     pub const fn layer_id(self) -> &'static str {
         match self {
+            Self::ChartCanvas => "chart_canvas",
             Self::PanelHeaders => "panel_headers",
             Self::Toolbar => "toolbar",
             Self::Sidebar => "sidebar",

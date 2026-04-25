@@ -234,11 +234,14 @@ pub fn render_watchlist_modal(
     ctx.line_to(modal_x + modal_w, modal_y + header_h);
     ctx.stroke();
 
-    // Register header drag zone
+    // Re-register the header drag zone with a tighter rect (excludes the close
+    // icon area on the right). Reuses the "watchlist_modal:header" id so the
+    // existing dispatch arm in input/mod.rs handles it; last-registered wins
+    // within a layer, so this shadows the broader rect registered earlier.
     input_coordinator.register_on_layer(
-        "wl_modal:header_drag",
+        "watchlist_modal:header",
         uzor::types::Rect::new(modal_x, modal_y, modal_w - icon_size - 14.0, header_h),
-        uzor::input::Sense::CLICK,
+        uzor::input::Sense::DRAG,
         &layer_id,
     );
 

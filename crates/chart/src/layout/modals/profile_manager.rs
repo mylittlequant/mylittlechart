@@ -849,7 +849,14 @@ fn render_page_profile_list(
         result.profile_list_handle_rect = Some(handle_rect);
         result.profile_list_track_rect = Some(track_rect);
 
-        let inflated = uzor::types::Rect::new(handle_rect.x - 5.0, handle_rect.y, handle_rect.width + 10.0, handle_rect.height);
+        // Inflate hit zone generously (±10px x, ±2px y) so the 4px-wide thumb is
+        // comfortably grabbable even when cursor is slightly off the visual bar.
+        let inflated = uzor::types::Rect::new(
+            handle_rect.x - 10.0,
+            handle_rect.y - 2.0,
+            handle_rect.width + 20.0,
+            handle_rect.height + 4.0,
+        );
         input_coordinator.register_on_layer(
             "user_settings:profile_list:scrollbar_handle",
             inflated,
