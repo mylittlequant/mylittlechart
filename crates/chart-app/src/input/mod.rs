@@ -379,24 +379,8 @@ impl ChartApp {
             return;
         }
 
-        // 3. Click on canvas — close any open dropdown and context menu first.
-        self.panel_app.toolbar_state.open_dropdown_id = None;
-        self.panel_app.toolbar_state.hovered_dropdown_item = None;
-        // Close inline dropdowns on canvas click
-        self.panel_app.toolbar_state.open_inline_style_dropdown = false;
-        self.panel_app.toolbar_state.open_inline_width_dropdown = false;
-        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
-        self.panel_app.context_menu_state.close();
-        self.modal_state.close();
-        self.sidebar_state.watchlist_config_dropdown_open = false;
-        // Close watchlist color picker when clicking outside any registered widget.
-        self.sidebar_state.watchlist_color_picker_open = None;
-        // Close slot spawn dropdown when clicking on canvas.
-        self.sidebar_state.slot_spawn_dropdown = None;
-        // Close agent popups when clicking on canvas.
-        self.sidebar_state.agent_model_dropdown = None;
-        self.sidebar_state.agent_perm_dropdown = None;
-        self.sidebar_state.agent_sessions_dropdown = None;
+        // 3. Click on canvas — close any open transient overlays first.
+        self.close_transient_overlays();
 
         // 4. Split panel routing — route click to the correct leaf.
         if self.panel_app.panel_grid.is_split() {
@@ -2453,6 +2437,13 @@ impl ChartApp {
 
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
+                return false;
+            }
+            ChartDragStartHit::SubPaneSeparator { instance_id } => {
+                // Sub-pane separator drag — set DragMode so on_drag_move
+                // routes to drag_pane_separator. No output action needed.
+                self.input_handler.state.drag_mode = DragMode::PaneSeparator { instance_id };
+                self.ui_drag_active = true;
                 return false;
             }
             ChartDragStartHit::ControlPoint { primitive_id: id, control_point: cp_type } => {

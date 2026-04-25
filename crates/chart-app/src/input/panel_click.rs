@@ -4419,9 +4419,14 @@ impl ChartApp {
         }
 
         // chart:pane BlackboxPanel — click landed on the chart canvas.
-        // Route to the chart's own dispatcher which handles drawing tool placement,
-        // primitive selection, scale corner buttons, and scales via panel_grid.resolve_input.
+        // Close any open dropdowns/context-menu first (canvas click should
+        // dismiss transient overlays — same as the on_click fallthrough path
+        // used to do before chart:pane became a registered widget). Then
+        // route to the chart's own dispatcher which handles drawing tool
+        // placement, primitive selection, scale corner buttons, and scales
+        // via panel_grid.resolve_input.
         if widget_id.starts_with("chart:pane:") {
+            self.close_transient_overlays();
             self.handle_canvas_click(x, y);
             return;
         }

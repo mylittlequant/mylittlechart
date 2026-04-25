@@ -1828,6 +1828,27 @@ impl ChartApp {
         }
     }
 
+    /// Close transient overlays (toolbar dropdowns, context menu, sidebar
+    /// dropdowns, agent popups) that should dismiss on any "outside" click.
+    /// Called when click lands on canvas (or any non-overlay widget) so that
+    /// dropdowns/context-menu stay short-lived even when chart:pane is now a
+    /// registered BlackboxPanel widget that consumes the click event.
+    pub(super) fn close_transient_overlays(&mut self) {
+        self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.panel_app.toolbar_state.hovered_dropdown_item = None;
+        self.panel_app.toolbar_state.open_inline_style_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+        self.panel_app.context_menu_state.close();
+        self.modal_state.close();
+        self.sidebar_state.watchlist_config_dropdown_open = false;
+        self.sidebar_state.watchlist_color_picker_open = None;
+        self.sidebar_state.slot_spawn_dropdown = None;
+        self.sidebar_state.agent_model_dropdown = None;
+        self.sidebar_state.agent_perm_dropdown = None;
+        self.sidebar_state.agent_sessions_dropdown = None;
+    }
+
     /// Handle a context menu item click.
     pub(super) fn on_context_menu_action(&mut self, action: &str) {
         let target = self.panel_app.context_menu_state.target.clone();

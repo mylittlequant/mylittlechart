@@ -1469,6 +1469,14 @@ pub enum ChartDragStartHit {
     /// Drag started on the chart background (no primitive, no freehand).
     /// Caller should capture `viewport_before_drag` for undo, then fall through.
     Background,
+    /// Hit a sub-pane separator (the horizontal divider between main chart
+    /// and a sub-pane, or between two sub-panes within a single chart leaf).
+    /// Caller should set `DragMode::PaneSeparator { instance_id }` so the
+    /// existing on_drag_move dispatch resizes the pane.
+    SubPaneSeparator {
+        /// Instance id of the sub-pane whose separator was hit.
+        instance_id: u64,
+    },
     /// Drag started outside all chart panes.
     Miss,
 }
@@ -1500,6 +1508,19 @@ impl ChartPanelGrid {
             && local_x <= chart_rect.width
             && local_y >= 0.0
             && local_y <= chart_rect.height;
+
+        // ----------------------------------------------------------------
+        // Step 0: sub-pane separator (highest priority — separator drag
+        // must win over primitive/freehand even when cursor is inside a
+        // pane near the separator edge).
+        //
+        // chart:pane is registered as BlackboxPanel — sub-pane separators
+        // were intentionally NOT registered as separate widgets, so the
+        // chart's internal hit-tester (find_separator_at_y) handles them.
+        // ----------------------------------------------------------------
+        if let Some(instance_id) = extended.find_separator_at_y(screen_y) {
+            return ChartDragStartHit::SubPaneSeparator { instance_id };
+        }
 
         // ----------------------------------------------------------------
         // Step 1: freehand tool
