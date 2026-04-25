@@ -2437,6 +2437,12 @@ impl ChartApp {
 
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
+                // Hide crosshair for the duration of freehand drag — the freehand
+                // stroke renders its own preview as the cursor moves, the crosshair
+                // is redundant. Without this, on_mouse_move's stale visible=true
+                // from before the drag stays set since on_mouse_move doesn't fire
+                // while the cursor button is down.
+                self.hide_crosshair();
                 return false;
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
@@ -4409,18 +4415,46 @@ impl ChartApp {
             return;
         }
 
-        // Phase 7.3: crosshair gate — show only when hovered widget is chart:pane:*.
+        // Phase 7.3: crosshair gate — show only when hovered widget is chart:pane:*
+        // AND cursor is inside the actual chart canvas area (not over the price /
+        // time scales which the chart:pane BlackboxPanel covers but logically own).
+        //
         // Hovering price/time scale, sub-pane separator, toolbar, modal, etc. all
-        // suppress the crosshair.  drawing_active bypasses the gate so the preview
-        // line stays visible when the cursor drifts outside the chart pane.
+        // suppress the crosshair. Click-tool drawing bypasses the gate so the
+        // preview anchor stays visible when the cursor drifts outside the chart
+        // pane. Freehand drawing does NOT bypass — the freehand stroke renders
+        // its own preview, the crosshair is redundant and visually noisy.
         {
             let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
                 .map(|w| w.0.starts_with("chart:pane:"))
                 .unwrap_or(false);
-            let is_drawing = self.panel_app.panel_grid.active_window()
-                .map(|w| w.drawing_manager.is_drawing())
+            // Tool-aware drawing bypass: only click-tool drawing keeps the crosshair
+            // (preview anchor follows cursor). Freehand draws its own preview stroke.
+            let is_click_drawing = self.panel_app.panel_grid.active_window()
+                .map(|w| w.drawing_manager.is_drawing() && !w.drawing_manager.is_freehand_tool())
                 .unwrap_or(false);
-            if !hovered_chart_pane && !is_drawing {
+
+            // Inside-chart check: chart:pane covers canvas + scales + sub-pane seps,
+            // but crosshair should only show over the canvas. Use the chart's own
+            // hit-tester to distinguish canvas (Chart) from scale (PriceScale /
+            // TimeScale / ScaleCorner) and separator (PaneSeparator).
+            let on_canvas = if hovered_chart_pane {
+                use zengeld_chart::input::ChartHitTester;
+                use zengeld_chart::engine::input::HitResult;
+                let extended = self.build_extended_layout();
+                let overlays = self.panel_app.panel_grid.active_window()
+                    .map(|w| w.sub_pane_overlay_results.clone())
+                    .unwrap_or_default();
+                let tester = ExtendedLayoutHitTester::new(&extended).with_overlays(&overlays);
+                matches!(
+                    tester.hit_test(x, y),
+                    HitResult::Chart | HitResult::SubPaneChart { .. }
+                )
+            } else {
+                false
+            };
+
+            if !on_canvas && !is_click_drawing {
                 if self.panel_app.panel_grid.is_split() {
                     self.hide_all_split_crosshairs();
                 } else {
