@@ -14,6 +14,8 @@ pub mod panel_trait;
 pub mod panel_router;
 pub mod panel_theme;
 
+pub use panel_trait::BlackboxEvent;
+
 // Re-export RenderContext under the old `crate::render` path so the copied
 // renderer files can keep `use crate::render::{RenderContext, ...};` unchanged.
 pub mod render {

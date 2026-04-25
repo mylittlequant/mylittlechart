@@ -1264,59 +1264,78 @@ impl ChartApp {
             }
         }
 
-        // ── DOM panel drag-to-scroll initiation ─────────────────────────────
-        // When drag starts over a `slot:{idx}:leaf:{leaf_id}:focus_content`
-        // widget that hosts a DOM panel, record state for smooth price scroll.
-        if self.slot_dom_drag.is_none() {
+        // ── Slot panel drag initiation ───────────────────────────────────────
+        // Detect drag on `slot:{idx}:leaf:{leaf_id}:dom:body` (DOM BlackboxPanel)
+        // or `slot:{idx}:leaf:{leaf_id}:focus_content` (other panel types).
+        // DOM is now registered as a BlackboxPanel widget with id `slot:N:leaf:M:dom:body`.
+        if self.active_drag_panel.is_none() {
             let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
             if let Some(ref wid) = hovered_wid {
+                // Check for DOM BlackboxPanel widget: slot:N:leaf:M:dom:body
                 if let Some(rest) = wid.strip_prefix("slot:") {
-                    if let Some((slot_str, leaf_rest)) = rest.split_once(":leaf:") {
-                        if let Some(leaf_id_str) = leaf_rest.strip_suffix(":focus_content") {
-                            if let (Ok(slot_idx), Ok(raw)) =
-                                (slot_str.parse::<usize>(), leaf_id_str.parse::<u64>())
-                            {
-                                if slot_idx < 4 {
-                                    let leaf_id = uzor::panels::LeafId(raw);
-                                    let item_opt = self.sidebar_state.slot_dockings[slot_idx]
-                                        .inner()
-                                        .tree()
-                                        .leaf(leaf_id)
-                                        .and_then(|l| l.active_panel().cloned());
-                                    use sidebar_content::free_slot::FreeItem;
-                                    match item_opt {
-                                        Some(FreeItem::Dom(pid)) => {
-                                            self.slot_dom_drag = Some((slot_idx, leaf_id, pid, y, 20.0));
-                                            self.ui_drag_active = true;
-                                            return false;
-                                        }
-                                        Some(item @ FreeItem::L2Tape(_))
-                                        | Some(item @ FreeItem::Footprint(_))
-                                        | Some(item @ FreeItem::BigTrades(_))
-                                        | Some(item @ FreeItem::LiquidityHeatmap(_))
-                                        | Some(item @ FreeItem::VolumeProfile(_)) => {
-                                            let local_id = match &item {
-                                                FreeItem::L2Tape(_) => "l2tape:body",
-                                                FreeItem::Footprint(_) => "footprint:body",
-                                                FreeItem::BigTrades(_) => "bigtrades:body",
-                                                FreeItem::LiquidityHeatmap(_) => "heatmap:body",
-                                                FreeItem::VolumeProfile(_) => "volprofile:body",
-                                                _ => unreachable!(),
-                                            };
+                    if let Some((slot_str, after_slot)) = rest.split_once(":leaf:") {
+                        if let Ok(slot_idx) = slot_str.parse::<usize>() {
+                            if slot_idx < 4 {
+                                // DOM body widget
+                                if let Some(leaf_id_str) = after_slot.strip_suffix(":dom:body") {
+                                    if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                        let leaf_id = uzor::panels::LeafId(raw);
+                                        let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(leaf_id)
+                                            .and_then(|l| l.active_panel().cloned());
+                                        use sidebar_content::free_slot::FreeItem;
+                                        if let Some(item @ FreeItem::Dom(_)) = item_opt {
                                             if let Some(panel) = self.panels_store.get_panel_mut(&item) {
-                                                if panel.handle_drag_start(local_id, x, y) {
-                                                    self.active_drag_panel = Some((item, local_id.to_string(), x, y));
+                                                if panel.handle_drag_start("dom:body", x, y) {
+                                                    self.active_drag_panel = Some((item, "dom:body".to_string(), x, y));
                                                     self.ui_drag_active = true;
                                                     return false;
                                                 }
                                             }
                                         }
-                                        Some(FreeItem::TradeTape(pid)) => {
-                                            self.slot_tradetape_drag = Some((pid, x, y));
-                                            self.ui_drag_active = true;
-                                            return false;
+                                    }
+                                }
+                                // Other panel types via focus_content widget
+                                else if let Some(leaf_id_str) = after_slot.strip_suffix(":focus_content") {
+                                    if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                        let leaf_id = uzor::panels::LeafId(raw);
+                                        let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                            .inner()
+                                            .tree()
+                                            .leaf(leaf_id)
+                                            .and_then(|l| l.active_panel().cloned());
+                                        use sidebar_content::free_slot::FreeItem;
+                                        match item_opt {
+                                            Some(item @ FreeItem::L2Tape(_))
+                                            | Some(item @ FreeItem::Footprint(_))
+                                            | Some(item @ FreeItem::BigTrades(_))
+                                            | Some(item @ FreeItem::LiquidityHeatmap(_))
+                                            | Some(item @ FreeItem::VolumeProfile(_)) => {
+                                                let local_id = match &item {
+                                                    FreeItem::L2Tape(_) => "l2tape:body",
+                                                    FreeItem::Footprint(_) => "footprint:body",
+                                                    FreeItem::BigTrades(_) => "bigtrades:body",
+                                                    FreeItem::LiquidityHeatmap(_) => "heatmap:body",
+                                                    FreeItem::VolumeProfile(_) => "volprofile:body",
+                                                    _ => unreachable!(),
+                                                };
+                                                if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                                    if panel.handle_drag_start(local_id, x, y) {
+                                                        self.active_drag_panel = Some((item, local_id.to_string(), x, y));
+                                                        self.ui_drag_active = true;
+                                                        return false;
+                                                    }
+                                                }
+                                            }
+                                            Some(FreeItem::TradeTape(pid)) => {
+                                                self.slot_tradetape_drag = Some((pid, x, y));
+                                                self.ui_drag_active = true;
+                                                return false;
+                                            }
+                                            _ => {}
                                         }
-                                        _ => {}
                                     }
                                 }
                             }
@@ -2493,23 +2512,7 @@ impl ChartApp {
             return;
         }
 
-        // ── DOM drag scroll ──────────────────────────────────────────────────
-        if let Some((_, _, pid, ref mut last_y, row_h)) = self.slot_dom_drag {
-            let delta_y = y - *last_y;
-            if delta_y.abs() > 1.0 {
-                if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                    // Drag down = content follows mouse down = higher prices at center
-                    let ticks_moved = delta_y / row_h;
-                    state.center_price += ticks_moved * state.tick_size;
-                    state.auto_center = false;
-                    self.sidebar_data_dirty = true;
-                }
-                *last_y = y;
-            }
-            return;
-        }
-
-        // ── Coordinator-routed panel drag (L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─────
+        // ── Coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─────
         if let Some((ref item, ref local_id, ref mut last_x, ref mut last_y)) = self.active_drag_panel {
             let dx = x - *last_x;
             let dy = y - *last_y;
@@ -3452,13 +3455,7 @@ impl ChartApp {
             return;
         }
 
-        // ── End DOM drag scroll ───────────────────────────────────────────────
-        if self.slot_dom_drag.take().is_some() {
-            self.sidebar_data_dirty = true;
-            return;
-        }
-
-        // ── End coordinator-routed panel drag (L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─
+        // ── End coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─
         if let Some((item, local_id, _, _)) = self.active_drag_panel.take() {
             if let Some(panel) = self.panels_store.get_panel_mut(&item) {
                 panel.handle_drag_end(&local_id);
@@ -5425,7 +5422,54 @@ impl ChartApp {
                         };
 
                         if let Some(slot_idx) = slot_idx_opt {
-                            // Hit-test all `slot:{idx}:leaf:{lid}:focus_content` rects.
+                            use sidebar_content::free_slot::FreeItem;
+                            let scroll_step = dy;
+
+                            // First: check if coordinator hovered widget is a DOM BlackboxPanel.
+                            // `slot:N:leaf:M:dom:body` wins the hit-test over `focus_content`.
+                            let dom_leaf_opt = {
+                                let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                                hovered.and_then(|wid| {
+                                    let rest = wid.strip_prefix("slot:")?;
+                                    let (idx_str, after_slot) = rest.split_once(":leaf:")?;
+                                    let leaf_id_str = after_slot.strip_suffix(":dom:body")?;
+                                    let panel_idx: usize = idx_str.parse().ok()?;
+                                    if panel_idx != slot_idx { return None; }
+                                    let raw: u64 = leaf_id_str.parse().ok()?;
+                                    Some(uzor::panels::LeafId(raw))
+                                })
+                            };
+
+                            if let Some(dom_leaf_id) = dom_leaf_opt {
+                                let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                    .inner()
+                                    .tree()
+                                    .leaf(dom_leaf_id)
+                                    .and_then(|l| l.active_panel().cloned());
+                                if let Some(FreeItem::Dom(pid)) = item_opt {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        if ctrl {
+                                            // Ctrl+scroll: zoom tick_size (depth aggregation).
+                                            let new_tick = if scroll_step > 0.0 {
+                                                (state.tick_size * 10.0).clamp(0.0001, 100.0)
+                                            } else if scroll_step < 0.0 {
+                                                (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                            } else {
+                                                state.tick_size
+                                            };
+                                            state.set_tick_size(new_tick);
+                                        } else {
+                                            use zengeld_panels::BlackboxEvent;
+                                            use zengeld_panels::panel_trait::TradingPanel;
+                                            state.handle_blackbox_event(0.0, 0.0, BlackboxEvent::Scroll { dy: scroll_step as f32 });
+                                        }
+                                        self.sidebar_data_dirty = true;
+                                    }
+                                }
+                                return;
+                            }
+
+                            // Hit-test all `slot:{idx}:leaf:{lid}:focus_content` rects for other panels.
                             let hovered_slot_leaf = sidebar_result.item_rects.iter()
                                 .filter_map(|(wid, wrect)| {
                                     let rest = wid.strip_prefix("slot:")?;
@@ -5452,35 +5496,7 @@ impl ChartApp {
                                     .leaf(hover_leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
 
-                                use sidebar_content::free_slot::FreeItem;
-                                let scroll_step = dy;
-
                                 match item_opt {
-                                    Some(FreeItem::Dom(pid)) => {
-                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                            if ctrl {
-                                                // Ctrl+scroll: zoom tick_size (depth aggregation).
-                                                // Scroll up → multiply by 10 (zoom out / coarser).
-                                                // Scroll down → divide by 10 (zoom in / finer).
-                                                // `set_tick_size` rebuilds aggregation from raw orderbook
-                                                // so no data is lost waiting for the next snapshot.
-                                                let new_tick = if scroll_step > 0.0 {
-                                                    (state.tick_size * 10.0).clamp(0.0001, 100.0)
-                                                } else if scroll_step < 0.0 {
-                                                    (state.tick_size / 10.0).clamp(0.0001, 100.0)
-                                                } else {
-                                                    state.tick_size
-                                                };
-                                                state.set_tick_size(new_tick);
-                                            } else {
-                                                // Normal scroll: move center price 1 tick per notch.
-                                                state.auto_center = false;
-                                                let lines = (scroll_step / 20.0).round(); // normalize: 1 notch = ±20.0 → ±1 line
-                                                let delta = lines * state.tick_size;
-                                                state.center_price += delta;
-                                            }
-                                        }
-                                    }
                                     Some(item @ FreeItem::BigTrades(_))
                                     | Some(item @ FreeItem::L2Tape(_))
                                     | Some(item @ FreeItem::Footprint(_))

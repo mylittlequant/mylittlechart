@@ -704,9 +704,28 @@ impl TradingPanel for DomState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        // Register the entire DOM body as a single BlackboxPanel widget.
+        // All input (drag/scroll/click/hover) is routed to handle_blackbox_event.
+        {
+            use uzor::input::{Sense, WidgetKind, LayerId};
+            let body_id = format!("{}:dom:body", slot_prefix);
+            coordinator.register_composite(
+                body_id,
+                WidgetKind::BlackboxPanel,
+                uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+                Sense::CLICK
+                    | Sense::RIGHT_CLICK
+                    | Sense::DOUBLE_CLICK
+                    | Sense::HOVER
+                    | Sense::DRAG
+                    | Sense::SCROLL,
+                &LayerId::main(),
+            );
+        }
+
         // Background fill
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
@@ -1197,9 +1216,55 @@ impl TradingPanel for DomState {
         false
     }
 
-    fn handle_hover(&mut self, _local_id: &str) -> bool {
-        // Per-row hover removed (DOM BlackboxPanel migration deferred).
-        // hovered_price is not updated until handle_blackbox_event is available.
-        false
+    fn handle_drag_start(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        // DOM claims every drag on its body widget.
+        true
+    }
+
+    fn handle_drag_move(&mut self, _local_id: &str, _dx: f64, dy: f64) -> bool {
+        self.auto_center = false;
+        let lines = (dy / 20.0).round();
+        let delta = lines * self.tick_size;
+        self.center_price += delta;
+        true
+    }
+
+    fn handle_drag_end(&mut self, _local_id: &str) -> bool {
+        true
+    }
+
+    fn handle_blackbox_event(&mut self, _local_x: f32, _local_y: f32, event: crate::panel_trait::BlackboxEvent) -> bool {
+        use crate::panel_trait::BlackboxEvent;
+        match event {
+            BlackboxEvent::Hover => {
+                // TODO: compute hovered_price from local_y once cached row
+                // geometry is stored on DomState (needs last_render_geometry field).
+                // For now, clear it so no stale highlight lingers.
+                self.hovered_price = None;
+                true
+            }
+            BlackboxEvent::HoverLeave => {
+                self.hovered_price = None;
+                true
+            }
+            BlackboxEvent::DragStart | BlackboxEvent::DragEnd => true,
+            BlackboxEvent::DragMove { dy, .. } => {
+                self.auto_center = false;
+                // 1 line = DOM_ROW_HEIGHT (20px). Drag down → lower prices at center.
+                let lines = (dy as f64 / 20.0).round();
+                let delta = lines * self.tick_size;
+                self.center_price += delta;
+                true
+            }
+            BlackboxEvent::Scroll { dy } => {
+                // Normal scroll (ctrl branch stays in input.rs).
+                self.auto_center = false;
+                let lines = (dy as f64 / 20.0).round();
+                let delta = lines * self.tick_size;
+                self.center_price += delta;
+                true
+            }
+            _ => false,
+        }
     }
 }

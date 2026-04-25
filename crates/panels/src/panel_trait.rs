@@ -7,6 +7,32 @@
 
 use crate::render::RenderContext;
 
+/// Raw cursor event delivered to a panel registered as a BlackboxPanel.
+///
+/// `local_x` / `local_y` in every call are panel-local coordinates
+/// (screen coordinate minus panel origin).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum BlackboxEvent {
+    /// Single primary-button click.
+    Click,
+    /// Right-button click.
+    RightClick,
+    /// Double primary-button click.
+    DoubleClick,
+    /// Cursor is over the panel this frame (fires every frame while inside).
+    Hover,
+    /// Cursor left the panel area.
+    HoverLeave,
+    /// Drag gesture began.
+    DragStart,
+    /// Drag moved; `dx`/`dy` are deltas from the previous position.
+    DragMove { dx: f32, dy: f32 },
+    /// Drag gesture ended.
+    DragEnd,
+    /// Mouse-wheel scroll; `dy` is raw delta (positive = scroll down / away from user).
+    Scroll { dy: f32 },
+}
+
 /// The encapsulation contract for a trading panel.
 ///
 /// Each of the 11 panel state structs implements this trait in its own file,
@@ -104,6 +130,16 @@ pub trait TradingPanel {
     ///
     /// Returns `true` if the event was consumed.
     fn handle_double_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        false
+    }
+
+    /// Receives raw cursor events when this panel is registered as a BlackboxPanel.
+    ///
+    /// `local_x`/`local_y` are panel-local coordinates (subtract panel origin from
+    /// screen coords). `event` describes what happened.
+    ///
+    /// Returns `true` if the panel consumed the event.
+    fn handle_blackbox_event(&mut self, _local_x: f32, _local_y: f32, _event: BlackboxEvent) -> bool {
         false
     }
 }

@@ -578,12 +578,7 @@ pub struct ChartApp {
     /// `(slot_index, separator_index, start_mouse_pos, total_available_size)`.
     pub(crate) slot_sep_drag: Option<(usize, usize, f64, f32)>,
 
-    /// Active DOM drag-to-scroll.
-    ///
-    /// `(slot_index, leaf_id, dom_panel_id, last_y, row_height)`.
-    pub(crate) slot_dom_drag: Option<(usize, uzor::panels::LeafId, sidebar_content::free_slot::PanelId, f64, f64)>,
-
-    /// Active coordinator-routed panel drag (L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
+    /// Active coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile).
     ///
     /// `(free_item, local_id, last_x, last_y)` — replaces per-panel fields.
     pub(crate) active_drag_panel: Option<(sidebar_content::free_slot::FreeItem, String, f64, f64)>,
@@ -934,7 +929,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            slot_dom_drag: None,
+
             active_drag_panel: None,
             slot_tradetape_drag: None,
             trading_manager: trading_manager::TradingManager::new(
@@ -1241,7 +1236,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            slot_dom_drag: None,
+
             active_drag_panel: None,
             slot_tradetape_drag: None,
             trading_manager: None,
@@ -1436,7 +1431,7 @@ impl ChartApp {
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
-            slot_dom_drag: None,
+
             active_drag_panel: None,
             slot_tradetape_drag: None,
             trading_manager: None,
@@ -2785,7 +2780,7 @@ impl ChartApp {
                 .collect();
 
             use zengeld_chart::SeparatorOrientation;
-            for (idx, (orientation, position, start, length, thickness)) in separators.iter().copied().enumerate() {
+            for (_idx, (orientation, position, start, length, thickness)) in separators.iter().copied().enumerate() {
                 let color: &str = &frame_theme.toolbar_border;
                 // Convert content-relative separator coords to absolute screen coords.
                 let (rect_x, rect_y, rect_w, rect_h) = match orientation {
@@ -2804,31 +2799,6 @@ impl ChartApp {
                 };
                 ctx.set_fill_color(color);
                 ctx.fill_rect(rect_x, rect_y, rect_w, rect_h);
-
-                // Register separator as a draggable hit zone (wider than visual for easier grab).
-                {
-                    use uzor::input::Sense;
-                    const HIT_EXPAND: f64 = 4.0;
-                    let (hit_x, hit_y, hit_w, hit_h) = match orientation {
-                        SeparatorOrientation::Vertical => (
-                            rect_x - HIT_EXPAND,
-                            rect_y,
-                            rect_w + HIT_EXPAND * 2.0,
-                            rect_h,
-                        ),
-                        SeparatorOrientation::Horizontal => (
-                            rect_x,
-                            rect_y - HIT_EXPAND,
-                            rect_w,
-                            rect_h + HIT_EXPAND * 2.0,
-                        ),
-                    };
-                    self.input_coordinator.borrow_mut().register(
-                        format!("chart:separator:{}", idx),
-                        uzor::Rect::new(hit_x, hit_y, hit_w, hit_h),
-                        Sense::DRAG,
-                    );
-                }
             }
 
             ScaleCornerHitZones::default()
