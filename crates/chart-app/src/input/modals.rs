@@ -38,6 +38,13 @@ impl ChartApp {
             }
         };
 
+        // Sync primitive_idx into primitive_settings_state so apply_primitive_color
+        // (and other downstream handlers that read .primitive_idx) know which primitive
+        // the inline toolbar is operating on. Without this, color changes from the
+        // inline color picker silently no-op because primitive_idx stays None until
+        // the full primitive_settings modal is opened.
+        self.panel_app.primitive_settings_state.primitive_idx = Some(idx);
+
         let screen_w = self.width as f64;
         let screen_h = self.height as f64;
 
