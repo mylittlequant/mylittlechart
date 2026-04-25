@@ -4904,10 +4904,12 @@ impl ChartApp {
             }
 
             // Phase 6.1a: route 6 simple modals via coordinator scroll surface registrations.
-            // hovered_widget() returns the topmost registered widget under (x, y) within the
-            // active modal layer — meaning hit detection is already done by the coordinator.
+            // process_scroll(x, y) finds the TOPMOST widget at (x, y) WITH Sense::SCROLL —
+            // skipping any non-scroll widgets stacked above (rows, items, dimmer, etc.).
+            // This is sense-aware (uzor v1.1.3+) and immune to the 1-frame lag of
+            // hovered_widget() which reads previous frame's hover state.
             {
-                let hovered_id = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
                 if let Some(ref id) = hovered_id {
                     match id.as_str() {
                         "chart_settings:scroll_viewport" => {
@@ -5046,10 +5048,11 @@ impl ChartApp {
             }
 
             // Phase 6.1c-sliders: route prim_settings and compare_settings slider
-            // wheel events via coordinator. Sense::SCROLL was added to their registrations
-            // so hovered_widget() resolves them by the same hit-test path used for clicks.
+            // wheel events via coordinator. Sense::SCROLL was added to their registrations.
+            // process_scroll(x, y) is sense-aware — only returns SCROLL widgets, ignoring
+            // any non-scroll widgets stacked above.
             {
-                let hovered_wid = self.input_coordinator.borrow().hovered_widget().map(|w| w.0.clone());
+                let hovered_wid = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|w| w.0.clone());
 
                 // prim_settings sliders — guard: modal must be open
                 if self.panel_app.primitive_settings_state.is_open() {
@@ -5265,10 +5268,11 @@ impl ChartApp {
                 let sr = &sidebar_result.sidebar_rect;
                 if x >= sr.x && x <= sr.x + sr.width && y >= sr.y && y <= sr.y + sr.height {
                     // Phase 6.2b: signal group viewport scroll via coordinator dispatch.
-                    // Replaces the manual loop above — the coordinator hit-test resolves
-                    // which group is under the cursor, so no geometry iteration needed here.
+                    // Sense-aware process_scroll(x, y) — skips non-scroll widgets stacked
+                    // above (signal rows, group headers, etc.) and finds the topmost
+                    // SCROLL-sensitive widget at cursor.
                     {
-                        let sg_hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        let sg_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
                         if let Some(ref sg_id) = sg_hovered {
                             if let Some(iid_str) = sg_id.strip_prefix("signal_group:").and_then(|r| r.strip_suffix(":viewport")) {
                                 if let Ok(iid) = iid_str.parse::<u64>() {
@@ -5304,8 +5308,10 @@ impl ChartApp {
                     }
 
                     // Phase 6.2a: agent scroll surfaces via coordinator dispatch.
+                    // Sense-aware process_scroll(x, y) — finds topmost SCROLL widget
+                    // ignoring rows/items stacked above without scroll sense.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
-                        let hovered_id = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
                         if let Some(ref id) = hovered_id {
                             let scroll_step = -dy;
 
@@ -5425,10 +5431,11 @@ impl ChartApp {
                             use sidebar_content::free_slot::FreeItem;
                             let scroll_step = dy;
 
-                            // First: check if coordinator hovered widget is a DOM BlackboxPanel.
-                            // `slot:N:leaf:M:dom:body` wins the hit-test over `focus_content`.
+                            // First: check if coordinator scroll target is a DOM BlackboxPanel.
+                            // Sense-aware process_scroll(x, y) finds dom:body even if non-scroll
+                            // widgets (overlays/buttons) are stacked above.
                             let dom_leaf_opt = {
-                                let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                                let hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
                                 hovered.and_then(|wid| {
                                     let rest = wid.strip_prefix("slot:")?;
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
@@ -5532,8 +5539,11 @@ impl ChartApp {
                     }
 
                     // Phase 6.2b: main right sidebar body scroll via coordinator dispatch.
+                    // Sense-aware process_scroll(x, y) — skips non-scroll widgets stacked above
+                    // (slot focus_content, signal_group items, watchlist rows, etc.) and finds
+                    // the topmost SCROLL-sensitive widget under the cursor.
                     {
-                        let sidebar_hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+                        let sidebar_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
                         if sidebar_hovered.as_deref() == Some("right_sidebar:viewport") {
                             let content_h = sidebar_result.content_height;
                             let viewport_h = sidebar_result.content_rect.height;
