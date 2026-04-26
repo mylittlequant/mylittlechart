@@ -3371,10 +3371,18 @@ impl ChartApp {
             return;
         }
 
-        // PRIORITY: Freehand drawing (brush/highlighter) — add points during drag
+        // PRIORITY: Freehand drawing (brush/highlighter) — add points during drag.
+        // Also update the crosshair so it tracks the cursor as the stroke is
+        // drawn (without this, on_mouse_move doesn't fire while button is held
+        // and the crosshair freezes at its pre-press position, only "jumping"
+        // when win32 cursor polling catches the cursor leaving the window).
         {
             let extended = self.build_extended_layout();
             if self.panel_app.panel_grid.extend_freehand(x, y, &extended) {
+                let drag_mode = self.input_handler.state.drag_mode;
+                self.panel_app.panel_grid.update_crosshair(
+                    x, y, drag_mode, /* drawing_active */ true, &extended,
+                );
                 return;
             }
         }

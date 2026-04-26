@@ -253,18 +253,22 @@ impl DrawingManager {
 
                 // Verify tool exists in registry
                 let registry = PrimitiveRegistry::global().read().unwrap();
-                if let Some(meta) = registry.get(base_id) {
+                if let Some(_meta) = registry.get(base_id) {
                     // Store variant if present
                     self.tool_variant = variant;
 
-                    // For FreehandDrag tools, immediately enter Creating state
-                    // so drag starts drawing without needing a "priming" click
-                    if meta.click_behavior == ClickBehavior::FreehandDrag {
-                        self.state = DrawingState::Creating {
-                            tool_id: base_id.to_string(),
-                            points: Vec::new(), // Empty - first point added on drag start
-                        };
-                    }
+                    // NOTE: For FreehandDrag tools we used to enter Creating state
+                    // here so `is_drawing()` would already report true while the
+                    // tool was just primed. That conflated "primed" with "stroke
+                    // active" — every callsite reading is_drawing() saw it as
+                    // true even before any stroke had begun, breaking crosshair
+                    // routing (forced into drawing branch with current_pane=None
+                    // → wrong coords on sub-pane hover).
+                    //
+                    // Now: state stays Idle until start_freehand() actually fires
+                    // on mouse-press. is_drawing() == "stroke active", not
+                    // "tool selected". Use is_freehand_tool() to query the primed
+                    // state separately.
                     Some(base_id.to_string())
                 } else {
                     // Unknown tool_id, fall back to cursor mode
@@ -442,23 +446,34 @@ impl DrawingManager {
         }
     }
 
-    /// Start freehand drawing on drag start
-    /// Adds the first point to the already-active Creating state
-    /// Returns true if point was added
+    /// Start freehand drawing on drag start.
+    ///
+    /// Transitions Idle → Creating with the first point. Requires `current_tool`
+    /// to be a FreehandDrag tool. This is the ONLY entry point that flips
+    /// `is_drawing()` to true for freehand tools — `set_tool` no longer does it.
+    ///
+    /// Returns true if a stroke was started.
     pub fn start_freehand(&mut self, bar: f64, price: f64) -> bool {
-        // FreehandDrag tools are already in Creating state from set_tool()
-        // Just add the first point when drag starts
-        if let DrawingState::Creating { tool_id, points } = &mut self.state {
-            let registry = PrimitiveRegistry::global().read().unwrap();
-            if let Some(meta) = registry.get(tool_id) {
-                if meta.click_behavior == ClickBehavior::FreehandDrag && points.is_empty() {
-                    drop(registry);
-                    points.push((bar, price));
-                    return true;
-                }
-            }
+        let tool_id = match self.current_tool.clone() {
+            Some(id) => id,
+            None => return false,
+        };
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        let is_freehand = registry
+            .get(&tool_id)
+            .map(|m| m.click_behavior == ClickBehavior::FreehandDrag)
+            .unwrap_or(false);
+        drop(registry);
+        if !is_freehand {
+            return false;
         }
-        false
+        // Cancel any prior in-progress stroke before starting a new one.
+        self.state.cancel();
+        self.state = DrawingState::Creating {
+            tool_id,
+            points: vec![(bar, price)],
+        };
+        true
     }
 
     /// Add a point during freehand drawing
@@ -535,26 +550,21 @@ impl DrawingManager {
                         prim.data_mut().symbol = self.current_symbol.clone();
                         self.primitives.push(prim);
                         self.selected = Some(self.primitives.len() - 1);
-                        // Reset to ready state for continuous drawing
-                        // Tool stays active, just clear points for next stroke
-                        self.state = DrawingState::Creating {
-                            tool_id: tool_id_clone,
-                            points: Vec::new(),
-                        };
-                        // Don't reset current_tool - stay in freehand mode
+                        // Reset to Idle — tool stays primed via current_tool.
+                        // Next mouse-press will call start_freehand → Creating.
+                        // is_drawing() now correctly returns false between strokes.
+                        let _ = tool_id_clone;
+                        self.state = DrawingState::Idle;
                         self.current_pane_id = None;
                         return true;
                     }
                 }
             }
         } else {
-            // Not enough points - stay in Creating state for FreehandDrag tools
-            // so user can try again without re-selecting the tool
-            // Clear points but stay in Creating state
-            self.state = DrawingState::Creating {
-                tool_id: tool_id_clone,
-                points: Vec::new(),
-            };
+            // Not enough points — drop the stroke. Tool stays primed via
+            // current_tool; next press will start a fresh stroke.
+            let _ = tool_id_clone;
+            self.state = DrawingState::Idle;
             return false;
         }
         false
