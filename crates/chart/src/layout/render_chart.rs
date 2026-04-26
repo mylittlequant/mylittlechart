@@ -2430,8 +2430,13 @@ pub fn render_main_chart_primitives(
         }
     }
 
-    // Render drawing preview
-    if dm.is_drawing() {
+    // Render drawing preview — only when drawing on the MAIN chart.
+    // current_pane() == Some(id) means the in-progress stroke belongs to a
+    // sub-pane; that pane's render path draws the preview itself. Without this
+    // guard, the projection line between the first click and the cursor leaks
+    // into the main chart's coordinate system even when the user is drawing
+    // inside a sub-pane (visually extends through main chart and other panes).
+    if dm.is_drawing() && dm.current_pane().is_none() {
         // Snap to bar centre (matching crosshair coordinate system)
         let cursor_bar = if let Some(idx) = state.crosshair.bar_idx {
             idx as f64

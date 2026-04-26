@@ -2437,12 +2437,12 @@ impl ChartApp {
 
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
-                // Hide crosshair for the duration of freehand drag — the freehand
-                // stroke renders its own preview as the cursor moves, the crosshair
-                // is redundant. Without this, on_mouse_move's stale visible=true
-                // from before the drag stays set since on_mouse_move doesn't fire
-                // while the cursor button is down.
-                self.hide_crosshair();
+                // Baseline behavior: do NOT touch crosshair on freehand start.
+                // The crosshair remains in whatever state on_mouse_move last
+                // set it (typically visible from prior hover) — this matches
+                // pre-migration UX where crosshair stayed visible during a
+                // freehand stroke (mouse-move doesn't fire while button held,
+                // so visible state is implicitly preserved).
                 return false;
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
@@ -4427,10 +4427,11 @@ impl ChartApp {
             let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
                 .map(|w| w.0.starts_with("chart:pane:"))
                 .unwrap_or(false);
-            // Tool-aware drawing bypass: only click-tool drawing keeps the crosshair
-            // (preview anchor follows cursor). Freehand draws its own preview stroke.
-            let is_click_drawing = self.panel_app.panel_grid.active_window()
-                .map(|w| w.drawing_manager.is_drawing() && !w.drawing_manager.is_freehand_tool())
+            // Drawing bypass: keep crosshair visible while ANY drawing is in progress
+            // (matches baseline pre-migration behavior — both click-tool and freehand
+            // bypassed the hide path).
+            let is_drawing = self.panel_app.panel_grid.active_window()
+                .map(|w| w.drawing_manager.is_drawing())
                 .unwrap_or(false);
 
             // Inside-chart check: chart:pane covers canvas + scales + sub-pane seps,
@@ -4456,7 +4457,7 @@ impl ChartApp {
                 false
             };
 
-            if !on_canvas && !is_click_drawing {
+            if !on_canvas && !is_drawing {
                 if self.panel_app.panel_grid.is_split() {
                     self.hide_all_split_crosshairs();
                 } else {

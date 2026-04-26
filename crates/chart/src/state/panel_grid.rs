@@ -1752,18 +1752,6 @@ impl ChartPanelGrid {
         use crate::layout::ExtendedLayoutHitTester;
 
         if drawing_active {
-            // Freehand drawing renders its own preview stroke as the cursor moves —
-            // crosshair is redundant and visually noisy. Hide and skip the update.
-            // Click-tool drawing keeps the crosshair to anchor the preview line.
-            let is_freehand = self.active_window()
-                .map(|w| w.drawing_manager.is_freehand_tool())
-                .unwrap_or(false);
-            if is_freehand {
-                if let Some(window) = self.active_window_mut() {
-                    window.crosshair.visible = false;
-                }
-                return None;
-            }
             // Unclamped crosshair — preview must extend beyond chart area.
             let current_pane = self.active_window()
                 .and_then(|w| w.drawing_manager.current_pane());
