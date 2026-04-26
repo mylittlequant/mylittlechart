@@ -1752,6 +1752,18 @@ impl ChartPanelGrid {
         use crate::layout::ExtendedLayoutHitTester;
 
         if drawing_active {
+            // Freehand drawing renders its own preview stroke as the cursor moves —
+            // crosshair is redundant and visually noisy. Hide and skip the update.
+            // Click-tool drawing keeps the crosshair to anchor the preview line.
+            let is_freehand = self.active_window()
+                .map(|w| w.drawing_manager.is_freehand_tool())
+                .unwrap_or(false);
+            if is_freehand {
+                if let Some(window) = self.active_window_mut() {
+                    window.crosshair.visible = false;
+                }
+                return None;
+            }
             // Unclamped crosshair — preview must extend beyond chart area.
             let current_pane = self.active_window()
                 .and_then(|w| w.drawing_manager.current_pane());
@@ -1982,7 +1994,7 @@ impl ChartPanelGrid {
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        chart_rect: crate::layout::LayoutRect,
+        extended: &crate::layout::ExtendedFrameLayout,
     ) -> bool {
         let (is_active, current_pane) = self
             .active_window()
@@ -1996,10 +2008,16 @@ impl ChartPanelGrid {
             return false;
         }
 
-        // Sub-pane freehand: when start_freehand was called with current_pane = Some,
-        // continue feeding points using that pane's coordinate space.
+        // Sub-pane freehand: continue feeding points using THAT pane's content
+        // rect + price range (NOT main chart_rect — different height/origin).
         if let Some(pane_id) = current_pane {
-            // Look up the sub-pane's price range from the active window state.
+            let pane_layout = match extended.sub_panes.iter()
+                .find(|sp| sp.instance_id == pane_id)
+            {
+                Some(p) => p,
+                None => return true, // pane disappeared; consume to keep stroke alive
+            };
+            let content = pane_layout.content;
             let (price_min, price_max) = self
                 .active_window()
                 .and_then(|w| {
@@ -2009,22 +2027,17 @@ impl ChartPanelGrid {
                         .map(|sp| (sp.price_min, sp.price_max))
                 })
                 .unwrap_or((0.0, 100.0));
-            // For x → bar use the same viewport (panes share the time axis).
-            // For y → price use the sub-pane's height; we need the sub-pane content
-            // rect from the layout. The caller passes only the main chart rect, so
-            // approximate height via the active window's viewport (best-effort).
-            // Sub-pane content rect height equals viewport.chart_height for the pane,
-            // but we don't have it here — fall back to chart_rect.height which is
-            // close enough for stroke continuation (visual fidelity matters more
-            // than pixel-exact price for in-progress freehand preview).
-            let local_x = screen_x - chart_rect.x;
-            let local_y_approx = screen_y - chart_rect.y;
+            let local_x = screen_x - content.x;
+            let local_y = screen_y - content.y;
             let bar = self
                 .active_window()
                 .map(|w| w.viewport.x_to_bar_f64(local_x))
                 .unwrap_or(0.0);
-            let price = price_max
-                - (local_y_approx / chart_rect.height) * (price_max - price_min);
+            let price = if content.height > 0.0 {
+                price_max - (local_y / content.height) * (price_max - price_min)
+            } else {
+                price_min
+            };
             if let Some(window) = self.active_window_mut() {
                 window.drawing_manager.add_freehand_point(bar, price);
             }
@@ -2032,6 +2045,7 @@ impl ChartPanelGrid {
         }
 
         // Main chart freehand.
+        let chart_rect = extended.main_chart.chart;
         let local_x = screen_x - chart_rect.x;
         let local_y = screen_y - chart_rect.y;
 

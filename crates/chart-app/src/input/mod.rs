@@ -3374,8 +3374,7 @@ impl ChartApp {
         // PRIORITY: Freehand drawing (brush/highlighter) — add points during drag
         {
             let extended = self.build_extended_layout();
-            let chart_rect = extended.main_chart.chart;
-            if self.panel_app.panel_grid.extend_freehand(x, y, chart_rect) {
+            if self.panel_app.panel_grid.extend_freehand(x, y, &extended) {
                 return;
             }
         }
@@ -4450,6 +4449,7 @@ impl ChartApp {
                     tester.hit_test(x, y),
                     HitResult::Chart
                         | HitResult::SubPaneChart { .. }
+                        | HitResult::PriceScale
                         | HitResult::SubPanePriceScale { .. }
                 )
             } else {

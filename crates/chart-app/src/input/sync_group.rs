@@ -1091,11 +1091,19 @@ impl ChartApp {
         // If sync_drawings is OFF for this group, leave the primitive in the
         // drawing_manager for this window only — forward sync is blocked anyway,
         // so moving it to the group would cause it to disappear visually.
-        let sync_drawings_on = self.panel_app.tag_manager
+        let (sync_drawings_on, is_mono) = self.panel_app.tag_manager
             .group(group_id)
-            .map(|g| g.sync_flags.sync_drawings)
-            .unwrap_or(true);
+            .map(|g| (g.sync_flags.sync_drawings, g.members.len() <= 1))
+            .unwrap_or((true, false));
         if !sync_drawings_on {
+            return false;
+        }
+        // Symmetric mono-group guard: forward sync (group → window) in
+        // prepare_frame skips when members <= 1 to avoid wiping local
+        // primitives. Intercept must do the same — otherwise the primitive
+        // is moved into group.primitives and never returns to drawing_manager,
+        // becoming invisible on the chart while still listed in Object Tree.
+        if is_mono {
             return false;
         }
 
