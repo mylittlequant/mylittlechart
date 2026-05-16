@@ -300,8 +300,8 @@ impl ChartApp {
             // Split layout events вЂ” wire to ChartPanelGrid split system.
             // After each split all new leaves receive a shared sync color tag so
             // that symbol / timeframe changes propagate across the split group.
-            ChartOutEvent::InternalSplitHorizontal => { self.do_split(zengeld_chart::SplitKind::Horizontal); state_mutated = true; }
-            ChartOutEvent::InternalSplitVertical => { self.do_split(zengeld_chart::SplitKind::Vertical); state_mutated = true; }
+            ChartOutEvent::InternalSplitHorizontal => { self.do_split(zengeld_chart::SplitKind::SplitRight); state_mutated = true; }
+            ChartOutEvent::InternalSplitVertical => { self.do_split(zengeld_chart::SplitKind::SplitBottom); state_mutated = true; }
             ChartOutEvent::InternalSplitGrid2x2 => { self.do_split(zengeld_chart::SplitKind::Grid2x2); state_mutated = true; }
             ChartOutEvent::InternalSplit2Left1Right => { self.do_split(zengeld_chart::SplitKind::TwoLeftOneRight); state_mutated = true; }
             ChartOutEvent::InternalSplit1Left2Right => { self.do_split(zengeld_chart::SplitKind::OneLeftTwoRight); state_mutated = true; }
@@ -1325,7 +1325,7 @@ impl ChartApp {
                                         }) {
                                             Ok(tree) => {
                                                 sidebar_content::SlotDockingManager(
-                                                    uzor::panels::DockingManager::from_tree(tree),
+                                                    uzor::layout::DockState::from_tree(tree),
                                                 )
                                             }
                                             Err(e) => {

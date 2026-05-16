@@ -1,13 +1,19 @@
 //! Instanced wgpu RenderContext implementation
 //!
-//! Thin wrapper around `uzor_backend_wgpu_instanced::InstancedRenderContext` that
+//! Thin wrapper around `uzor_render_wgpu_instanced::InstancedRenderContext` that
 //! delegates all drawing operations to the instanced wgpu backend and adds chart-domain
 //! coordinate conversion (bar → X, price → Y) on top.
 
 use zengeld_chart::{PriceScale, Viewport};
 use zengeld_chart::render::RenderContext as ChartRenderContext;
-use uzor::render::{RenderContext as UzorRenderContext, RenderContextExt, TextAlign, TextBaseline};
-use uzor_backend_wgpu_instanced::InstancedRenderContext as InnerContext;
+use uzor::render::{
+    RenderContext as UzorRenderContext, RenderContextExt,
+    Painter, TextRenderer, TextMetrics, Masking, Effects,
+    ShapeHelpers, BatchPainter, GradientPainter, UiEffectHelpers,
+    TextAlign, TextBaseline, BlendMode, TextBounds,
+    LineSegment, CircleBatch,
+};
+use uzor_render_wgpu_instanced::InstancedRenderContext as InnerContext;
 
 // ─── Coordinate-space override ────────────────────────────────────────────────
 
@@ -27,7 +33,7 @@ struct CoordinateSpaceOverride {
 
 /// Chart render context backed by the instanced wgpu renderer.
 ///
-/// All drawing primitives are delegated to [`uzor_backend_wgpu_instanced::InstancedRenderContext`].
+/// All drawing primitives are delegated to [`uzor_render_wgpu_instanced::InstancedRenderContext`].
 /// This type only adds chart-domain coordinate conversion on top.
 pub struct InstancedChartRenderContext<'a> {
     inner: InnerContext,
@@ -70,23 +76,21 @@ impl<'a> InstancedChartRenderContext<'a> {
     }
 }
 
-// ─── UzorRenderContext — forward every method to inner ───────────────────────
+// ─── Painter ─────────────────────────────────────────────────────────────────
 
-impl<'a> UzorRenderContext for InstancedChartRenderContext<'a> {
-    fn dpr(&self) -> f64 { self.inner.dpr() }
-
-    // Stroke style
+impl<'a> Painter for InstancedChartRenderContext<'a> {
+    fn save(&mut self) { self.inner.save() }
+    fn restore(&mut self) { self.inner.restore() }
+    fn translate(&mut self, x: f64, y: f64) { self.inner.translate(x, y) }
+    fn rotate(&mut self, angle: f64) { self.inner.rotate(angle) }
+    fn scale(&mut self, x: f64, y: f64) { self.inner.scale(x, y) }
+    fn set_fill_color(&mut self, color: &str) { self.inner.set_fill_color(color) }
+    fn set_global_alpha(&mut self, alpha: f64) { self.inner.set_global_alpha(alpha) }
     fn set_stroke_color(&mut self, color: &str) { self.inner.set_stroke_color(color) }
     fn set_stroke_width(&mut self, width: f64) { self.inner.set_stroke_width(width) }
     fn set_line_dash(&mut self, pattern: &[f64]) { self.inner.set_line_dash(pattern) }
     fn set_line_cap(&mut self, cap: &str) { self.inner.set_line_cap(cap) }
     fn set_line_join(&mut self, join: &str) { self.inner.set_line_join(join) }
-
-    // Fill style
-    fn set_fill_color(&mut self, color: &str) { self.inner.set_fill_color(color) }
-    fn set_global_alpha(&mut self, alpha: f64) { self.inner.set_global_alpha(alpha) }
-
-    // Path operations
     fn begin_path(&mut self) { self.inner.begin_path() }
     fn move_to(&mut self, x: f64, y: f64) { self.inner.move_to(x, y) }
     fn line_to(&mut self, x: f64, y: f64) { self.inner.line_to(x, y) }
@@ -104,63 +108,99 @@ impl<'a> UzorRenderContext for InstancedChartRenderContext<'a> {
     fn bezier_curve_to(&mut self, cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64) {
         self.inner.bezier_curve_to(cp1x, cp1y, cp2x, cp2y, x, y)
     }
-
-    // Stroke/fill/clip
     fn stroke(&mut self) { self.inner.stroke() }
     fn fill(&mut self) { self.inner.fill() }
-    fn clip(&mut self) { self.inner.clip() }
+}
 
-    // Shape helpers
-    fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.stroke_rect(x, y, w, h) }
-    fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.fill_rect(x, y, w, h) }
+// ─── TextRenderer ─────────────────────────────────────────────────────────────
 
-    // Text
+impl<'a> TextRenderer for InstancedChartRenderContext<'a> {
     fn set_font(&mut self, font: &str) { self.inner.set_font(font) }
     fn set_text_align(&mut self, align: TextAlign) { self.inner.set_text_align(align) }
     fn set_text_baseline(&mut self, baseline: TextBaseline) { self.inner.set_text_baseline(baseline) }
     fn fill_text(&mut self, text: &str, x: f64, y: f64) { self.inner.fill_text(text, x, y) }
     fn stroke_text(&mut self, text: &str, x: f64, y: f64) { self.inner.stroke_text(text, x, y) }
+}
+
+// ─── TextMetrics ──────────────────────────────────────────────────────────────
+
+impl<'a> TextMetrics for InstancedChartRenderContext<'a> {
     fn measure_text(&self, text: &str) -> f64 { self.inner.measure_text(text) }
+    fn text_bounds(&self, text: &str, font: &str) -> TextBounds { self.inner.text_bounds(text, font) }
+}
 
-    // Transform
-    fn save(&mut self) { self.inner.save() }
-    fn restore(&mut self) { self.inner.restore() }
-    fn translate(&mut self, x: f64, y: f64) { self.inner.translate(x, y) }
-    fn rotate(&mut self, angle: f64) { self.inner.rotate(angle) }
-    fn scale(&mut self, x: f64, y: f64) { self.inner.scale(x, y) }
+// ─── Masking ──────────────────────────────────────────────────────────────────
 
-    // Images — instanced backend has no image support; use default no-ops from trait
-    fn draw_image_rgba(
-        &mut self,
-        _data: &[u8],
-        _img_width: u32,
-        _img_height: u32,
-        _x: f64,
-        _y: f64,
-        _width: f64,
-        _height: f64,
-    ) {
-        // Not supported in this backend.
+impl<'a> Masking for InstancedChartRenderContext<'a> {
+    fn clip(&mut self) { self.inner.clip() }
+}
+
+// ─── Effects ──────────────────────────────────────────────────────────────────
+
+impl<'a> Effects for InstancedChartRenderContext<'a> {
+    fn set_shadow(&mut self, dx: f64, dy: f64, blur: f64, color: &str) {
+        self.inner.set_shadow(dx, dy, blur, color)
     }
+    fn clear_shadow(&mut self) { self.inner.clear_shadow() }
+    fn set_blend_mode(&mut self, mode: BlendMode) { self.inner.set_blend_mode(mode) }
+}
 
-    // Blur / glass — not supported in instanced backend; use no-ops
-    fn draw_blur_background(&mut self, _x: f64, _y: f64, _width: f64, _height: f64) {}
-    fn has_blur_background(&self) -> bool { false }
-    fn use_convex_glass_buttons(&self) -> bool { false }
-    fn draw_glass_button_3d(
-        &mut self,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-        radius: f64,
-        _is_active: bool,
-        color: &str,
-    ) {
-        // Fallback: plain rounded rect fill
-        self.inner.set_fill_color(color);
-        self.inner.fill_rounded_rect(x, y, width, height, radius);
+// ─── ShapeHelpers ─────────────────────────────────────────────────────────────
+
+impl<'a> ShapeHelpers for InstancedChartRenderContext<'a> {
+    fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.stroke_rect(x, y, w, h) }
+    fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.fill_rect(x, y, w, h) }
+    fn rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {
+        self.inner.rounded_rect(x, y, w, h, r)
     }
+    fn rounded_rect_corners(
+        &mut self, x: f64, y: f64, w: f64, h: f64,
+        tl: f64, tr: f64, br: f64, bl: f64,
+    ) {
+        self.inner.rounded_rect_corners(x, y, w, h, tl, tr, br, bl)
+    }
+}
+
+// ─── BatchPainter — default impls sufficient ─────────────────────────────────
+
+impl<'a> BatchPainter for InstancedChartRenderContext<'a> {
+    fn draw_line_batch(&mut self, lines: &[LineSegment], color: &str, width: f64) {
+        self.inner.draw_line_batch(lines, color, width)
+    }
+    fn draw_circle_batch(&mut self, circles: &[CircleBatch], color: &str) {
+        self.inner.draw_circle_batch(circles, color)
+    }
+    fn stroke_polyline(&mut self, pts: &[(f64, f64)], color: &str, width: f64) {
+        self.inner.stroke_polyline(pts, color, width)
+    }
+}
+
+// ─── GradientPainter ──────────────────────────────────────────────────────────
+
+impl<'a> GradientPainter for InstancedChartRenderContext<'a> {
+    fn fill_linear_gradient(
+        &mut self, stops: &[(f32, &str)],
+        x1: f64, y1: f64, x2: f64, y2: f64,
+    ) {
+        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2)
+    }
+    fn fill_radial_gradient(
+        &mut self, cx: f64, cy: f64, r: f64,
+        stops: &[(f32, &str)],
+        x: f64, y: f64, w: f64, h: f64,
+    ) {
+        self.inner.fill_radial_gradient(cx, cy, r, stops, x, y, w, h)
+    }
+}
+
+// ─── UiEffectHelpers — default impls (no blur in instanced backend) ───────────
+
+impl<'a> UiEffectHelpers for InstancedChartRenderContext<'a> {}
+
+// ─── UzorRenderContext ────────────────────────────────────────────────────────
+
+impl<'a> UzorRenderContext for InstancedChartRenderContext<'a> {
+    fn dpr(&self) -> f64 { self.inner.dpr() }
 }
 
 // ─── RenderContextExt — instanced backend has no blur image ──────────────────
@@ -237,5 +277,4 @@ impl<'a> ChartRenderContext for InstancedChartRenderContext<'a> {
             price_max,
         });
     }
-
 }

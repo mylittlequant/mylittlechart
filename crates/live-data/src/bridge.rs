@@ -15,9 +15,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::runtime::Runtime;
 
 use digdigdig3::{
-    ExchangeId, AccountType, Symbol, MarketData, SymbolInfo,
-    Trading, Account, Positions,
-    CancelAll, AmendOrder, BatchOrders,
+    ExchangeId, AccountType, Symbol, SymbolInfo,
     Order, Balance, Position,
     TradingCapabilities, AccountCapabilities,
     ExchangeError,
@@ -27,7 +25,6 @@ use digdigdig3::core::{
     BalanceQuery, AccountInfo, PositionQuery, PositionModification,
     CancelScope, CancelAllResponse, AmendRequest, OrderResult,
 };
-use digdigdig3::core::traits::ExchangeIdentity;
 use digdigdig3::connector_manager::{ConnectorFactory, ConnectorPool};
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;

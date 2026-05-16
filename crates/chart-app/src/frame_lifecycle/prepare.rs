@@ -33,7 +33,7 @@ impl ChartApp {
         // Sync text-field cursor → picker.hex_cursor before rendering.
         // The renderer reads hex_cursor from ColorPickerState, but the text-field
         // store owns the authoritative cursor position after mouse/keyboard events.
-        let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+        let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
         if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
             let coord = self.input_coordinator.borrow();
             let tf = coord.text_fields();
@@ -64,7 +64,7 @@ impl ChartApp {
         }
 
         // Sync text-field store → sidebar_state for agent chat input rendering.
-        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             let coord = self.input_coordinator.borrow();
             let tf = coord.text_fields();

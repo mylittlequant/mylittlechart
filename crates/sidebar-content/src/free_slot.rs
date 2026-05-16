@@ -160,18 +160,18 @@ impl uzor::panels::DockPanel for FreeItem {
 /// `Clone` returns an empty manager — same policy as `AgentDockingManager`,
 /// used only for `SidebarState` snapshot/undo scenarios where a clean slate
 /// is desired.
-pub struct SlotDockingManager(pub uzor::panels::DockingManager<FreeItem>);
+pub struct SlotDockingManager(pub uzor::layout::DockState<FreeItem>);
 
 impl SlotDockingManager {
     pub fn new() -> Self {
-        Self(uzor::panels::DockingManager::new())
+        Self(uzor::layout::DockState::new())
     }
 
-    pub fn inner(&self) -> &uzor::panels::DockingManager<FreeItem> {
+    pub fn inner(&self) -> &uzor::layout::DockState<FreeItem> {
         &self.0
     }
 
-    pub fn inner_mut(&mut self) -> &mut uzor::panels::DockingManager<FreeItem> {
+    pub fn inner_mut(&mut self) -> &mut uzor::layout::DockState<FreeItem> {
         &mut self.0
     }
 }

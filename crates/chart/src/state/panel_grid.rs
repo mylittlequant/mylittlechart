@@ -6,7 +6,10 @@
 
 use std::collections::HashMap;
 
-use uzor::panels::{DockingManager, DockingTree, LeafId, PanelRect, SplitKind, SeparatorOrientation};
+use uzor::panels::{DockingTree, LeafId, PanelRect, SplitKind, SeparatorOrientation};
+use uzor::layout::DockState;
+// DockingManager is DockState in uzor 2.0 (renamed + moved)
+type DockingManager<P> = DockState<P>;
 
 use crate::ChartHitTester;
 use crate::state::{ChartWindow, ChartId, Timeframe};
@@ -705,9 +708,8 @@ impl ChartPanelGrid {
         );
 
         // Apply updates via public API.
-        let tree = self.docking.tree_mut();
         for upd in pending {
-            tree.set_branch_proportions(upd.id, upd.props);
+            self.docking.tree_mut().set_branch_proportions(upd.id, upd.props);
         }
     }
 
@@ -742,78 +744,127 @@ impl ChartPanelGrid {
             None => return Vec::new(),
         };
 
-        // Ask the docking tree to split the leaf.
-        // We pass 0.0 for width/height — the tree uses those only for custom
-        // rect computation which we don't use here.
-        let new_leaf_ids = self
-            .docking
-            .tree_mut()
-            .split_leaf(active_leaf, split, 0.0, 0.0);
-
-        if new_leaf_ids.is_empty() {
-            return Vec::new();
-        }
-
-        // The first new leaf inherits the original window's chart ID.
-        // Subsequent leaves get fresh clones with new chart IDs.
-        let source_window = match self.windows.get(&source_chart_id) {
-            Some(w) => w,
-            None => return Vec::new(),
-        };
-
-        // Re-map the first leaf to the existing window.
-        if let Some(&first_id) = new_leaf_ids.first() {
-            self.leaf_to_chart.remove(&active_leaf);
-            self.leaf_to_chart.insert(first_id, source_chart_id);
-
-            // Update the panel title in the docking tree for the first leaf.
-            if let Some(leaf) = self.docking.tree_mut().leaf_mut(first_id) {
-                if let Some(panel) = leaf.active_panel_mut() {
-                    panel.title = source_window.title.clone();
-                }
-            }
-        }
-
-        // For every subsequent new leaf, clone the source window.
-        let mut created_ids = Vec::with_capacity(new_leaf_ids.len().saturating_sub(1));
-        for &leaf_id in new_leaf_ids.iter().skip(1) {
-            let new_chart_id = generate_chart_id();
-
-            // We need a fresh clone from the source window each time.
-            // Re-borrow since the borrow above ended at the `first_id` block.
-            let cloned = {
-                let src = self
-                    .windows
-                    .get(&source_chart_id)
-                    .expect("source window must exist");
-                src.clone_for_split(new_chart_id, true)
-            };
-
-            let cloned_title = cloned.title.clone();
-
-            self.windows.insert(new_chart_id, cloned);
-            self.leaf_to_chart.insert(leaf_id, new_chart_id);
-
-            // Update the panel stored inside the leaf.
-            if let Some(leaf) = self.docking.tree_mut().leaf_mut(leaf_id) {
-                if let Some(panel) = leaf.active_panel_mut() {
-                    panel.chart_id = new_chart_id;
-                    panel.title = cloned_title;
-                }
-            }
-
-            created_ids.push(leaf_id);
-        }
-
-        // Set the first new leaf as active.
-        if let Some(&first_id) = new_leaf_ids.first() {
-            self.docking.set_active_leaf(first_id);
-        }
+        // Snapshot source title before any mutation.
+        let source_title = self
+            .windows
+            .get(&source_chart_id)
+            .map(|w| w.title.clone())
+            .unwrap_or_default();
 
         // Exit expand mode when splitting (the layout changed).
         self.expanded = false;
 
-        new_leaf_ids
+        match split {
+            // ── Binary splits ────────────────────────────────────────────────
+            // `split_leaf` keeps the original leaf at its existing ID and
+            // returns a single new leaf ID.  Convention for callers:
+            //   returned_vec[0] = mother (original leaf, same chart window)
+            //   returned_vec[1] = new sibling (fresh cloned window)
+            SplitKind::SplitRight | SplitKind::SplitBottom => {
+                // Build the panel for the new sibling before calling split_leaf.
+                let new_chart_id = generate_chart_id();
+                let new_panel = {
+                    let src = match self.windows.get(&source_chart_id) {
+                        Some(w) => w,
+                        None => return Vec::new(),
+                    };
+                    let cloned = src.clone_for_split(new_chart_id, true);
+                    super::sub_panel::ChartSubPanel::new(new_chart_id, cloned.title.clone())
+                };
+
+                // Clone the window now (before tree mutation borrows self).
+                let cloned_window = match self.windows.get(&source_chart_id) {
+                    Some(w) => w.clone_for_split(new_chart_id, true),
+                    None => return Vec::new(),
+                };
+                let cloned_title = cloned_window.title.clone();
+
+                let new_leaf_id = match self
+                    .docking
+                    .tree_mut()
+                    .split_leaf(active_leaf, split, new_panel)
+                {
+                    Some(id) => id,
+                    None => return Vec::new(),
+                };
+
+                // Register the new window and leaf.
+                self.windows.insert(new_chart_id, cloned_window);
+                self.leaf_to_chart.insert(new_leaf_id, new_chart_id);
+
+                // Update the panel title stored inside the new leaf.
+                if let Some(leaf) = self.docking.tree_mut().leaf_mut(new_leaf_id) {
+                    if let Some(panel) = leaf.active_panel_mut() {
+                        panel.chart_id = new_chart_id;
+                        panel.title = cloned_title;
+                    }
+                }
+
+                // Update the mother leaf's panel title (it kept its ID).
+                if let Some(leaf) = self.docking.tree_mut().leaf_mut(active_leaf) {
+                    if let Some(panel) = leaf.active_panel_mut() {
+                        panel.title = source_title;
+                    }
+                }
+
+                // Mother stays active.
+                self.docking.set_active_leaf(active_leaf);
+
+                // Return [mother, new_sibling] — callers rely on index 0 = mother.
+                vec![active_leaf, new_leaf_id]
+            }
+
+            // ── Compound splits ──────────────────────────────────────────────
+            // `split_leaf_with_children` invalidates the original leaf ID and
+            // returns N brand-new leaf IDs.  All new leaves need fresh windows.
+            // Convention: new_ids[0] = mother (inherits original window),
+            //             new_ids[1..] = siblings (fresh clones).
+            _ => {
+                let new_leaf_ids = self
+                    .docking
+                    .tree_mut()
+                    .split_leaf_with_children(active_leaf, split, 0.0, 0.0);
+
+                if new_leaf_ids.is_empty() {
+                    return Vec::new();
+                }
+
+                // The original active_leaf is now gone — remove its mapping.
+                self.leaf_to_chart.remove(&active_leaf);
+
+                // Mother leaf (new_ids[0]) inherits the original window.
+                let mother_leaf = new_leaf_ids[0];
+                self.leaf_to_chart.insert(mother_leaf, source_chart_id);
+                if let Some(leaf) = self.docking.tree_mut().leaf_mut(mother_leaf) {
+                    if let Some(panel) = leaf.active_panel_mut() {
+                        panel.title = source_title.clone();
+                    }
+                }
+
+                // Sibling leaves (new_ids[1..]) get fresh clones.
+                for &leaf_id in new_leaf_ids.iter().skip(1) {
+                    let new_chart_id = generate_chart_id();
+                    let cloned = match self.windows.get(&source_chart_id) {
+                        Some(w) => w.clone_for_split(new_chart_id, true),
+                        None => continue,
+                    };
+                    let cloned_title = cloned.title.clone();
+                    self.windows.insert(new_chart_id, cloned);
+                    self.leaf_to_chart.insert(leaf_id, new_chart_id);
+                    if let Some(leaf) = self.docking.tree_mut().leaf_mut(leaf_id) {
+                        if let Some(panel) = leaf.active_panel_mut() {
+                            panel.chart_id = new_chart_id;
+                            panel.title = cloned_title;
+                        }
+                    }
+                }
+
+                // Set mother as active.
+                self.docking.set_active_leaf(mother_leaf);
+
+                new_leaf_ids
+            }
+        }
     }
 
     /// Close a leaf (remove its sub-chart).
@@ -955,6 +1006,7 @@ impl ChartPanelGrid {
             };
             let (parent_id, child_a, child_b) = match &sep.level {
                 SeparatorLevel::Node { parent_id, child_a, child_b } => {
+                    // BranchId and u64 are Copy — dereference to owned values.
                     (*parent_id, *child_a, *child_b)
                 }
             };
@@ -964,8 +1016,8 @@ impl ChartPanelGrid {
         // Use the parent-branch pixel size for correct proportion math.
         // `rect_for_branch` walks the layout tree to find the actual rect of
         // this branch within the content area, so nested branches work correctly.
-        let branch_rect = self.docking.tree()
-            .rect_for_branch(parent_id, content_width, content_height);
+        let branch_rect = self.docking
+            .tree().rect_for_branch(parent_id, content_width, content_height);
 
         let branch_size = match branch_rect {
             Some(r) => match orientation {

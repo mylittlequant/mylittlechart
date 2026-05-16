@@ -357,7 +357,7 @@ pub fn render_right_sidebar(
     let close_x = rect.x + rect.width - close_size - 12.0;
     let close_y = rect.y + (header_height - close_size) / 2.0;
     let close_hovered = input_coordinator
-        .is_hovered(&uzor::types::WidgetId::new("right_sidebar_close"));
+        .is_hovered(&uzor::types::WidgetId::from("right_sidebar_close"));
     if close_hovered {
         // Draw a subtle rounded hover background behind the icon.
         ctx.set_fill_color(&toolbar_theme.item_bg_hover);
@@ -404,7 +404,7 @@ pub fn render_right_sidebar(
         let col_x = close_x - btn_size - 8.0;
         let col_y = rect.y + (header_height - btn_size) / 2.0;
         let col_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new("watchlist_column_config"));
+            .is_hovered(&uzor::types::WidgetId::from("watchlist_column_config"));
         if col_hovered {
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
             ctx.fill_rounded_rect(col_x - close_pad, col_y - close_pad, btn_size + close_pad * 2.0, btn_size + close_pad * 2.0, 4.0);
@@ -425,7 +425,7 @@ pub fn render_right_sidebar(
         let expand_x = col_x - btn_size - 8.0;
         let expand_y = col_y;
         let expand_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new("watchlist_open_modal"));
+            .is_hovered(&uzor::types::WidgetId::from("watchlist_open_modal"));
         if expand_hovered {
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
             ctx.fill_rounded_rect(expand_x - close_pad, expand_y - close_pad, btn_size + close_pad * 2.0, btn_size + close_pad * 2.0, 4.0);
@@ -795,7 +795,7 @@ fn render_watchlist_config_dropdown(
         let row_rect = WidgetRect::new(dropdown_rect.x, row_y, dropdown_w, row_h);
 
         let is_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&widget_id));
+            .is_hovered(&uzor::types::WidgetId::from(widget_id.as_str()));
 
         if is_hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
@@ -905,7 +905,7 @@ fn render_slot_spawn_dropdown(
         let row_rect = WidgetRect::new(dropdown_x, row_y, dropdown_w, row_h);
 
         let widget_id = format!("slot:{}:spawn:{}", slot_idx, kind_str);
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&widget_id));
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(widget_id.as_str()));
 
         if is_hovered {
             ctx.set_fill_color(theme.item_bg_hover.as_str());
@@ -1049,7 +1049,7 @@ fn render_watchlist_column_header(
         let flag_x = rect.x;
         let flag_y = header_y;
         let flag_h = header_row_h;
-        let flag_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new("watchlist_sort_color"));
+        let flag_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from("watchlist_sort_color"));
         let sort_active = state.watchlist_sort_mode != 0;
 
         if sort_active {
@@ -1096,7 +1096,7 @@ fn render_watchlist_column_header(
         let sep_x = sep_pos - 0.5;
         let sep_id = format!("watchlist_sep_{}", sep_i + 1);
         let sep_is_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&sep_id));
+            .is_hovered(&uzor::types::WidgetId::from(sep_id.as_str()));
         if sep_is_hovered {
             ctx.set_stroke_color("#4a9eff");
         } else {
@@ -1346,11 +1346,11 @@ fn render_watchlist_items(
 
         // Hover detection: row OR delete button hovered.
         let is_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&row_id))
+            .is_hovered(&uzor::types::WidgetId::from(row_id.as_str()))
             || input_coordinator
-                .is_hovered(&uzor::types::WidgetId::new(&del_id));
+                .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
         let del_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&del_id));
+            .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
 
         // Virtual scrolling: skip draw calls for rows entirely outside the
         // visible viewport.  Hit-zone registrations above are kept so that
@@ -1387,7 +1387,7 @@ fn render_watchlist_items(
         let flag_id = format!("watchlist_flag_{}", i);
         let flag_rect = WidgetRect::new(rect.x, current_y, 10.0, data_row_h);
         input_coordinator.register(flag_id.as_str(), flag_rect, uzor::input::Sense::CLICK);
-        let flag_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&flag_id));
+        let flag_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(flag_id.as_str()));
 
         {
             let flag_w = 10.0;
@@ -1871,9 +1871,9 @@ fn render_alert_items(
             input_coordinator.register(row_id.as_str(), item_rect, uzor::input::Sense::CLICK);
 
             let is_hovered = input_coordinator
-                .is_hovered(&uzor::types::WidgetId::new(&row_id))
+                .is_hovered(&uzor::types::WidgetId::from(row_id.as_str()))
                 || input_coordinator
-                    .is_hovered(&uzor::types::WidgetId::new(&del_id));
+                    .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
 
             if is_hovered {
                 ctx.set_fill_color(&theme.item_bg_hover);
@@ -2183,14 +2183,14 @@ fn render_object_tree_items(
                     }
 
                     // Row hover = row OR any of its buttons hovered.
-                    let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&item_id))
-                        || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id))
-                        || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&set_id))
-                        || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&alert_id))
-                        || input_coordinator.is_hovered(&uzor::types::WidgetId::new(&vis_id))
+                    let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(item_id.as_str()))
+                        || input_coordinator.is_hovered(&uzor::types::WidgetId::from(del_id.as_str()))
+                        || input_coordinator.is_hovered(&uzor::types::WidgetId::from(set_id.as_str()))
+                        || input_coordinator.is_hovered(&uzor::types::WidgetId::from(alert_id.as_str()))
+                        || input_coordinator.is_hovered(&uzor::types::WidgetId::from(vis_id.as_str()))
                         || lock_id.as_ref().is_some_and(|lid|
-                            input_coordinator.is_hovered(&uzor::types::WidgetId::new(lid)));
-                    let del_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&del_id));
+                            input_coordinator.is_hovered(&uzor::types::WidgetId::from(lid.as_str())));
+                    let del_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
 
                     // Selection / hover background.
                     if item.selected {
@@ -2280,7 +2280,7 @@ fn render_object_tree_items(
                     if item.is_deletable() {
                         let del_id = format!("{}_delete_{}", widget_prefix, item.id);
                         let del_hovered = input_coordinator
-                            .is_hovered(&uzor::types::WidgetId::new(&del_id));
+                            .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
                         let delete_color = if del_hovered {
                             "#ff5252"
                         } else {
@@ -2375,7 +2375,7 @@ fn render_indicator_signals(
             uzor::input::Sense::CLICK,
         );
         let is_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&group_id));
+            .is_hovered(&uzor::types::WidgetId::from(group_id.as_str()));
 
         if is_hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
@@ -2492,7 +2492,7 @@ fn render_indicator_signals(
 
                 // Hover highlight (drawn before text so text renders on top).
                 let is_row_hovered = input_coordinator
-                    .is_hovered(&uzor::types::WidgetId::new(&sig_id));
+                    .is_hovered(&uzor::types::WidgetId::from(sig_id.as_str()));
                 if is_row_hovered {
                     ctx.set_fill_color(&theme.item_bg_hover);
                     ctx.fill_rect(signal_rect.x, signal_rect.y, signal_rect.width, signal_rect.height);
@@ -2710,7 +2710,7 @@ fn render_connectors_panel(
         let header_h = 28.0;
         let group_header_id = format!("connector_group:{}", group_label);
         let is_header_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&group_header_id));
+            .is_hovered(&uzor::types::WidgetId::from(group_header_id.as_str()));
 
         // Header background — slightly darker than the panel background.
         if is_header_hovered {
@@ -2795,10 +2795,10 @@ fn render_connectors_panel(
         let full_row_rect = WidgetRect::new(rect.x, current_y, content_width, row_h);
 
         let is_row_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&row_id));
+            .is_hovered(&uzor::types::WidgetId::from(row_id.as_str()));
         let toggle_id = format!("connector_toggle:{}", connector.exchange_id);
         let is_toggle_hovered = input_coordinator
-            .is_hovered(&uzor::types::WidgetId::new(&toggle_id));
+            .is_hovered(&uzor::types::WidgetId::from(toggle_id.as_str()));
         let is_any_hovered = is_row_hovered || is_toggle_hovered;
 
         if is_any_hovered {
@@ -3563,7 +3563,7 @@ fn render_slot_panel(
         let new_id    = format!("slot:{slot_idx}:new");
         let new_w     = 28.0_f64;
         let new_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, new_w, btn_h);
-        let new_hov   = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&new_id));
+        let new_hov   = input_coordinator.is_hovered(&uzor::types::WidgetId::from(new_id.as_str()));
         ctx.set_fill_color(if new_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(new_rect.x, new_rect.y, new_rect.width, new_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
@@ -3588,7 +3588,7 @@ fn render_slot_panel(
             let sa_id  = format!("slot:{slot_idx}:source:auto");
             let is_a   = state.slot_source_mode == SlotSourceMode::Auto;
             let a_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
-            let a_hov  = !is_a && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sa_id));
+            let a_hov  = !is_a && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sa_id.as_str()));
             ctx.set_fill_color(if is_a { &theme.accent } else if a_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(a_rect.x, a_rect.y, a_rect.width, a_rect.height, 3.0);
             ctx.set_fill_color(if is_a { &theme.item_text_active } else { &theme.item_text_muted });
@@ -3603,7 +3603,7 @@ fn render_slot_panel(
             let sp_id  = format!("slot:{slot_idx}:source:pinned");
             let is_p   = state.slot_source_mode == SlotSourceMode::Pinned;
             let p_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
-            let p_hov  = !is_p && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sp_id));
+            let p_hov  = !is_p && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sp_id.as_str()));
             ctx.set_fill_color(if is_p { &theme.accent } else if p_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(p_rect.x, p_rect.y, p_rect.width, p_rect.height, 3.0);
             ctx.set_fill_color(if is_p { &theme.item_text_active } else { &theme.item_text_muted });
@@ -3618,7 +3618,7 @@ fn render_slot_panel(
             let sl_id  = format!("slot:{slot_idx}:source:linked");
             let is_l   = state.slot_source_mode == SlotSourceMode::Linked;
             let l_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
-            let l_hov  = !is_l && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sl_id));
+            let l_hov  = !is_l && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sl_id.as_str()));
             ctx.set_fill_color(if is_l { &theme.accent } else if l_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(l_rect.x, l_rect.y, l_rect.width, l_rect.height, 3.0);
             ctx.set_fill_color(if is_l { &theme.item_text_active } else { &theme.item_text_muted });
@@ -3646,7 +3646,7 @@ fn render_slot_panel(
             let sh_id   = format!("slot:{slot_idx}:split:h");
             let is_h    = state.slot_spawn_layout == AgentSpawnLayout::SplitH;
             let h_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-            let h_hov   = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sh_id));
+            let h_hov   = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sh_id.as_str()));
             ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
@@ -3663,7 +3663,7 @@ fn render_slot_panel(
             let sv_id  = format!("slot:{slot_idx}:split:v");
             let is_v   = state.slot_spawn_layout == AgentSpawnLayout::SplitV;
             let v_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sv_id));
+            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sv_id.as_str()));
             ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
@@ -3680,7 +3680,7 @@ fn render_slot_panel(
             let sr_id  = format!("slot:{slot_idx}:split:replace");
             let is_r   = state.slot_spawn_layout == AgentSpawnLayout::Replace;
             let r_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&sr_id));
+            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sr_id.as_str()));
             ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
@@ -3704,7 +3704,7 @@ fn render_slot_panel(
             };
             let expand_en = has_focused && multi_leaf;
             let exp_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&exp_id));
+            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from(exp_id.as_str()));
             ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
             {
@@ -3724,7 +3724,7 @@ fn render_slot_panel(
             let rst_id   = format!("slot:{slot_idx}:reset_sizes");
             let reset_en = has_focused && multi_leaf;
             let rst_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let rst_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&rst_id));
+            let rst_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from(rst_id.as_str()));
             ctx.set_fill_color(if !reset_en { &theme.background } else if rst_hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(rst_rect.x, rst_rect.y, rst_rect.width, rst_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
@@ -3740,7 +3740,7 @@ fn render_slot_panel(
             // [×] close pane
             let cl_id   = format!("slot:{slot_idx}:close_pane");
             let cl_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let cl_hov  = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new(&cl_id));
+            let cl_hov  = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from(cl_id.as_str()));
             ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
             ctx.fill_rounded_rect(cl_rect.x, cl_rect.y, cl_rect.width, cl_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
@@ -3855,7 +3855,7 @@ fn render_slot_panel(
             let gear_x = right_x;
             let gear_id = format!("slot:{}:leaf:{}:col_config", slot_idx, leaf_id.0);
             let gear_is_open = state.panel_col_config_open == Some((slot_idx, leaf_id.0));
-            let gear_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&gear_id));
+            let gear_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(gear_id.as_str()));
             if gear_hov || gear_is_open {
                 ctx.set_fill_color(if gear_is_open { &theme.accent } else { &theme.item_bg_hover });
                 ctx.fill_rounded_rect(gear_x as f64, btn_y as f64, gear_w as f64, btn_h as f64, 2.0);
@@ -3875,7 +3875,7 @@ fn render_slot_panel(
         right_x -= close_w;
         let close_x = right_x;
         let close_id = format!("slot:{}:leaf:{}:close", slot_idx, leaf_id.0);
-        let close_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&close_id));
+        let close_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(close_id.as_str()));
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(if close_hov { &theme.item_text } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
@@ -3898,7 +3898,7 @@ fn render_slot_panel(
             right_x -= ts_w;
             let ts_x = right_x;
             let ts_id = format!("slot:{}:leaf:{}:tick_size", slot_idx, leaf_id.0);
-            let ts_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&ts_id));
+            let ts_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(ts_id.as_str()));
             ctx.set_font("9px monospace");
             ctx.set_fill_color(if ts_hov { &theme.item_text } else { &theme.item_text_muted });
             ctx.set_text_align(TextAlign::Center);
@@ -3919,7 +3919,7 @@ fn render_slot_panel(
             let am_x = right_x;
             let am_label = if auto_center { "A" } else { "M" };
             let am_id = format!("slot:{}:leaf:{}:am_toggle", slot_idx, leaf_id.0);
-            let am_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&am_id));
+            let am_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(am_id.as_str()));
             if am_hov || !auto_center {
                 ctx.set_fill_color(if am_hov { &theme.item_bg_hover } else { &theme.button_bg });
                 ctx.fill_rounded_rect(am_x as f64, btn_y as f64, am_w as f64, btn_h as f64, 2.0);
@@ -3949,7 +3949,7 @@ fn render_slot_panel(
             right_x -= f_w;
             let f_x = right_x;
             let f_id = format!("slot:{}:leaf:{}:vol_filter", slot_idx, leaf_id.0);
-            let f_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&f_id));
+            let f_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(f_id.as_str()));
             if f_hov || filter_active {
                 ctx.set_fill_color(if f_hov { &theme.item_bg_hover } else { &theme.button_bg });
                 ctx.fill_rounded_rect(f_x as f64, btn_y as f64, f_w as f64, btn_h as f64, 2.0);
@@ -4077,7 +4077,7 @@ fn render_slot_panel(
                 for (ci, label) in col_labels.iter().enumerate() {
                     let item_y = popup_y + 2.0 + ci as f64 * row_h;
                     let item_id = format!("slot:{}:leaf:{}:col_toggle:{}", slot_idx, leaf_id.0, ci);
-                    let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(&item_id));
+                    let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(item_id.as_str()));
 
                     if item_hov {
                         ctx.set_fill_color(&theme.item_bg_hover);
@@ -4222,7 +4222,7 @@ fn render_performance_panel(
                              accent: &str,
                              theme: &ToolbarTheme| {
         let row_rect = WidgetRect::new(rect.x, *y, content_width, row_h);
-        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::new(wid));
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(wid));
         if is_hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
             ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
@@ -4522,7 +4522,7 @@ fn render_agents_panel(
 
         // [PTY] segment — terminal icon
         let pty_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-        let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
+        let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:pty"));
         ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
@@ -4537,7 +4537,7 @@ fn render_agents_panel(
 
         // [Chat] segment — chat bubble icon
         let chat_seg_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-        let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
+        let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:chat"));
         ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
@@ -4574,7 +4574,7 @@ fn render_agents_panel(
         for btn in cli_btns.iter() {
             let label = if use_short { btn.short } else { btn.label };
             let btn_rect = WidgetRect::new(btn_cur_x, y + (ctrl_h - btn_h) / 2.0, per_btn_w, btn_h);
-            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
+            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn.id));
             ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
             ctx.set_font("11px sans-serif");
@@ -4591,7 +4591,7 @@ fn render_agents_panel(
         // [H] split-direction toggle
         let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
         let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:h"));
+        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:h"));
         ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
@@ -4607,7 +4607,7 @@ fn render_agents_panel(
         // [V] split-direction toggle
         let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
         let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:v"));
+        let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:v"));
         ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
@@ -4623,7 +4623,7 @@ fn render_agents_panel(
         // [R] replace toggle
         let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
         let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
+        let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:replace"));
         ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
@@ -4642,7 +4642,7 @@ fn render_agents_panel(
         });
         let expand_en = has_focused && multi_leaf;
         let exp_rect  = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:expand_toggle"));
+        let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:expand_toggle"));
         ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
         {
@@ -4661,7 +4661,7 @@ fn render_agents_panel(
         // [reset] reset sizes
         let reset_en   = has_focused && multi_leaf;
         let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:reset_sizes"));
+        let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:reset_sizes"));
         ctx.set_fill_color(if !reset_en { &theme.background } else if reset_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
@@ -4676,7 +4676,7 @@ fn render_agents_panel(
 
         // [×] close pane
         let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+        let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:close_pane"));
         ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
         ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
         ctx.set_stroke_color(&theme.separator);
@@ -4709,7 +4709,7 @@ fn render_agents_panel(
             let toggle_w = 28.0;
             let icon_pad_2r = 4.0;
             let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:pty"));
+            let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:pty"));
             ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
@@ -4724,7 +4724,7 @@ fn render_agents_panel(
             // [Chat] segment — chat bubble icon
             let chat_seg_x = x + toggle_w + 2.0;
             let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:mode:chat"));
+            let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:chat"));
             ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
@@ -4759,7 +4759,7 @@ fn render_agents_panel(
             for btn in cli_btns.iter() {
                 let label = if use_short { btn.short } else { btn.label };
                 let btn_rect = WidgetRect::new(btn_cur_x_2r, y + (ctrl_h - btn_h) / 2.0, per_btn_w_2r, btn_h);
-                let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(btn.id));
+                let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn.id));
                 ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
                 ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
                 ctx.set_font("11px sans-serif");
@@ -4788,7 +4788,7 @@ fn render_agents_panel(
             // [H] split-direction toggle
             let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
             let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:h"));
+            let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:h"));
             ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
@@ -4804,7 +4804,7 @@ fn render_agents_panel(
             // [V] split-direction toggle
             let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
             let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:v"));
+            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:v"));
             ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
@@ -4820,7 +4820,7 @@ fn render_agents_panel(
             // [R] replace toggle
             let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
             let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:split:replace"));
+            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:replace"));
             ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
@@ -4839,7 +4839,7 @@ fn render_agents_panel(
             });
             let expand_en = has_focused && multi_leaf;
             let exp_rect  = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:expand_toggle"));
+            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:expand_toggle"));
             ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
             {
@@ -4858,7 +4858,7 @@ fn render_agents_panel(
             // [reset] reset sizes
             let reset_en   = has_focused && multi_leaf;
             let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:reset_sizes"));
+            let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:reset_sizes"));
             ctx.set_fill_color(if !reset_en { &theme.background } else if reset_hov { &theme.button_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
@@ -4873,7 +4873,7 @@ fn render_agents_panel(
 
             // [×] close pane
             let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::new("agent:close_pane"));
+            let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:close_pane"));
             ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
             ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
             ctx.set_stroke_color(&theme.separator);
@@ -5085,7 +5085,7 @@ fn render_agents_pane(
             let sess_y = mid_y - btn_sz / 2.0;
             let sess_wid  = format!("agent:leaf:{}:sessions_toggle", leaf_id.0);
             let sess_open = state.agent_sessions_dropdown == Some(leaf_id);
-            let sess_hov  = input_coordinator.is_hovered(&uzor::types::WidgetId::new(sess_wid.as_str()));
+            let sess_hov  = input_coordinator.is_hovered(&uzor::types::WidgetId::from(sess_wid.as_str()));
             ctx.set_fill_color(if sess_open || sess_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_x, sess_y, sess_w, btn_sz, 3.0);
             ctx.set_font("13px sans-serif");
@@ -5105,7 +5105,7 @@ fn render_agents_pane(
             // [+] new session button — icon only.
             let new_y   = mid_y - btn_sz / 2.0;
             let new_wid = format!("agent:leaf:{}:new_session", leaf_id.0);
-            let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(new_wid.as_str()));
+            let new_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(new_wid.as_str()));
             ctx.set_fill_color(if new_hov { &theme.item_bg_hover } else { &theme.background });
             ctx.fill_rounded_rect(btn_x, new_y, btn_sz, btn_sz, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
@@ -5121,7 +5121,7 @@ fn render_agents_pane(
         // Close button — rendered LAST so it's always visually on top.
         {
             let close_wid = format!("agent:leaf:{}:close", leaf_id.0);
-            let cl_hov    = input_coordinator.is_hovered(&uzor::types::WidgetId::new(close_wid.as_str()));
+            let cl_hov    = input_coordinator.is_hovered(&uzor::types::WidgetId::from(close_wid.as_str()));
             ctx.set_fill_color(if cl_hov { &theme.danger_hover_bg } else { &theme.background });
             ctx.fill_rounded_rect(close_x, close_y, btn_sz, btn_sz, 3.0);
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
@@ -5212,7 +5212,7 @@ fn render_agents_pane(
                 if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
                 let item_wid = format!("agent:leaf:{}:load_session:{}", leaf_id.0, idx);
                 let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
-                let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+                let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(item_wid.as_str()));
                 if item_hov {
                     ctx.set_fill_color(&theme.item_bg_hover);
                     ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
@@ -5408,7 +5408,7 @@ fn render_pty_idle(
     let btn_y = y + h / 2.0 - btn_h / 2.0;
     let start_rect = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
     let start_wid = format!("agent:leaf:{}:start", leaf_id.0);
-    let _hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(start_wid.as_str()));
+    let _hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(start_wid.as_str()));
     ctx.set_fill_color(&theme.accent);
     ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
     ctx.set_font("11px sans-serif");
@@ -5861,7 +5861,7 @@ fn render_agents_chat_leaf(
 
     let model_open = state.agent_model_dropdown == Some(leaf_id);
     let model_wid = format!("agent:leaf:{}:model", leaf_id.0);
-    let model_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(model_wid.as_str()));
+    let model_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(model_wid.as_str()));
     let model_rect = WidgetRect::new(x + inner_pad, ctrl_y, model_tw + 4.0, ctrl_bar_h);
     ctx.set_fill_color(if model_open || model_hov { &theme.item_text } else { &theme.item_text_muted });
     ctx.set_text_align(TextAlign::Left);
@@ -5873,7 +5873,7 @@ fn render_agents_chat_leaf(
     let perm_x = x + inner_pad + model_tw + 12.0;
     let perm_open = state.agent_perm_dropdown == Some(leaf_id);
     let perm_wid = format!("agent:leaf:{}:perm", leaf_id.0);
-    let perm_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(perm_wid.as_str()));
+    let perm_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(perm_wid.as_str()));
     let perm_rect = WidgetRect::new(perm_x, ctrl_y, perm_tw + 4.0, ctrl_bar_h);
     ctx.set_fill_color(if perm_open || perm_hov { &theme.item_text } else { &theme.item_text_muted });
     ctx.fill_text(perm_label_full, perm_x, ctrl_mid_y);
@@ -5917,7 +5917,7 @@ fn render_agents_chat_leaf(
     let send_y2 = ctrl_y + (ctrl_bar_h - send_sz) / 2.0 - 1.0; // -1px: avoid bottom border overlap
     let send_rect = WidgetRect::new(send_x, send_y2, send_sz, send_sz);
     let send_wid = format!("agent:leaf:{}:send", leaf_id.0);
-    let send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(send_wid.as_str()));
+    let send_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(send_wid.as_str()));
     // Normal: muted bg + background arrow.  Hover: accent bg + muted arrow.
     if send_hov {
         ctx.set_fill_color(&theme.accent);
@@ -5983,7 +5983,7 @@ fn render_agents_chat_leaf(
             if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
             let item_wid = format!("agent:leaf:{}:select_model:{}", leaf_id.0, model_info.id);
             let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
-            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(item_wid.as_str()));
             if item_hov {
                 ctx.set_fill_color(&theme.item_bg_hover);
                 ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);
@@ -6073,7 +6073,7 @@ fn render_agents_chat_leaf(
             if item_y + item_h < drop_y || item_y > drop_y + drop_h { continue; }
             let item_wid = format!("agent:leaf:{}:select_perm:{}", leaf_id.0, perm_info.id);
             let item_rect = WidgetRect::new(drop_x, item_y, drop_w, item_h);
-            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::new(item_wid.as_str()));
+            let item_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(item_wid.as_str()));
             if item_hov {
                 ctx.set_fill_color(&theme.item_bg_hover);
                 ctx.fill_rounded_rect(drop_x, item_y, drop_w, item_h, 2.0);

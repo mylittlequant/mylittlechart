@@ -317,7 +317,7 @@ impl App<'_> {
                         .or(pw.chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
                         .or(pw.chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
                     if let Some(btn_id) = hovered_id {
-                        let wid = uzor::WidgetId::new(format!("toolbar:{}", btn_id));
+                        let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
                         pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
                         if let Some(text) = zengeld_chart::toolbar::find_toolbar_tooltip(btn_id) {
                             pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
@@ -337,7 +337,7 @@ impl App<'_> {
                                         && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
                                     {
                                         if let Some(tip_text) = sidebar_content::render::find_agent_tooltip(wid_str) {
-                                            let wid = uzor::WidgetId::new(&wid_str[..]);
+                                            let wid = uzor::WidgetId::from(wid_str[..].as_str());
                                             pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
                                             // Tooltip renders in window-space (no
                                             // translate), so pass window y for position.

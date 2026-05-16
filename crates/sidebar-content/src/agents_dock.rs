@@ -18,21 +18,21 @@ use gate4agent::{AgentCli, InstanceId, InstanceMode};
 /// `Clone` creates a new empty manager rather than deep-copying the internal
 /// tree. This is intentional: `SidebarState::clone()` is only used for
 /// snapshot/undo scenarios where we want a clean docking slate anyway.
-pub struct AgentDockingManager(pub uzor::panels::DockingManager<AgentPaneLeaf>);
+pub struct AgentDockingManager(pub uzor::layout::DockState<AgentPaneLeaf>);
 
 impl AgentDockingManager {
     /// Create a new empty docking manager.
     pub fn new() -> Self {
-        Self(uzor::panels::DockingManager::new())
+        Self(uzor::layout::DockState::new())
     }
 
     /// Borrow the inner manager immutably.
-    pub fn inner(&self) -> &uzor::panels::DockingManager<AgentPaneLeaf> {
+    pub fn inner(&self) -> &uzor::layout::DockState<AgentPaneLeaf> {
         &self.0
     }
 
     /// Borrow the inner manager mutably.
-    pub fn inner_mut(&mut self) -> &mut uzor::panels::DockingManager<AgentPaneLeaf> {
+    pub fn inner_mut(&mut self) -> &mut uzor::layout::DockState<AgentPaneLeaf> {
         &mut self.0
     }
 }

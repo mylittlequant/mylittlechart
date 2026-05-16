@@ -322,7 +322,7 @@ impl ChartApp {
                         }
                     };
                     let widget_id_str = format!("chart_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                     // Store the field name (without prefix) in color_picker_field
                     self.panel_app.chart_settings_state.open_color_picker_smart(
@@ -437,7 +437,7 @@ impl ChartApp {
                     let current_color: Option<String> = self.panel_app.panel_grid.active_window()
                         .map(|w| w.crosshair_options.vert_line.color.clone());
                     let widget_id_str = format!("chart_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                     self.panel_app.chart_settings_state.open_color_picker_smart(
                         "crosshair_line_color", ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
@@ -589,7 +589,7 @@ impl ChartApp {
                         .and_then(|wm| wm.lines.first())
                         .map(|line| line.color.clone());
                     let widget_id_str = format!("chart_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                     self.panel_app.chart_settings_state.open_color_picker_smart(
                         "watermark_color", ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
@@ -653,7 +653,7 @@ impl ChartApp {
             );
             if let Some(color) = current_color {
                 let widget_id_str = format!("chart_settings:item:{}", item_id);
-                let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                 let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                 self.panel_app.chart_settings_state.open_color_picker_smart(
                     field, ax, ay, aw, ah, screen_w, screen_h, Some(color),
@@ -1203,7 +1203,7 @@ impl ChartApp {
                     _ => None,
                 });
             let widget_id_str = format!("prim_settings:item:{}", item_id);
-            let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+            let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
             let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
             self.panel_app.primitive_settings_state.open_color_picker_smart(
                 item_id, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
@@ -1639,7 +1639,7 @@ impl ChartApp {
                             None
                         });
                     let widget_id_str = format!("prim_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                     self.panel_app.primitive_settings_state.open_color_picker_smart(
                         item_id, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
@@ -1771,7 +1771,7 @@ impl ChartApp {
                     PropertyType::Color => {
                         let current_color = prop_value.as_color().unwrap_or("#ffffff");
                         let widget_id_str = format!("prim_settings:item:{}", item_id);
-                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                         let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
@@ -1845,7 +1845,7 @@ impl ChartApp {
                     PropertyType::Color => {
                         let current_color = prop_value.as_color().unwrap_or("#ffffff");
                         let widget_id_str = format!("prim_settings:item:{}", item_id);
-                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                         let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
@@ -1903,7 +1903,7 @@ impl ChartApp {
                     PropertyType::Color => {
                         let current_color = prop_value.as_color().unwrap_or("#ffffff");
                         let widget_id_str = format!("prim_settings:item:{}", item_id);
-                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                         let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
@@ -2761,7 +2761,7 @@ impl ChartApp {
             };
 
             let widget_id_str = format!("ind_settings:item:{}", item_id);
-            let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+            let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
             let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
                 .map(|r| (r.x, r.y, r.width, r.height))
                 .unwrap_or((0.0, 0.0, 0.0, 0.0));
@@ -3011,7 +3011,7 @@ impl ChartApp {
                         .get_instance(ind_id)
                         .map(|inst| inst.signal_display.bullish_color.clone());
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
                         .map(|r| (r.x, r.y, r.width, r.height))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
@@ -3030,7 +3030,7 @@ impl ChartApp {
                         .get_instance(ind_id)
                         .map(|inst| inst.signal_display.bearish_color.clone());
                     let widget_id_str = format!("ind_settings:item:{}", item_id);
-                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId(widget_id_str));
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
                     let (anchor_x, anchor_y, anchor_w, anchor_h) = rect
                         .map(|r| (r.x, r.y, r.width, r.height))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));

@@ -232,12 +232,10 @@ impl Primitive for Image {
         let img_w = half_w * 2.0;
         let img_h = half_h * 2.0;
 
-        // Try to draw the actual image if URL is set
-        let image_drawn = if !self.url.is_empty() {
-            ctx.draw_image(&self.url, img_x, img_y, img_w, img_h)
-        } else {
-            false
-        };
+        // URL-based image drawing requires the opt-in ImagePainter capability.
+        // Chart's RenderContext does not bind ImagePainter, so always fall through
+        // to the placeholder rendering below.
+        let image_drawn = false;
 
         // Draw placeholder if image not loaded or no URL
         if !image_drawn {

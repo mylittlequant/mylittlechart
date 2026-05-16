@@ -216,7 +216,7 @@ async fn run_ws_actor(
         }
 
         // Build a new WS connection.
-        let mut ws: Box<dyn WebSocketConnector> =
+        let ws: Box<dyn WebSocketConnector> =
             match build_ws(key.exchange_id, &ws_rtt_handles, None).await {
                 Ok(ws) => ws,
                 Err(e) => {
@@ -492,7 +492,7 @@ async fn run_private_ws_actor(
         }
         retry_count += 1;
 
-        let mut ws: Box<dyn WebSocketConnector> =
+        let ws: Box<dyn WebSocketConnector> =
             match build_ws(key.exchange_id, &ws_rtt_handles, credentials.clone()).await {
                 Ok(ws) => ws,
                 Err(e) => {
@@ -576,7 +576,7 @@ async fn build_ws(
 ) -> Result<Box<dyn WebSocketConnector>, String> {
     macro_rules! standard {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
+            let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -589,7 +589,7 @@ async fn build_ws(
 
     macro_rules! credentials_only {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(credentials.clone())
+            let ws = <$ws_type>::new(credentials.clone())
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -602,7 +602,7 @@ async fn build_ws(
 
     macro_rules! sync_new {
         ($ws_type:ty) => {{
-            let mut ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
+            let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
                 .await
@@ -625,7 +625,7 @@ async fn build_ws(
 
         // ── OKX: new(creds, testnet) — no AccountType in constructor ──
         ExchangeId::OKX => {
-            let mut ws = OkxWebSocket::new(credentials.clone(), false)
+            let ws = OkxWebSocket::new(credentials.clone(), false)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -649,7 +649,7 @@ async fn build_ws(
 
         // ── Kraken: new(token_opt, account_type) async — uses its own token type ──
         ExchangeId::Kraken => {
-            let mut ws = KrakenWebSocket::new(None, AccountType::Spot)
+            let ws = KrakenWebSocket::new(None, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -661,7 +661,7 @@ async fn build_ws(
 
         // ── Bitstamp: new() takes no arguments ──
         ExchangeId::Bitstamp => {
-            let mut ws = BitstampWebSocket::new()
+            let ws = BitstampWebSocket::new()
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -673,7 +673,7 @@ async fn build_ws(
 
         // ── HyperLiquid: sync new(testnet) ──
         ExchangeId::HyperLiquid => {
-            let mut ws = HyperliquidWebSocket::new(false);
+            let ws = HyperliquidWebSocket::new(false);
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;
@@ -683,7 +683,7 @@ async fn build_ws(
 
         // ── Upbit: new(creds, region) async ──
         ExchangeId::Upbit => {
-            let mut ws = UpbitWebSocket::new(credentials.clone(), "sg")
+            let ws = UpbitWebSocket::new(credentials.clone(), "sg")
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -695,7 +695,7 @@ async fn build_ws(
 
         // ── dYdX: new(testnet, account_type) async ──
         ExchangeId::Dydx => {
-            let mut ws = DydxWebSocket::new(false, AccountType::Spot)
+            let ws = DydxWebSocket::new(false, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -707,7 +707,7 @@ async fn build_ws(
 
         // ── MOEX: sync new_public() ──
         ExchangeId::Moex => {
-            let mut ws = MoexWebSocket::new_public();
+            let ws = MoexWebSocket::new_public();
             ws.connect(AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS connect failed: {}", e))?;

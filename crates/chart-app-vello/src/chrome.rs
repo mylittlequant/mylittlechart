@@ -355,7 +355,7 @@ fn widget_id_for_hit(hit: ChromeHit) -> Option<&'static str> {
 pub fn update_tooltip(state: &mut ChromeState, cursor_x: f64, cursor_y: f64, time_ms: f64) {
     let hit = state.hovered;
 
-    let widget_id = widget_id_for_hit(hit).map(WidgetId::new);
+    let widget_id = widget_id_for_hit(hit).map(WidgetId::from);
     state.tooltip.update(widget_id.clone(), time_ms);
 
     if let (Some(wid), Some(text)) = (widget_id, tooltip_for_hit(hit, state.is_maximized)) {

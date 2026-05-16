@@ -1824,7 +1824,7 @@ impl ChartApp {
                             Ok(tree) => {
                                 // Replace the docking manager with the restored tree.
                                 *self.sidebar_state.agent_docking.inner_mut() =
-                                    uzor::panels::DockingManager::from_tree(tree);
+                                    uzor::layout::DockState::from_tree(tree);
 
                                 // Rebuild the agent_leaves map from persisted descriptors.
                                 // Each leaf gets a registered instance via create_instance so
@@ -4029,7 +4029,7 @@ impl ChartApp {
             if let Some(ref cp) = fr.color_picker {
                 if let Some(ref l2) = cp.l2_result {
                     let r = &l2.hex_input_rect;
-                    let hex_id = WidgetId::new(text_input::HEX_COLOR);
+                    let hex_id = WidgetId::from(text_input::HEX_COLOR);
                     self.input_coordinator.borrow_mut().text_fields_mut().update_field(
                         &hex_id,
                         (r.x, r.y, r.width, r.height),
@@ -4045,7 +4045,7 @@ impl ChartApp {
                 sidebar_result.agent_input_rect,
                 sidebar_result.agent_input_char_positions.clone(),
             ) {
-                let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+                let chat_id = WidgetId::from(text_input::AGENT_CHAT);
                 self.input_coordinator.borrow_mut().text_fields_mut().update_field(
                     &chat_id,
                     (rect.x, rect.y, rect.width, rect.height),
@@ -4214,7 +4214,7 @@ impl ChartApp {
 
         // Sync cursor blink state — render() does this in prepare_frame,
         // but render_sidebar_only() skips prepare_frame so we must do it here.
-        let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+        let chat_id = WidgetId::from(text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4429,7 +4429,7 @@ impl ChartApp {
             sidebar_result.agent_input_rect,
             sidebar_result.agent_input_char_positions.clone(),
         ) {
-            let chat_id = WidgetId::new(text_input::AGENT_CHAT);
+            let chat_id = WidgetId::from(text_input::AGENT_CHAT);
             self.input_coordinator.borrow_mut().text_fields_mut().update_field(
                 &chat_id,
                 (rect.x, rect.y, rect.width, rect.height),

@@ -66,7 +66,7 @@ impl ChartApp {
                 // color picker can be anchored beneath the clicked button.
                 let widget_id_str = "ilb:inline:color".to_string();
                 let rect = self.input_coordinator.borrow_mut().widget_rect(
-                    &uzor::input::WidgetId(widget_id_str),
+                    &uzor::input::WidgetId::from(widget_id_str),
                 );
                 let (ax, ay, aw, ah) = rect
                     .map(|r| (r.x, r.y, r.width, r.height))
@@ -88,7 +88,7 @@ impl ChartApp {
 
                 let widget_id_str = "ilb:inline:text_color".to_string();
                 let rect = self.input_coordinator.borrow_mut().widget_rect(
-                    &uzor::input::WidgetId(widget_id_str),
+                    &uzor::input::WidgetId::from(widget_id_str),
                 );
                 let (ax, ay, aw, ah) = rect
                     .map(|r| (r.x, r.y, r.width, r.height))

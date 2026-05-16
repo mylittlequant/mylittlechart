@@ -533,16 +533,16 @@ impl ChartApp {
                         }
                         AgentSpawnLayout::SplitH | AgentSpawnLayout::SplitV => {
                             let split_kind = if self.sidebar_state.agent_spawn_layout == AgentSpawnLayout::SplitH {
-                                uzor::panels::SplitKind::Horizontal
+                                uzor::panels::SplitKind::SplitRight
                             } else {
-                                uzor::panels::SplitKind::Vertical
+                                uzor::panels::SplitKind::SplitBottom
                             };
                             if let Some(focus) = self.sidebar_state.focused_agent_leaf {
                                 // Tree already has leaves — split the focused one using the selected direction.
                                 let rw = self.sidebar_state.right_sidebar_width as f32;
                                 let rh = self.height as f32;
                                 let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
-                                    .split_leaf(focus, split_kind, rw, rh);
+                                    .split_leaf_with_children(focus, split_kind, rw, rh);
                                 if new_ids.len() >= 2 {
                                     let original_id = new_ids[0];
                                     let sibling_id  = new_ids[1];
@@ -659,13 +659,13 @@ impl ChartApp {
             if let Some(focus) = self.sidebar_state.focused_agent_leaf {
                 use uzor::panels::SplitKind;
                 use sidebar_content::agents_dock::AgentLeafDescriptor;
-                let kind = if widget_id == "agent:split_h" { SplitKind::Horizontal } else { SplitKind::Vertical };
+                let kind = if widget_id == "agent:split_h" { SplitKind::SplitRight } else { SplitKind::SplitBottom };
                 let rw = self.sidebar_state.right_sidebar_width as f32;
                 let rh = self.height as f32;
                 // split_leaf creates 2 new leaf nodes replacing the old one.
                 // new_ids[0] inherits the original leaf's position; new_ids[1] is the sibling.
                 let new_ids = self.sidebar_state.agent_docking.inner_mut().tree_mut()
-                    .split_leaf(focus, kind, rw, rh);
+                    .split_leaf_with_children(focus, kind, rw, rh);
                 if new_ids.len() >= 2 {
                     let original_id = new_ids[0];
                     let sibling_id  = new_ids[1];
@@ -740,7 +740,7 @@ impl ChartApp {
                     {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&next_id).map(|s| s.as_str()).unwrap_or("");
-                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                 }
@@ -765,7 +765,7 @@ impl ChartApp {
                     {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                     self.sidebar_data_dirty = true;
@@ -795,7 +795,7 @@ impl ChartApp {
                         Some(gate4agent::InstanceMode::Chat) => {
                             let buf = self.sidebar_state.agent_input_buffers
                                 .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                            let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                            let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                             self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                         }
@@ -834,7 +834,7 @@ impl ChartApp {
                             {
                                 let buf = self.sidebar_state.agent_input_buffers
                                     .get(&next_id).map(|s| s.as_str()).unwrap_or("");
-                                let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                                let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                                 self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                             }
                         }
@@ -1037,7 +1037,7 @@ impl ChartApp {
                                 // Sync buffer first to avoid leaking previous leaf's text.
                                 let buf = self.sidebar_state.agent_input_buffers
                                     .get(&leaf_id).map(|s| s.as_str()).unwrap_or("");
-                                let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                                let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                                 self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                                 self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&chat_id);
                                 self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
@@ -1054,7 +1054,7 @@ impl ChartApp {
             // --- Per-leaf: agent:leaf:{id}:input (chat input focus) ---
             if let Some(id_str) = rest.strip_suffix(":input") {
                 if let Ok(_raw) = id_str.parse::<u64>() {
-                    let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                    let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                     if !self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
                         self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&chat_id);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
@@ -1071,7 +1071,7 @@ impl ChartApp {
                     let leaf_id = uzor::panels::LeafId(raw);
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
-                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         let from_field = self.input_coordinator.borrow().text_fields().text(&chat_id).to_string();
                         let from_buffer = self.sidebar_state.agent_input_buffers
                             .get(&leaf_id).cloned().unwrap_or_default();
@@ -3177,7 +3177,7 @@ impl ChartApp {
                     if let Ok(leaf_id_val) = id["split_h:".len()..].parse::<u64>() {
                         let leaf_id = zengeld_chart::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
-                        self.do_split(zengeld_chart::SplitKind::Horizontal);
+                        self.do_split(zengeld_chart::SplitKind::SplitRight);
                         eprintln!("[TagsTabs] Split horizontal for leaf {}", leaf_id_val);
                     }
                 }
@@ -3185,7 +3185,7 @@ impl ChartApp {
                     if let Ok(leaf_id_val) = id["split_v:".len()..].parse::<u64>() {
                         let leaf_id = zengeld_chart::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
-                        self.do_split(zengeld_chart::SplitKind::Vertical);
+                        self.do_split(zengeld_chart::SplitKind::SplitBottom);
                         eprintln!("[TagsTabs] Split vertical for leaf {}", leaf_id_val);
                     }
                 }

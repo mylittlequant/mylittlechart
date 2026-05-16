@@ -155,7 +155,7 @@ impl ChartApp {
     /// True when the Agent PTY field currently owns keyboard focus — used by the
     /// platform runner to short-circuit named-key and char routing straight to the PTY.
     pub fn is_agent_pty_focused(&self) -> bool {
-        let pty_id = WidgetId::new(crate::text_input::AGENT_PTY);
+        let pty_id = WidgetId::from(crate::text_input::AGENT_PTY);
         self.input_coordinator.borrow().text_fields().is_focused(&pty_id)
     }
 
@@ -310,7 +310,7 @@ impl ChartApp {
         // This MUST come before the drawing tool guard so toolbar clicks still work.
         // Drop the RefMut borrow before calling dispatch_panel_click (which needs &mut self).
         let clicked_widget_id = self.input_coordinator.borrow_mut().process_click(x, y)
-            .map(|w| w.0.clone());
+            .map(|w| w.as_str().to_string());
         if let Some(id) = clicked_widget_id {
             eprintln!("[ChartApp] click dispatched to: {}", id);
             self.dispatch_panel_click(&id, x, y);
@@ -606,7 +606,7 @@ impl ChartApp {
         // click never reaches handle_toolbar_click_with_chart, so the
         // last_magnet_click_time comparison never fires.
         let dbl_clicked_id = self.input_coordinator.borrow_mut().process_click(x, y)
-            .map(|w| w.0.clone());
+            .map(|w| w.as_str().to_string());
         if let Some(id) = dbl_clicked_id {
             let is_toolbar = id.starts_with("toolbar:")
                 || id.starts_with("dtb:")
@@ -621,7 +621,7 @@ impl ChartApp {
             }
         }
 
-        let double_click_wid: Option<String> = self.input_coordinator.borrow_mut().process_double_click(x, y).map(|w| w.0.clone());
+        let double_click_wid: Option<String> = self.input_coordinator.borrow_mut().process_double_click(x, y).map(|w| w.as_str().to_string());
         if let Some(wid) = double_click_wid {
             let id_str = &wid;
             if id_str == "watchlist:column_header" {
@@ -750,7 +750,7 @@ impl ChartApp {
         // MUST run BEFORE PTY/Chat drag so separator hit zones take priority
         // over the leaf content areas that may overlap the separator zone.
         if self.agent_sep_drag.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered_wid {
                 if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
                     if let Ok(sep_idx) = idx_str.parse::<usize>() {
@@ -869,7 +869,7 @@ impl ChartApp {
                     if leaf_mode == Some(gate4agent::InstanceMode::Chat) {
                         let buf = self.sidebar_state.agent_input_buffers
                             .get(&hovered_leaf_id).map(|s| s.as_str()).unwrap_or("");
-                        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+                        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, buf);
                     }
                     self.sidebar_data_dirty = true;
@@ -1064,7 +1064,7 @@ impl ChartApp {
         // This must be checked BEFORE the modal guard so the separator is reachable
         // even when a sidebar panel is open (which registers the sidebar as a UI widget).
         let on_sidebar_separator = self.input_coordinator.borrow_mut().hovered_widget()
-            .map(|h| h.0 == "right_sidebar_separator")
+            .map(|h| h.as_str() == "right_sidebar_separator")
             .unwrap_or(false);
         if on_sidebar_separator {
             self.sidebar_separator_drag_active = true;
@@ -1076,7 +1076,7 @@ impl ChartApp {
         if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Watchlist {
             // Widget ids use 1-based indexing; strip prefix and subtract 1 for 0-based sep index.
             let on_sep = self.input_coordinator.borrow_mut().hovered_widget()
-                .and_then(|h| h.0.strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
+                .and_then(|h| h.as_str().strip_prefix("watchlist_sep_").and_then(|s| s.parse::<usize>().ok()))
                 .map(|one_based| one_based.saturating_sub(1));
             // Skip separator drag when columns are in equal-width (aligned) mode.
             let align_cols = self.sidebar_state.watchlist_manager
@@ -1143,11 +1143,11 @@ impl ChartApp {
         // Must be checked before the modal guard so it works while the sidebar is open.
         if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Watchlist {
             let on_watchlist_row = self.input_coordinator.borrow_mut().hovered_widget()
-                .and_then(|h| h.0.strip_prefix("watchlist_").and_then(|s| s.parse::<usize>().ok()));
+                .and_then(|h| h.as_str().strip_prefix("watchlist_").and_then(|s| s.parse::<usize>().ok()));
             if let Some(idx) = on_watchlist_row {
                 // Verify this is a plain index (not "watchlist_delete_N" etc.).
                 let hovered_id = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.0.clone())
+                    .map(|h| h.as_str().to_string())
                     .unwrap_or_default();
                 if hovered_id == format!("watchlist_{}", idx) {
                     self.sidebar_state.watchlist_drag_index = Some(idx);
@@ -1211,7 +1211,7 @@ impl ChartApp {
         // ── Free-slot separator drag initiation ──────────────────────────────
         // Detect `"slot:{slot_idx}:sep:{sep_idx}"` widget hover → begin separator resize drag.
         if self.slot_sep_drag.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered_wid {
                 if let Some(rest) = wid.strip_prefix("slot:") {
                     if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
@@ -1253,7 +1253,7 @@ impl ChartApp {
         // or `slot:{idx}:leaf:{leaf_id}:focus_content` (other panel types).
         // DOM is now registered as a BlackboxPanel widget with id `slot:N:leaf:M:dom:body`.
         if self.active_drag_panel.is_none() {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered_wid {
                 // Check for DOM BlackboxPanel widget: slot:N:leaf:M:dom:body
                 if let Some(rest) = wid.strip_prefix("slot:") {
@@ -1339,7 +1339,7 @@ impl ChartApp {
                 if x >= sr.x && x <= sr.x + sr.width && y >= sr.y && y <= sr.y + sr.height {
                     // Only start scroll-drag when not on the separator widget.
                     let on_sep = self.input_coordinator.borrow_mut().hovered_widget()
-                        .map(|h| h.0 == "right_sidebar_separator")
+                        .map(|h| h.as_str() == "right_sidebar_separator")
                         .unwrap_or(false);
                     if !on_sep {
                         self.sidebar_state.sidebar_drag_active = true;
@@ -1356,7 +1356,7 @@ impl ChartApp {
         // Modal header drags — dispatched via InputCoordinator registration.
         // Each modal registers its header rect with Sense::DRAG during render.
         if let Some(wid) = self.input_coordinator.borrow_mut().process_drag_start(x, y) {
-            let id = wid.0.clone();
+            let id = wid.as_str().to_string();
             if id.ends_with(":header") {
                 let prefix = &id[..id.len() - 7];
                 let started = match prefix {
@@ -1906,7 +1906,7 @@ impl ChartApp {
                 // Guard: if the pointer is over a delete button, don't start drag — let it be a click.
                 // Check hovered widget AND check delete_btn_rects directly (hovered_widget can lag).
                 let over_delete_hovered = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.0.starts_with("wl_modal:delete:"))
+                    .map(|h| h.as_str().starts_with("wl_modal:delete:"))
                     .unwrap_or(false);
                 let over_delete_rect = wl.delete_btn_rects.iter()
                     .any(|(_sym, r)| r.contains(x, y));
@@ -1959,7 +1959,7 @@ impl ChartApp {
             if let Some(bar_rect) = self.last_inline_bar_rect {
                 // Check if we're on the name label specifically
                 let on_name_label = self.input_coordinator.borrow_mut().hovered_widget()
-                    .map(|h| h.0 == "ilb:inline:name")
+                    .map(|h| h.as_str() == "ilb:inline:name")
                     .unwrap_or(false);
                 if on_name_label {
                     self.panel_app.toolbar_state.floating_inline_bar.start_drag(x, y, &bar_rect);
@@ -4201,7 +4201,7 @@ impl ChartApp {
         // the pointer as of the last begin_frame() (which uses last_mouse_pos).
         // We parse the prefix to determine which toolbar strip is hovered.
         if let Some(hovered) = self.input_coordinator.borrow_mut().hovered_widget() {
-            let id_str = &hovered.0;
+            let id_str = hovered.as_str();
             if let Some(item_id) = id_str.strip_prefix("dtb:") {
                 self.panel_app.toolbar_state.hovered_left_toolbar_id = Some(item_id.to_string());
             } else if let Some(item_id) = id_str.strip_prefix("csb:") {
@@ -4318,7 +4318,7 @@ impl ChartApp {
         self.panel_app.overlay_settings_state.hovered_item_id = None;
 
         {
-            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref id_str) = hovered {
                 let id = id_str.as_str();
 
@@ -4433,7 +4433,7 @@ impl ChartApp {
         // its own preview, the crosshair is redundant and visually noisy.
         {
             let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
-                .map(|w| w.0.starts_with("chart:pane:"))
+                .map(|w| w.as_str().starts_with("chart:pane:"))
                 .unwrap_or(false);
             // Drawing bypass: keep crosshair visible while ANY drawing is in progress
             // (matches baseline pre-migration behavior — both click-tool and freehand
@@ -4755,7 +4755,7 @@ impl ChartApp {
         // Sidebar separator: show EwResize cursor when hovering over or dragging the separator.
         let on_sidebar_separator = self.sidebar_separator_drag_active
             || self.input_coordinator.borrow_mut().hovered_widget()
-                .map(|h| h.0 == "right_sidebar_separator")
+                .map(|h| h.as_str() == "right_sidebar_separator")
                 .unwrap_or(false);
         if on_sidebar_separator {
             return CursorStyle::EwResize;
@@ -4764,7 +4764,7 @@ impl ChartApp {
         // Watchlist column separators: show EwResize cursor when hovering or dragging.
         let on_watchlist_col_sep = self.sidebar_state.watchlist_sep_drag.is_some()
             || self.input_coordinator.borrow_mut().hovered_widget()
-                .map(|h| h.0.starts_with("watchlist_sep_"))
+                .map(|h| h.as_str().starts_with("watchlist_sep_"))
                 .unwrap_or(false);
         if on_watchlist_col_sep {
             return CursorStyle::EwResize;
@@ -4782,7 +4782,7 @@ impl ChartApp {
         // would fire first and swallow the resize cursor).
         {
             use uzor::panels::SeparatorOrientation;
-            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered {
                 if let Some(idx_str) = wid.strip_prefix("agent:sep:") {
                     if let Ok(sep_idx) = idx_str.parse::<usize>() {
@@ -4892,7 +4892,7 @@ impl ChartApp {
             {
                 let opacity_step = 0.01 * -dy.signum();
                 let source = self.input_coordinator.borrow().hovered_widget().and_then(|wid| {
-                    wid.0.strip_prefix("color_picker_")
+                    wid.as_str().strip_prefix("color_picker_")
                         .and_then(|s| s.strip_suffix(":opacity_slider"))
                         .map(|s| s.to_string())
                 });
@@ -4945,7 +4945,7 @@ impl ChartApp {
             // This is sense-aware (uzor v1.1.3+) and immune to the 1-frame lag of
             // hovered_widget() which reads previous frame's hover state.
             {
-                let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
+                let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                 if let Some(ref id) = hovered_id {
                     match id.as_str() {
                         "chart_settings:scroll_viewport" => {
@@ -5088,7 +5088,7 @@ impl ChartApp {
             // process_scroll(x, y) is sense-aware — only returns SCROLL widgets, ignoring
             // any non-scroll widgets stacked above.
             {
-                let hovered_wid = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|w| w.0.clone());
+                let hovered_wid = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|w| w.as_str().to_string());
 
                 // prim_settings sliders — guard: modal must be open
                 if self.panel_app.primitive_settings_state.is_open() {
@@ -5308,7 +5308,7 @@ impl ChartApp {
                     // above (signal rows, group headers, etc.) and finds the topmost
                     // SCROLL-sensitive widget at cursor.
                     {
-                        let sg_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
+                        let sg_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                         if let Some(ref sg_id) = sg_hovered {
                             if let Some(iid_str) = sg_id.strip_prefix("signal_group:").and_then(|r| r.strip_suffix(":viewport")) {
                                 if let Ok(iid) = iid_str.parse::<u64>() {
@@ -5347,7 +5347,7 @@ impl ChartApp {
                     // Sense-aware process_scroll(x, y) — finds topmost SCROLL widget
                     // ignoring rows/items stacked above without scroll sense.
                     if self.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents {
-                        let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
+                        let hovered_id = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                         if let Some(ref id) = hovered_id {
                             let scroll_step = -dy;
 
@@ -5471,7 +5471,7 @@ impl ChartApp {
                             // Sense-aware process_scroll(x, y) finds dom:body even if non-scroll
                             // widgets (overlays/buttons) are stacked above.
                             let dom_leaf_opt = {
-                                let hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
+                                let hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                                 hovered.and_then(|wid| {
                                     let rest = wid.strip_prefix("slot:")?;
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
@@ -5579,7 +5579,7 @@ impl ChartApp {
                     // (slot focus_content, signal_group items, watchlist rows, etc.) and finds
                     // the topmost SCROLL-sensitive widget under the cursor.
                     {
-                        let sidebar_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.0.clone());
+                        let sidebar_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                         if sidebar_hovered.as_deref() == Some("right_sidebar:viewport") {
                             let content_h = sidebar_result.content_height;
                             let viewport_h = sidebar_result.content_rect.height;
@@ -5829,7 +5829,7 @@ impl ChartApp {
 
         // Handle color picker hex input editing.
         // Check all color picker instances; the first one with hex_editing=true consumes the event.
-        let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+        let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
         if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
             let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
             match action {
@@ -5866,7 +5866,7 @@ impl ChartApp {
             return;
         }
         // Agent PTY input — route raw characters directly to the focused leaf's PTY.
-        let pty_id = WidgetId::new(crate::text_input::AGENT_PTY);
+        let pty_id = WidgetId::from(crate::text_input::AGENT_PTY);
         if self.input_coordinator.borrow().text_fields().is_focused(&pty_id) {
             let action = self.input_coordinator.borrow_mut().text_fields_mut().on_char(ch);
             if let TextAction::RawInput(bytes) = action {
@@ -5883,7 +5883,7 @@ impl ChartApp {
             return;
         }
         // Agent chat input — route printable characters and Enter to the focused leaf's chat.
-        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             if ch == '\r' || ch == '\n' {
                 if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
@@ -7098,7 +7098,7 @@ impl ChartApp {
         }
 
         // ── Hex color picker key routing ──────────────────────────────────────
-        let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+        let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
         if self.input_coordinator.borrow().text_fields().is_focused(&hex_id) {
             if let Some(uzor_key) = to_uzor_key(&key) {
                 let action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
@@ -7155,7 +7155,7 @@ impl ChartApp {
         }
 
         // ── Agent chat key routing — syncs focused leaf's input buffer ────────
-        let chat_id = WidgetId::new(crate::text_input::AGENT_CHAT);
+        let chat_id = WidgetId::from(crate::text_input::AGENT_CHAT);
         if self.input_coordinator.borrow().text_fields().is_focused(&chat_id) {
             if let Some(uzor_key) = to_uzor_key(&key) {
                 let _action = self.input_coordinator.borrow_mut().text_fields_mut().on_key(uzor_key);
@@ -7301,7 +7301,7 @@ impl ChartApp {
         // Panels return `false` until they implement actual hotkeys, at which
         // point returning `true` stops propagation here.
         {
-            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.0.clone());
+            let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered_wid {
                 if let Some(rest) = wid.strip_prefix("slot:") {
                     if let Some((slot_str, leaf_rest)) = rest.split_once(":leaf:") {

@@ -136,7 +136,7 @@ impl ChartApp {
                     // without requiring an extra click to warm up geometry.
                     picker.hex_editing = true;
                     let hex = picker.hex_input.clone();
-                    let hex_id = WidgetId::new(crate::text_input::HEX_COLOR);
+                    let hex_id = WidgetId::from(crate::text_input::HEX_COLOR);
                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&hex_id, &hex);
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&hex_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::HEX_COLOR);

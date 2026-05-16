@@ -1,14 +1,20 @@
 //! Vello RenderContext implementation for vello 0.6
 //!
-//! Thin wrapper around `uzor_backend_vello_gpu::VelloGpuRenderContext` that
+//! Thin wrapper around `uzor_render_vello_gpu::VelloGpuRenderContext` that
 //! delegates all drawing operations to the GPU backend and adds chart-domain
 //! coordinate conversion (bar → X, price → Y) on top.
 
 use vello::Scene;
 use zengeld_chart::{PriceScale, Viewport};
 use zengeld_chart::render::RenderContext as ChartRenderContext;
-use uzor::render::{RenderContext as UzorRenderContext, RenderContextExt, TextAlign, TextBaseline};
-use uzor_backend_vello_gpu::VelloGpuRenderContext as InnerContext;
+use uzor::render::{
+    RenderContext as UzorRenderContext, RenderContextExt,
+    Painter, TextRenderer, TextMetrics, Masking, Effects,
+    ShapeHelpers, BatchPainter, GradientPainter, UiEffectHelpers,
+    TextAlign, TextBaseline, BlendMode, TextBounds,
+    LineSegment, CircleBatch,
+};
+use uzor_render_vello_gpu::VelloGpuRenderContext as InnerContext;
 
 // ─── Coordinate-space override ────────────────────────────────────────────────
 
@@ -28,7 +34,7 @@ struct CoordinateSpaceOverride {
 
 /// Chart render context backed by the vello GPU renderer.
 ///
-/// All drawing primitives are delegated to [`uzor_backend_vello_gpu::VelloGpuRenderContext`].
+/// All drawing primitives are delegated to [`uzor_render_vello_gpu::VelloGpuRenderContext`].
 /// This type only adds chart-domain coordinate conversion on top.
 pub struct VelloGpuRenderContext<'a> {
     inner: InnerContext<'a>,
@@ -60,23 +66,21 @@ impl<'a> VelloGpuRenderContext<'a> {
     }
 }
 
-// ─── UzorRenderContext — forward every method to inner ───────────────────────
+// ─── Painter ─────────────────────────────────────────────────────────────────
 
-impl<'a> UzorRenderContext for VelloGpuRenderContext<'a> {
-    fn dpr(&self) -> f64 { self.inner.dpr() }
-
-    // Stroke style
+impl<'a> Painter for VelloGpuRenderContext<'a> {
+    fn save(&mut self) { self.inner.save() }
+    fn restore(&mut self) { self.inner.restore() }
+    fn translate(&mut self, x: f64, y: f64) { self.inner.translate(x, y) }
+    fn rotate(&mut self, angle: f64) { self.inner.rotate(angle) }
+    fn scale(&mut self, x: f64, y: f64) { self.inner.scale(x, y) }
+    fn set_fill_color(&mut self, color: &str) { self.inner.set_fill_color(color) }
+    fn set_global_alpha(&mut self, alpha: f64) { self.inner.set_global_alpha(alpha) }
     fn set_stroke_color(&mut self, color: &str) { self.inner.set_stroke_color(color) }
     fn set_stroke_width(&mut self, width: f64) { self.inner.set_stroke_width(width) }
     fn set_line_dash(&mut self, pattern: &[f64]) { self.inner.set_line_dash(pattern) }
     fn set_line_cap(&mut self, cap: &str) { self.inner.set_line_cap(cap) }
     fn set_line_join(&mut self, join: &str) { self.inner.set_line_join(join) }
-
-    // Fill style
-    fn set_fill_color(&mut self, color: &str) { self.inner.set_fill_color(color) }
-    fn set_global_alpha(&mut self, alpha: f64) { self.inner.set_global_alpha(alpha) }
-
-    // Path operations
     fn begin_path(&mut self) { self.inner.begin_path() }
     fn move_to(&mut self, x: f64, y: f64) { self.inner.move_to(x, y) }
     fn line_to(&mut self, x: f64, y: f64) { self.inner.line_to(x, y) }
@@ -94,54 +98,97 @@ impl<'a> UzorRenderContext for VelloGpuRenderContext<'a> {
     fn bezier_curve_to(&mut self, cp1x: f64, cp1y: f64, cp2x: f64, cp2y: f64, x: f64, y: f64) {
         self.inner.bezier_curve_to(cp1x, cp1y, cp2x, cp2y, x, y)
     }
-
-    // Stroke/fill/clip
     fn stroke(&mut self) { self.inner.stroke() }
     fn fill(&mut self) { self.inner.fill() }
-    fn fill_linear_gradient(&mut self, stops: &[(f32, &str)], x1: f64, y1: f64, x2: f64, y2: f64) {
-        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2);
-    }
-    fn clip(&mut self) { self.inner.clip() }
+}
 
-    // Shape helpers
-    fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.stroke_rect(x, y, w, h) }
-    fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.fill_rect(x, y, w, h) }
+// ─── TextRenderer ─────────────────────────────────────────────────────────────
 
-    // Text
+impl<'a> TextRenderer for VelloGpuRenderContext<'a> {
     fn set_font(&mut self, font: &str) { self.inner.set_font(font) }
     fn set_text_align(&mut self, align: TextAlign) { self.inner.set_text_align(align) }
     fn set_text_baseline(&mut self, baseline: TextBaseline) { self.inner.set_text_baseline(baseline) }
     fn fill_text(&mut self, text: &str, x: f64, y: f64) { self.inner.fill_text(text, x, y) }
     fn stroke_text(&mut self, text: &str, x: f64, y: f64) { self.inner.stroke_text(text, x, y) }
-    fn measure_text(&self, text: &str) -> f64 { self.inner.measure_text(text) }
-
-    /// Override to use the inner context's corrected rotation implementation.
     fn fill_text_rotated(&mut self, text: &str, x: f64, y: f64, angle: f64) {
         self.inner.fill_text_rotated(text, x, y, angle)
     }
+}
 
-    // Transform
-    fn save(&mut self) { self.inner.save() }
-    fn restore(&mut self) { self.inner.restore() }
-    fn translate(&mut self, x: f64, y: f64) { self.inner.translate(x, y) }
-    fn rotate(&mut self, angle: f64) { self.inner.rotate(angle) }
-    fn scale(&mut self, x: f64, y: f64) { self.inner.scale(x, y) }
+// ─── TextMetrics ──────────────────────────────────────────────────────────────
 
-    // Images
-    fn draw_image_rgba(
-        &mut self,
-        data: &[u8],
-        img_width: u32,
-        img_height: u32,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-    ) {
-        self.inner.draw_image_rgba(data, img_width, img_height, x, y, width, height)
+impl<'a> TextMetrics for VelloGpuRenderContext<'a> {
+    fn measure_text(&self, text: &str) -> f64 { self.inner.measure_text(text) }
+    fn text_bounds(&self, text: &str, font: &str) -> TextBounds { self.inner.text_bounds(text, font) }
+}
+
+// ─── Masking ──────────────────────────────────────────────────────────────────
+
+impl<'a> Masking for VelloGpuRenderContext<'a> {
+    fn clip(&mut self) { self.inner.clip() }
+}
+
+// ─── Effects ──────────────────────────────────────────────────────────────────
+
+impl<'a> Effects for VelloGpuRenderContext<'a> {
+    fn set_shadow(&mut self, dx: f64, dy: f64, blur: f64, color: &str) {
+        self.inner.set_shadow(dx, dy, blur, color)
     }
+    fn clear_shadow(&mut self) { self.inner.clear_shadow() }
+    fn set_blend_mode(&mut self, mode: BlendMode) { self.inner.set_blend_mode(mode) }
+}
 
-    // Blur / glass effects
+// ─── ShapeHelpers ─────────────────────────────────────────────────────────────
+
+impl<'a> ShapeHelpers for VelloGpuRenderContext<'a> {
+    fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.stroke_rect(x, y, w, h) }
+    fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) { self.inner.fill_rect(x, y, w, h) }
+    fn rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, r: f64) {
+        self.inner.rounded_rect(x, y, w, h, r)
+    }
+    fn rounded_rect_corners(
+        &mut self, x: f64, y: f64, w: f64, h: f64,
+        tl: f64, tr: f64, br: f64, bl: f64,
+    ) {
+        self.inner.rounded_rect_corners(x, y, w, h, tl, tr, br, bl)
+    }
+}
+
+// ─── BatchPainter ─────────────────────────────────────────────────────────────
+
+impl<'a> BatchPainter for VelloGpuRenderContext<'a> {
+    fn draw_line_batch(&mut self, lines: &[LineSegment], color: &str, width: f64) {
+        self.inner.draw_line_batch(lines, color, width)
+    }
+    fn draw_circle_batch(&mut self, circles: &[CircleBatch], color: &str) {
+        self.inner.draw_circle_batch(circles, color)
+    }
+    fn stroke_polyline(&mut self, pts: &[(f64, f64)], color: &str, width: f64) {
+        self.inner.stroke_polyline(pts, color, width)
+    }
+}
+
+// ─── GradientPainter ──────────────────────────────────────────────────────────
+
+impl<'a> GradientPainter for VelloGpuRenderContext<'a> {
+    fn fill_linear_gradient(
+        &mut self, stops: &[(f32, &str)],
+        x1: f64, y1: f64, x2: f64, y2: f64,
+    ) {
+        self.inner.fill_linear_gradient(stops, x1, y1, x2, y2)
+    }
+    fn fill_radial_gradient(
+        &mut self, cx: f64, cy: f64, r: f64,
+        stops: &[(f32, &str)],
+        x: f64, y: f64, w: f64, h: f64,
+    ) {
+        self.inner.fill_radial_gradient(cx, cy, r, stops, x, y, w, h)
+    }
+}
+
+// ─── UiEffectHelpers ──────────────────────────────────────────────────────────
+
+impl<'a> UiEffectHelpers for VelloGpuRenderContext<'a> {
     fn draw_blur_background(&mut self, x: f64, y: f64, width: f64, height: f64) {
         self.inner.draw_blur_background(x, y, width, height)
     }
@@ -149,16 +196,17 @@ impl<'a> UzorRenderContext for VelloGpuRenderContext<'a> {
     fn use_convex_glass_buttons(&self) -> bool { self.inner.use_convex_glass_buttons() }
     fn draw_glass_button_3d(
         &mut self,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-        radius: f64,
-        is_active: bool,
-        color: &str,
+        x: f64, y: f64, width: f64, height: f64,
+        radius: f64, is_active: bool, color: &str,
     ) {
         self.inner.draw_glass_button_3d(x, y, width, height, radius, is_active, color)
     }
+}
+
+// ─── UzorRenderContext ────────────────────────────────────────────────────────
+
+impl<'a> UzorRenderContext for VelloGpuRenderContext<'a> {
+    fn dpr(&self) -> f64 { self.inner.dpr() }
 }
 
 // ─── RenderContextExt — forward to inner ─────────────────────────────────────
@@ -242,5 +290,4 @@ impl<'a> ChartRenderContext for VelloGpuRenderContext<'a> {
             price_max,
         });
     }
-
 }
