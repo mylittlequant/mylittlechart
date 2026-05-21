@@ -470,13 +470,6 @@ pub struct ChartApp {
     /// Controlled via the Performance tab toggle in User Settings.
     pub diagnostics_enabled: bool,
 
-    /// Cached connector registry — built once on first sidebar open, reused every frame.
-    ///
-    /// `ConnectorRegistry::new()` allocates a HashMap from a 50+ entry static array.
-    /// The registry data is static and never changes at runtime, so we cache it here
-    /// to avoid a per-frame heap allocation when the connectors sidebar panel is open.
-    connector_registry: Option<digdigdig3::connector_manager::ConnectorRegistry>,
-
     /// Sidebar data needs rebuild — set by mutations, cleared after sidebar populate.
     ///
     /// When `false` the sidebar population block is skipped entirely, saving the
@@ -907,7 +900,6 @@ impl ChartApp {
             recalc_log_timer: std::time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
-            connector_registry: None,
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
@@ -1050,29 +1042,36 @@ impl ChartApp {
         // Ensure connectors for all registered exchanges.
         // New connectors default to disabled — only explicitly enabled ones start.
         {
-            use digdigdig3::connector_manager::ConnectorRegistry;
-            let registry = ConnectorRegistry::new();
-            for meta in registry.list_all() {
+            use digdigdig3::ExchangeId;
+            const ALL_EXCHANGE_IDS: &[ExchangeId] = &[
+                ExchangeId::Binance, ExchangeId::Bybit, ExchangeId::OKX, ExchangeId::KuCoin,
+                ExchangeId::GateIO, ExchangeId::Bitget, ExchangeId::MEXC, ExchangeId::HTX,
+                ExchangeId::Kraken, ExchangeId::Coinbase, ExchangeId::BingX, ExchangeId::Bitfinex,
+                ExchangeId::Bitstamp, ExchangeId::Gemini, ExchangeId::CryptoCom, ExchangeId::Lighter,
+                ExchangeId::Upbit, ExchangeId::Deribit, ExchangeId::HyperLiquid,
+                ExchangeId::Dydx, ExchangeId::Moex,
+            ];
+            for &eid in ALL_EXCHANGE_IDS {
                 // Original 24 exchanges default to enabled; new ones default to disabled.
                 // l3/open connectors with real capabilities — enabled by default
-                let default_enabled = matches!(meta.id,
-                    digdigdig3::ExchangeId::Binance | digdigdig3::ExchangeId::Bybit |
-                    digdigdig3::ExchangeId::OKX | digdigdig3::ExchangeId::KuCoin |
-                    digdigdig3::ExchangeId::GateIO | digdigdig3::ExchangeId::Bitget |
-                    digdigdig3::ExchangeId::MEXC | digdigdig3::ExchangeId::HTX |
-                    digdigdig3::ExchangeId::Kraken | digdigdig3::ExchangeId::Coinbase |
-                    digdigdig3::ExchangeId::BingX | digdigdig3::ExchangeId::Bitfinex |
-                    digdigdig3::ExchangeId::Bitstamp | digdigdig3::ExchangeId::Gemini |
-                    digdigdig3::ExchangeId::CryptoCom | digdigdig3::ExchangeId::Lighter |
-                    digdigdig3::ExchangeId::Upbit |
-                    digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
-                    digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Moex
+                let default_enabled = matches!(eid,
+                    ExchangeId::Binance | ExchangeId::Bybit |
+                    ExchangeId::OKX | ExchangeId::KuCoin |
+                    ExchangeId::GateIO | ExchangeId::Bitget |
+                    ExchangeId::MEXC | ExchangeId::HTX |
+                    ExchangeId::Kraken | ExchangeId::Coinbase |
+                    ExchangeId::BingX | ExchangeId::Bitfinex |
+                    ExchangeId::Bitstamp | ExchangeId::Gemini |
+                    ExchangeId::CryptoCom | ExchangeId::Lighter |
+                    ExchangeId::Upbit |
+                    ExchangeId::Deribit | ExchangeId::HyperLiquid |
+                    ExchangeId::Dydx |
+                    ExchangeId::Moex
                 );
-                if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
+                if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
                 }
-                bridge.ensure_connector(meta.id);
+                bridge.ensure_connector(eid);
             }
         }
 
@@ -1214,7 +1213,6 @@ impl ChartApp {
             recalc_log_timer: std::time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
-            connector_registry: None,
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
@@ -1409,7 +1407,6 @@ impl ChartApp {
             recalc_log_timer: std::time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
-            connector_registry: None,
             sidebar_data_dirty: true,
             last_active_leaf: None,
             render_timing_us: (0, 0, 0, 0),
@@ -1636,29 +1633,36 @@ impl ChartApp {
         // Warm up all enabled connectors (idempotent — ensure_connector is a no-op if started).
         // New connectors default to disabled — only explicitly enabled ones start.
         if !skeleton {
-            use digdigdig3::connector_manager::ConnectorRegistry;
-            let registry = ConnectorRegistry::new();
-            for meta in registry.list_all() {
+            use digdigdig3::ExchangeId;
+            const ALL_EXCHANGE_IDS: &[ExchangeId] = &[
+                ExchangeId::Binance, ExchangeId::Bybit, ExchangeId::OKX, ExchangeId::KuCoin,
+                ExchangeId::GateIO, ExchangeId::Bitget, ExchangeId::MEXC, ExchangeId::HTX,
+                ExchangeId::Kraken, ExchangeId::Coinbase, ExchangeId::BingX, ExchangeId::Bitfinex,
+                ExchangeId::Bitstamp, ExchangeId::Gemini, ExchangeId::CryptoCom, ExchangeId::Lighter,
+                ExchangeId::Upbit, ExchangeId::Deribit, ExchangeId::HyperLiquid,
+                ExchangeId::Dydx, ExchangeId::Moex,
+            ];
+            for &eid in ALL_EXCHANGE_IDS {
                 // Original 24 exchanges default to enabled; new ones default to disabled.
                 // l3/open connectors with real capabilities — enabled by default
-                let default_enabled = matches!(meta.id,
-                    digdigdig3::ExchangeId::Binance | digdigdig3::ExchangeId::Bybit |
-                    digdigdig3::ExchangeId::OKX | digdigdig3::ExchangeId::KuCoin |
-                    digdigdig3::ExchangeId::GateIO | digdigdig3::ExchangeId::Bitget |
-                    digdigdig3::ExchangeId::MEXC | digdigdig3::ExchangeId::HTX |
-                    digdigdig3::ExchangeId::Kraken | digdigdig3::ExchangeId::Coinbase |
-                    digdigdig3::ExchangeId::BingX | digdigdig3::ExchangeId::Bitfinex |
-                    digdigdig3::ExchangeId::Bitstamp | digdigdig3::ExchangeId::Gemini |
-                    digdigdig3::ExchangeId::CryptoCom | digdigdig3::ExchangeId::Lighter |
-                    digdigdig3::ExchangeId::Upbit |
-                    digdigdig3::ExchangeId::Deribit | digdigdig3::ExchangeId::HyperLiquid |
-                    digdigdig3::ExchangeId::Dydx |
-                    digdigdig3::ExchangeId::Moex
+                let default_enabled = matches!(eid,
+                    ExchangeId::Binance | ExchangeId::Bybit |
+                    ExchangeId::OKX | ExchangeId::KuCoin |
+                    ExchangeId::GateIO | ExchangeId::Bitget |
+                    ExchangeId::MEXC | ExchangeId::HTX |
+                    ExchangeId::Kraken | ExchangeId::Coinbase |
+                    ExchangeId::BingX | ExchangeId::Bitfinex |
+                    ExchangeId::Bitstamp | ExchangeId::Gemini |
+                    ExchangeId::CryptoCom | ExchangeId::Lighter |
+                    ExchangeId::Upbit |
+                    ExchangeId::Deribit | ExchangeId::HyperLiquid |
+                    ExchangeId::Dydx |
+                    ExchangeId::Moex
                 );
-                if !app.sidebar_state.connector_enabled.get(meta.id.as_str()).copied().unwrap_or(default_enabled) {
+                if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(default_enabled) {
                     continue;
                 }
-                bridge.ensure_connector(meta.id);
+                bridge.ensure_connector(eid);
             }
         }
 

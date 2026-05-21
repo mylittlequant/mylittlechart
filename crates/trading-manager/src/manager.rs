@@ -223,13 +223,13 @@ impl TradingManager {
 
         for update in live_updates {
             match update {
-                live_data::LiveUpdate::OrderUpdate { exchange_id, account_type, event } => {
+                live_data::LiveUpdate::OrderUpdate { exchange_id, account_type, symbol: order_symbol, event } => {
                     let key = (*exchange_id, *account_type);
                     if let Some(om) = self.order_managers.get_mut(&key) {
                         let order = Order {
                             id: event.order_id.clone(),
                             client_order_id: event.client_order_id.clone(),
-                            symbol: event.symbol.clone(),
+                            symbol: Some(order_symbol.clone()),
                             side: event.side,
                             order_type: event.order_type.clone(),
                             status: event.status,
@@ -250,7 +250,7 @@ impl TradingManager {
                             if fill_qty > 0.0 {
                                 let fill = Fill {
                                     order_id: event.order_id.clone(),
-                                    symbol: event.symbol.clone(),
+                                    symbol: order_symbol.clone(),
                                     side: event.side,
                                     price: fill_price,
                                     quantity: fill_qty,
@@ -287,12 +287,12 @@ impl TradingManager {
                         });
                     }
                 }
-                live_data::LiveUpdate::PositionUpdate { exchange_id, account_type, event } => {
+                live_data::LiveUpdate::PositionUpdate { exchange_id, account_type, symbol: pos_symbol, event } => {
                     let key = (*exchange_id, *account_type);
                     let pt = self.position_trackers.entry(key)
                         .or_insert_with(|| PositionTracker::new(false));
                     let pos = Position {
-                        symbol: event.symbol.clone(),
+                        symbol: pos_symbol.clone(),
                         side: event.side,
                         quantity: event.quantity,
                         entry_price: event.entry_price,

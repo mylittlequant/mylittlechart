@@ -396,7 +396,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
         // Use clear_color = background so the surface is cleared first.
         if pw.instanced_renderer.is_none() {
             pw.instanced_renderer = Some(
-                uzor_backend_wgpu_instanced::InstancedRenderer::new(
+                uzor_render_wgpu_instanced::InstancedRenderer::new(
                     device,
                     queue,
                     surface_texture.texture.format(),

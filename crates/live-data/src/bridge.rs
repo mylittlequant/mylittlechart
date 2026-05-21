@@ -25,7 +25,7 @@ use digdigdig3::core::{
     BalanceQuery, AccountInfo, PositionQuery, PositionModification,
     CancelScope, CancelAllResponse, AmendRequest, OrderResult,
 };
-use digdigdig3::connector_manager::{ConnectorFactory, ConnectorPool};
+use digdigdig3::connector_manager::ExchangeHub;
 use zengeld_chart::Bar;
 use zengeld_chart::state::Timeframe;
 
@@ -169,6 +169,7 @@ pub enum LiveUpdate {
     OrderUpdate {
         exchange_id: ExchangeId,
         account_type: AccountType,
+        symbol: String,
         event: digdigdig3::OrderUpdateEvent,
     },
     /// Private stream: account balance change event.
@@ -181,6 +182,7 @@ pub enum LiveUpdate {
     PositionUpdate {
         exchange_id: ExchangeId,
         account_type: AccountType,
+        symbol: String,
         event: digdigdig3::PositionUpdateEvent,
     },
 }
@@ -200,7 +202,7 @@ pub enum LiveUpdate {
 /// ```
 pub struct DataBridge {
     runtime: Runtime,
-    pool: ConnectorPool,
+    hub: ExchangeHub,
     tx: broadcast::Sender<LiveUpdate>,
     /// Dedicated mpsc sender for `ConnectorReady` events.
     ///
@@ -295,11 +297,11 @@ impl DataBridge {
 
         let (tx, rx) = broadcast::channel(65536);
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
-        let pool = ConnectorPool::new();
+        let hub = ExchangeHub::new();
 
         (Self {
             runtime,
-            pool,
+            hub,
             tx,
             connector_ready_tx,
             ws_actors: Arc::new(Mutex::new(WsActorMap::new())),
@@ -340,9 +342,9 @@ impl DataBridge {
         self.tx.subscribe()
     }
 
-    /// Get a reference to the connector pool.
-    pub fn pool(&self) -> &ConnectorPool {
-        &self.pool
+    /// Get a reference to the connector hub.
+    pub fn pool(&self) -> &ExchangeHub {
+        &self.hub
     }
 
     /// Record the oldest bar timestamp seen for a given key.
@@ -384,17 +386,16 @@ impl DataBridge {
     /// Non-blocking — spawns an async task. On completion, sends either
     /// `ConnectorReady` or `Error` through the update channel.
     pub fn ensure_connector(&self, exchange_id: ExchangeId) {
-        if self.pool.contains(&exchange_id) {
+        if self.hub.is_connected(exchange_id) {
             return;
         }
-        let pool = self.pool.clone();
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let connector_ready_tx = self.connector_ready_tx.clone();
         self.runtime.spawn(async move {
             // Creating connector asynchronously.
-            match ConnectorFactory::create_public(exchange_id, false).await {
-                Ok(connector) => {
-                    pool.insert(exchange_id, connector);
+            match hub.connect_public(exchange_id, false).await {
+                Ok(()) => {
                     let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });
                     // Also notify the app-level mpsc consumer so it doesn't
                     // need to hold a broadcast subscription open.
@@ -442,7 +443,7 @@ impl DataBridge {
         _total_bars: Option<usize>,
         force: bool,
     ) {
-        let pool = self.pool.clone();
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -501,7 +502,7 @@ impl DataBridge {
             let connector = {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = pool.get(&exchange_id) {
+                    if let Some(c) = hub.rest(exchange_id) {
                         break c;
                     }
                     attempts += 1;
@@ -544,7 +545,7 @@ impl DataBridge {
             eprintln!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
             let phase_a_result = connector
-                .get_klines(sym.clone(), &interval, Some(300), account_type, None)
+                .get_klines((&sym).into(),&interval, Some(300), account_type, None)
                 .await;
 
             let fresh_300: Vec<Bar> = match phase_a_result {
@@ -640,7 +641,7 @@ impl DataBridge {
 
             'heal: loop {
                 let result = connector
-                    .get_klines(sym.clone(), &interval, Some(500), account_type, end_time_cursor)
+                    .get_klines((&sym).into(),&interval, Some(500), account_type, end_time_cursor)
                     .await;
 
                 match result {
@@ -724,13 +725,13 @@ impl DataBridge {
         limit: Option<u16>,
         _total_bars: Option<usize>,
     ) -> Option<Vec<Bar>> {
-        let connector = self.pool.get(&exchange_id)?;
+        let connector = self.hub.rest(exchange_id)?;
         let sym = parse_symbol_for_exchange(exchange_id, symbol);
         let interval = timeframe_to_interval(timeframe);
 
         self.runtime.block_on(async move {
             let page_size: u16 = limit.unwrap_or(500).min(500);
-            let result = connector.get_klines(sym, &interval, Some(page_size), account_type, None).await;
+            let result = connector.get_klines((&sym).into(), &interval, Some(page_size), account_type, None).await;
 
             match result {
                 Ok(klines) => {
@@ -752,7 +753,7 @@ impl DataBridge {
     /// session — subsequent calls return the cached list immediately without a
     /// network request.
     pub fn request_symbols(&self, exchange_id: ExchangeId) {
-        let pool = self.pool.clone();
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let cache = self.symbol_cache.clone();
 
@@ -768,7 +769,7 @@ impl DataBridge {
         }
 
         self.runtime.spawn(async move {
-            let connector = match pool.get(&exchange_id) {
+            let connector = match hub.rest(exchange_id) {
                 Some(c) => c,
                 None => {
                     let _ = tx.send(LiveUpdate::Error {
@@ -832,9 +833,8 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
-        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, pool, None);
+            let cmd_tx = actors.get_or_spawn(ws_key, tx, rtt, &rt, None, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
 
@@ -865,9 +865,8 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
-        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
-            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, pool, None);
+            let cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, None, None);
             let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol.to_string() });
         }
     }
@@ -899,7 +898,7 @@ impl DataBridge {
             let tx = self.tx.clone();
             let rtt = self.ws_rtt_handles.clone();
             let rt = self.runtime.handle().clone();
-            let pool = self.pool.clone();
+            let hub = self.hub.clone();
             let orderbook_map = self.orderbook_map.clone();
             let ws_actors = self.ws_actors.clone();
             let symbol_owned = symbol.to_string();
@@ -919,16 +918,16 @@ impl DataBridge {
                 {
                     if let Ok(mut actors) = ws_actors.lock() {
                         let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-                        actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+                        actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
 
                         let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-                        actors.get_or_spawn(key_diff, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+                        actors.get_or_spawn(key_diff, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
                     }
                 }
 
                 // Phase 1: await REST bootstrap — full book before any WS data.
                 rest_orderbook_bootstrap_inner(
-                    pool.clone(),
+                    hub.clone(),
                     exchange_id,
                     &symbol_owned,
                     account_type,
@@ -939,11 +938,11 @@ impl DataBridge {
                 // Phase 2: now that the book is seeded, let WS actors subscribe.
                 if let Ok(mut actors) = ws_actors.lock() {
                     let key = WsKey { exchange_id, stream_type: WsStreamType::Depth, account_type };
-                    let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, pool.clone(), Some(orderbook_map.clone()));
+                    let cmd_tx = actors.get_or_spawn(key, tx.clone(), rtt.clone(), &rt, None, Some(orderbook_map.clone()));
                     let _ = cmd_tx.try_send(WsCmd::AddSymbol { symbol: symbol_owned.clone() });
 
                     let key_diff = WsKey { exchange_id, stream_type: WsStreamType::DepthDiff, account_type };
-                    let cmd_tx_diff = actors.get_or_spawn(key_diff, tx, rtt, &rt, None, pool, Some(orderbook_map));
+                    let cmd_tx_diff = actors.get_or_spawn(key_diff, tx, rtt, &rt, None, Some(orderbook_map));
                     let _ = cmd_tx_diff.try_send(WsCmd::AddSymbol { symbol: symbol_owned });
                 }
             });
@@ -1035,10 +1034,9 @@ impl DataBridge {
         let tx = self.tx.clone();
         let rtt = self.ws_rtt_handles.clone();
         let rt = self.runtime.handle().clone();
-        let pool = self.pool.clone();
         if let Ok(mut actors) = self.ws_actors.lock() {
             // get_or_spawn returns existing cmd_tx if already running.
-            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), pool, None);
+            let _cmd_tx = actors.get_or_spawn(key, tx, rtt, &rt, Some(credentials), None);
         }
     }
 
@@ -1144,7 +1142,9 @@ impl DataBridge {
     /// Disable a connector — remove from pool and stop all WS tasks.
     pub fn disable_connector(&self, exchange_id: ExchangeId) {
         self.unsubscribe_exchange(exchange_id);
-        if self.pool().remove(&exchange_id).is_some() {
+        let was_connected = self.hub.is_connected(exchange_id);
+        self.hub.shutdown(exchange_id);
+        if was_connected {
             eprintln!("[Bridge] Removed connector: {:?}", exchange_id);
         }
     }
@@ -1183,8 +1183,8 @@ impl DataBridge {
         let mut results = Vec::new();
         let rtt_handles_snapshot = self.ws_rtt_handles.lock().ok()
             .map(|g| g.clone());
-        for eid in self.pool.ids() {
-            let mut stats = if let Some(connector) = self.pool.get(&eid) {
+        for eid in self.hub.list_connected() {
+            let mut stats = if let Some(connector) = self.hub.rest(eid) {
                 connector.metrics()
             } else {
                 digdigdig3::core::types::ConnectorStats::default()
@@ -1251,7 +1251,7 @@ impl DataBridge {
         account_type: AccountType,
         target_bars: u32,
     ) {
-        let pool = self.pool.clone();
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -1312,7 +1312,7 @@ impl DataBridge {
             let connector = {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = pool.get(&exchange_id) {
+                    if let Some(c) = hub.rest(exchange_id) {
                         break c;
                     }
                     attempts += 1;
@@ -1373,7 +1373,7 @@ impl DataBridge {
 
             'backfill: loop {
                 let result = connector
-                    .get_klines(sym.clone(), &interval, Some(effective_limit), account_type, end_time_cursor)
+                    .get_klines((&sym).into(),&interval, Some(effective_limit), account_type, end_time_cursor)
                     .await;
 
                 match result {
@@ -1520,7 +1520,7 @@ impl DataBridge {
         before_ts: i64,
         batch_size: usize,
     ) {
-        let pool = self.pool.clone();
+        let hub = self.hub.clone();
         let tx = self.tx.clone();
         let symbol_str = symbol.to_string();
         let interval = timeframe_to_interval(timeframe);
@@ -1631,7 +1631,7 @@ impl DataBridge {
             let connector = {
                 let mut attempts = 0;
                 loop {
-                    if let Some(c) = pool.get(&exchange_id) {
+                    if let Some(c) = hub.rest(exchange_id) {
                         break c;
                     }
                     attempts += 1;
@@ -1662,7 +1662,7 @@ impl DataBridge {
             // a full page from an exhausted-history short page.
             let limit = exchange_kline_limit(exchange_id, (batch_size as u16).min(500));
             let result = connector
-                .get_klines(sym, &interval, Some(limit), account_type, end_time_ms)
+                .get_klines((&sym).into(), &interval, Some(limit), account_type, end_time_ms)
                 .await;
 
             match result {
@@ -2114,7 +2114,7 @@ fn parse_symbol(s: &str) -> Symbol {
 /// sequenced bootstrap task in `subscribe_depth` so that WS subscriptions
 /// only start AFTER this snapshot has landed.
 async fn rest_orderbook_bootstrap_inner(
-    pool: ConnectorPool,
+    hub: ExchangeHub,
     exchange_id: ExchangeId,
     symbol: &str,
     account_type: AccountType,
@@ -2122,7 +2122,7 @@ async fn rest_orderbook_bootstrap_inner(
     orderbook_map: SharedOrderbookMap,
 ) {
     // Resolve max depth from connector caps. Falls back to 1000 if unknown.
-    let depth: u16 = match pool.get(&exchange_id) {
+    let depth: u16 = match hub.rest(exchange_id) {
         Some(conn) => conn
             .orderbook_capabilities(account_type)
             .rest_max_depth
@@ -2131,14 +2131,14 @@ async fn rest_orderbook_bootstrap_inner(
         None => 1000,
     };
 
-    let conn = match pool.get(&exchange_id) {
+    let conn = match hub.rest(exchange_id) {
         Some(c) => c,
         None => return,
     };
 
     let sym = parse_symbol_for_exchange(exchange_id, symbol);
 
-    match conn.get_orderbook(sym, Some(depth), account_type).await {
+    match conn.get_orderbook((&sym).into(), Some(depth), account_type).await {
         Ok(book) => {
             let bids: Vec<(f64, f64)> = book.bids.iter().map(|l| (l.price, l.size)).collect();
             let asks: Vec<(f64, f64)> = book.asks.iter().map(|l| (l.price, l.size)).collect();
@@ -2194,7 +2194,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         req: OrderRequest,
     ) -> digdigdig3::ExchangeResult<PlaceOrderResponse> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.place_order(req).await
@@ -2206,7 +2206,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         req: CancelRequest,
     ) -> digdigdig3::ExchangeResult<Order> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.cancel_order(req).await
@@ -2220,7 +2220,7 @@ impl DataBridge {
         order_id: &str,
         account_type: AccountType,
     ) -> digdigdig3::ExchangeResult<Order> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_order(symbol, order_id, account_type).await
@@ -2233,7 +2233,7 @@ impl DataBridge {
         symbol: Option<&str>,
         account_type: AccountType,
     ) -> digdigdig3::ExchangeResult<Vec<Order>> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_open_orders(symbol, account_type).await
@@ -2246,7 +2246,7 @@ impl DataBridge {
         filter: OrderHistoryFilter,
         account_type: AccountType,
     ) -> digdigdig3::ExchangeResult<Vec<Order>> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_order_history(filter, account_type).await
@@ -2260,7 +2260,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         query: BalanceQuery,
     ) -> digdigdig3::ExchangeResult<Vec<Balance>> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_balance(query).await
@@ -2272,7 +2272,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         account_type: AccountType,
     ) -> digdigdig3::ExchangeResult<AccountInfo> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_account_info(account_type).await
@@ -2286,7 +2286,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         query: PositionQuery,
     ) -> digdigdig3::ExchangeResult<Vec<Position>> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.get_positions(query).await
@@ -2298,7 +2298,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         req: PositionModification,
     ) -> digdigdig3::ExchangeResult<()> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.modify_position(req).await
@@ -2313,7 +2313,7 @@ impl DataBridge {
         scope: CancelScope,
         account_type: AccountType,
     ) -> digdigdig3::ExchangeResult<CancelAllResponse> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.cancel_all_orders(scope, account_type).await
@@ -2325,7 +2325,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         req: AmendRequest,
     ) -> digdigdig3::ExchangeResult<Order> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.amend_order(req).await
@@ -2337,7 +2337,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         orders: Vec<OrderRequest>,
     ) -> digdigdig3::ExchangeResult<Vec<OrderResult>> {
-        let connector = self.pool.get(&exchange_id).ok_or_else(|| {
+        let connector = self.hub.rest(exchange_id).ok_or_else(|| {
             ExchangeError::NotFound(format!("connector not ready: {:?}", exchange_id))
         })?;
         connector.place_orders_batch(orders).await
@@ -2352,7 +2352,7 @@ impl DataBridge {
         exchange_id: ExchangeId,
         account_type: AccountType,
     ) -> Option<TradingCapabilities> {
-        self.pool.get(&exchange_id).map(|c| c.trading_capabilities(account_type))
+        self.hub.rest(exchange_id).map(|c| c.trading_capabilities(account_type))
     }
 
     /// Returns account capabilities for the given exchange and account type,
@@ -2362,12 +2362,12 @@ impl DataBridge {
         exchange_id: ExchangeId,
         account_type: AccountType,
     ) -> Option<AccountCapabilities> {
-        self.pool.get(&exchange_id).map(|c| c.account_capabilities(account_type))
+        self.hub.rest(exchange_id).map(|c| c.account_capabilities(account_type))
     }
 
     /// Returns the list of account types supported by the connector,
     /// or `None` if the connector is not yet ready.
     pub fn supported_account_types(&self, exchange_id: ExchangeId) -> Option<Vec<AccountType>> {
-        self.pool.get(&exchange_id).map(|c| c.supported_account_types())
+        self.hub.rest(exchange_id).map(|c| c.supported_account_types())
     }
 }

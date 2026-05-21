@@ -20,7 +20,7 @@ trade-service = { path = "../trade-service" }
 orderbook-service = { path = "../orderbook-service" }
 
 # V5 connectors (async exchange API) — separate workspace, use path
-digdigdig3 = "=0.1.32"
+digdigdig3 = "=0.3.4"
 
 # Async runtime for background tasks
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }

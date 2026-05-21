@@ -608,15 +608,13 @@ impl ChartApp {
                 }
             }
 
-            // --- Connectors: populate from ConnectorRegistry + active pool ---
+            // --- Connectors: populate from active hub ---
             {
-                use digdigdig3::connector_manager::{ConnectorRegistry, AuthType};
                 use sidebar_content::types::ConnectorStatusItem;
                 use sidebar_content::types::ConnectorGroup;
 
                 self.sidebar_state.connector_items.clear();
-                let registry = self.connector_registry.get_or_insert_with(ConnectorRegistry::new);
-                let active_ids = self.bridge.pool().ids();
+                let active_ids = self.bridge.pool().list_connected();
 
                 let metrics_map: std::collections::HashMap<String, (digdigdig3::core::types::ConnectorStats, usize)> =
                     self.bridge.collect_metrics()
@@ -645,48 +643,37 @@ impl ChartApp {
                     }
                 }
 
-                for meta in registry.list_all() {
-                    let is_active = active_ids.contains(&meta.id);
-                    if !is_active {
-                        continue; // connector not in pool = not shown
-                    }
+                for exchange_id in &active_ids {
+                    let hub = self.bridge.pool();
+                    let at = digdigdig3::AccountType::Spot;
+                    let connector = match hub.rest(*exchange_id) {
+                        Some(c) => c,
+                        None => continue,
+                    };
+
+                    let name = connector.exchange_name();
+                    let md_caps = Some(connector.market_data_capabilities(at));
+                    let tr_caps = Some(connector.trading_capabilities(at));
+                    let ac_caps = Some(connector.account_capabilities(at));
 
                     let mut item = ConnectorStatusItem::new(
-                        meta.id.as_str(),
-                        meta.name,
+                        exchange_id.as_str(),
+                        name,
                     );
 
-                    let pool = self.bridge.pool();
-                    let at = digdigdig3::AccountType::Spot;
-                    let md_caps = pool.market_data_capabilities(&meta.id, at);
-                    let tr_caps = pool.trading_capabilities(&meta.id, at);
-                    let ac_caps = pool.account_capabilities(&meta.id, at);
-
                     item.enabled = *self.sidebar_state.connector_enabled
-                        .get(meta.id.as_str())
+                        .get(exchange_id.as_str())
                         .unwrap_or(&true);
                     item.expanded = *self.sidebar_state.connector_expanded
-                        .get(meta.id.as_str())
+                        .get(exchange_id.as_str())
                         .unwrap_or(&false);
                     item.rest_healthy = item.enabled;
 
                     let has_ws = md_caps.map_or(false, |md| md.has_ws_klines || md.has_ws_trades || md.has_ws_orderbook);
                     item.ws_connected = item.enabled && has_ws;
 
-                    item.auth_type = match meta.authentication {
-                        AuthType::ApiKey => "API Key".to_string(),
-                        AuthType::OAuth2 => "OAuth2".to_string(),
-                        AuthType::TOTP => "TOTP".to_string(),
-                        AuthType::BasicAuth => "Basic Auth".to_string(),
-                        AuthType::BearerToken => "Bearer Token".to_string(),
-                        AuthType::None => "None".to_string(),
-                    };
-                    item.requires_api_key = meta.requires_api_key_for_data;
-                    item.free_tier = meta.free_tier;
                     item.group = if md_caps.map_or(true, |md| !md.has_klines) {
                         ConnectorGroup::NonChartData
-                    } else if meta.requires_api_key_for_data {
-                        ConnectorGroup::RequiresApiKey
                     } else {
                         ConnectorGroup::NoApiKey
                     };
@@ -712,20 +699,6 @@ impl ChartApp {
                         item.has_positions = ac.has_positions;
                     }
 
-                    // Derive legacy UI fields from RateLimitCapabilities
-                    if let Some(pool) = meta.rate_limits.rest_pools.first() {
-                        if pool.is_weight {
-                            item.weight_per_minute = Some(pool.max_budget * 60 / pool.window_seconds.max(1));
-                        } else {
-                            let rps = pool.max_budget / pool.window_seconds.max(1);
-                            item.rate_limit_per_second = if rps > 0 { Some(rps) } else { None };
-                            item.rate_limit_per_minute = Some(pool.max_budget * 60 / pool.window_seconds.max(1));
-                        }
-                    }
-
-                    item.base_url = meta.base_url.to_string();
-                    item.ws_url = meta.websocket_url.unwrap_or("").to_string();
-
                     item.rest_status = "active".to_string();
                     item.ws_status = if has_ws {
                         "available".to_string()
@@ -741,7 +714,7 @@ impl ChartApp {
                         .map(|md| md.supported_intervals.iter().map(|s| s.to_string()).collect())
                         .unwrap_or_default();
 
-                    if let Some((stats, ws_count)) = metrics_map.get(meta.id.as_str()) {
+                    if let Some((stats, ws_count)) = metrics_map.get(exchange_id.as_str()) {
                         item.ws_active_count = *ws_count;
                         item.http_requests_total = stats.http_requests;
                         item.http_errors_total = stats.http_errors;
@@ -749,15 +722,14 @@ impl ChartApp {
                         item.rate_used = stats.rate_used;
                         item.rate_max = stats.rate_max;
                         item.rate_groups = stats.rate_groups.clone();
-                        item.rate_window_seconds = meta.rate_limits.rest_pools.first().map(|p| p.window_seconds).unwrap_or(60);
                         item.ws_ping_rtt_ms = stats.ws_ping_rtt_ms;
                     }
 
                     item.show_metrics = *self.sidebar_state.connector_metrics_visible
-                        .get(meta.id.as_str())
+                        .get(exchange_id.as_str())
                         .unwrap_or(&false);
 
-                    if let Some(history) = self.sidebar_state.metrics_history.get(meta.id.as_str()) {
+                    if let Some(history) = self.sidebar_state.metrics_history.get(exchange_id.as_str()) {
                         item.metrics_history = history.iter().cloned().collect();
                     }
 

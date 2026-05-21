@@ -205,9 +205,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
         // caches are vello-only.  The alt backend re-renders everything each
         // frame so dirty tracking is not needed.
 
-        // Bring uzor::render::RenderContext trait into scope so that
-        // save/translate/restore etc. are callable on concrete context types.
-        use uzor::render::RenderContext as _;
+        // Bring uzor render traits into scope so that save/translate/restore/
+        // set_fill_color/fill_rect etc. are callable on concrete context types.
+        use uzor::render::{Painter as _, ShapeHelpers as _};
 
         match pw.render_backend {
             RenderBackend::InstancedWgpu => {
@@ -405,7 +405,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
                 chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
-                let mut inner = uzor_backend_vello_hybrid::VelloHybridRenderContext::new(1.0);
+                let mut inner = uzor_render_vello_hybrid::VelloHybridRenderContext::new(1.0);
                 std::mem::swap(&mut inner, hybrid_ctx.inner_mut());
                 pw.hybrid_ctx = Some(inner);
             }

@@ -101,7 +101,7 @@ impl PaperEngine {
                 let order = Order {
                     id: order_id,
                     client_order_id: Some(client_order_id),
-                    symbol: sym_str,
+                    symbol: Some(sym_str),
                     side: req.side,
                     order_type: req.order_type,
                     status: OrderStatus::Filled,
@@ -126,7 +126,7 @@ impl PaperEngine {
                 let order = Order {
                     id: order_id.clone(),
                     client_order_id: Some(client_order_id),
-                    symbol: sym_str,
+                    symbol: Some(sym_str),
                     side: req.side,
                     order_type: req.order_type,
                     status: OrderStatus::New,
@@ -154,7 +154,7 @@ impl PaperEngine {
                 let order = Order {
                     id: order_id.clone(),
                     client_order_id: Some(client_order_id),
-                    symbol: sym_str,
+                    symbol: Some(sym_str),
                     side: req.side,
                     order_type: req.order_type,
                     status: OrderStatus::New,
@@ -182,7 +182,7 @@ impl PaperEngine {
                 let order = Order {
                     id: order_id.clone(),
                     client_order_id: Some(client_order_id),
-                    symbol: sym_str,
+                    symbol: Some(sym_str),
                     side: req.side,
                     order_type: req.order_type,
                     status: OrderStatus::New,
@@ -212,7 +212,7 @@ impl PaperEngine {
 
     pub fn tick(&mut self) {
         let symbols: Vec<String> = self.pending.iter()
-            .map(|p| p.order.symbol.clone())
+            .filter_map(|p| p.order.symbol.clone())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -228,7 +228,10 @@ impl PaperEngine {
         let mut to_fill: Vec<usize> = Vec::new();
 
         for (i, pending) in self.pending.iter_mut().enumerate() {
-            let sym = &pending.order.symbol;
+            let sym = match pending.order.symbol.as_deref() {
+                Some(s) => s,
+                None => continue,
+            };
             let Some(&(best_bid, best_ask)) = prices.get(sym) else { continue };
 
             match (pending.stop_price, pending.limit_price) {
@@ -268,7 +271,10 @@ impl PaperEngine {
 
         for i in to_fill.into_iter().rev() {
             let pending = self.pending.remove(i);
-            let sym = &pending.order.symbol;
+            let sym = match pending.order.symbol.as_deref() {
+                Some(s) => s,
+                None => continue,
+            };
             let Some(&(best_bid, best_ask)) = prices.get(sym) else { continue };
             let (base, quote) = parse_assets(sym);
 
@@ -293,7 +299,7 @@ impl PaperEngine {
 
             let fill = Fill {
                 order_id: pending.order.id.clone(),
-                symbol: sym.to_string(),
+                symbol: sym.to_string(),  // sym is &str from as_deref() above
                 side: pending.order.side,
                 price: fill_price,
                 quantity: pending.order.quantity,
@@ -327,7 +333,8 @@ impl PaperEngine {
         };
 
         let pending = self.pending.remove(idx);
-        let (base, quote) = parse_assets(&pending.order.symbol);
+        let sym_str = pending.order.symbol.as_deref().unwrap_or("");
+        let (base, quote) = parse_assets(sym_str);
 
         if let Some(lp) = pending.limit_price {
             match pending.order.side {

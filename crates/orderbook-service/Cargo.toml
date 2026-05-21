@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 orderbook-store = { path = "../orderbook-store" }
-digdigdig3 = "=0.1.32"
+digdigdig3 = "=0.3.4"
 ordered-float = "4"
 
 [dev-dependencies]

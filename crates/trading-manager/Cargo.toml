@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-digdigdig3 = "=0.1.32"
+digdigdig3 = "=0.3.4"
 live-data = { path = "../live-data" }
 orderbook-service = { path = "../orderbook-service" }
 tokio = { version = "1", features = ["sync", "rt"] }

@@ -337,7 +337,7 @@ impl App<'_> {
                                         && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
                                     {
                                         if let Some(tip_text) = sidebar_content::render::find_agent_tooltip(wid_str) {
-                                            let wid = uzor::WidgetId::from(wid_str[..].as_str());
+                                            let wid = uzor::WidgetId::from(wid_str.as_str());
                                             pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
                                             // Tooltip renders in window-space (no
                                             // translate), so pass window y for position.

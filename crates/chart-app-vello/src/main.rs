@@ -176,13 +176,13 @@ struct PerWindowState {
     /// each frame before the parallel scene-build phase.
     render_backend: sidebar_content::state::RenderBackend,
     /// Instanced renderer for the wGPU backend (created lazily).
-    instanced_renderer: Option<uzor_backend_wgpu_instanced::InstancedRenderer>,
+    instanced_renderer: Option<uzor_render_wgpu_instanced::InstancedRenderer>,
     /// Unified draw command list from the last chart render (instanced backend).
     /// Preserves painter's z-order — later entries draw on top of earlier ones.
-    instanced_commands: Vec<uzor_backend_wgpu_instanced::DrawCmd>,
+    instanced_commands: Vec<uzor_render_wgpu_instanced::DrawCmd>,
     /// GPU-side copy of draw commands (double-buffered like scene/gpu_scene).
     /// The GPU thread consumes this while the main thread fills `instanced_commands`.
-    gpu_instanced_commands: Vec<uzor_backend_wgpu_instanced::DrawCmd>,
+    gpu_instanced_commands: Vec<uzor_render_wgpu_instanced::DrawCmd>,
     /// CPU-rendered chart pixels (RGBA8, stored from build phase for GPU upload).
     cpu_chart_pixels: Vec<u8>,
     /// Dimensions of the CPU-rendered chart image.
@@ -193,9 +193,9 @@ struct PerWindowState {
     /// VelloHybrid renderer (created lazily on first use).
     hybrid_renderer: Option<vello_hybrid::Renderer>,
     /// VelloHybrid render context built during chart render phase.
-    hybrid_ctx: Option<uzor_backend_vello_hybrid::VelloHybridRenderContext>,
+    hybrid_ctx: Option<uzor_render_vello_hybrid::VelloHybridRenderContext>,
     /// GPU-side double-buffered copy for the GPU thread.
-    gpu_hybrid_ctx: Option<uzor_backend_vello_hybrid::VelloHybridRenderContext>,
+    gpu_hybrid_ctx: Option<uzor_render_vello_hybrid::VelloHybridRenderContext>,
     /// Whether `window.set_visible(true)` has been called yet.
     ///
     /// Windows are created with `with_visible(false)` to avoid the white-flash
@@ -1613,6 +1613,9 @@ impl App<'_> {
         // 3. Drop all existing windows.
         //    Removing from the HashMap drops PerWindowState which owns the winit
         //    Window (Arc) and the RenderSurface.  winit will handle OS cleanup.
+        //    Block until the GPU thread releases the surfaces — it still holds
+        //    raw pointers into target_view from the previous Submit.
+        self.wait_for_gpu_frame_blocking();
         let window_ids: Vec<winit::window::WindowId> = self.windows.keys().copied().collect();
         for wid in window_ids {
             self.windows.remove(&wid);
@@ -1787,6 +1790,12 @@ impl App<'_> {
             self.windows.len()
         );
 
+        // Block until any in-flight GPU frame finishes — the GPU thread holds
+        // raw pointers into PerWindowState (surface.target_view); dropping the
+        // window while it is mid-render trips wgpu's TextureView generation
+        // assertion in create_bind_group (vello 0.8 / wgpu-core 28).
+        self.wait_for_gpu_frame_blocking();
+
         // Drop all skeleton windows.
         let window_ids: Vec<winit::window::WindowId> = self.windows.keys().copied().collect();
         for wid in window_ids {
@@ -1840,6 +1849,31 @@ impl App<'_> {
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     eprintln!("[App] GPU render thread channel closed (wait_for_gpu_frame)");
+                    self.close_all_requested = true;
+                }
+            }
+        }
+        self.gpu_frame_pending = false;
+    }
+
+    /// Like [`wait_for_gpu_frame`] but blocks unconditionally until the GPU
+    /// thread acknowledges the in-flight frame. Use before dropping any
+    /// `PerWindowState` (the GPU thread holds raw pointers into surface /
+    /// gpu_scene / renderer; dropping while the frame is in flight makes
+    /// wgpu fail the TextureView generation check inside `create_bind_group`).
+    fn wait_for_gpu_frame_blocking(&mut self) {
+        if !self.gpu_frame_pending {
+            return;
+        }
+        if let Some(ref done_rx) = self.gpu_done_rx {
+            match done_rx.recv() {
+                Ok(done) => {
+                    if done.close_all {
+                        self.close_all_requested = true;
+                    }
+                }
+                Err(_) => {
+                    eprintln!("[App] GPU render thread channel closed (wait_for_gpu_frame_blocking)");
                     self.close_all_requested = true;
                 }
             }
@@ -2985,6 +3019,11 @@ impl ApplicationHandler for App<'_> {
 
                 self.save_all(&deleted_ids);
 
+                // Block until any in-flight GPU frame is done — dropping a
+                // PerWindowState while the GPU thread still holds a raw
+                // pointer to its surface.target_view trips wgpu's generation
+                // check (vello 0.8 / wgpu-core 28).
+                self.wait_for_gpu_frame_blocking();
                 for (wid, _) in windows_to_close {
                     self.windows.remove(&wid);
                 }

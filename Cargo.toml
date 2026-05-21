@@ -56,7 +56,7 @@ opt-level = 2
 # Local development overrides — use local source instead of crates.io.
 # CI strips this section before building (see .github/workflows/release.yml).
 [patch.crates-io]
-digdigdig3 = { path = "../digdigdig3" }
+digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
 gate4agent = { path = "../gate4agent" }
 uzor = { path = "../uzor/uzor" }
 uzor-render-vello-gpu = { path = "../uzor/uzor-render-vello-gpu" }

@@ -17,7 +17,6 @@ use digdigdig3::{
     AccountType, ExchangeId, StreamEvent, SubscriptionRequest, Symbol, StreamType,
     WebSocketConnector,
 };
-use digdigdig3::connector_manager::ConnectorPool;
 use digdigdig3::l3::open::crypto::cex::binance::BinanceWebSocket;
 use digdigdig3::l3::open::crypto::cex::bybit::BybitWebSocket;
 use digdigdig3::l3::open::crypto::cex::okx::OkxWebSocket;
@@ -102,7 +101,6 @@ impl WsActorMap {
         ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
         rt: &tokio::runtime::Handle,
         credentials: Option<digdigdig3::Credentials>,
-        pool: ConnectorPool,
         orderbook_map: Option<SharedOrderbookMap>,
     ) -> mpsc::Sender<WsCmd> {
         if let Some(handle) = self.actors.get(&key) {
@@ -112,7 +110,7 @@ impl WsActorMap {
             self.actors.remove(&key);
         }
         let (cmd_tx, cmd_rx) = mpsc::channel::<WsCmd>(64);
-        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials, pool, orderbook_map));
+        let task = rt.spawn(run_ws_actor(key, cmd_rx, tx, ws_rtt_handles, credentials, orderbook_map));
         self.actors.insert(key, WsActorHandle { cmd_tx: cmd_tx.clone(), task });
         cmd_tx
     }
@@ -170,7 +168,6 @@ async fn run_ws_actor(
     tx: broadcast::Sender<LiveUpdate>,
     ws_rtt_handles: Arc<Mutex<HashMap<ExchangeId, Arc<tokio::sync::Mutex<u64>>>>>,
     credentials: Option<digdigdig3::Credentials>,
-    _pool: ConnectorPool,
     orderbook_map: Option<SharedOrderbookMap>,
 ) {
     // Private actors use a simplified loop that connects immediately and
@@ -331,7 +328,7 @@ async fn run_ws_actor(
                             // Intercept depth events — maintain local book from WS data.
                             if let Some(ref mut db) = depth_book {
                                 match &event {
-                                    StreamEvent::OrderbookSnapshot(ref ob) => {
+                                    StreamEvent::OrderbookSnapshot { book: ob, .. } => {
                                         let (emitted, synthetic_delta) = db.feed_snapshot(ob, EMIT_LEVELS);
                                         let maybe_sym = state
                                             .refcounts
@@ -379,7 +376,7 @@ async fn run_ws_actor(
                                         }
                                         continue;
                                     }
-                                    StreamEvent::OrderbookDelta(ref delta) => {
+                                    StreamEvent::OrderbookDelta { delta, .. } => {
                                         if let Some(emitted) = db.feed_delta(delta, EMIT_LEVELS) {
                                             let maybe_sym = state
                                                 .refcounts
@@ -600,6 +597,19 @@ async fn build_ws(
         }};
     }
 
+    macro_rules! credentials_with_account {
+        ($ws_type:ty) => {{
+            let ws = <$ws_type>::new(credentials.clone(), AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS create failed: {}", e))?;
+            ws.connect(AccountType::Spot)
+                .await
+                .map_err(|e| format!("WS connect failed: {}", e))?;
+            capture_rtt(&ws, exchange_id, ws_rtt_handles);
+            Box::new(ws) as Box<dyn WebSocketConnector>
+        }};
+    }
+
     macro_rules! sync_new {
         ($ws_type:ty) => {{
             let ws = <$ws_type>::new(credentials.clone(), false, AccountType::Spot)
@@ -623,9 +633,9 @@ async fn build_ws(
         ExchangeId::Deribit  => standard!(DeribitWebSocket),
         ExchangeId::KuCoin   => standard!(KuCoinWebSocket),
 
-        // ── OKX: new(creds, testnet) — no AccountType in constructor ──
+        // ── OKX: new(creds, testnet, account_type) async ──
         ExchangeId::OKX => {
-            let ws = OkxWebSocket::new(credentials.clone(), false)
+            let ws = OkxWebSocket::new(credentials.clone(), false, AccountType::Spot)
                 .await
                 .map_err(|e| format!("WS create failed: {}", e))?;
             ws.connect(AccountType::Spot)
@@ -639,10 +649,10 @@ async fn build_ws(
             Box::new(ws)
         }
 
-        // ── No AccountType in constructor ──
         // ── Credentials only (no testnet, no account_type) ──
         ExchangeId::Coinbase => credentials_only!(CoinbaseWebSocket),
-        ExchangeId::MEXC     => credentials_only!(MexcWebSocket),
+        // ── Credentials + AccountType (no testnet) ──
+        ExchangeId::MEXC     => credentials_with_account!(MexcWebSocket),
 
         // ── Sync constructor ──
         ExchangeId::HTX => sync_new!(HtxWebSocket),
@@ -852,22 +862,22 @@ fn dispatch_event(
     orderbook_map: Option<&SharedOrderbookMap>,
 ) {
     match event {
-        StreamEvent::Trade(trade) => {
+        StreamEvent::Trade { symbol, trade } => {
             let _ = tx.send(LiveUpdate::TradeUpdate {
                 exchange_id: state.exchange_id,
                 account_type: state.account_type,
-                symbol: trade.symbol.clone(),
+                symbol,
                 price: trade.price,
                 quantity: trade.quantity,
                 timestamp: trade.timestamp,
                 is_buyer_maker: trade.side == digdigdig3::core::types::TradeSide::Sell,
             });
         }
-        StreamEvent::Ticker(ticker) => {
+        StreamEvent::Ticker { symbol, ticker } => {
             let _ = tx.send(LiveUpdate::MiniTickerUpdate {
                 exchange_id: state.exchange_id,
                 account_type: state.account_type,
-                symbol: ticker.symbol.clone(),
+                symbol,
                 last_price: ticker.last_price,
                 price_change_percent: ticker.price_change_percent_24h,
                 high_price: ticker.high_24h,
@@ -875,7 +885,7 @@ fn dispatch_event(
                 volume: ticker.volume_24h,
             });
         }
-        StreamEvent::OrderbookSnapshot(ob) => {
+        StreamEvent::OrderbookSnapshot { symbol: _, book: ob } => {
             // Some exchanges (e.g. Bitstamp) emit orderbook updates instead of
             // ticker events on the ticker stream.  Synthesize a price from the
             // mid-point of the best bid/ask.
@@ -935,7 +945,7 @@ fn dispatch_event(
                 }
             }
         }
-        StreamEvent::OrderbookDelta(delta) => {
+        StreamEvent::OrderbookDelta { symbol: _, delta } => {
             let bids = &delta.bids;
             let asks = &delta.asks;
             let timestamp = delta.timestamp;
@@ -998,10 +1008,11 @@ fn dispatch_event(
                 }
             }
         }
-        StreamEvent::OrderUpdate(event) => {
+        StreamEvent::OrderUpdate { symbol, event } => {
             let _ = tx.send(LiveUpdate::OrderUpdate {
                 exchange_id: state.exchange_id,
                 account_type: state.account_type,
+                symbol,
                 event,
             });
         }
@@ -1012,10 +1023,11 @@ fn dispatch_event(
                 event,
             });
         }
-        StreamEvent::PositionUpdate(event) => {
+        StreamEvent::PositionUpdate { symbol, event } => {
             let _ = tx.send(LiveUpdate::PositionUpdate {
                 exchange_id: state.exchange_id,
                 account_type: state.account_type,
+                symbol,
                 event,
             });
         }
