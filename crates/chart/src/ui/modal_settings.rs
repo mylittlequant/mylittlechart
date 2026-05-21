@@ -3351,33 +3351,6 @@ pub struct ManagedKeyInfo {
 /// Preferred new name for the key display info type.
 pub type LocalAgentKeyInfo = ManagedKeyInfo;
 
-// =============================================================================
-// Cloud Profile Entry
-// =============================================================================
-
-/// A local mirror of `zengeld_updater::cloud_sync::CloudProfileInfo`.
-///
-/// Stored in `UserSettingsState` without requiring the `zengeld-updater` crate
-/// as a dependency of `zengeld-chart`.  The binary crate converts from the
-/// updater type before writing into this state.
-#[derive(Clone, Debug, Default)]
-pub struct CloudProfileEntry {
-    /// UUID identifier for this profile.
-    pub profile_id: String,
-    /// Human-readable name (from profile_meta, if available).
-    pub display_name: Option<String>,
-    /// Total number of sync items for this profile.
-    pub item_count: i64,
-    /// Total bytes across all sync items.
-    pub total_bytes: i64,
-    /// Unix timestamp (milliseconds) of the most recently modified item.
-    pub last_modified: i64,
-    /// Whether the server holds a `vault` category item for this profile.
-    pub has_vault: bool,
-    /// Whether the server holds a `recovery_key` category item for this profile.
-    pub has_recovery_key: bool,
-}
-
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
 pub struct UserSettingsState {
@@ -3409,8 +3382,6 @@ pub struct UserSettingsState {
     pub server_port: u16,
     /// Current server status: "running", "stopped", "error".
     pub server_status: String,
-    /// Display string for local agent keys (e.g. "3 key(s) registered").
-    pub local_agent_key_display: String,
 
     // ── Key Manager ──────────────────────────────────────────────────────────
     /// List of local agent CLI connector keys (metadata only — no raw key values).
@@ -3434,79 +3405,6 @@ pub struct UserSettingsState {
     pub sync_tab_scroll: ScrollState,
     /// Scroll state for the Performance tab content.
     pub performance_tab_scroll: ScrollState,
-
-    // ── Auth / Account ────────────────────────────────────────────────────────
-    /// Whether the user is currently logged in to chart.example.
-    pub is_logged_in: bool,
-    /// Display name shown in the General tab when logged in.
-    pub auth_display_name: String,
-    /// OAuth provider name (e.g. "GitHub", "Google").
-    pub auth_provider: String,
-    /// Numeric user ID from the server.
-    pub auth_user_id: i64,
-
-    // ── Connection mode ───────────────────────────────────────────────────────
-    /// `true` = Connected to chart.example (OTA updates, cloud sync).
-    /// `false` = Standalone / offline mode (no server communication).
-    pub client_mode_connected: bool,
-
-    // ── Mode transition confirmation ──────────────────────────────────────────
-    /// `true` = showing the Standalone → Connected confirmation dialog.
-    /// The radio visually stays on Standalone until user confirms.
-    pub sync_transition_pending: bool,
-    /// `true` = showing the Connected → Standalone disconnect confirmation.
-    pub disconnect_pending: bool,
-
-    // ── Sync tab state ────────────────────────────────────────────────────────
-    /// Whether the user has opted into cloud sync (mirrors SyncState.enabled).
-    pub sync_enabled: bool,
-    /// In-memory passphrase input buffer — never persisted to disk.
-    /// Also used by vault unlock / profile manager passphrase pages.
-    pub e2e_passphrase_editing: TextEditingState,
-    /// Whether the E2E passphrase input field has keyboard focus.
-    /// Also used by vault unlock / profile manager passphrase pages.
-    pub e2e_passphrase_focused: bool,
-    /// In-memory recovery key input buffer — never persisted to disk.
-    pub recovery_key_editing: TextEditingState,
-    /// Whether the recovery key input field has keyboard focus.
-    pub recovery_key_focused: bool,
-    /// Last sync timestamp displayed in the Sync tab (Unix seconds, 0 = never).
-    pub last_sync_timestamp: i64,
-    /// Quota used in bytes (from server status response, 0 = unknown).
-    pub quota_used_bytes: i64,
-
-    // ── Granular sync toggles ──────────────────────────────────────────────
-    /// Whether chart presets are included in cloud sync.
-    pub sync_presets: bool,
-    /// Whether indicator templates are included in cloud sync.
-    pub sync_templates: bool,
-    /// Whether watchlists are included in cloud sync.
-    pub sync_watchlists: bool,
-    /// Whether the active theme is included in cloud sync.
-    pub sync_theme_toggle: bool,
-    /// Whether OTA auto-updates are enabled.
-    pub ota_enabled: bool,
-
-    // ── Device-level settings (device_settings.json) ──────────────────────
-    /// Device-level OTA enabled flag (`DeviceSettings.ota_enabled`).
-    /// `true` = Connected mode; `false` = Standalone mode.
-    /// Distinct from profile-level `ota_enabled` — applies to the whole device.
-    pub device_ota_enabled: bool,
-    /// Device-level OTA channel (`DeviceSettings.update_channel`).
-    /// One of `"stable"` or `"dev"`.
-    pub device_update_channel: String,
-
-    // ── SYNC STATUS (P0) ──────────────────────────────────────────────────
-    /// Human-readable sync status: "Idle" / "Syncing…" / "Synced — ↑3 ↓1" / "Error: …"
-    pub sync_status_label: String,
-    /// Hex color for the status label: "#888888" muted, "#f0ad4e" yellow, "#5cb85c" green, "#d9534f" red
-    pub sync_status_color: String,
-    /// True while SyncStatus::Syncing — drives a spinner or progress indicator.
-    pub sync_is_active: bool,
-    /// True when BUILD_ATTESTATION env var was empty at compile time (dev / unofficial build).
-    pub is_unofficial_build: bool,
-    /// True when the server returned a 403 attestation-rejected error.
-    pub attestation_rejected: bool,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -3535,14 +3433,10 @@ pub struct UserSettingsState {
     /// Display name of the target profile (for showing in headers).
     pub profile_manager_target_name: String,
     /// Whether each profile has vault encryption.
-    /// Vec<(id, display_name, avatar, client_mode, has_vault, sync_level)>.
-    pub profiles_with_vault_status: Vec<(String, String, String, bool, bool, String)>,
+    /// Vec<(id, display_name, avatar, has_vault)>.
+    pub profiles_with_vault_status: Vec<(String, String, String, bool)>,
     /// Wizard page: 0 = mode selection, 1 = link account, 2 = E2E setup.
     pub wizard_page: u8,
-    /// 8-char device code for device linking displayed on page 1.
-    pub wizard_device_code: String,
-    /// Status message shown on page 1 while polling for link: "Waiting..." / "Linked as {name}".
-    pub wizard_linking_status: String,
     /// True if the user selected the E2E option (so page 2 is shown after linking).
     pub wizard_e2e_chosen: bool,
 
@@ -3560,8 +3454,8 @@ pub struct UserSettingsState {
     /// the truly-active profile so that Rename/Avatar/Delete buttons appear on the
     /// correct row.
     pub runtime_profile_id: String,
-    /// All available profiles as (id, display_name, avatar, sync_level) tuples.
-    pub available_profiles: Vec<(String, String, String, String)>,
+    /// All available profiles as (id, display_name, avatar) tuples.
+    pub available_profiles: Vec<(String, String, String)>,
     /// Whether the profile name is currently being edited inline.
     pub profile_rename_mode: bool,
     /// Text editing state for the inline rename input.
@@ -3580,16 +3474,6 @@ pub struct UserSettingsState {
     pub new_profile_name_editing: TextEditingState,
     /// Whether the new profile name input field is focused for keyboard input.
     pub new_profile_name_focused: bool,
-
-    // ── Cloud Profile Restore ─────────────────────────────────────────────────
-    /// Cloud profiles loaded from server (profiles not present locally).
-    pub cloud_profiles: Vec<CloudProfileEntry>,
-    /// Whether cloud profiles are currently being fetched.
-    pub cloud_profiles_loading: bool,
-    /// Error message from the cloud profiles fetch.
-    pub cloud_profiles_error: String,
-    /// Profile ID currently being restored from cloud.
-    pub restoring_profile_id: Option<String>,
 
     // ── Set New Passphrase (post-recovery re-key) ─────────────────────────────
     /// In-memory buffer for the new passphrase during the SetNewPassphrase flow.
@@ -3626,10 +3510,6 @@ pub struct UserSettingsState {
 
     /// Timestamp (ms) when recovery key was last copied. Used for visual feedback.
     pub recovery_key_copied_at: u64,
-
-    /// Retained for backward compatibility. No longer used by the profile wizard
-    /// — sync level is now controlled device-wide via `device_ota_enabled`.
-    pub new_profile_sync_level: String,
 
     // ── DATA & CACHE slider state ─────────────────────────────────────────────
     /// Cached value synced from `UserProfile.data_load.background_bar_count`.
@@ -3670,7 +3550,6 @@ impl Default for UserSettingsState {
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),
-            local_agent_key_display: String::new(),
             local_agent_keys_ui: Vec::new(),
             new_key_label: String::new(),
             new_key_tier: "read_only".to_string(),
@@ -3680,44 +3559,6 @@ impl Default for UserSettingsState {
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
-            is_logged_in: false,
-            auth_display_name: String::new(),
-            auth_provider: String::new(),
-            auth_user_id: 0,
-            client_mode_connected: false,
-            sync_transition_pending: false,
-            disconnect_pending: false,
-            sync_enabled: false,
-            e2e_passphrase_editing: TextEditingState {
-                field_id: "e2e_passphrase".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
-            e2e_passphrase_focused: false,
-            recovery_key_editing: TextEditingState {
-                field_id: "recovery_key".to_string(),
-                text: String::new(),
-                cursor: 0,
-                selection_start: None,
-                blink_time: 0,
-            },
-            recovery_key_focused: false,
-            last_sync_timestamp: 0,
-            quota_used_bytes: 0,
-            sync_presets: true,
-            sync_templates: true,
-            sync_watchlists: true,
-            sync_theme_toggle: true,
-            ota_enabled: true,
-            device_ota_enabled: true,
-            device_update_channel: "stable".to_string(),
-            sync_status_label: "Idle".to_string(),
-            sync_status_color: "#888888".to_string(),
-            sync_is_active: false,
-            is_unofficial_build: false,
-            attestation_rejected: false,
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
@@ -3729,8 +3570,6 @@ impl Default for UserSettingsState {
             profile_manager_target_name: String::new(),
             profiles_with_vault_status: Vec::new(),
             wizard_page: 0,
-            wizard_device_code: String::new(),
-            wizard_linking_status: String::new(),
             wizard_e2e_chosen: false,
             profile_display_name: "Default".to_string(),
             profile_avatar: "chart".to_string(),
@@ -3758,10 +3597,6 @@ impl Default for UserSettingsState {
                 blink_time: 0,
             },
             new_profile_name_focused: false,
-            cloud_profiles: Vec::new(),
-            cloud_profiles_loading: false,
-            cloud_profiles_error: String::new(),
-            restoring_profile_id: None,
             new_passphrase_editing: TextEditingState {
                 field_id: "new_passphrase".to_string(),
                 text: String::new(),
@@ -3790,7 +3625,6 @@ impl Default for UserSettingsState {
             },
             recovery_key_display_focused: false,
             recovery_key_copied_at: 0,
-            new_profile_sync_level: "connected".to_string(),
             data_bg_bars: 2000,
             data_max_bars: 10000,
             data_store_size_mb: 500,
@@ -3814,10 +3648,6 @@ impl UserSettingsState {
         self.is_dragging = false;
         self.drag_offset = None;
         self.active_dropdown = None;
-        // Always discard any in-progress mode transition when the modal closes
-        // so the user cannot get stuck in a confirmation state.
-        self.sync_transition_pending = false;
-        self.disconnect_pending = false;
     }
 
     /// Toggle open/closed.

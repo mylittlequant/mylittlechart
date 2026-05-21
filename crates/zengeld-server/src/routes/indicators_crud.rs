@@ -10,15 +10,14 @@
 
 use std::sync::Arc;
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, patch},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::check_permission;
-use crate::state::{AgentCommand, IndicatorSummary, Permissions};
+use crate::state::{AgentCommand, IndicatorSummary};
 use crate::AgentState;
 
 // ---------------------------------------------------------------------------
@@ -127,13 +126,9 @@ struct AddIndicatorRequest {
 
 async fn add_indicator(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(path): Path<ChartPath>,
     Json(body): Json<AddIndicatorRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_indicators")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::AddIndicator {
         window_id: path.window_id,
         chart_id: path.chart_id,
@@ -158,13 +153,9 @@ struct UpdateIndicatorRequest {
 
 async fn update_indicator(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(path): Path<IndicatorPath>,
     Json(body): Json<UpdateIndicatorRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_indicators")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::UpdateIndicator {
         window_id: path.window_id,
         chart_id: path.chart_id,
@@ -187,13 +178,9 @@ struct DeleteQuery {
 
 async fn remove_indicator(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(path): Path<IndicatorPath>,
     Query(query): Query<DeleteQuery>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_indicators")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::RemoveIndicator {
         window_id: path.window_id,
         chart_id: path.chart_id,

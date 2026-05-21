@@ -447,7 +447,7 @@ fn render_page2_profile(
     *cy += confirm_h + 4.0;
 
     // Mismatch error
-    let passphrase_text = &state.e2e_passphrase_editing.text;
+    let passphrase_text = &state.new_passphrase_editing.text;
     let confirm_text = &state.confirm_passphrase_editing.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
         ctx.set_font("11px sans-serif");
@@ -476,8 +476,8 @@ fn render_page2_profile(
     // ── Complete Setup button ─────────────────────────────────────────────────
     let profile_name = state.new_profile_name_editing.text.trim().to_string();
     let profile_name_ok = !profile_name.is_empty();
-    let passphrase_ok = state.e2e_passphrase_editing.text.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH;
-    let confirm_matches = state.confirm_passphrase_editing.text == state.e2e_passphrase_editing.text;
+    let passphrase_ok = state.new_passphrase_editing.text.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH;
+    let confirm_matches = state.confirm_passphrase_editing.text == state.new_passphrase_editing.text;
     let finish_disabled = !passphrase_ok || !profile_name_ok || !confirm_matches;
 
     let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
@@ -756,14 +756,14 @@ fn render_passphrase_input(
     let input_rect = WidgetRect::new(x, *cy, w, input_h);
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let editing = &state.e2e_passphrase_editing;
+    let editing = &state.new_passphrase_editing;
     let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
     let input_config = InputConfig::new(&editing.text)
-        .with_focused(state.e2e_passphrase_focused)
+        .with_focused(state.new_passphrase_focused)
         .with_cursor(editing.cursor)
         .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
         .with_type(InputType::Password)
@@ -777,7 +777,7 @@ fn render_passphrase_input(
     input_coordinator.register_on_layer("user_settings:wizard_passphrase_input", input_rect, Sense::CLICK, layer_id);
 
     // Blinking cursor (only when focused)
-    if state.e2e_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
+    if state.new_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,
@@ -882,7 +882,7 @@ pub fn render_vault_unlock(
     cy = render_passphrase_input(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, &layer_id, input_coordinator, result);
 
     // Unlock button (disabled until passphrase is entered)
-    let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
+    let unlock_disabled = state.new_passphrase_editing.text.is_empty();
     let hovered = state.hovered_item_id.as_deref();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("vault_unlock_btn");
     let btn_bg = if unlock_disabled {

@@ -256,7 +256,7 @@ impl ProfileManager {
             _ => self.auto_generate_name(),
         };
 
-        let meta = create_profile(&final_name, avatar, false)?;
+        let meta = create_profile(&final_name, avatar)?;
         self.refresh_index();
         Ok(meta)
     }
@@ -636,10 +636,10 @@ impl ProfileManager {
                     dir_name: m.dir_name.clone(),
                     display_name: m.display_name.clone(),
                     avatar: m.avatar.clone(),
-                    cloud_enabled: m.cloud_enabled,
+                    cloud_enabled: false,
                     has_vault,
                     is_active,
-                    sync_level: m.sync_level.clone(),
+                    sync_level: String::new(),
                 }
             })
             .collect()

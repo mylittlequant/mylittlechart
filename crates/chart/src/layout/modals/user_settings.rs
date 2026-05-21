@@ -230,24 +230,7 @@ pub fn render_user_settings_modal(
                 &mut result,
             );
         }
-        UserSettingsTab::Sync => {
-            let viewport_rect = WidgetRect::new(
-                content_x + padding,
-                settings_y,
-                content_w - padding * 2.0,
-                scroll_viewport_h,
-            );
-            render_sync_tab(
-                ctx,
-                viewport_rect,
-                state,
-                text_color,
-                &scroll_widget_theme,
-                input_coordinator,
-                &layer_id,
-                &mut result,
-            );
-        }
+        UserSettingsTab::Sync => {}
         UserSettingsTab::Performance => {
             let viewport_rect = WidgetRect::new(
                 content_x + padding,
@@ -331,118 +314,6 @@ fn render_general_tab(
         current_time_ms, input_coordinator, layer_id, result,
     );
     cy += 16.0;
-
-    // ── Section: ACCOUNT ─────────────────────────────────────────────────────
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("ACCOUNT", x, cy);
-    cy += 20.0;
-
-    if state.is_logged_in {
-        // ── Logged in state ───────────────────────────────────────────────────
-        ctx.set_font("700 18px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.fill_text(&state.auth_display_name, x, cy);
-        cy += 26.0;
-
-        // "Signed in via {provider}"
-        let provider_text = if state.auth_provider.is_empty() {
-            "Signed in".to_string()
-        } else {
-            format!("Signed in via {}", state.auth_provider)
-        };
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.5)");
-        ctx.fill_text(&provider_text, x, cy);
-        cy += 30.0;
-
-        let btn_h = 28.0;
-        let btn_w = available_w.min(180.0);
-
-        // "Open Dashboard" button
-        let is_hovered = state.hovered_item_id.as_deref() == Some("open_dashboard");
-        let dash_bg = if is_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
-        ctx.set_fill_color(dash_bg);
-        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Open Dashboard", x + btn_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        result.content_items.push(("open_dashboard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:open_dashboard",
-            uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        cy += btn_h + 8.0;
-
-        // "Log Out" button — always shown when logged in (works in any mode)
-        let is_logout_hovered = state.hovered_item_id.as_deref() == Some("logout");
-        let logout_bg = if is_logout_hovered { "rgba(239,83,80,0.28)" } else { "rgba(239,83,80,0.15)" };
-        let logout_border = if is_logout_hovered { "rgba(239,83,80,0.75)" } else { "rgba(239,83,80,0.5)" };
-        ctx.set_fill_color(logout_bg);
-        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color(logout_border);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color("#ef5350");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Log Out", x + btn_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        result.content_items.push(("logout".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:logout",
-            uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        cy += btn_h + 24.0;
-    } else {
-        // ── Not logged in — show Sign In button in all modes ──────────────────
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color("rgba(254,255,238,0.5)");
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Sign in to link your account.", x, cy);
-        cy += 28.0;
-
-        // "Sign In via Browser" button — works in both modes
-        let btn_h = 28.0;
-        let btn_w = available_w.min(200.0);
-        let is_signin_hovered = state.hovered_item_id.as_deref() == Some("sign_in");
-        let signin_bg = if is_signin_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
-        ctx.set_fill_color(signin_bg);
-        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.accent);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&toolbar_theme.accent);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Sign In via Browser", x + btn_w / 2.0, cy + btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        result.content_items.push(("sign_in".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
-        input_coordinator.register_on_layer(
-            "user_settings:sign_in",
-            uzor::types::Rect::new(x, cy, btn_w, btn_h),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        cy += btn_h + 24.0;
-    }
 
     // ── Section: LANGUAGE ────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
@@ -639,7 +510,7 @@ fn render_profile_section(
     let btn_gap = 6.0;
     let small_btn_w = 46.0;
 
-    for (id, name, avatar, sync_level) in &state.available_profiles {
+    for (id, name, avatar) in &state.available_profiles {
         // Use runtime_profile_id (the ACTUALLY loaded profile) so that buttons
         // remain on the correct row even after a pending profile_switch.
         let is_active = *id == state.runtime_profile_id;
@@ -797,16 +668,6 @@ fn render_profile_section(
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(name.as_str(), name_x, row_cy);
 
-            let mode_label = match sync_level.as_str() {
-                "cloud" | "cloud_zt" => " (Cloud)",
-                "connected" => " (Connected)",
-                _ => " (Local)",
-            };
-            let mode_tag_x = name_x + name.chars().count() as f64 * 7.5 + 4.0;
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.35)");
-            ctx.fill_text(mode_label, mode_tag_x, row_cy);
-
             let btn_y = cy + (profile_row_h - btn_h) / 2.0;
 
             // ── Rename button (shown on every row) ──
@@ -923,8 +784,8 @@ fn render_profile_section(
 
             // Determine current avatar for the target profile
             let current_avatar = state.profile_avatar_target_id.as_deref()
-                .and_then(|tid| state.available_profiles.iter().find(|(pid, _, _, _)| pid == tid))
-                .map(|(_, _, av, _)| av.as_str())
+                .and_then(|tid| state.available_profiles.iter().find(|(pid, _, _)| pid == tid))
+                .map(|(_, _, av)| av.as_str())
                 .unwrap_or(state.profile_avatar.as_str());
 
             for (i, av) in avatars.iter().enumerate() {
@@ -1085,196 +946,8 @@ fn render_profile_section(
 }
 
 // =============================================================================
-// Sync tab renderer
+// Performance tab renderer
 // =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_sync_tab(
-    ctx: &mut dyn RenderContext,
-    viewport_rect: WidgetRect,
-    state: &UserSettingsState,
-    text_color: &str,
-    scroll_widget_theme: &WidgetTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let container = ScrollableContainer::new(
-        viewport_rect,
-        &state.sync_tab_scroll,
-        None,
-    );
-    container.begin(ctx);
-    let x = viewport_rect.x;
-    let available_w = container.content_width();
-    let mut cy = container.content_y();
-    let _section_gap = 20.0;
-
-    // ── Gate: Unofficial Build / Attestation Rejected ─────────────────────────
-    let sync_tab_locked = state.is_unofficial_build || state.attestation_rejected;
-
-    // Effective text color — dimmed when the sync tab is locked
-    let effective_text_color: &str = if sync_tab_locked { "#666666" } else { text_color };
-
-    // Banner: development / unofficial build
-    if state.is_unofficial_build {
-        let banner_h = 34.0;
-        ctx.set_fill_color("rgba(244,205,99,0.08)");
-        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
-        ctx.set_stroke_color("rgba(244,205,99,0.25)");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(244,205,99,0.75)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("Development build — cloud backup disabled.", x, cy + 4.0);
-        cy += banner_h + 8.0;
-    }
-
-    // Banner: attestation rejected by server
-    if state.attestation_rejected {
-        let banner_h = 34.0;
-        ctx.set_fill_color("rgba(239,83,80,0.08)");
-        ctx.fill_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
-        ctx.set_stroke_color("rgba(239,83,80,0.25)");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x - 4.0, cy - 4.0, available_w + 8.0, banner_h, 4.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(239,83,80,0.85)");
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("Server rejected this build. Only official releases can sync.", x, cy + 4.0);
-        cy += banner_h + 8.0;
-    }
-
-    // ── Sync status + storage bar (shown when cloud sync is enabled) ────────────
-    if state.sync_enabled {
-        // Divider line
-        ctx.set_stroke_color("rgba(254,255,238,0.12)");
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(x, cy);
-        ctx.line_to(x + available_w, cy);
-        ctx.stroke();
-        cy += 10.0;
-
-        // Live sync status dot + label
-        {
-            let dot_char = "\u{25CF}"; // filled circle ●
-            ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(&state.sync_status_color);
-            ctx.set_text_align(uzor::render::TextAlign::Left);
-            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-            ctx.fill_text(dot_char, x, cy);
-
-            ctx.set_fill_color(effective_text_color);
-            ctx.fill_text(&state.sync_status_label, x + 14.0, cy);
-            cy += 16.0;
-
-            let ts_str = if state.last_sync_timestamp > 0 {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
-                let elapsed = (now - state.last_sync_timestamp).max(0) as u64;
-                let mins = elapsed / 60;
-                let hours = mins / 60;
-                let days = hours / 24;
-                format!("Last synced: {}d {}h ago", days, hours % 24)
-            } else {
-                "Last synced: Never".to_string()
-            };
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.45)");
-            ctx.fill_text(&ts_str, x, cy);
-            cy += 18.0;
-        }
-
-        // Storage usage bar
-        {
-            const QUOTA_LIMIT_BYTES: i64 = 50 * 1024 * 1024; // 50 MB
-
-            if state.quota_used_bytes == 0 {
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color("rgba(254,255,238,0.30)");
-                ctx.set_text_align(uzor::render::TextAlign::Left);
-                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-                ctx.fill_text("Storage: \u{2014}", x, cy);
-                cy += 20.0;
-            } else {
-                let used_mb = state.quota_used_bytes as f64 / (1024.0 * 1024.0);
-                let limit_mb = QUOTA_LIMIT_BYTES as f64 / (1024.0 * 1024.0);
-                let used_pct = (state.quota_used_bytes as f64 / QUOTA_LIMIT_BYTES as f64).min(1.0);
-
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color("rgba(254,255,238,0.55)");
-                ctx.set_text_align(uzor::render::TextAlign::Left);
-                ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-                ctx.fill_text("Storage", x, cy);
-
-                let used_str = format!("{:.1} MB / {:.0} MB", used_mb, limit_mb);
-                ctx.set_text_align(uzor::render::TextAlign::Right);
-                ctx.fill_text(&used_str, x + available_w, cy);
-                ctx.set_text_align(uzor::render::TextAlign::Left);
-                cy += 14.0;
-
-                let bar_h = 8.0;
-                ctx.set_fill_color("#333333");
-                ctx.fill_rounded_rect(x, cy, available_w, bar_h, 3.0);
-
-                let fill_color = if used_pct >= 0.90 {
-                    "#d9534f"
-                } else if used_pct >= 0.70 {
-                    "#f0ad4e"
-                } else {
-                    "#5cb85c"
-                };
-                let fill_w = available_w * used_pct;
-                if fill_w > 0.0 {
-                    ctx.set_fill_color(fill_color);
-                    ctx.fill_rounded_rect(x, cy, fill_w, bar_h, 3.0);
-                }
-                cy += bar_h + 8.0;
-            }
-        }
-    }
-
-    cy += 8.0;
-    let total_content_h = cy - container.content_y();
-    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
-    result.scroll_viewport_rect = Some(viewport_rect);
-    result.scroll_content_height = scroll_result.content_height;
-    result.scrollbar_handle_rect = scroll_result.handle_rect;
-    result.scrollbar_track_rect = scroll_result.track_rect;
-    result.scroll_viewport_height = scroll_result.viewport_height;
-
-    if let Some(ref hr) = result.scrollbar_handle_rect {
-        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
-        input_coordinator.register_on_layer(
-            "user_settings:scrollbar_handle",
-            inflated,
-            uzor::input::Sense::DRAG,
-            layer_id,
-        );
-    }
-    if let Some(ref tr) = result.scrollbar_track_rect {
-        input_coordinator.register_on_layer(
-            "user_settings:scrollbar_track",
-            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
-            uzor::input::Sense::CLICK,
-            layer_id,
-        );
-    }
-    if let Some(ref vp) = result.scroll_viewport_rect {
-        input_coordinator.register_on_layer(
-            "user_settings:scroll_viewport",
-            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
-            uzor::input::Sense::SCROLL,
-            layer_id,
-        );
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 fn render_performance_tab(

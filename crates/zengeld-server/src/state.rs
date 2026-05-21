@@ -7,140 +7,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use subtle::ConstantTimeEq;
 
 use live_data::DataBridge;
-
-// ===========================================================================
-// Permission types
-// ===========================================================================
-
-/// Fine-grained permission set attached to each API key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Permissions {
-    pub read_windows: bool,
-    pub read_indicators: bool,
-    pub read_primitives: bool,
-    pub read_screenshots: bool,
-    pub read_catalog: bool,
-    pub write_viewport: bool,
-    pub write_indicators: bool,
-    pub write_primitives: bool,
-    pub admin: bool,
-}
-
-impl Permissions {
-    /// Read-only access to all data, no mutations.
-    pub fn read_only() -> Self {
-        Self {
-            read_windows: true,
-            read_indicators: true,
-            read_primitives: true,
-            read_screenshots: true,
-            read_catalog: true,
-            write_viewport: false,
-            write_indicators: false,
-            write_primitives: false,
-            admin: false,
-        }
-    }
-
-    /// Full read + write access, but not admin (cannot manage keys).
-    pub fn read_write() -> Self {
-        Self {
-            read_windows: true,
-            read_indicators: true,
-            read_primitives: true,
-            read_screenshots: true,
-            read_catalog: true,
-            write_viewport: true,
-            write_indicators: true,
-            write_primitives: true,
-            admin: false,
-        }
-    }
-
-    /// Full access including key management.
-    pub fn admin() -> Self {
-        Self {
-            read_windows: true,
-            read_indicators: true,
-            read_primitives: true,
-            read_screenshots: true,
-            read_catalog: true,
-            write_viewport: true,
-            write_indicators: true,
-            write_primitives: true,
-            admin: true,
-        }
-    }
-
-    /// Build a [`Permissions`] from a tier string.
-    ///
-    /// Returns [`Permissions::read_only`] for unknown tiers as a safe default.
-    pub fn from_tier(tier: &str) -> Self {
-        match tier {
-            "read_write" => Self::read_write(),
-            "admin" => Self::admin(),
-            _ => Self::read_only(),
-        }
-    }
-}
-
-/// Origin of a local agent CLI connector key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum AgentKeySource {
-    /// Generated locally via the terminal UI or the Agent API `/api/v1/keys`
-    /// endpoint.  These keys are local-only and never managed by cloud sync.
-    #[default]
-    Local,
-    /// Reserved for future use (previously used by cloud sync).
-    Cloud,
-}
-
-
-// Backward-compatible type alias so callers using the old name still compile.
-#[allow(dead_code)]
-pub type KeySource = AgentKeySource;
-
-/// One entry in the local agent CLI connector key registry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalAgentKey {
-    /// SHA-256 hex digest of the raw key — never store the raw key.
-    pub key_hash: String,
-    /// Human-readable label chosen by the creator.
-    pub label: String,
-    /// Tier string: `"read_only"`, `"read_write"`, or `"admin"`.
-    pub tier: String,
-    /// Effective permissions derived from the tier.
-    pub permissions: Permissions,
-    /// Unix timestamp (seconds) when this entry was created.
-    pub created_at: u64,
-    /// Optional agent identifier attached to this key.
-    pub agent_id: Option<String>,
-    /// Whether this key was created locally or reserved for future sync.
-    ///
-    /// Defaults to [`AgentKeySource::Local`] so that keys loaded from older
-    /// profile.json files (which lack this field) are treated as local.
-    #[serde(default)]
-    pub source: AgentKeySource,
-}
-
-// Backward-compatible type alias so callers using the old name still compile.
-pub type ApiKeyEntry = LocalAgentKey;
-
-/// Hash a raw local agent key to a hex SHA-256 digest.
-pub fn hash_agent_key(raw_key: &str) -> String {
-    format!("{:x}", Sha256::digest(raw_key.as_bytes()))
-}
-
-/// Backward-compatible alias for [`hash_agent_key`].
-#[allow(dead_code)]
-pub fn hash_key(raw_key: &str) -> String {
-    hash_agent_key(raw_key)
-}
 
 // ===========================================================================
 // AgentState — root shared state
@@ -178,16 +46,11 @@ pub struct AgentState {
 
     /// Application version string (e.g. `"0.1.0"`).
     pub version: String,
-
-    /// Registered local agent CLI connector keys.  An empty vec means auth is disabled (open access).
-    pub local_keys: RwLock<Vec<LocalAgentKey>>,
 }
 
 impl AgentState {
     /// Create a new [`AgentState`] wrapping the given bridge.
-    ///
-    /// Pass an empty `local_keys` vec to disable authentication (open access).
-    pub fn new(bridge: Arc<DataBridge>, version: impl Into<String>, local_keys: Vec<LocalAgentKey>) -> Self {
+    pub fn new(bridge: Arc<DataBridge>, version: impl Into<String>) -> Self {
         Self {
             bridge,
             indicator_snapshot: RwLock::new(IndicatorSnapshot::default()),
@@ -199,84 +62,7 @@ impl AgentState {
             command_queue: Mutex::new(Vec::new()),
             start_time: std::time::Instant::now(),
             version: version.into(),
-            local_keys: RwLock::new(local_keys),
         }
-    }
-
-    /// Resolve a raw key token into its permissions and optional agent_id.
-    ///
-    /// Returns `None` when the key is not found in the registry.
-    /// Hashes the raw key and finds the matching entry.
-    pub fn resolve_key(&self, raw_key: &str) -> Option<(Permissions, Option<String>)> {
-        let hash = hash_agent_key(raw_key);
-        let guard = self.local_keys.read().ok()?;
-        guard
-            .iter()
-            .find(|e| bool::from(e.key_hash.as_bytes().ct_eq(hash.as_bytes())))
-            .map(|e| (e.permissions.clone(), e.agent_id.clone()))
-    }
-
-    /// Add a new local agent key entry to the registry at runtime.
-    pub fn add_local_key(&self, entry: LocalAgentKey) {
-        if let Ok(mut keys) = self.local_keys.write() {
-            keys.push(entry);
-        }
-    }
-
-    /// Backward-compatible alias for [`add_local_key`].
-    pub fn add_key(&self, entry: LocalAgentKey) {
-        self.add_local_key(entry);
-    }
-
-    /// Remove all key entries whose label matches `label`.
-    ///
-    /// Returns `true` if at least one entry was removed.
-    pub fn remove_local_key(&self, label: &str) -> bool {
-        if let Ok(mut keys) = self.local_keys.write() {
-            let before = keys.len();
-            keys.retain(|e| e.label != label);
-            keys.len() < before
-        } else {
-            false
-        }
-    }
-
-    /// Backward-compatible alias for [`remove_local_key`].
-    pub fn remove_key(&self, label: &str) -> bool {
-        self.remove_local_key(label)
-    }
-
-    /// Return a clone of all registered local agent key entries.
-    pub fn list_local_keys(&self) -> Vec<LocalAgentKey> {
-        self.local_keys.read().map(|g| g.clone()).unwrap_or_default()
-    }
-
-    /// Backward-compatible alias for [`list_local_keys`].
-    pub fn list_keys(&self) -> Vec<LocalAgentKey> {
-        self.list_local_keys()
-    }
-
-    /// Generate a new local agent key, store its hash, and return the raw key string.
-    /// Used by the UI key manager (CreateKey command).
-    pub fn create_key_for_ui(&self, label: &str, tier: &str) -> String {
-        use sha2::{Sha256, Digest};
-        let random_bytes: [u8; 32] = rand::random();
-        let raw_key = hex::encode(random_bytes);
-        let key_hash = format!("{:x}", Sha256::digest(raw_key.as_bytes()));
-        let entry = LocalAgentKey {
-            key_hash,
-            label: label.to_string(),
-            tier: tier.to_string(),
-            permissions: Permissions::from_tier(tier),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            agent_id: None,
-            source: AgentKeySource::Local,
-        };
-        self.add_local_key(entry);
-        raw_key
     }
 
     /// Push an agent command into the queue (called from HTTP handlers).

@@ -549,31 +549,10 @@ impl App<'_> {
     ) -> Self {
         let app_state = AppState::from_profile(&profile, profile_manager.presets.clone(), profile_manager.snapshots.clone(), profile_manager.template_manager.clone(), profile_manager.vault_key);
 
-        // Convert StoredLocalAgentKey entries to LocalAgentKey (the server type).
-        let server_keys: Vec<zengeld_server::state::LocalAgentKey> = app_state
-            .local_agent_keys
-            .iter()
-            .map(|k| zengeld_server::state::LocalAgentKey {
-                key_hash: k.key_hash.clone(),
-                label: k.label.clone(),
-                tier: k.tier.clone(),
-                permissions: zengeld_server::state::Permissions::from_tier(&k.tier),
-                created_at: k.created_at,
-                agent_id: k.agent_id.clone(),
-                // Treat any stored key as Local unless it was explicitly marked cloud.
-                source: if k.source == "cloud" {
-                    zengeld_server::state::AgentKeySource::Cloud
-                } else {
-                    zengeld_server::state::AgentKeySource::Local
-                },
-            })
-            .collect();
-
         // Start the internal Agent API server on the DataBridge's tokio runtime.
         let agent_state = std::sync::Arc::new(zengeld_server::AgentState::new(
             bridge.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
-            server_keys,
         ));
         // ── Populate indicator catalog (one-time, at startup) ─────────────────
         {
@@ -1179,37 +1158,9 @@ impl App<'_> {
         } else {
             "stopped".to_string()
         };
-        // Sync connection mode from the authoritative profile (self.profile is
-        // the copy serialised by save_all; profile_manager.profile is only the
-        // seed used during startup loading).
-        chart.panel_app.user_settings_state.client_mode_connected =
-            self.profile.cloud_enabled;
         // Sync language preference from the loaded profile.
         chart.panel_app.user_settings_state.language =
             self.profile_manager.profile.language.clone();
-        // Sync cloud sync settings from the loaded profile.
-        {
-            let ss = &self.profile_manager.profile.sync_state;
-            let uss = &mut chart.panel_app.user_settings_state;
-            uss.sync_enabled = ss.enabled;
-            uss.last_sync_timestamp = ss.last_sync_timestamp;
-            uss.sync_presets = ss.sync_presets;
-            uss.sync_templates = ss.sync_templates;
-            uss.sync_watchlists = ss.sync_watchlists;
-            uss.sync_theme_toggle = ss.sync_theme;
-        }
-        {
-            let uss = &mut chart.panel_app.user_settings_state;
-            uss.ota_enabled = self.profile_manager.profile.ota_enabled;
-        }
-        // Seed device-level settings into the UI state so the profile manager
-        // toggles reflect the persisted device preferences.
-        {
-            let ds = zengeld_chart::user_profile::DeviceSettings::load();
-            let uss = &mut chart.panel_app.user_settings_state;
-            uss.device_ota_enabled = ds.ota_enabled;
-            uss.device_update_channel = ds.update_channel;
-        }
         // Sync profile data into the user settings state.
         {
             let uss = &mut chart.panel_app.user_settings_state;
@@ -1227,7 +1178,7 @@ impl App<'_> {
                     .parent()
                     .map(|p| p.to_path_buf());
                 uss.available_profiles = index.profiles.iter().map(|m| {
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.sync_level.clone())
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone())
                 }).collect();
                 uss.profiles_with_vault_status = index.profiles.iter().map(|m| {
                     let has_vault = if let Some(ref pd) = profiles_dir {
@@ -1235,7 +1186,7 @@ impl App<'_> {
                     } else {
                         false
                     };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault, m.sync_level.clone())
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), has_vault)
                 }).collect();
             } else {
                 // No index yet — synthesize a single entry from the current profile.
@@ -1243,16 +1194,9 @@ impl App<'_> {
                     uss.profile_id.clone(),
                     uss.profile_display_name.clone(),
                     uss.profile_avatar.clone(),
-                    "local".to_string(),
                 )];
             }
         }
-        // API keys are now managed via /api/v1/keys REST endpoint.
-        // Show key count in the UI instead of the raw key string.
-        chart.panel_app.user_settings_state.local_agent_key_display = format!(
-            "{} key(s) registered",
-            self.app_state.local_agent_keys.len()
-        );
         // Show the welcome wizard on the first window when this is a first-run launch.
         // The wizard is non-closeable until the user makes a mode choice.
         if self.is_first_run {
@@ -1279,7 +1223,7 @@ impl App<'_> {
                     } else {
                         false
                     };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), m.cloud_enabled, has_vault, m.sync_level.clone())
+                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), has_vault)
                 }).collect();
             }
         }
@@ -1365,13 +1309,13 @@ impl App<'_> {
     /// windows so the user-settings modal always shows up-to-date data.
     fn sync_profiles_to_windows(&mut self) {
         let profiles = self.profile_manager.available_profiles();
-        let profiles_with_vault: Vec<(String, String, String, bool, bool, String)> = profiles
+        let profiles_with_vault: Vec<(String, String, String, bool)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.cloud_enabled, p.has_vault, p.sync_level.clone()))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
             .collect();
-        let available: Vec<(String, String, String, String)> = profiles
+        let available: Vec<(String, String, String)> = profiles
             .iter()
-            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.sync_level.clone()))
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone()))
             .collect();
         for pw in self.windows.values_mut() {
             pw.chart.panel_app.user_settings_state.available_profiles = available.clone();
@@ -1739,12 +1683,6 @@ impl App<'_> {
             .or_else(|| self.windows.keys().next().copied());
 
         // Sync profile_manager mutations back into self.profile before saving.
-        // All toggle handlers (set_sync_enabled, set_ota_enabled, e2e salt, etc.)
-        // write to profile_manager.profile, not self.profile. Without this copy
-        // those changes would be lost on the next save_all() call.
-        self.profile.sync_state = self.profile_manager.profile.sync_state.clone();
-        self.profile.ota_enabled = self.profile_manager.profile.ota_enabled;
-        self.profile.cloud_enabled = self.profile_manager.profile.cloud_enabled;
 
         let mut profile = self.profile.clone();
         profile.windows = window_states;
@@ -1763,11 +1701,6 @@ impl App<'_> {
         };
         profile.server_enabled = self.app_state.server_enabled;
         profile.server_port = self.app_state.server_port;
-        // Persist the current key registry (managed via the REST API).
-        // The legacy `legacy_single_agent_key` field is kept empty after migration so
-        // we don't double-migrate on the next load.
-        profile.local_agent_keys = self.app_state.local_agent_keys.clone();
-        profile.legacy_single_agent_key = String::new();
 
         // Persist notification settings from the first window's alert settings state.
         if let Some(pw) = self.windows.values().next() {
@@ -2760,35 +2693,10 @@ impl ApplicationHandler for App<'_> {
         }
 
         // ── Drain local_agent_key changes (legacy single-key hot-reload) ─────────
-        // When the UI Regenerate button creates a new master key, register it
-        // as an admin key in AgentState and persist immediately.
+        // Consume but ignore — key management via REST API only.
         {
-            let key_change: Option<String> = self.windows.values_mut()
+            let _key_change: Option<String> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.local_agent_key_changed.take());
-            if let Some(raw_key) = key_change {
-                if !raw_key.is_empty() {
-                    if let Some(agent_state) = self.agent_state.clone() {
-                        // Remove any previous "master" key, then add the new one
-                        agent_state.remove_key("master");
-                        let key_hash = zengeld_server::state::hash_agent_key(&raw_key);
-                        let entry = zengeld_server::state::LocalAgentKey {
-                            key_hash,
-                            label: "master".to_string(),
-                            tier: "admin".to_string(),
-                            permissions: zengeld_server::state::Permissions::admin(),
-                            created_at: std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                            agent_id: None,
-                            source: zengeld_server::state::AgentKeySource::Local,
-                        };
-                        agent_state.add_local_key(entry);
-                        self.sync_keys_from_agent(&agent_state);
-                        eprintln!("[App] Master API key regenerated and persisted");
-                    }
-                }
-            }
         }
 
         // ── Drain key create requests from UI ────────────────────────────
@@ -2925,8 +2833,8 @@ impl ApplicationHandler for App<'_> {
                                 pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = meta.id.clone();
                                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = meta.display_name.clone();
-                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                             }
                         }
@@ -3077,9 +2985,9 @@ impl ApplicationHandler for App<'_> {
                                             for pw in self.windows.values_mut() {
                                                 use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.recovery_key_display =
                                                     recovery_key.clone();
                                                 // Sync read-only display editing state so it can be selected/copied.
@@ -3098,9 +3006,9 @@ impl ApplicationHandler for App<'_> {
                                             self.pending_profile_switch = Some(new_profile_id.clone());
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                             }
                                         }
@@ -3150,9 +3058,9 @@ impl ApplicationHandler for App<'_> {
                                             self.pending_profile_switch = Some(target_id);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                 pw.chart.panel_app.user_settings_state.is_open = false;
                                             }
@@ -3180,9 +3088,9 @@ impl ApplicationHandler for App<'_> {
                                             self.pending_profile_switch = Some(target_id);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                                                pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                                                pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                 pw.chart.panel_app.user_settings_state.is_open = false;
                                             }
@@ -3206,8 +3114,6 @@ impl ApplicationHandler for App<'_> {
                                 self.app_state.vault_key = Some(key);
                                 self.profile_manager.vault_key = Some(key);
                                 self.profile = self.profile_manager.profile.clone();
-                                self.app_state.local_agent_keys =
-                                    self.profile_manager.profile.local_agent_keys.clone();
                                 self.needs_vault_unlock = false;
                                 // Drop skeleton windows and recreate with live data.
                                 self.pending_skeleton_promote = true;
@@ -3230,8 +3136,6 @@ impl ApplicationHandler for App<'_> {
                                 self.profile_manager.vault_key = Some(key);
                                 self.app_state.template_manager.vault_key = Some(key);
                                 eprintln!("[App] vault key derived and set — promoting skeleton");
-                                self.app_state.local_agent_keys =
-                                    self.profile_manager.profile.local_agent_keys.clone();
                                 self.needs_vault_unlock = false;
                                 self.needs_migration = false;
 
@@ -3325,8 +3229,6 @@ impl ApplicationHandler for App<'_> {
                                                         self.app_state.vault_key = Some(vault_key);
                                                         self.profile_manager.vault_key = Some(vault_key);
                                                         self.profile = self.profile_manager.profile.clone();
-                                                        self.app_state.local_agent_keys =
-                                                            self.profile_manager.profile.local_agent_keys.clone();
                                                         self.needs_vault_unlock = false;
 
                                                         // Store master_key so set_new_passphrase: can re-key the vault.
@@ -3354,9 +3256,9 @@ impl ApplicationHandler for App<'_> {
                                                         self.pending_profile_switch = Some(target_id.clone());
                                                         for pw in self.windows.values_mut() {
                                                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                                            pw.chart.panel_app.user_settings_state.recovery_key_editing.text.clear();
-                                                            pw.chart.panel_app.user_settings_state.recovery_key_editing.cursor = 0;
-                                                            pw.chart.panel_app.user_settings_state.recovery_key_focused = false;
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.text.clear();
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_display_editing.cursor = 0;
+                                                            pw.chart.panel_app.user_settings_state.recovery_key_display_focused = false;
                                                             pw.chart.panel_app.user_settings_state.show_profile_manager = false;
                                                             pw.chart.panel_app.user_settings_state.is_open = false;
                                                         }
@@ -3541,10 +3443,10 @@ impl ApplicationHandler for App<'_> {
                         pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
                         pw.chart.panel_app.user_settings_state.wizard_page = 0;
                         // Clear the passphrase field so the wizard starts clean.
-                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        pw.chart.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
-                        pw.chart.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                        pw.chart.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
+                        pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                     }
                     // Treat this as first-run so wizard_complete configures the already-
                     // created profile in-place instead of creating a second duplicate.
@@ -4013,20 +3915,6 @@ impl ApplicationHandler for App<'_> {
                 self.update_terminal_snapshot(agent_state);
                 self.update_watchlist_snapshot(agent_state);
                 self.update_connector_snapshot(agent_state);
-            }
-            // Sync managed_keys list to all windows for display in the Server tab.
-            if let Some(ref agent_state) = self.agent_state {
-                let server_keys = agent_state.list_keys();
-                let managed: Vec<zengeld_chart::LocalAgentKeyInfo> = server_keys.iter().map(|k| {
-                    zengeld_chart::LocalAgentKeyInfo {
-                        label: k.label.clone(),
-                        tier: k.tier.clone(),
-                        agent_id: k.agent_id.clone(),
-                    }
-                }).collect();
-                for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.user_settings_state.local_agent_keys_ui = managed.clone();
-                }
             }
             // Clock time in the toolbar updates every second — mark all toolbars dirty
             // so the clock string is refreshed on the next frame.

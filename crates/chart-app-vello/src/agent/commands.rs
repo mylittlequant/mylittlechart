@@ -281,52 +281,14 @@ impl App<'_> {
                 }
 
                 zengeld_server::state::AgentCommand::CreateKey { label, tier } => {
-                    let raw_key = agent_state.create_key_for_ui(&label, &tier);
-                    for pw in self.windows.values_mut() {
-                        pw.chart.panel_app.user_settings_state.last_created_key = Some(raw_key.clone());
-                    }
-                    // Sync keys to AppState and persist immediately
-                    self.sync_keys_from_agent(&agent_state);
-                    eprintln!("[AgentCommand] CreateKey: label={}, tier={}", label, tier);
+                    eprintln!("[AgentCommand] CreateKey ignored (auth removed): label={}, tier={}", label, tier);
                 }
 
                 zengeld_server::state::AgentCommand::DeleteKey { label } => {
-                    agent_state.remove_key(&label);
-                    // Sync keys to AppState and persist immediately
-                    self.sync_keys_from_agent(&agent_state);
-                    eprintln!("[AgentCommand] DeleteKey: label={}", label);
+                    eprintln!("[AgentCommand] DeleteKey ignored (auth removed): label={}", label);
                 }
             }
         }
     }
 
-    /// Sync API keys from AgentState back to AppState and persist to disk immediately.
-    /// Called after CreateKey / DeleteKey / Regenerate to ensure keys survive crashes.
-    pub(crate) fn sync_keys_from_agent(&mut self, agent_state: &std::sync::Arc<zengeld_server::AgentState>) {
-        let server_keys = agent_state.list_local_keys();
-        self.app_state.local_agent_keys = server_keys.iter().map(|k| {
-            zengeld_chart::StoredLocalAgentKey {
-                key_hash: k.key_hash.clone(),
-                label: k.label.clone(),
-                tier: k.tier.clone(),
-                created_at: k.created_at,
-                agent_id: k.agent_id.clone(),
-                source: match k.source {
-                    zengeld_server::state::AgentKeySource::Cloud => "cloud".to_string(),
-                    zengeld_server::state::AgentKeySource::Local => "local".to_string(),
-                },
-            }
-        }).collect();
-        // Persist profile with updated keys
-        let mut profile = self.profile.clone();
-        profile.local_agent_keys = self.app_state.local_agent_keys.clone();
-        profile.legacy_single_agent_key = String::new();
-        let vault_key = self.app_state.vault_key.as_ref();
-        if let Err(e) = zengeld_chart::save_profile(&profile, vault_key) {
-            eprintln!("[App] Failed to persist keys: {}", e);
-        } else {
-            self.profile = profile;
-            eprintln!("[App] Keys persisted to profile ({} keys)", self.app_state.local_agent_keys.len());
-        }
-    }
 }

@@ -261,14 +261,6 @@ pub struct UserProfile {
     pub app_version: String,
 
     // -------------------------------------------------------------------------
-    // Optional authentication (user can link an account)
-    // -------------------------------------------------------------------------
-
-    /// Optional linked account info. None = anonymous user.
-    #[serde(default)]
-    pub linked_account: Option<LinkedAccount>,
-
-    // -------------------------------------------------------------------------
     // Chart data preferences
     // -------------------------------------------------------------------------
 
@@ -307,20 +299,6 @@ pub struct UserProfile {
     #[serde(default = "default_server_port")]
     pub server_port: u16,
 
-    /// Legacy single API key — kept for backward-compat deserialization only.
-    ///
-    /// If non-empty on load it will be migrated to a single admin entry in
-    /// `local_agent_keys` by the startup code in `main.rs`.
-    #[serde(default, rename = "agent_api_key")]
-    pub legacy_single_agent_key: String,
-
-    /// Registered local agent CLI connector keys with permission tiers.
-    ///
-    /// An empty vec means auth is disabled (open access).
-    /// `alias` ensures old profiles serialized with `agent_api_keys` still load.
-    #[serde(default, alias = "agent_api_keys")]
-    pub local_agent_keys: Vec<StoredLocalAgentKey>,
-
     // -------------------------------------------------------------------------
     // Exchange API credentials (keychain-backed)
     // -------------------------------------------------------------------------
@@ -351,32 +329,6 @@ pub struct UserProfile {
     // Cloud connectivity
     // -------------------------------------------------------------------------
 
-    /// Whether cloud connectivity (OTA, sync, telemetry) is enabled.
-    ///
-    /// Set at profile creation (connected vs standalone mode) and persisted in
-    /// profile.json.  Renamed from the old `client_mode == Connected` pattern.
-    #[serde(default)]
-    pub cloud_enabled: bool,
-
-    /// Sync level: "local", "connected", "cloud".
-    /// Source of truth — index.json derives from this on every load.
-    #[serde(default)]
-    pub sync_level: String,
-
-    /// Whether OTA (over-the-air) updates are enabled.
-    ///
-    /// When `false`, the app will not check for updates on startup.
-    /// Defaults to `true`.
-    #[serde(default = "default_true")]
-    pub ota_enabled: bool,
-
-    // -------------------------------------------------------------------------
-    // Telemetry counters (accumulated since installation)
-    // -------------------------------------------------------------------------
-
-    #[serde(default)]
-    pub telemetry: TelemetryData,
-
     // -------------------------------------------------------------------------
     // Notification / alert delivery settings
     // -------------------------------------------------------------------------
@@ -395,15 +347,6 @@ pub struct UserProfile {
     /// compatibility and always reflect the primary window.
     #[serde(default)]
     pub windows: Vec<WindowState>,
-
-    // -------------------------------------------------------------------------
-    // Cloud sync
-    // -------------------------------------------------------------------------
-
-    /// Incremental sync state — persisted so subsequent syncs only request
-    /// items changed since the last successful sync.
-    #[serde(default)]
-    pub sync_state: SyncState,
 
     // -------------------------------------------------------------------------
     // Multi-profile identity
@@ -434,85 +377,6 @@ pub struct UserProfile {
     pub data_load: DataLoadSettings,
 }
 
-// =============================================================================
-// SyncState
-// =============================================================================
-
-/// Minimal state required to perform incremental cloud sync.
-///
-/// Stored inside [`UserProfile`] so it is automatically persisted to and
-/// loaded from `profile.json` via the existing save/load infrastructure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncState {
-    /// Unix timestamp (seconds) of the last successful sync.
-    /// `0` means the client has never completed a sync.
-    #[serde(default)]
-    pub last_sync_timestamp: i64,
-    /// Whether the user has opted into cloud sync.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Whether the encrypted vault file (`vault.enc`) is included in cloud sync.
-    /// Defaults to `true` — the vault is always synced unless the user opts out.
-    #[serde(default = "default_true")]
-    pub sync_vault: bool,
-    /// Whether chart presets are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub sync_presets: bool,
-    /// Whether indicator templates are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub sync_templates: bool,
-    /// Whether watchlists are included in cloud sync.
-    #[serde(default = "default_true")]
-    pub sync_watchlists: bool,
-    /// Whether the active theme is included in cloud sync.
-    #[serde(default = "default_true")]
-    pub sync_theme: bool,
-    /// Whether the recovery key (encrypted master key) is included in cloud sync.
-    #[serde(default = "default_true")]
-    pub sync_recovery_key: bool,
-    /// Set of sync item keys (`"category:sync_id"`) that have been successfully
-    /// pushed to the server at least once.
-    ///
-    /// Used for tombstone detection: if an item disappears from local storage
-    /// but is present in this set, a tombstone (`deleted: true`) is pushed on
-    /// the next sync cycle so the server marks the item as deleted.
-    #[serde(default)]
-    pub synced_items: std::collections::HashSet<String>,
-
-    /// SHA-256 checksums of sync items as they were after the last successful
-    /// push or pull.
-    ///
-    /// Key: `sync_id` (e.g. `"preset_1728503941_123456789"`).
-    /// Value: SHA-256 hex digest of the item content at the time it was last
-    /// successfully synced to *or* from the server.
-    ///
-    /// Persisted across restarts so that conflict detection works correctly
-    /// after a restart.  Without this, an empty map would cause every item to
-    /// appear as a conflict on the first sync after startup.
-    ///
-    /// Seeded into `cloud_sync::SyncState.last_synced_checksums` on startup
-    /// and written back after each successful sync cycle.
-    #[serde(default)]
-    pub last_synced_checksums: std::collections::HashMap<String, String>,
-}
-
-impl Default for SyncState {
-    fn default() -> Self {
-        Self {
-            last_sync_timestamp: 0,
-            enabled: false,
-            sync_vault: true,
-            sync_presets: true,
-            sync_templates: true,
-            sync_watchlists: true,
-            sync_theme: true,
-            sync_recovery_key: true,
-            synced_items: std::collections::HashSet::new(),
-            last_synced_checksums: std::collections::HashMap::new(),
-        }
-    }
-}
-
 impl UserProfile {
     /// Create a new profile with sensible defaults.
     pub fn new() -> Self {
@@ -530,24 +394,16 @@ impl UserProfile {
             // New fields
             device_name: String::new(),
             app_version: String::new(),
-            linked_account: None,
             bar_count: default_bar_count(),
             recalc_mode: default_recalc_mode(),
             scale_mode: default_scale_mode(),
             language: default_language(),
             server_enabled: default_server_enabled(),
             server_port: default_server_port(),
-            legacy_single_agent_key: String::new(),
-            local_agent_keys: Vec::new(),
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
-            cloud_enabled: false,
-            sync_level: String::new(),
-            ota_enabled: true,
-            telemetry: TelemetryData::default(),
             notification_settings: alert_delivery::NotificationSettings::default(),
             windows: Vec::new(),
-            sync_state: SyncState::default(),
             profile_id: String::new(),
             display_name: "Default".to_string(),
             avatar: "chart".to_string(),
@@ -556,18 +412,9 @@ impl UserProfile {
         }
     }
 
-    /// Record a new app launch in telemetry.
+    /// Record a new app launch (update app_version field).
     pub fn record_launch(&mut self, app_version: &str) {
         self.app_version = app_version.to_string();
-        self.telemetry.total_launches += 1;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.telemetry.last_active_at = now;
-        if self.telemetry.first_launch_at == 0 {
-            self.telemetry.first_launch_at = now;
-        }
     }
 }
 
@@ -678,118 +525,6 @@ pub struct StoredExchangeKey {
 }
 
 // =============================================================================
-// StoredLocalAgentKey — persisted local agent CLI connector key entry
-// =============================================================================
-
-/// Persisted representation of a single local agent CLI connector key entry.
-///
-/// This type mirrors [`zengeld_server::state::LocalAgentKey`] but lives in the
-/// `chart` crate so that `profile.rs` stays independent of `zengeld-server`.
-/// Conversion to the server type happens in `chart-app-vello/src/main.rs`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredLocalAgentKey {
-    /// SHA-256 hex digest of the raw key.
-    pub key_hash: String,
-    /// Human-readable label.
-    pub label: String,
-    /// Tier: `"read_only"`, `"read_write"`, or `"admin"`.
-    pub tier: String,
-    /// Unix timestamp (seconds) when this entry was created.
-    pub created_at: u64,
-    /// Optional agent identifier.
-    #[serde(default)]
-    pub agent_id: Option<String>,
-    /// Key origin: `"local"` or `"cloud"` (legacy).
-    ///
-    /// Uses `String` instead of an enum so the JSON stays human-readable and
-    /// backward-compatible.  Missing field defaults to `"local"` so that keys
-    /// loaded from older profile.json files are treated as local.
-    #[serde(default = "default_key_source")]
-    pub source: String,
-}
-
-/// Backward-compatible type alias — old code using `StoredApiKey` still compiles.
-pub type StoredApiKey = StoredLocalAgentKey;
-
-// =============================================================================
-// LinkedAccount
-// =============================================================================
-
-/// Optional linked account for user identification.
-/// Users can optionally link a Telegram, GitHub, Google, or Discord account,
-/// or just set a local display name.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LinkedAccount {
-    /// Authentication provider: "local", "telegram", "github", "google", "discord"
-    pub provider: String,
-
-    /// Provider-specific user ID (e.g. Telegram user_id, GitHub user_id)
-    #[serde(default)]
-    pub provider_user_id: String,
-
-    /// Display name chosen by user or fetched from provider
-    #[serde(default)]
-    pub display_name: String,
-
-    /// When the account was linked (unix timestamp seconds)
-    #[serde(default)]
-    pub linked_at: u64,
-}
-
-// =============================================================================
-// TelemetryData
-// =============================================================================
-
-/// Accumulated usage telemetry for analytics.
-/// Counters reset only on profile reset, not on app restart.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TelemetryData {
-    /// Total app launches since installation
-    #[serde(default)]
-    pub total_launches: u64,
-
-    /// Total active time in seconds (app in foreground)
-    #[serde(default)]
-    pub total_active_seconds: u64,
-
-    /// Last active timestamp (unix seconds) — for "last seen"
-    #[serde(default)]
-    pub last_active_at: u64,
-
-    /// First launch timestamp (unix seconds)
-    #[serde(default)]
-    pub first_launch_at: u64,
-
-    /// Total chart windows opened
-    #[serde(default)]
-    pub charts_opened: u64,
-
-    /// Total indicators added
-    #[serde(default)]
-    pub indicators_added: u64,
-
-    /// Total drawing primitives created
-    #[serde(default)]
-    pub drawings_created: u64,
-
-    /// Total presets saved
-    #[serde(default)]
-    pub presets_saved: u64,
-
-    /// Total templates saved
-    #[serde(default)]
-    pub templates_saved: u64,
-
-    /// Total click/interaction count (rough engagement metric)
-    #[serde(default)]
-    pub total_interactions: u64,
-
-    /// Total symbols searched/viewed
-    #[serde(default)]
-    pub symbols_viewed: u64,
-}
-
-// =============================================================================
 // ProfileMeta / ProfileIndex — multi-profile index
 // =============================================================================
 
@@ -806,14 +541,6 @@ pub struct ProfileMeta {
     pub created_at: i64,
     /// Relative subdirectory name under `profiles/` (e.g. "default" or a UUID).
     pub dir_name: String,
-    /// Whether cloud connectivity (OTA, sync, telemetry) is enabled.
-    /// Old index.json files without this field default to false (cloud disabled).
-    #[serde(default)]
-    pub cloud_enabled: bool,
-    /// Sync level label for display: "local", "connected", "cloud".
-    /// Old index.json files without this field derive it from cloud_enabled.
-    #[serde(default)]
-    pub sync_level: String,
 }
 
 /// The profile index file — lists all profiles and which is active.
@@ -840,14 +567,6 @@ pub struct ProfileIndex {
 /// A vault key is always required — set during the welcome wizard.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VaultSecrets {
-    /// Legacy single API key — kept for backward-compat migration only.
-    #[serde(default, rename = "agent_api_key")]
-    pub legacy_single_agent_key: String,
-
-    /// Registered local agent CLI connector keys with permission tiers (contains `key_hash`).
-    #[serde(default, alias = "agent_api_keys")]
-    pub local_agent_keys: Vec<StoredLocalAgentKey>,
-
     /// Exchange API key entries (contains `api_secret` and `passphrase`).
     #[serde(default)]
     pub exchange_keys: Vec<StoredExchangeKey>,
@@ -866,10 +585,7 @@ impl VaultSecrets {
     /// `VaultSecrets` and clearing those fields in the profile so they
     /// are not written to plaintext storage.
     pub fn extract_from(profile: &mut UserProfile) -> Self {
-        
         Self {
-            legacy_single_agent_key: std::mem::take(&mut profile.legacy_single_agent_key),
-            local_agent_keys: std::mem::take(&mut profile.local_agent_keys),
             exchange_keys: std::mem::take(&mut profile.exchange_keys),
             notification_settings: std::mem::take(&mut profile.notification_settings),
         }
@@ -877,8 +593,6 @@ impl VaultSecrets {
 
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
     pub fn merge_into(self, profile: &mut UserProfile) {
-        profile.legacy_single_agent_key = self.legacy_single_agent_key;
-        profile.local_agent_keys = self.local_agent_keys;
         profile.exchange_keys = self.exchange_keys;
         profile.notification_settings = self.notification_settings;
         profile.notification_settings.telegram.migrate_legacy();
@@ -893,13 +607,6 @@ fn default_version() -> u32 {
     PROFILE_VERSION
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_key_source() -> String {
-    "local".to_string()
-}
 
 fn default_theme() -> String {
     "dark".to_string()

@@ -335,58 +335,7 @@ pub fn load_profile_index() -> Option<ProfileIndex> {
         return None;
     }
     let json = fs::read_to_string(&path).ok()?;
-    let mut index: ProfileIndex = serde_json::from_str(&json).ok()?;
-
-    // Always derive sync_level from profile.json — it's the source of truth.
-    // index.json sync_level is just a UI cache, recomputed every load.
-    let pdir = profiles_dir();
-    #[derive(serde::Deserialize)]
-    struct Probe {
-        #[serde(default)]
-        ota_enabled: bool,
-        #[serde(default)]
-        cloud_enabled: bool,
-        #[serde(default)]
-        sync_state: ProbeSync,
-        #[serde(default)]
-        sync_level: String,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct ProbeSync {
-        #[serde(default)]
-        enabled: bool,
-    }
-    let mut changed = false;
-    for meta in &mut index.profiles {
-        let profile_json = pdir.join(&meta.dir_name).join("profile.json");
-        let level = if let Ok(json) = fs::read_to_string(&profile_json) {
-            if let Ok(p) = serde_json::from_str::<Probe>(&json) {
-                // If profile.json already has an explicit sync_level, trust it.
-                if !p.sync_level.is_empty() && p.sync_level != "cloud_zt" {
-                    p.sync_level
-                } else if p.cloud_enabled && p.sync_state.enabled {
-                    "cloud".to_string()
-                } else if p.ota_enabled {
-                    "connected".to_string()
-                } else {
-                    "local".to_string()
-                }
-            } else {
-                "local".to_string()
-            }
-        } else {
-            "local".to_string()
-        };
-        let cloud = level == "cloud";
-        if meta.sync_level != level || meta.cloud_enabled != cloud {
-            meta.sync_level = level;
-            meta.cloud_enabled = cloud;
-            changed = true;
-        }
-    }
-    if changed {
-        let _ = save_profile_index(&index);
-    }
+    let index: ProfileIndex = serde_json::from_str(&json).ok()?;
 
     Some(index)
 }
@@ -430,7 +379,7 @@ pub fn active_profile_data_dir() -> PathBuf {
     // No index or empty index — create a default profile instead of falling
     // back to the root app data dir (which causes cross-profile data leaks).
     eprintln!("[storage] WARNING: no profile index — creating default profile");
-    let meta = create_profile("Default", "chart", false)
+    let meta = create_profile("Default", "chart")
         .expect("failed to create default profile");
     profiles_dir().join(&meta.dir_name)
 }
@@ -452,7 +401,7 @@ pub fn migrate_legacy_profile_if_needed() -> Result<bool, String> {
 ///
 /// Creates `profiles/{uuid}/profile.json` and adds the entry to the index.
 /// Does NOT switch the active profile.
-pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<ProfileMeta, String> {
+pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -470,7 +419,6 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
     profile.display_name = name.to_string();
     profile.avatar = avatar.to_string();
     profile.profile_created_at = now;
-    profile.cloud_enabled = cloud_enabled;
 
     let json = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
     fs::write(profile_dir.join("profile.json"), json).map_err(|e| e.to_string())?;
@@ -487,8 +435,6 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
         avatar: avatar.to_string(),
         created_at: now,
         dir_name,
-        cloud_enabled,
-        sync_level: if cloud_enabled { "cloud".to_string() } else { "local".to_string() },
     };
 
     // Append to existing index (or create one if it doesn't exist yet).
@@ -500,25 +446,6 @@ pub fn create_profile(name: &str, avatar: &str, cloud_enabled: bool) -> Result<P
     save_profile_index(&index)?;
 
     Ok(meta)
-}
-
-/// Update the `cloud_enabled` flag and `sync_level` for a profile in the index.
-///
-/// This must be called whenever the user changes sync level so the
-/// profile list UI shows the correct badge.
-pub fn set_profile_cloud_enabled(profile_id: &str, enabled: bool) -> Result<(), String> {
-    set_profile_sync_level(profile_id, enabled, if enabled { "cloud" } else { "local" })
-}
-
-/// Update sync level and cloud_enabled for a profile in the index.
-pub fn set_profile_sync_level(profile_id: &str, cloud_enabled: bool, level: &str) -> Result<(), String> {
-    let mut index = load_profile_index()
-        .ok_or_else(|| "No profile index found".to_string())?;
-    if let Some(meta) = index.profiles.iter_mut().find(|m| m.id == profile_id) {
-        meta.cloud_enabled = cloud_enabled;
-        meta.sync_level = level.to_string();
-    }
-    save_profile_index(&index)
 }
 
 // =============================================================================

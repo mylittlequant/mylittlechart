@@ -12,15 +12,14 @@
 
 use std::sync::Arc;
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, patch},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::check_permission;
-use crate::state::{AgentCommand, Permissions, PrimitiveSummary, TerminalSnapshot, WindowSnapshot};
+use crate::state::{AgentCommand, PrimitiveSummary, TerminalSnapshot, WindowSnapshot};
 use crate::AgentState;
 
 // ---------------------------------------------------------------------------
@@ -167,13 +166,9 @@ async fn list_primitives(
 /// Queues an [`AgentCommand::AddPrimitive`] and returns 202 Accepted.
 async fn add_primitive(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(ChartPath { window_id, chart_id }): Path<ChartPath>,
     Json(body): Json<AddPrimitiveRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_primitives")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::AddPrimitive {
         window_id,
         chart_id,
@@ -191,13 +186,9 @@ async fn add_primitive(
 /// Queues an [`AgentCommand::UpdatePrimitive`] and returns 202 Accepted.
 async fn update_primitive(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(PrimitivePath { window_id, chart_id, primitive_id }): Path<PrimitivePath>,
     Json(body): Json<UpdatePrimitiveRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_primitives")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::UpdatePrimitive {
         window_id,
         chart_id,
@@ -216,13 +207,9 @@ async fn update_primitive(
 /// Queues an [`AgentCommand::RemovePrimitive`] and returns 202 Accepted.
 async fn remove_primitive(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(PrimitivePath { window_id, chart_id, primitive_id }): Path<PrimitivePath>,
     Query(q): Query<DeleteQuery>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_primitives")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::RemovePrimitive {
         window_id,
         chart_id,

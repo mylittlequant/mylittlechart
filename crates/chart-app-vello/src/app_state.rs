@@ -56,11 +56,6 @@ pub(crate) struct AppState {
     pub(crate) server_enabled: bool,
     /// Port the server listens on.
     pub(crate) server_port: u16,
-    /// Registered API keys with permission tiers.
-    ///
-    /// Canonical source — keys managed via the REST API are reflected here and
-    /// persisted to the user profile on the next save_all() call.
-    pub(crate) local_agent_keys: Vec<zengeld_chart::StoredLocalAgentKey>,
 
     /// Encryption key for zero-trust storage. Derived from passphrase at startup.
     /// `None` during migration or when running without a passphrase (plaintext mode).
@@ -145,27 +140,6 @@ impl AppState {
             scale_mode,
             server_enabled: profile.server_enabled,
             server_port: profile.server_port,
-            local_agent_keys: {
-                // Start with whatever the profile already has.
-                let mut keys = profile.local_agent_keys.clone();
-
-                // Migrate legacy single-key field if present and no new keys yet.
-                if keys.is_empty() && !profile.legacy_single_agent_key.is_empty() {
-                    let created_at = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    keys.push(zengeld_chart::StoredApiKey {
-                        key_hash: zengeld_server::state::hash_key(&profile.legacy_single_agent_key),
-                        label: "migrated-legacy-key".to_string(),
-                        tier: "admin".to_string(),
-                        created_at,
-                        agent_id: None,
-                        source: "local".to_string(),
-                    });
-                }
-                keys
-            },
             vault_key,
         }
     }

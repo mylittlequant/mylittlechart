@@ -153,105 +153,6 @@ fn render_page_profile_list(
     let left_inner_w = left_col_w - left_pad * 2.0;
     let mut left_cy = modal_y + 28.0;
 
-    // "ACCOUNT" section header
-    ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("ACCOUNT", left_inner_x, left_cy);
-    left_cy += 20.0;
-
-    if state.is_logged_in {
-        // Display name
-        ctx.set_font("bold 14px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&state.auth_display_name, left_inner_x, left_cy);
-        left_cy += 20.0;
-
-        // Provider label
-        if !state.auth_provider.is_empty() {
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text(&format!("via {}", state.auth_provider), left_inner_x, left_cy);
-            left_cy += 18.0;
-        }
-
-        left_cy += 10.0;
-
-        // "Log Out" button
-        let logout_btn_h = 30.0;
-        let logout_id = "profile_mgr:logout";
-        let is_logout_hovered = hovered == Some(logout_id);
-        let logout_bg = if is_logout_hovered {
-            "rgba(255,80,80,0.35)"
-        } else {
-            "rgba(255,80,80,0.15)"
-        };
-        ctx.set_fill_color(logout_bg);
-        ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, logout_btn_h, 4.0);
-        let logout_text_color = if is_logout_hovered { toolbar_theme.danger.as_str() } else { toolbar_theme.danger.as_str() };
-        draw_svg_icon(ctx, Icon::LogOut.svg(), left_inner_x + 10.0, left_cy + (logout_btn_h - 14.0) / 2.0, 14.0, 14.0, logout_text_color);
-        ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color(logout_text_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Log Out", left_inner_x + left_inner_w / 2.0 + 7.0, left_cy + logout_btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let logout_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, logout_btn_h);
-        result.content_items.push((logout_id.to_string(), logout_rect));
-        input_coordinator.register_on_layer(
-            format!("user_settings:{}", logout_id).as_str(),
-            logout_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        left_cy += logout_btn_h;
-    } else {
-        // Not logged in — brief description
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Sign in to enable cloud", left_inner_x, left_cy);
-        left_cy += 16.0;
-        ctx.fill_text("sync and profile backup.", left_inner_x, left_cy);
-        left_cy += 24.0;
-
-        // "Sign In via Browser" button
-        let signin_btn_h = 32.0;
-        let signin_id = "profile_mgr:sign_in";
-        let is_signin_hovered = hovered == Some(signin_id);
-        let signin_bg = if is_signin_hovered {
-            toolbar_theme.button_bg_hover.as_str()
-        } else {
-            toolbar_theme.button_bg.as_str()
-        };
-        ctx.set_fill_color(signin_bg);
-        ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, signin_btn_h, 4.0);
-        draw_svg_icon(ctx, Icon::LogIn.svg(), left_inner_x + 10.0, left_cy + (signin_btn_h - 16.0) / 2.0, 16.0, 16.0, toolbar_theme.item_text_active.as_str());
-        ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color(toolbar_theme.item_text_active.as_str());
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Sign In via Browser", left_inner_x + left_inner_w / 2.0 + 8.0, left_cy + signin_btn_h / 2.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let signin_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, signin_btn_h);
-        result.content_items.push((signin_id.to_string(), signin_rect));
-        input_coordinator.register_on_layer(
-            format!("user_settings:{}", signin_id).as_str(),
-            signin_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        left_cy += signin_btn_h;
-    }
-
     // ── Separator ─────────────────────────────────────────────────────────────
     left_cy += 20.0;
     ctx.set_stroke_color(toolbar_theme.separator.as_str());
@@ -289,131 +190,6 @@ fn render_page_profile_list(
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, mid_y);
         left_cy += row_h + 8.0;
-    }
-
-    // ── OTA UPDATES section ──────────────────────────────────────────────────
-    ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("OTA UPDATES", left_inner_x, left_cy);
-    left_cy += 18.0;
-
-    // Connected / Standalone radio pair
-    let radio_r = 5.0;
-    let radio_row_h = 22.0;
-    let radio_label_x = left_inner_x + radio_r * 2.0 + 7.0;
-
-    // "Connected" row
-    {
-        let id = "profile_mgr:device_connected";
-        let is_active = state.device_ota_enabled;
-        let circle_cy = left_cy + radio_row_h / 2.0;
-        let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
-        if is_active {
-            ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.begin_path();
-            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-        } else {
-            ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-            ctx.stroke();
-        }
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Connected", radio_label_x, circle_cy);
-        result.content_items.push((id.to_string(), row_rect));
-        input_coordinator.register_on_layer(
-            id,
-            row_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        left_cy += radio_row_h;
-    }
-
-    // "Standalone" row
-    {
-        let id = "profile_mgr:device_standalone";
-        let is_active = !state.device_ota_enabled;
-        let circle_cy = left_cy + radio_row_h / 2.0;
-        let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
-        if is_active {
-            ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.begin_path();
-            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-            ctx.fill();
-        } else {
-            ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-            ctx.stroke();
-        }
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Standalone", radio_label_x, circle_cy);
-        result.content_items.push((id.to_string(), row_rect));
-        input_coordinator.register_on_layer(
-            id,
-            row_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        left_cy += radio_row_h;
-    }
-
-    // Channel selector — only shown in Connected mode
-    if state.device_ota_enabled {
-        left_cy += 8.0;
-        ctx.set_font("bold 10px sans-serif");
-        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("CHANNEL", left_inner_x, left_cy);
-        left_cy += 16.0;
-
-        let channel_rows: &[(&str, &str, &str)] = &[
-            ("stable", "Stable", "profile_mgr:channel_stable"),
-            ("dev",    "Dev",    "profile_mgr:channel_dev"),
-        ];
-        for &(channel_key, label, id) in channel_rows {
-            let is_active = state.device_update_channel == channel_key;
-            let circle_cy = left_cy + radio_row_h / 2.0;
-            let row_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, radio_row_h);
-            if is_active {
-                ctx.set_fill_color(toolbar_theme.accent.as_str());
-                ctx.begin_path();
-                ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-                ctx.fill();
-            } else {
-                ctx.set_stroke_color(toolbar_theme.item_text_muted.as_str());
-                ctx.set_stroke_width(1.0);
-                ctx.begin_path();
-                ctx.arc(left_inner_x + radio_r, circle_cy, radio_r, 0.0, std::f64::consts::TAU);
-                ctx.stroke();
-            }
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, radio_label_x, circle_cy);
-            result.content_items.push((id.to_string(), row_rect));
-            input_coordinator.register_on_layer(
-                id,
-                row_rect,
-                Sense::CLICK | Sense::HOVER,
-                layer_id,
-            );
-            left_cy += radio_row_h;
-        }
     }
 
     // ── Temporary: Run Setup Wizard button ───────────────────────────────────
@@ -456,19 +232,7 @@ fn render_page_profile_list(
     let cloud_row_h: f64 = 44.0;
 
     // Filter cloud profiles: exclude any that are already present locally.
-    let local_ids: std::collections::HashSet<&str> = state
-        .profiles_with_vault_status
-        .iter()
-        .map(|(id, _, _, _, _, _)| id.as_str())
-        .collect();
-    let cloud_profiles_to_show: Vec<&crate::ui::modal_settings::CloudProfileEntry> = state
-        .cloud_profiles
-        .iter()
-        .filter(|cp| !local_ids.contains(cp.profile_id.as_str()))
-        .collect();
-    let has_cloud_section = !cloud_profiles_to_show.is_empty()
-        || state.cloud_profiles_loading
-        || !state.cloud_profiles_error.is_empty();
+    let _cloud_profiles_to_show: Vec<()> = Vec::new();
 
     // Close button (×) — only when a live profile is running AND not in skeleton lock
     if !state.runtime_profile_id.is_empty() && !state.needs_vault_unlock {
@@ -552,16 +316,7 @@ fn render_page_profile_list(
     for _ in &state.profiles_with_vault_status {
         total_content_h += profile_row_h + 6.0;
     }
-    if has_cloud_section {
-        total_content_h += 16.0; // gap before section header
-        total_content_h += 24.0; // section header row
-        if state.cloud_profiles_loading || !state.cloud_profiles_error.is_empty() {
-            total_content_h += 24.0;
-        }
-        for _ in &cloud_profiles_to_show {
-            total_content_h += cloud_row_h + 6.0;
-        }
-    }
+    let _ = cloud_row_h;
 
     // Clamp scroll offset against the actual max.
     let max_scroll = (total_content_h - scroll_viewport_h).max(0.0);
@@ -592,7 +347,7 @@ fn render_page_profile_list(
     cy = scroll_viewport_y - scroll_offset;
 
     // Profile rows
-    for (id, display_name, _avatar, _client_mode, has_vault, _sync_level) in &state.profiles_with_vault_status {
+    for (id, display_name, _avatar, has_vault) in &state.profiles_with_vault_status {
         let widget_id = format!("profile_mgr:select:{}", id);
         let is_row_hovered = hovered == Some(widget_id.as_str());
         let is_active = *id == state.runtime_profile_id;
@@ -670,163 +425,6 @@ fn render_page_profile_list(
         }
 
         cy += profile_row_h + 6.0;
-    }
-
-    // ── CLOUD PROFILES section (inside clip) ──────────────────────────────────
-    if has_cloud_section {
-        cy += 16.0;
-
-        // Section header row: "CLOUD PROFILES" label + "Refresh" link
-        ctx.set_font("bold 10px sans-serif");
-        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("CLOUD PROFILES", inner_x, cy + 10.0);
-
-        // "Refresh" link on the right
-        let refresh_id = "profile_mgr:refresh_cloud_profiles";
-        let is_refresh_hovered = hovered == Some(refresh_id);
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if is_refresh_hovered {
-            toolbar_theme.accent.as_str()
-        } else {
-            toolbar_theme.item_text_muted.as_str()
-        });
-        ctx.set_text_align(TextAlign::Right);
-        ctx.fill_text("Refresh", inner_x + inner_w, cy + 10.0);
-        ctx.set_text_align(TextAlign::Left);
-
-        let refresh_rect = WidgetRect::new(inner_x + inner_w - 50.0, cy, 50.0, 20.0);
-        result.content_items.push((refresh_id.to_string(), refresh_rect));
-        input_coordinator.register_on_layer(
-            format!("user_settings:{}", refresh_id).as_str(),
-            refresh_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-        cy += 24.0;
-
-        // Loading / error state
-        if state.cloud_profiles_loading {
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text("Loading\u{2026}", inner_x, cy);
-            cy += 24.0;
-        } else if !state.cloud_profiles_error.is_empty() {
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(toolbar_theme.danger.as_str());
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text(&state.cloud_profiles_error, inner_x, cy);
-            cy += 24.0;
-        }
-
-        // Cloud profile rows
-        for cp in &cloud_profiles_to_show {
-            let row_id = format!("profile_mgr:cloud_restore:{}", cp.profile_id);
-            let is_row_hovered = hovered == Some(row_id.as_str());
-
-            // Row background
-            let row_bg = if is_row_hovered {
-                toolbar_theme.button_bg_hover.as_str()
-            } else {
-                toolbar_theme.button_bg.as_str()
-            };
-            ctx.set_fill_color(row_bg);
-            ctx.fill_rounded_rect(inner_x, cy, inner_w, cloud_row_h, 4.0);
-
-            let row_mid_y = cy + cloud_row_h / 2.0;
-
-            // Lock icon for encrypted cloud profiles
-            let label_x = if cp.has_vault {
-                draw_svg_icon(ctx, Icon::Lock.svg(), inner_x + 6.0, row_mid_y - 7.0, 14.0, 14.0, toolbar_theme.item_text_muted.as_str());
-                inner_x + 26.0
-            } else {
-                inner_x + 8.0
-            };
-            // Display name (bold) + short profile ID (dimmer)
-            let short_id: String = cp.profile_id.chars().take(8).collect();
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            let mut text_x = label_x;
-            if let Some(ref name) = cp.display_name {
-                ctx.set_font("bold 13px sans-serif");
-                ctx.set_fill_color(toolbar_theme.item_text.as_str());
-                ctx.fill_text(name, text_x, row_mid_y);
-                text_x += ctx.measure_text(name) + 6.0;
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-                ctx.fill_text(&format!("({})", short_id), text_x, row_mid_y);
-            } else {
-                ctx.set_font("bold 13px sans-serif");
-                ctx.set_fill_color(toolbar_theme.item_text.as_str());
-                ctx.fill_text(&short_id, text_x, row_mid_y);
-            }
-
-            // Item count + size
-            let size_str = if cp.total_bytes >= 1_048_576 {
-                format!(
-                    "{} items, {:.1} MB",
-                    cp.item_count,
-                    cp.total_bytes as f64 / 1_048_576.0
-                )
-            } else {
-                format!(
-                    "{} items, {} KB",
-                    cp.item_count,
-                    cp.total_bytes / 1024
-                )
-            };
-            ctx.set_font("10px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&size_str, inner_x + 8.0, row_mid_y + 13.0);
-
-            // Restore button (right side)
-            let btn_w = 60.0;
-            let btn_h = 22.0;
-            let btn_x = inner_x + inner_w - btn_w - 6.0;
-            let btn_y = row_mid_y - btn_h / 2.0;
-
-            let is_restoring = state.restoring_profile_id.as_deref() == Some(&cp.profile_id);
-            let btn_label = if is_restoring { "Restoring\u{2026}" } else { "Restore" };
-            let btn_bg = if is_restoring || !is_row_hovered {
-                toolbar_theme.button_bg.as_str()
-            } else {
-                toolbar_theme.button_bg_hover.as_str()
-            };
-            ctx.set_fill_color(btn_bg);
-            ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
-
-            let btn_text_color = if is_restoring {
-                toolbar_theme.item_text_muted.as_str()
-            } else {
-                toolbar_theme.item_text_active.as_str()
-            };
-            ctx.set_font("bold 10px sans-serif");
-            ctx.set_fill_color(btn_text_color);
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(btn_label, btn_x + btn_w / 2.0, row_mid_y);
-            ctx.set_text_align(TextAlign::Left);
-
-            // Register row click area (covers entire row including button)
-            let row_rect = WidgetRect::new(inner_x, cy, inner_w, cloud_row_h);
-            result.content_items.push((row_id.clone(), row_rect));
-            if !is_restoring {
-                input_coordinator.register_on_layer(
-                    format!("user_settings:{}", row_id).as_str(),
-                    row_rect,
-                    Sense::CLICK | Sense::HOVER,
-                    layer_id,
-                );
-            }
-
-            cy += cloud_row_h + 6.0;
-        }
     }
 
     // End clip — scrollbar and Create button are drawn outside.
@@ -948,7 +546,7 @@ fn render_page_unlock(
     );
 
     // Unlock button
-    let unlock_disabled = state.e2e_passphrase_editing.text.is_empty();
+    let unlock_disabled = state.new_passphrase_editing.text.is_empty();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("profile_mgr:unlock");
     let btn_bg = if is_unlock_hovered {
         toolbar_theme.button_bg_hover.as_str()
@@ -1077,7 +675,7 @@ fn render_page_create_passphrase(
     cy += 22.0;
 
     // Minimum length hint
-    if state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH {
+    if state.new_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Left);
@@ -1147,7 +745,7 @@ fn render_page_create_passphrase(
     cy += confirm_h + 4.0;
 
     // Mismatch error
-    let passphrase_text = &state.e2e_passphrase_editing.text;
+    let passphrase_text = &state.new_passphrase_editing.text;
     let confirm_text = &state.confirm_passphrase_editing.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
         ctx.set_font("11px sans-serif");
@@ -1161,8 +759,8 @@ fn render_page_create_passphrase(
     }
 
     // Encrypt button (disabled until passphrase meets minimum length AND confirm matches)
-    let confirm_matches_create = state.confirm_passphrase_editing.text == state.e2e_passphrase_editing.text;
-    let encrypt_disabled = state.e2e_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
+    let confirm_matches_create = state.confirm_passphrase_editing.text == state.new_passphrase_editing.text;
+    let encrypt_disabled = state.new_passphrase_editing.text.len() < crate::user_manager::profile_manager::MIN_PASSPHRASE_LENGTH
         || !confirm_matches_create;
     let is_encrypt_hovered = !encrypt_disabled && hovered == Some("profile_mgr:create_passphrase");
     let btn_bg = if is_encrypt_hovered {
@@ -1800,14 +1398,14 @@ fn render_page_use_recovery_key(
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
     let input_h = 32.0;
     let input_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
-    let editing = &state.recovery_key_editing;
+    let editing = &state.recovery_key_display_editing;
     let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
     let input_config = InputConfig::new(&editing.text)
-        .with_focused(state.recovery_key_focused)
+        .with_focused(state.recovery_key_display_focused)
         .with_cursor(editing.cursor)
         .with_placeholder("xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-\u{2026}")
         .with_type(InputType::Text)
@@ -1824,7 +1422,7 @@ fn render_page_use_recovery_key(
         layer_id,
     );
 
-    if state.recovery_key_focused && editing.is_cursor_visible(current_time_ms) {
+    if state.recovery_key_display_focused && editing.is_cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,
@@ -1836,7 +1434,7 @@ fn render_page_use_recovery_key(
     cy += input_h + 14.0;
 
     // Recover button
-    let recover_disabled = state.recovery_key_editing.text.len() < 40;
+    let recover_disabled = state.recovery_key_display_editing.text.len() < 40;
     let is_recover_hovered = !recover_disabled && hovered == Some("profile_mgr:recovery_unlock");
     let btn_bg = if is_recover_hovered {
         toolbar_theme.button_bg_hover.as_str()
@@ -1946,14 +1544,14 @@ fn render_passphrase_input(
     let input_h = 32.0;
     let input_rect = WidgetRect::new(x, *cy, w, input_h);
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let editing = &state.e2e_passphrase_editing;
+    let editing = &state.new_passphrase_editing;
     let (sel_start, sel_end) = if let Some((lo, hi)) = editing.selection_range() {
         (Some(lo), Some(hi))
     } else {
         (None, None)
     };
     let input_config = InputConfig::new(&editing.text)
-        .with_focused(state.e2e_passphrase_focused)
+        .with_focused(state.new_passphrase_focused)
         .with_cursor(editing.cursor)
         .with_placeholder("Click to type passphrase\u{2026}")
         .with_type(InputType::Password)
@@ -1970,7 +1568,7 @@ fn render_passphrase_input(
         layer_id,
     );
 
-    if state.e2e_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
+    if state.new_passphrase_focused && editing.is_cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

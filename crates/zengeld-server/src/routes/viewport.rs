@@ -9,15 +9,14 @@
 
 use std::sync::Arc;
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     routing::post,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::auth::check_permission;
-use crate::state::{AgentCommand, Permissions};
+use crate::state::AgentCommand;
 use crate::AgentState;
 
 // ---------------------------------------------------------------------------
@@ -59,14 +58,9 @@ struct ViewportRequest {
 
 async fn set_viewport(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(path): Path<ChartPath>,
     Json(body): Json<ViewportRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    // Permission check — only keys with write_viewport may call this.
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_viewport")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     // At least one field must be provided.
     if body.view_start.is_none() && body.bar_spacing.is_none() && body.mode.is_none() {
         return Err((
@@ -108,13 +102,9 @@ fn default_account_type() -> String {
 
 async fn switch_symbol(
     State(state): State<Arc<AgentState>>,
-    perms: Option<Extension<Permissions>>,
     Path(path): Path<ChartPath>,
     Json(body): Json<SwitchSymbolRequest>,
 ) -> Result<(StatusCode, Json<AcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    check_permission(perms.as_ref().map(|Extension(p)| p), "write_viewport")
-        .map_err(|(status, json)| (status, Json(ErrorResponse { error: json.0["error"].as_str().unwrap_or("forbidden").to_string() })))?;
-
     state.push_command(AgentCommand::SwitchSymbol {
         window_id: path.window_id,
         chart_id: path.chart_id,

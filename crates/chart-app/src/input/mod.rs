@@ -1679,9 +1679,9 @@ impl ChartApp {
                         // Clear selection on ALL other fields to prevent multiple highlights.
                         match field_id.as_str() {
                             "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                                self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.new_passphrase_focused = true;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
@@ -1693,21 +1693,21 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.new_profile_name_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = Some(drag_cursor);
                                 self.panel_app.user_settings_state.new_profile_name_focused = true;
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_passphrase_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             }
                             "profile_mgr:recovery_key_input" => {
-                                self.panel_app.user_settings_state.recovery_key_editing.cursor = drag_cursor;
-                                self.panel_app.user_settings_state.recovery_key_editing.selection_start = Some(drag_cursor);
-                                self.panel_app.user_settings_state.recovery_key_focused = true;
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
+                                self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
+                                self.panel_app.user_settings_state.recovery_key_display_focused = true;
+                                self.panel_app.user_settings_state.new_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
@@ -1715,9 +1715,9 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.new_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.new_passphrase_editing.selection_start = Some(drag_cursor);
                                 self.panel_app.user_settings_state.new_passphrase_focused = true;
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_passphrase_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
                             "profile_mgr:confirm_passphrase_input"
@@ -1726,10 +1726,10 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = Some(drag_cursor);
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                                 self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                             }
@@ -1737,10 +1737,10 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.recovery_key_display_editing.cursor = drag_cursor;
                                 self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = Some(drag_cursor);
                                 self.panel_app.user_settings_state.recovery_key_display_focused = true;
-                                self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                                self.panel_app.user_settings_state.new_passphrase_focused = false;
                                 self.panel_app.user_settings_state.new_profile_name_focused = false;
                                 self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                                self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                                 self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                                 self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                             }
@@ -2920,13 +2920,13 @@ impl ChartApp {
                 let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
                 match field_id.as_str() {
                     "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
                         self.panel_app.user_settings_state.new_profile_name_editing.cursor = new_cursor;
                     }
                     "profile_mgr:recovery_key_input" => {
-                        self.panel_app.user_settings_state.recovery_key_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
                     }
                     "profile_mgr:new_passphrase_input" => {
                         self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
@@ -3682,16 +3682,16 @@ impl ChartApp {
             // Finalize: if anchor == cursor (plain click jitter), clear the selection.
             let (anchor, cursor) = match field_id.as_str() {
                 "e2e_passphrase_input" | "wizard_passphrase_input" => (
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start,
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.cursor,
+                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
+                    self.panel_app.user_settings_state.new_passphrase_editing.cursor,
                 ),
                 "wizard_profile_name_input" | "profile_mgr:name_input" => (
                     self.panel_app.user_settings_state.new_profile_name_editing.selection_start,
                     self.panel_app.user_settings_state.new_profile_name_editing.cursor,
                 ),
                 "profile_mgr:recovery_key_input" => (
-                    self.panel_app.user_settings_state.recovery_key_editing.selection_start,
-                    self.panel_app.user_settings_state.recovery_key_editing.cursor,
+                    self.panel_app.user_settings_state.recovery_key_display_editing.selection_start,
+                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor,
                 ),
                 "profile_mgr:new_passphrase_input" => (
                     self.panel_app.user_settings_state.new_passphrase_editing.selection_start,
@@ -3712,13 +3712,13 @@ impl ChartApp {
             if anchor == Some(cursor) {
                 match field_id.as_str() {
                     "e2e_passphrase_input" | "wizard_passphrase_input" => {
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
                         self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     }
                     "profile_mgr:recovery_key_input" => {
-                        self.panel_app.user_settings_state.recovery_key_editing.selection_start = None;
+                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                     }
                     "profile_mgr:new_passphrase_input" => {
                         self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
@@ -5737,9 +5737,9 @@ impl ChartApp {
         // keyboard shortcuts.
         // The recovery key DISPLAY box (read-only) is also excluded from char input.
         if self.panel_app.user_settings_state.show_profile_manager
-            && !self.panel_app.user_settings_state.e2e_passphrase_focused
+            && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
-            && !self.panel_app.user_settings_state.recovery_key_focused
+            && !self.panel_app.user_settings_state.recovery_key_display_focused
             && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
@@ -6015,9 +6015,9 @@ impl ChartApp {
 
         // Handle E2E passphrase input in User Settings Sync tab, Welcome Wizard, or Profile Manager
         if (self.panel_app.user_settings_state.is_open || self.panel_app.user_settings_state.show_welcome_wizard || self.panel_app.user_settings_state.needs_vault_unlock || self.panel_app.user_settings_state.show_profile_manager)
-            && self.panel_app.user_settings_state.e2e_passphrase_focused
+            && self.panel_app.user_settings_state.new_passphrase_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.e2e_passphrase_editing;
+            let editing = &mut self.panel_app.user_settings_state.new_passphrase_editing;
             match ch {
                 '\r' | '\n' => {
                     // Enter submits the passphrase — only when on an
@@ -6042,18 +6042,18 @@ impl ChartApp {
                         editing.cursor = 0;
                         editing.selection_start = None;
                     }
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 '\x09' => {
                     // Tab moves to next field in wizard.
                     if self.panel_app.user_settings_state.show_welcome_wizard {
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        self.panel_app.user_settings_state.new_passphrase_focused = false;
                         self.panel_app.user_settings_state.confirm_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
                     // Escape unfocuses without submitting
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 '\x08' => {
                     // Backspace — clear the error so the user knows they can retry.
@@ -6084,9 +6084,9 @@ impl ChartApp {
 
         // Handle recovery key input in the UseRecoveryKey profile manager page
         if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.recovery_key_focused
+            && self.panel_app.user_settings_state.recovery_key_display_focused
         {
-            let editing = &mut self.panel_app.user_settings_state.recovery_key_editing;
+            let editing = &mut self.panel_app.user_settings_state.recovery_key_display_editing;
             match ch {
                 '\r' | '\n' => {
                     // Enter submits the recovery key if long enough.
@@ -6096,11 +6096,11 @@ impl ChartApp {
                         self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
                         eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
                     }
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                 }
                 '\x1b' => {
                     // Escape unfocuses without submitting
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                 }
                 '\x08' => {
                     // Backspace — clear any error.
@@ -6172,13 +6172,13 @@ impl ChartApp {
         if (self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard)
             && self.panel_app.user_settings_state.confirm_passphrase_focused
         {
-            // For SetNewPassphrase page, compare against new_passphrase_editing; for wizard/CreatePassphrase compare against e2e_passphrase_editing.
+            // For SetNewPassphrase page, compare against new_passphrase_editing; for wizard/CreatePassphrase compare against new_passphrase_editing.
             let passphrase_text = if self.panel_app.user_settings_state.show_profile_manager
                 && !self.panel_app.user_settings_state.new_passphrase_editing.text.is_empty()
             {
                 self.panel_app.user_settings_state.new_passphrase_editing.text.clone()
             } else {
-                self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone()
+                self.panel_app.user_settings_state.new_passphrase_editing.text.clone()
             };
             let editing = &mut self.panel_app.user_settings_state.confirm_passphrase_editing;
             match ch {
@@ -6291,7 +6291,7 @@ impl ChartApp {
                     if self.panel_app.user_settings_state.show_welcome_wizard {
                         // In the wizard, Enter in the profile name field moves focus to passphrase.
                         self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                        self.panel_app.user_settings_state.new_passphrase_focused = true;
                     } else {
                         // Enter submits the new profile creation.
                         self.panel_app.user_settings_state.new_profile_name_focused = false;
@@ -6306,7 +6306,7 @@ impl ChartApp {
                     // Tab moves to next field.
                     if self.panel_app.user_settings_state.show_welcome_wizard {
                         self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                        self.panel_app.user_settings_state.new_passphrase_focused = true;
                     }
                 }
                 '\x1b' => {
@@ -6883,9 +6883,9 @@ impl ChartApp {
         // SelectAll (Ctrl+A) through so the user can select all text.  Ctrl+C is
         // handled passively via on_copy_selection() without needing a key event.
         if self.panel_app.user_settings_state.show_profile_manager
-            && !self.panel_app.user_settings_state.e2e_passphrase_focused
+            && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.new_profile_name_focused
-            && !self.panel_app.user_settings_state.recovery_key_focused
+            && !self.panel_app.user_settings_state.recovery_key_display_focused
             && !self.panel_app.user_settings_state.new_passphrase_focused
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
@@ -7059,9 +7059,9 @@ impl ChartApp {
             || self.panel_app.user_settings_state.show_welcome_wizard
             || self.panel_app.user_settings_state.needs_vault_unlock
             || self.panel_app.user_settings_state.show_profile_manager)
-            && self.panel_app.user_settings_state.e2e_passphrase_focused
+            && self.panel_app.user_settings_state.new_passphrase_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.e2e_passphrase_editing, key);
+            apply_key(&mut self.panel_app.user_settings_state.new_passphrase_editing, key);
             return;
         }
 
@@ -7075,9 +7075,9 @@ impl ChartApp {
 
         // ── Recovery key text input key events (profile manager UseRecoveryKey page) ──
         if self.panel_app.user_settings_state.show_profile_manager
-            && self.panel_app.user_settings_state.recovery_key_focused
+            && self.panel_app.user_settings_state.recovery_key_display_focused
         {
-            apply_key(&mut self.panel_app.user_settings_state.recovery_key_editing, key);
+            apply_key(&mut self.panel_app.user_settings_state.recovery_key_display_editing, key);
             return;
         }
 
@@ -7449,13 +7449,13 @@ impl ChartApp {
         // Profile manager text fields
         {
             let uss = &self.panel_app.user_settings_state;
-            if let Some(text) = get_selection(&uss.e2e_passphrase_editing) {
+            if let Some(text) = get_selection(&uss.new_passphrase_editing) {
                 return Some(text);
             }
             if let Some(text) = get_selection(&uss.new_profile_name_editing) {
                 return Some(text);
             }
-            if let Some(text) = get_selection(&uss.recovery_key_editing) {
+            if let Some(text) = get_selection(&uss.recovery_key_display_editing) {
                 return Some(text);
             }
             if let Some(text) = get_selection(&uss.new_passphrase_editing) {

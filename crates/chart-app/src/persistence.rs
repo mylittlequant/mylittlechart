@@ -40,8 +40,6 @@ impl ChartApp {
             // Preserve fields managed by the profile itself
             device_name: existing.device_name.clone(),
             app_version: existing.app_version.clone(),
-            linked_account: existing.linked_account.clone(),
-            telemetry: existing.telemetry.clone(),
             bar_count: existing.bar_count,
             data_load: existing.data_load.clone(),
             recalc_mode: existing.recalc_mode.clone(),
@@ -51,36 +49,12 @@ impl ChartApp {
                 ScaleMode::Focus  => "Focus".to_string(),
                 ScaleMode::Manual => "Manual".to_string(),
             },
-            cloud_enabled: existing.cloud_enabled,
-            sync_level: existing.sync_level.clone(),
-            ota_enabled: self.panel_app.user_settings_state.ota_enabled,
             server_enabled: self.panel_app.user_settings_state.server_enabled,
             server_port: self.panel_app.user_settings_state.server_port,
-            legacy_single_agent_key: String::new(),
-            local_agent_keys: existing.local_agent_keys.clone(),
             exchange_keys: existing.exchange_keys.clone(),
             connector_enabled: self.sidebar_state.connector_enabled.clone(),
             notification_settings: existing.notification_settings.clone(),
             windows: existing.windows.clone(),
-            sync_state: {
-                let ui = &self.panel_app.user_settings_state;
-                zengeld_chart::user_profile::profile::SyncState {
-                    enabled: ui.sync_enabled,
-                    last_sync_timestamp: existing.sync_state.last_sync_timestamp,
-                    sync_vault: true,
-                    sync_presets: ui.sync_presets,
-                    sync_templates: ui.sync_templates,
-                    sync_watchlists: ui.sync_watchlists,
-                    sync_theme: ui.sync_theme_toggle,
-                    sync_recovery_key: true,
-                    // Preserve the synced_items set — it is managed by the updater
-                    // loop and must not be reset when the user changes settings.
-                    synced_items: existing.sync_state.synced_items.clone(),
-                    // Preserve the last-synced checksum map — managed by the updater
-                    // loop and written back to the profile for cross-restart persistence.
-                    last_synced_checksums: existing.sync_state.last_synced_checksums.clone(),
-                }
-            },
         }
     }
 

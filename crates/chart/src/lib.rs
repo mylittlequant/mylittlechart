@@ -463,8 +463,6 @@ pub use user_profile::{
     UserProfile,
     VaultSecrets,
     WindowState,
-    StoredLocalAgentKey,
-    StoredApiKey,  // backward-compat alias for StoredLocalAgentKey
     ProfileError,
     ProfileMeta,
     ProfileIndex,
@@ -480,8 +478,6 @@ pub use user_profile::{
     load_profile_index,
     save_profile_index,
     create_profile,
-    set_profile_cloud_enabled,
-    set_profile_sync_level,
     delete_profile,
     PersistedAgentLeaf,
     PersistedAgentCli,

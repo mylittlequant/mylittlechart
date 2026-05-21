@@ -2,12 +2,6 @@
 //!
 //! Unlike `UserProfile`, these settings are **not tied to any profile** — they
 //! apply to the device as a whole and persist across profile switches.
-//!
-//! # Fields
-//! - `ota_enabled` — Connected (`true`, default) vs Standalone (`false`) mode.
-//!   When `false` the updater makes no network calls (OTA + telemetry off).
-//! - `update_channel` — OTA channel: `"stable"` (default) or `"dev"`.
-//!   Only meaningful when `ota_enabled` is `true`.
 
 use std::path::PathBuf;
 
@@ -25,14 +19,6 @@ pub enum RenderBackend {
     VelloCpu,
     VelloHybrid,
     TinySkia,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_stable() -> String {
-    "stable".to_string()
 }
 
 fn default_fps_limit() -> u32 {
@@ -56,21 +42,6 @@ fn default_recalc_mode() -> String {
 /// Stored at `{app_data_dir()}/device_settings.json`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DeviceSettings {
-    /// Whether OTA updates and telemetry are active.
-    ///
-    /// `true` = Connected mode (default): updater polls for updates and sends
-    /// anonymous metrics.  `false` = Standalone mode: no network activity.
-    #[serde(default = "default_true")]
-    pub ota_enabled: bool,
-
-    /// OTA update channel: `"stable"` or `"dev"`.
-    ///
-    /// Controls the polling interval and which release track the updater
-    /// checks.  `"stable"` uses a 4-hour interval; `"dev"` uses 2 minutes.
-    /// Only meaningful when `ota_enabled` is `true`.
-    #[serde(default = "default_stable")]
-    pub update_channel: String,
-
     /// Preferred render backend.
     ///
     /// `None` (default) means auto-detect: the app picks the best available
@@ -98,8 +69,6 @@ pub struct DeviceSettings {
 impl Default for DeviceSettings {
     fn default() -> Self {
         Self {
-            ota_enabled: true,
-            update_channel: "stable".to_string(),
             render_backend: None,
             fps_limit: default_fps_limit(),
             msaa_samples: default_msaa_samples(),

@@ -38,7 +38,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.profile_manager_page =
                         zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                    self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                     eprintln!("[ChartApp] profile_manager: dimmer clicked, dismissing (live profile exists)");
                 }
                 return;
@@ -3435,47 +3435,6 @@ impl ChartApp {
             return;
         }
 
-        // === Device-level OTA toggles (profile manager left column) ===
-        match widget_id {
-            "profile_mgr:device_connected" => {
-                self.panel_app.user_settings_state.device_ota_enabled = true;
-                let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                ds.ota_enabled = true;
-                ds.save();
-                self.pending_updater_cmd = Some("device_ota:connected".to_string());
-                eprintln!("[ChartApp] profile_mgr: device mode → Connected");
-                return;
-            }
-            "profile_mgr:device_standalone" => {
-                self.panel_app.user_settings_state.device_ota_enabled = false;
-                let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                ds.ota_enabled = false;
-                ds.save();
-                self.pending_updater_cmd = Some("device_ota:standalone".to_string());
-                eprintln!("[ChartApp] profile_mgr: device mode → Standalone");
-                return;
-            }
-            "profile_mgr:channel_stable" => {
-                self.panel_app.user_settings_state.device_update_channel = "stable".to_string();
-                let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                ds.update_channel = "stable".to_string();
-                ds.save();
-                self.pending_updater_cmd = Some("set_channel:stable".to_string());
-                eprintln!("[ChartApp] profile_mgr: OTA channel → stable");
-                return;
-            }
-            "profile_mgr:channel_dev" => {
-                self.panel_app.user_settings_state.device_update_channel = "dev".to_string();
-                let mut ds = zengeld_chart::user_profile::DeviceSettings::load();
-                ds.update_channel = "dev".to_string();
-                ds.save();
-                self.pending_updater_cmd = Some("set_channel:dev".to_string());
-                eprintln!("[ChartApp] profile_mgr: OTA channel → dev");
-                return;
-            }
-            _ => {}
-        }
-
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use zengeld_chart::ui::modal_settings::UserSettingsTab;
@@ -3542,7 +3501,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
                 "e2e_passphrase_input" => {
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
@@ -3552,8 +3511,8 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] e2e_passphrase_input: focused");
                 }
@@ -3563,8 +3522,8 @@ impl ChartApp {
                     // Clear leaked state from profile_manager
                     self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     eprintln!("[ChartApp] show_wizard: opening welcome wizard");
                 }
@@ -3690,10 +3649,10 @@ impl ChartApp {
                 "wizard_profile_name_input" => {
                     // Focus the profile name input on the profile page
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     // Clear selections on other fields
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
                     // Position cursor at click point using pre-computed char positions.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
@@ -3710,7 +3669,7 @@ impl ChartApp {
                 }
                 "wizard_passphrase_input" => {
                     // Focus the passphrase input on the profile page
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     // Clear selections on other fields
@@ -3724,18 +3683,18 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = new_cursor;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] wizard: passphrase input focused");
                 }
                 "wizard_confirm_passphrase_input" => {
                     // Focus the confirm passphrase input on wizard page 2.
                     self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     // Clear selections on other fields
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                    self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                     self.panel_app.user_settings_state.new_profile_name_editing.selection_start = None;
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -3751,7 +3710,7 @@ impl ChartApp {
                 }
                 "wizard_finish" => {
                     // Page 2: submit passphrase (and log profile name) then close wizard.
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    let passphrase = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
                     let profile_name = self.panel_app.user_settings_state.new_profile_name_editing.text.trim().to_string();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
                         eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
@@ -3759,9 +3718,9 @@ impl ChartApp {
                         self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", profile_name_final, passphrase));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
                         self.panel_app.user_settings_state.needs_vault_unlock = false;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.selection_start = None;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.selection_start = None;
                         self.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
                         self.panel_app.user_settings_state.confirm_passphrase_editing.cursor = 0;
                         self.panel_app.user_settings_state.confirm_passphrase_editing.selection_start = None;
@@ -3800,8 +3759,8 @@ impl ChartApp {
                     // Clear leaked state from profile_manager
                     self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     eprintln!("[ChartApp] profile_mgr: launching setup wizard");
                 }
@@ -3812,7 +3771,7 @@ impl ChartApp {
                     // VALIDATES it before proceeding.  Do NOT dismiss the overlay here —
                     // main.rs will dismiss it on success, or set vault_unlock_error on
                     // failure so the user can retry with the correct passphrase.
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    let passphrase = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         // Clear any previous error while the request is in flight.
                         self.panel_app.user_settings_state.vault_unlock_error = None;
@@ -3827,7 +3786,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.profile_manager_page =
                         zengeld_chart::ui::modal_settings::ProfileManagerPage::ProfileList;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
+                    self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
                     eprintln!("[ChartApp] profile_mgr: close button clicked, dismissing");
                 }
                 "profile_mgr:back" => {
@@ -3845,18 +3804,10 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_focused = false;
                         eprintln!("[ChartApp] profile_mgr: back to profile list");
-                        // Auto-fetch cloud profiles when returning to ProfileList (connected mode).
-                        if self.panel_app.user_settings_state.client_mode_connected
-                            && self.panel_app.user_settings_state.is_logged_in
-                        {
-                            self.panel_app.user_settings_state.cloud_profiles_loading = true;
-                            self.panel_app.user_settings_state.cloud_profiles_error.clear();
-                            self.pending_updater_cmd = Some("list_cloud_profiles".to_string());
-                        }
                     }
                 }
                 "profile_mgr:create_new" => {
@@ -3868,7 +3819,7 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_mgr: create new profile page");
                 }
                 "profile_mgr:unlock" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    let passphrase = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
                     if !passphrase.is_empty() {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
@@ -3876,7 +3827,7 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:create_passphrase" => {
-                    let passphrase = self.panel_app.user_settings_state.e2e_passphrase_editing.text.clone();
+                    let passphrase = self.panel_app.user_settings_state.new_passphrase_editing.text.clone();
                     let confirm = self.panel_app.user_settings_state.confirm_passphrase_editing.text.clone();
                     if passphrase.len() >= zengeld_chart::MIN_PASSPHRASE_LENGTH && passphrase == confirm {
                         self.panel_app.user_settings_state.confirm_passphrase_editing.text.clear();
@@ -3895,7 +3846,7 @@ impl ChartApp {
                 }
                 "profile_mgr:name_input" => {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     // Position cursor at click point.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
@@ -3912,15 +3863,15 @@ impl ChartApp {
                 "profile_mgr:use_recovery_key" => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
                     self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
-                    self.panel_app.user_settings_state.recovery_key_editing.text.clear();
-                    self.panel_app.user_settings_state.recovery_key_editing.cursor = 0;
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_editing.text.clear();
+                    self.panel_app.user_settings_state.recovery_key_display_editing.cursor = 0;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
                     eprintln!("[ChartApp] profile_mgr: use recovery key page");
                 }
                 "profile_mgr:recovery_key_input" => {
-                    self.panel_app.user_settings_state.recovery_key_focused = true;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
@@ -3932,16 +3883,16 @@ impl ChartApp {
                         .unwrap_or_default();
                     if !char_positions.is_empty() {
                         let new_cursor = zengeld_chart::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        self.panel_app.user_settings_state.recovery_key_editing.cursor = new_cursor;
-                        self.panel_app.user_settings_state.recovery_key_editing.selection_start = None;
+                        self.panel_app.user_settings_state.recovery_key_display_editing.cursor = new_cursor;
+                        self.panel_app.user_settings_state.recovery_key_display_editing.selection_start = None;
                     }
                     eprintln!("[ChartApp] profile_mgr: recovery key input focused");
                 }
                 "profile_mgr:new_passphrase_input" => {
                     self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     // Position cursor at click point.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
@@ -3959,8 +3910,8 @@ impl ChartApp {
                 "profile_mgr:confirm_passphrase_input" => {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     // Position cursor at click point.
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
@@ -3978,10 +3929,10 @@ impl ChartApp {
                 "profile_mgr:create_confirm_passphrase_input" => {
                     // Confirm passphrase field on the CreatePassphrase page.
                     self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
-                    self.panel_app.user_settings_state.recovery_key_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     let char_positions: Vec<f64> = self.frame_result.as_ref()
                         .and_then(|r| r.user_settings.as_ref())
                         .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:create_confirm_passphrase_input"))
@@ -4013,7 +3964,7 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:recovery_unlock" => {
-                    let recovery_key_text = self.panel_app.user_settings_state.recovery_key_editing.text.clone();
+                    let recovery_key_text = self.panel_app.user_settings_state.recovery_key_display_editing.text.clone();
                     if !recovery_key_text.is_empty() {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("recovery_unlock:{}", recovery_key_text));
@@ -4130,20 +4081,20 @@ impl ChartApp {
                     let profile_id = &rest["vault_picker_profile:".len()..];
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, has_vault)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _, _)| name.clone())
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                         self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] vault_picker: passphrase setup for unencrypted profile {}", profile_id);
                     } else {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
@@ -4151,8 +4102,8 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] vault_picker: passphrase prompt for profile {}", profile_id);
                     }
                     // Switch to profile_manager modal to show the passphrase page
@@ -4161,8 +4112,8 @@ impl ChartApp {
                     // Clear leaked state from wizard
                     self.panel_app.user_settings_state.confirm_passphrase_editing.clear();
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    self.panel_app.user_settings_state.e2e_passphrase_editing.clear();
-                    self.panel_app.user_settings_state.e2e_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_passphrase_editing.clear();
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
                     use zengeld_chart::ui::modal_settings::ProfileManagerPage;
@@ -4170,13 +4121,13 @@ impl ChartApp {
                     // Check if target profile has vault (encrypted)
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, has_vault)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _, _)| name.clone())
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _)| name.clone())
                         .unwrap_or_default();
                     if !target_has_vault {
                         // Unencrypted profile — show CreatePassphrase inline (NO hot-reload)
@@ -4184,8 +4135,8 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                         self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
                     } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         if self.panel_app.user_settings_state.needs_vault_unlock {
@@ -4195,8 +4146,8 @@ impl ChartApp {
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                             self.panel_app.user_settings_state.vault_unlock_error = None;
                             self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                            self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                            self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                            self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                            self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                             eprintln!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
                         } else {
                             // Already on this profile, vault OK — dismiss
@@ -4210,8 +4161,8 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
                     }
                 }
@@ -4220,8 +4171,8 @@ impl ChartApp {
                     let uss = &mut self.panel_app.user_settings_state;
                     // Find the display name for this profile to pre-fill the input
                     let current_name = uss.available_profiles.iter()
-                        .find(|(pid, _, _, _)| pid == id)
-                        .map(|(_, name, _, _)| name.clone())
+                        .find(|(pid, _, _)| pid == id)
+                        .map(|(_, name, _)| name.clone())
                         .unwrap_or_else(|| uss.profile_display_name.clone());
                     let cursor = current_name.chars().count();
                     uss.profile_rename_mode = true;
@@ -4256,13 +4207,13 @@ impl ChartApp {
                     // Check if target profile has vault
                     let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, _, has_vault, _)| *has_vault)
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, _, _, has_vault)| *has_vault)
                         .unwrap_or(false);
                     let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
                         .iter()
-                        .find(|(id, _, _, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _, _, _)| name.clone())
+                        .find(|(id, _, _, _)| id == profile_id)
+                        .map(|(_, name, _, _)| name.clone())
                         .unwrap_or_default();
                     if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                         // Already on this profile — dismiss
@@ -4274,8 +4225,8 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                         self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] profile_switch: passphrase setup for unencrypted {}", profile_id);
                     } else {
                         // Encrypted — show UnlockPassphrase inline
@@ -4286,8 +4237,8 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.text.clear();
-                        self.panel_app.user_settings_state.e2e_passphrase_editing.cursor = 0;
+                        self.panel_app.user_settings_state.new_passphrase_editing.text.clear();
+                        self.panel_app.user_settings_state.new_passphrase_editing.cursor = 0;
                         eprintln!("[ChartApp] profile_switch: passphrase prompt for {}", profile_id);
                     }
                 }
@@ -4311,19 +4262,6 @@ impl ChartApp {
                     let id = &rest["profile_delete:".len()..];
                     self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
                     eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
-                }
-                "profile_mgr:refresh_cloud_profiles" => {
-                    self.panel_app.user_settings_state.cloud_profiles_loading = true;
-                    self.panel_app.user_settings_state.cloud_profiles_error.clear();
-                    self.pending_updater_cmd = Some("list_cloud_profiles".to_string());
-                    eprintln!("[ChartApp] profile_mgr: refresh cloud profiles requested");
-                }
-                rest if rest.starts_with("profile_mgr:cloud_restore:") => {
-                    let profile_id = rest["profile_mgr:cloud_restore:".len()..].to_string();
-                    self.panel_app.user_settings_state.restoring_profile_id = Some(profile_id.clone());
-                    self.panel_app.user_settings_state.cloud_profiles_error.clear();
-                    self.pending_updater_cmd = Some(format!("restore_cloud_profile:{}", profile_id));
-                    eprintln!("[ChartApp] profile_mgr: restore cloud profile id = {}", profile_id);
                 }
                 "profile_mgr:sign_in" => {
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
