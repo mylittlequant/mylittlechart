@@ -3571,18 +3571,6 @@ impl ChartApp {
                         eprintln!("[ChartApp] server_key_delete: {}", label);
                     }
                 }
-                "sign_in" => {
-                    self.pending_updater_cmd = Some("start_device_auth".to_string());
-                    eprintln!("[ChartApp] sign_in: starting device auth link flow");
-                }
-                "open_dashboard" => {
-                    self.pending_open_url = Some("https://chart.example/dashboard".to_string());
-                    eprintln!("[ChartApp] open_dashboard: opening browser to chart.example/dashboard");
-                }
-                "sign_out" | "logout" => {
-                    self.pending_updater_cmd = Some("logout".to_string());
-                    eprintln!("[ChartApp] logout: sending logout command to updater");
-                }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 // Page order: 0=Welcome+Lang, 1=Theme, 2=Profile+Passphrase
                 "wizard_get_started" => {

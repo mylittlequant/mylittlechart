@@ -38,10 +38,10 @@ pub fn init(log_dir: &Path, version: &str) -> DiagnosticsGuard {
     }
 }
 
-/// Default log directory: %APPDATA%/zengeld/logs/
+/// Default log directory: %APPDATA%/mylittlechart/logs/
 pub fn default_log_dir() -> PathBuf {
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    base.join("zengeld").join("logs")
+    base.join("mylittlechart").join("logs")
 }

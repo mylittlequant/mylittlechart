@@ -130,16 +130,37 @@ fn resolve_platform_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Returns the root application data directory for zengeld, creating it if
-/// necessary.
+/// Returns the root application data directory for mylittlechart, creating
+/// it if necessary.
 ///
 /// Platform-specific paths:
-/// - Windows: `%APPDATA%\zengeld\`
-/// - macOS:   `~/Library/Application Support/zengeld/`
-/// - Linux:   `$XDG_DATA_HOME/zengeld/` (default `~/.local/share/zengeld/`)
+/// - Windows: `%APPDATA%\mylittlechart\`
+/// - macOS:   `~/Library/Application Support/mylittlechart/`
+/// - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
+///
+/// One-shot migration: if a legacy `zengeld/` directory exists in the same
+/// base location and the new `mylittlechart/` directory does not, the legacy
+/// dir is renamed in place. Both present → legacy is left alone (user must
+/// merge manually). Only present → nothing happens.
 pub fn app_data_dir() -> PathBuf {
     let base = resolve_platform_data_dir();
-    let dir = base.join("zengeld");
+    let dir = base.join("mylittlechart");
+    let legacy = base.join("zengeld");
+    if legacy.exists() && !dir.exists() {
+        match fs::rename(&legacy, &dir) {
+            Ok(()) => eprintln!(
+                "[app_data_dir] migrated legacy data dir: {} -> {}",
+                legacy.display(),
+                dir.display()
+            ),
+            Err(e) => eprintln!(
+                "[app_data_dir] WARN: failed to migrate legacy dir {} -> {}: {} (will use empty new dir)",
+                legacy.display(),
+                dir.display(),
+                e
+            ),
+        }
+    }
     // Best-effort creation; callers receive an Io error on the actual
     // read/write if the directory cannot be created.
     let _ = fs::create_dir_all(&dir);
