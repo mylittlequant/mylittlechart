@@ -15,7 +15,6 @@ members = [
     "crates/vello-cpu-context",
     "crates/vello-hybrid-context",
     "crates/tiny-skia-context",
-    "crates/updater",
     "crates/bar-store",
     "crates/bar-service",
     "crates/trade-store",

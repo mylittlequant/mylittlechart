@@ -219,47 +219,6 @@ struct SpawnRequest {
     cascade_from: Option<WindowId>,
 }
 
-/// Shared telemetry values written by the App main loop and read by the updater thread.
-struct TelemetryShared {
-    gpu_name: std::sync::Mutex<String>,
-    screen_width: std::sync::atomic::AtomicU32,
-    screen_height: std::sync::atomic::AtomicU32,
-    window_count: std::sync::atomic::AtomicU32,
-    avg_fps_bits: std::sync::atomic::AtomicU32, // f32 bits via f32::to_bits / f32::from_bits
-    total_bars: std::sync::atomic::AtomicU64,
-    /// Number of unique exchanges (not data streams) currently connected.
-    connector_count: std::sync::atomic::AtomicU32,
-    /// Total number of active WebSocket connections across all streams.
-    ws_connections: std::sync::atomic::AtomicU32,
-}
-
-impl TelemetryShared {
-    fn new() -> Self {
-        Self {
-            gpu_name: std::sync::Mutex::new(String::new()),
-            screen_width: std::sync::atomic::AtomicU32::new(0),
-            screen_height: std::sync::atomic::AtomicU32::new(0),
-            window_count: std::sync::atomic::AtomicU32::new(0),
-            avg_fps_bits: std::sync::atomic::AtomicU32::new(f32::to_bits(0.0)),
-            total_bars: std::sync::atomic::AtomicU64::new(0),
-            connector_count: std::sync::atomic::AtomicU32::new(0),
-            ws_connections: std::sync::atomic::AtomicU32::new(0),
-        }
-    }
-}
-
-/// Status updates sent from the OAuth device-link poll task to the main thread.
-#[derive(Debug)]
-enum LinkPollStatus {
-    /// Poll responded — waiting for user to click the link.
-    Pending,
-    /// Successfully linked — carry display name, provider, auth token and user id.
-    Linked { display_name: String, provider: String, auth_token: String, user_id: i64 },
-    /// Token expired or network error.
-    Expired(String),
-    /// Display the token/URL so the user can see it in the wizard.
-    Init { token: String, link_url: String },
-}
 
 /// Application state — owns all per-window state and the shared render context.
 struct App<'s> {
@@ -311,14 +270,6 @@ struct App<'s> {
     /// Active toast notifications to render as overlays.
     active_toasts: Vec<alert_delivery::ToastNotification>,
 
-    /// Handle for the OTA updater background task.
-    /// Present only when the `updater` feature is enabled and `standalone` is not.
-    #[cfg(all(feature = "updater", not(feature = "standalone")))]
-    updater_handle: Option<zengeld_updater::UpdaterHandle>,
-    /// Stub when updater feature is disabled or standalone mode is active.
-    #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
-    updater_handle: Option<()>,
-
     /// Frame timing — last frame's Instant for FPS calculation.
     last_frame_instant: std::time::Instant,
     /// Rolling FPS average (exponential moving average).
@@ -369,14 +320,6 @@ struct App<'s> {
     /// `true` while the GPU render thread is busy with the previous frame.
     gpu_frame_pending: bool,
 
-    /// Shared atomics written each second so the telemetry thread can read live values.
-    telemetry_shared: std::sync::Arc<TelemetryShared>,
-
-    /// True when BUILD_ATTESTATION was empty at compile time (dev / unofficial build).
-    /// Always false in standalone builds (no server connection anyway).
-    #[cfg(all(feature = "updater", not(feature = "standalone")))]
-    is_unofficial_build: bool,
-
     /// True when `profile.json` did not exist at startup (first-run).
     /// Causes the Welcome Wizard overlay to appear on the first window created.
     is_first_run: bool,
@@ -388,13 +331,6 @@ struct App<'s> {
     /// True when a plaintext profile exists without `salt.hex` — user must set a passphrase
     /// to migrate to encrypted storage.  Shows wizard at page 1 (passphrase).
     needs_migration: bool,
-
-    /// Receiver for status updates from the OAuth link-poll task.
-    ///
-    /// Set when `start_device_auth` spawns a poll loop; `None` when no link
-    /// attempt is in progress.  Drained in `about_to_wait` so the wizard UI
-    /// reflects current polling state.
-    link_poll_rx: Option<tokio::sync::mpsc::UnboundedReceiver<LinkPollStatus>>,
 
     /// Profile ID to switch to at the end of the current `about_to_wait` pass.
     ///
@@ -418,15 +354,6 @@ struct App<'s> {
     /// a recovery key must be shown before completing the profile switch.  Consumed
     /// by `recovery_key_confirmed` to trigger the actual switch.
     pending_switch_after_recovery: Option<(String, zengeld_chart::vault::VaultKey)>,
-
-    /// Unused — retained to avoid removing struct fields during the OTA simplification.
-    /// Previously held a deferred switch until the user chose a sync level in the wizard.
-    #[allow(dead_code)]
-    pending_switch_after_sync_level: Option<(String, zengeld_chart::vault::VaultKey)>,
-
-    /// Unused — retained alongside `pending_switch_after_sync_level`.
-    /// Previously held the sync level chosen by the user on the (now removed) ChooseSyncLevel page.
-    pending_switch_sync_level: Option<String>,
 
     /// Master key recovered from `recovery_key.enc` during a `recovery_unlock:` command.
     ///
@@ -803,106 +730,6 @@ impl App<'_> {
             alert_delivery::AlertDelivery::new(profile.notification_settings.clone())
         };
 
-        // Shared atomics for live telemetry — App writes each second, AppTelemetry reads.
-        let telemetry_shared = std::sync::Arc::new(TelemetryShared::new());
-
-        // Start the OTA updater background task.
-        // Disabled entirely when the `standalone` feature is active — standalone
-        // builds have no cloud connection and no update checks by design.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        let updater_handle = {
-            struct AppTelemetry {
-                start_time: std::time::Instant,
-                shared: std::sync::Arc<TelemetryShared>,
-            }
-
-            impl zengeld_updater::TelemetrySource for AppTelemetry {
-                fn collect(&self) -> zengeld_updater::telemetry::TelemetryPayload {
-                    use std::sync::atomic::Ordering::Relaxed;
-                    let gpu_name = self.shared.gpu_name.lock()
-                        .map(|g| g.clone())
-                        .unwrap_or_default();
-                    zengeld_updater::telemetry::TelemetryPayload {
-                        device_id: zengeld_updater::telemetry::get_or_create_device_id(),
-                        app_version: env!("CARGO_PKG_VERSION").to_string(),
-                        os: std::env::consts::OS.to_string(),
-                        arch: std::env::consts::ARCH.to_string(),
-                        gpu_name,
-                        screen_width: self.shared.screen_width.load(Relaxed),
-                        screen_height: self.shared.screen_height.load(Relaxed),
-                        connector_count: self.shared.connector_count.load(Relaxed),
-                        window_count: self.shared.window_count.load(Relaxed),
-                        avg_fps: f32::from_bits(self.shared.avg_fps_bits.load(Relaxed)),
-                        uptime_secs: self.start_time.elapsed().as_secs(),
-                        total_bars: self.shared.total_bars.load(Relaxed),
-                        ws_connections: self.shared.ws_connections.load(Relaxed),
-                    }
-                }
-            }
-
-            let source = std::sync::Arc::new(AppTelemetry {
-                start_time: std::time::Instant::now(),
-                shared: telemetry_shared.clone(),
-            });
-
-            // In standalone builds the updater always starts disconnected,
-            // regardless of what the profile says.  This permanently disables
-            // all server communication in open-source / self-hosted builds.
-            #[cfg(feature = "standalone")]
-            let connected = false;
-            #[cfg(not(feature = "standalone"))]
-            let connected = {
-                // OTA is controlled solely by the device-level toggle.
-                // Profile-level ota_enabled is kept in the struct for backward
-                // compatibility but no longer gates the updater.
-                let device_settings = zengeld_chart::user_profile::DeviceSettings::load();
-                device_settings.ota_enabled
-            };
-
-            // Build attestation — embedded at compile time by build.rs.
-            // Empty string for dev builds (no RELEASE_SIGNING_KEY set).
-            let build_attest = zengeld_updater::BuildAttestation {
-                attestation: env!("BUILD_ATTESTATION").to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                platform: env!("BUILD_PLATFORM").to_string(),
-                timestamp: env!("BUILD_TIMESTAMP").to_string(),
-            };
-
-            let handle = zengeld_updater::start(
-                bridge.runtime().handle(),
-                source,
-                connected,
-                profile.sync_state.enabled,
-                profile.sync_state.synced_items.clone(),
-                profile.sync_state.last_synced_checksums.clone(),
-                zengeld_chart::active_profile_data_dir(),
-                build_attest,
-                profile.profile_id.clone(),
-                profile.server_port,
-            );
-
-            // Seed granular sync toggles from profile into the updater loop.
-            // The `start()` function only accepts a single `sync_enabled` bool,
-            // so we send the per-category toggles immediately after starting.
-            {
-                use zengeld_updater::UpdaterCommand;
-                let ss = &profile.sync_state;
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
-                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
-            }
-
-            Some(handle)
-        };
-        // No updater when the crate feature is absent, or when standalone mode is active.
-        #[cfg(not(all(feature = "updater", not(feature = "standalone"))))]
-        let updater_handle: Option<()> = None;
-
-        // Detect unofficial / dev build (empty attestation = no release signing key).
-        // Only meaningful in connected builds; standalone never contacts the server.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        let is_unofficial_build: bool = env!("BUILD_ATTESTATION").is_empty();
 
         // Apply saved language preference from profile.
         {
@@ -1100,21 +927,14 @@ impl App<'_> {
             gpu_done_rx: None,
             gpu_thread: None,
             gpu_frame_pending: false,
-            updater_handle,
-            #[cfg(all(feature = "updater", not(feature = "standalone")))]
-            is_unofficial_build,
-            telemetry_shared,
             is_first_run,
             needs_vault_unlock,
             needs_migration,
-            link_poll_rx: None,
             pending_profile_switch: None,
             pending_switch_vault_key: None,
             pending_new_profile_id: None,
             pending_skeleton_promote: false,
             pending_switch_after_recovery: None,
-            pending_switch_after_sync_level: None,
-            pending_switch_sync_level: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
             bar_service,
@@ -1219,9 +1039,6 @@ impl App<'_> {
             self.gpu_name = info.name.clone();
             self.gpu_driver = info.driver_info.clone();
             eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
-            if let Ok(mut g) = self.telemetry_shared.gpu_name.lock() {
-                *g = self.gpu_name.clone();
-            }
 
             // Auto-detect backend based on GPU capabilities (first launch only)
             if self.backend_auto_detect {
@@ -1436,35 +1253,6 @@ impl App<'_> {
             "{} key(s) registered",
             self.app_state.local_agent_keys.len()
         );
-        // Propagate build attestation status to new windows.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        {
-            chart.panel_app.user_settings_state.is_unofficial_build = self.is_unofficial_build;
-        }
-        // Sync auth state from updater watch channel into the new window.
-        // `has_changed()` never fires for the initial value, so we read it
-        // directly here to restore logged-in state on startup.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        {
-            if let Some(ref handle) = self.updater_handle {
-                let status = handle.auth_rx.borrow().clone();
-                match &status {
-                    zengeld_updater::AuthStatus::LoggedIn { display_name, provider, user_id } => {
-                        let s = &mut chart.panel_app.user_settings_state;
-                        s.is_logged_in = true;
-                        s.auth_display_name = display_name.clone();
-                        s.auth_provider = provider.clone();
-                        s.auth_user_id = *user_id;
-                        // Always fetch cloud profiles when entering skeleton while logged in.
-                        s.cloud_profiles_loading = true;
-                        s.cloud_profiles_error.clear();
-                        let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
-                    }
-                    zengeld_updater::AuthStatus::NotLoggedIn => {}
-                }
-            }
-        }
-
         // Show the welcome wizard on the first window when this is a first-run launch.
         // The wizard is non-closeable until the user makes a mode choice.
         if self.is_first_run {
@@ -1662,50 +1450,6 @@ impl App<'_> {
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
         }
 
-        // 6c. Apply deferred sync level to the freshly loaded profile.
-        if let Some(level) = self.pending_switch_sync_level.take() {
-            eprintln!("[App] hot-reload: applying deferred sync_level={}", level);
-            let p = &mut self.profile_manager.profile;
-            match level.as_str() {
-                "local" => {
-                    p.ota_enabled = false;
-                    p.sync_state.enabled = false;
-                    p.cloud_enabled = false;
-                }
-                "connected" => {
-                    p.ota_enabled = true;
-                    p.sync_state.enabled = false;
-                    p.cloud_enabled = false;
-                }
-                "cloud" => {
-                    p.ota_enabled = true;
-                    p.sync_state.enabled = true;
-                    p.sync_state.sync_presets = true;
-                    p.sync_state.sync_templates = true;
-                    p.sync_state.sync_watchlists = true;
-                    p.sync_state.sync_theme = true;
-                    p.sync_state.sync_vault = true;
-                    p.sync_state.sync_recovery_key = true;
-                    p.cloud_enabled = true;
-                }
-                _ => {
-                    eprintln!("[App] hot-reload: unknown sync level '{}' — skipping", level);
-                }
-            }
-            p.sync_level = level.clone();
-            // Persist sync level to profile.json and index.
-            if let Err(e) = self.profile_manager.save_profile() {
-                eprintln!("[App] hot-reload: failed to save profile after sync level: {}", e);
-            }
-            let _ = zengeld_chart::set_profile_sync_level(
-                &self.profile_manager.profile.profile_id,
-                self.profile_manager.profile.cloud_enabled,
-                &level,
-            );
-            // Re-sync self.profile from the updated profile_manager.
-            self.profile = self.profile_manager.profile.clone();
-        }
-
         self.is_first_run = false;
 
         // 7. Recreate windows from the new profile's saved state.
@@ -1745,32 +1489,6 @@ impl App<'_> {
                 pw.chart.panel_app.user_settings_state.is_open = false;
             }
             eprintln!("[App] hot-reload: profile has no vault — showing passphrase creation");
-        }
-
-        // Notify the updater of the new data directory and sync settings.
-        // The updater loop holds its own copy of these values; after a profile
-        // switch it must read from the new profile's directory and respect the
-        // new profile's per-category sync toggles.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref handle) = self.updater_handle {
-            use zengeld_updater::UpdaterCommand;
-            let new_data_dir = zengeld_chart::active_profile_data_dir();
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetDataDir(new_data_dir));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetProfileId(
-                self.profile_manager.profile.profile_id.clone(),
-            ));
-            // Sync OTA/cloud mode from the new profile so the updater
-            // starts or stops OTA checks accordingly.
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(
-                self.profile_manager.profile.ota_enabled,
-            ));
-            let ss = &self.profile_manager.profile.sync_state;
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(ss.enabled));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncPresets(ss.sync_presets));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTemplates(ss.sync_templates));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncWatchlists(ss.sync_watchlists));
-            let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncTheme(ss.sync_theme));
-            eprintln!("[App] sent SetDataDir + sync toggles + SetCloudEnabled to updater after profile switch");
         }
 
         eprintln!(
@@ -2231,61 +1949,6 @@ impl ApplicationHandler for App<'_> {
             self.last_frame_time_ms = dt_ms;
         }
 
-        // ── OTA updater status check ─────────────────────────────────────────
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref mut handle) = self.updater_handle {
-            if handle.status_rx.has_changed().unwrap_or(false) {
-                let status = handle.status_rx.borrow_and_update().clone();
-                match &status {
-                    zengeld_updater::UpdateStatus::UpdateAvailable(info) => {
-                        eprintln!("[Updater] Update available: v{}", info.version);
-                        let msg = format!("Update v{} available — click to install", info.version);
-                        let ts = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        self.active_toasts.push(alert_delivery::ToastNotification {
-                            title: "Update Available".to_string(),
-                            message: msg,
-                            timestamp: ts,
-                            duration_ms: 8000,
-                        });
-                    }
-                    zengeld_updater::UpdateStatus::RestartPending => {
-                        eprintln!("[Updater] RestartPending — saving all state before restart");
-                        // CRITICAL: save_all() MUST run before process::exit()
-                        // so that agents, presets, and profile are persisted.
-                        // Previously spawn_and_exit() was called from the async
-                        // updater task, bypassing save_all() entirely and causing
-                        // data loss (agent leaves, slot layouts, etc.).
-                    }
-                    zengeld_updater::UpdateStatus::Error(e) => {
-                        eprintln!("[Updater] Error: {}", e);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // ── OTA restart: save state then spawn new process ──────────────
-        // Runs AFTER the status_rx borrow is released to avoid holding
-        // an immutable ref to updater_handle during save_all (which needs &mut self).
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        {
-            let restart_pending = self.updater_handle.as_ref()
-                .map(|h| matches!(*h.status_rx.borrow(), zengeld_updater::UpdateStatus::RestartPending))
-                .unwrap_or(false);
-            if restart_pending {
-                self.save_all(&[]);
-                eprintln!("[Updater] State saved — spawning new process");
-                let port = self.app_state.server_port;
-                if let Err(e) = zengeld_updater::replace::spawn_and_exit(Some(port)) {
-                    eprintln!("[Updater] spawn_and_exit failed: {} — continuing", e);
-                }
-                // spawn_and_exit calls process::exit(0), so we only reach here on error.
-            }
-        }
-
         // ── App-level tick ────────────────────────────────────────────────
         // Process app-level broadcast messages (ConnectorReady → request_symbols).
         self.tick_app_state();
@@ -2334,13 +1997,6 @@ impl ApplicationHandler for App<'_> {
                 cleanup.run_cleanup(max_size_mb, cleanup_days);
             });
         }
-
-        // ── Accumulator for event-driven sync push ───────────────────────────
-        // Collects blob categories that were flushed to disk this frame.  A
-        // single SyncPushChanged command is sent after all flush blocks so the
-        // updater can immediately push changed items to the server.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        let mut sync_changed_categories: Vec<String> = Vec::new();
 
         // ── Drain watchlist actions from all windows → AppState ────────────
         // Windows queue WatchlistAction instead of mutating directly.
@@ -2636,11 +2292,6 @@ impl ApplicationHandler for App<'_> {
         }
         if templates_had_actions {
             self.app_state.templates_dirty = true;
-            #[cfg(all(feature = "updater", not(feature = "standalone")))]
-            {
-                sync_changed_categories.push("template_primitive".to_string());
-                sync_changed_categories.push("template_indicator".to_string());
-            }
         }
 
         // ── Drain performance actions from all windows ─────────────────────
@@ -2730,8 +2381,6 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
             }
-            #[cfg(all(feature = "updater", not(feature = "standalone")))]
-            sync_changed_categories.push("preset".to_string());
         }
 
         // ── Dirty-flag persistence ──────────────────────────────────────
@@ -2810,8 +2459,6 @@ impl ApplicationHandler for App<'_> {
                     eprintln!("[App] Failed to save profile: {}", e);
                 } else {
                     self.profile = profile;
-                    #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                    sync_changed_categories.push("profile".to_string());
                 }
 
                 // Clear dirty flags.
@@ -2896,9 +2543,6 @@ impl ApplicationHandler for App<'_> {
                 // Watchlists are always plaintext — pass None regardless of vault key.
                 if let Err(e) = zengeld_chart::save_json(&watchlists_path, &self.app_state.watchlist_manager, None) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
-                } else {
-                    #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                    sync_changed_categories.push("watchlist".to_string());
                 }
                 // Clear dirty flags.
                 for pw in self.windows.values_mut() {
@@ -2948,20 +2592,6 @@ impl ApplicationHandler for App<'_> {
                         }
                     }
                 }
-                #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                sync_changed_categories.push("preset".to_string());
-            }
-        }
-
-        // ── Event-driven sync push ────────────────────────────────────────────
-        // Fire one SyncPushChanged after all dirty-flag flushes so the updater
-        // can immediately push to the server rather than waiting for the 5-min
-        // interval tick.  The updater's do_cloud_sync reads all files and dedupes
-        // via checksums — no extra work is done for unchanged items.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if !sync_changed_categories.is_empty() {
-            if let Some(ref handle) = self.updater_handle {
-                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::SyncPushChanged(sync_changed_categories));
             }
         }
 
@@ -2980,11 +2610,6 @@ impl ApplicationHandler for App<'_> {
             // Shutdown the GPU render thread cleanly.
             if let Some(ref tx) = self.gpu_cmd_tx {
                 let _ = tx.send(GpuCommand::Shutdown);
-            }
-            // Shutdown the updater background task cleanly.
-            #[cfg(all(feature = "updater", not(feature = "standalone")))]
-            if let Some(ref handle) = self.updater_handle {
-                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::Shutdown);
             }
             self.save_all(&[]);
             event_loop.exit();
@@ -3423,9 +3048,7 @@ impl ApplicationHandler for App<'_> {
                     }
                 }
 
-                // ── Local vault key derivation (e2e_setup — all build configs) ──
-                // This runs BEFORE the updater-handle block so that we can call
-                // save_all() without holding an immutable borrow of updater_handle.
+                // ── Local vault key derivation (e2e_setup) ──
                 if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
                     // ── New profile vault creation ──
                     // When the user just created a new profile, we show the CreatePassphrase
@@ -3851,55 +3474,6 @@ impl ApplicationHandler for App<'_> {
                                             ProfileManagerPage::ShowRecoveryKey;
                                     }
 
-                                    // ── Upload re-keyed vault params to server ──
-                                    let salt_path = zengeld_chart::active_profile_data_dir().join("salt.hex");
-                                    let vault_salt = std::fs::read_to_string(&salt_path)
-                                        .unwrap_or_default()
-                                        .trim()
-                                        .to_string();
-
-                                    if !vault_salt.is_empty() {
-                                        let token = zengeld_updater::token_store::load_token();
-                                        if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
-                                            let client = reqwest::Client::builder()
-                                                .timeout(std::time::Duration::from_secs(15))
-                                                .build()
-                                                .unwrap_or_default();
-                                            let server_url = "https://chart.example".to_string();
-                                            let token_str = tok.token.clone();
-                                            let salt_hex_for_spawn = vault_salt;
-
-                                            let encrypted_master_key_for_spawn =
-                                                self.profile_manager.take_encrypted_master_key();
-
-                                            let build_attest_for_spawn = zengeld_updater::BuildAttestation {
-                                                attestation: env!("BUILD_ATTESTATION").to_string(),
-                                                version: env!("CARGO_PKG_VERSION").to_string(),
-                                                platform: env!("BUILD_PLATFORM").to_string(),
-                                                timestamp: env!("BUILD_TIMESTAMP").to_string(),
-                                            };
-                                            let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
-                                            let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
-                                            let iterations = zengeld_updater::vault_params::PBKDF2_ITERATIONS as i32;
-                                            self.bridge.runtime().spawn(async move {
-                                                match zengeld_updater::vault_params::upload_vault_params(
-                                                    &client,
-                                                    &server_url,
-                                                    &token_str,
-                                                    &salt_hex_for_spawn,
-                                                    iterations,
-                                                    encrypted_master_key_for_spawn.as_deref(),
-                                                    &build_attest_for_spawn,
-                                                    &profile_id_for_spawn,
-                                                    &device_id_for_spawn,
-                                                )
-                                                .await {
-                                                    Ok(_) => eprintln!("[App] Re-keyed vault params uploaded to server"),
-                                                    Err(e) => eprintln!("[App] Re-keyed vault params upload failed: {}", e),
-                                                }
-                                            });
-                                        }
-                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("[App] set_new_passphrase: rekey_vault failed: {}", e);
@@ -3977,853 +3551,8 @@ impl ApplicationHandler for App<'_> {
                     self.is_first_run = true;
                     eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
                 }
-
-                // Flag set inside the `handle` borrow below; acted on after the borrow ends.
-                #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                let mut sync_level_changed = false;
-
-                #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                if let Some(ref handle) = self.updater_handle {
-                    use zengeld_updater::UpdaterCommand;
-                    let command = if cmd_str.starts_with("wizard_complete:") {
-                        // Handled entirely in the wizard_complete block above; do not
-                        // forward to the updater (it would log "unknown updater command").
-                        None
-                    } else if cmd_str.starts_with("profile_switch:")
-                        || cmd_str == "vault_skip_to_wizard"
-                        || cmd_str == "recovery_key_confirmed"
-                        || cmd_str.starts_with("sync_level_chosen:")
-                        || cmd_str.starts_with("recovery_unlock:")
-                        || cmd_str.starts_with("set_new_passphrase:")
-                        || cmd_str.starts_with("profile_create:")
-                        || cmd_str.starts_with("profile_rename:")
-                        || cmd_str == "profile_delete"
-                        || cmd_str.starts_with("profile_avatar:")
-                    {
-                        // App-level profile commands — handled above, not updater commands.
-                        None
-                    } else if cmd_str.starts_with("e2e_setup:") && self.needs_vault_unlock {
-                        // Vault unlock attempt with wrong passphrase — local handler already
-                        // rejected it.  Do NOT forward to updater (would set up E2E on server
-                        // with the wrong salt/key combo).
-                        None
-                    } else if cmd_str == "logout" {
-                        Some(UpdaterCommand::Logout)
-                    } else if let Some(provider) = cmd_str.strip_prefix("start_oauth:") {
-                        Some(UpdaterCommand::StartOAuth(provider.to_string()))
-                    } else if cmd_str == "set_connected"
-                        || cmd_str == "set_connected_upload"
-                        || cmd_str == "set_connected_download"
-                    {
-                        // All three connect variants enable Connected mode.
-                        // Upload/download also trigger an immediate sync cycle so
-                        // local data is pushed / server data is pulled right away.
-                        if cmd_str == "set_connected_upload" || cmd_str == "set_connected_download" {
-                            // Send SetConnectedMode first, then ForceSync.
-                            // SetConnectedMode is sent below via the `command` variable;
-                            // ForceSync is queued here as a second message.
-                            let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                            let _ = handle.cmd_tx.send(UpdaterCommand::ForceSync);
-                            // Skip the generic send below (already sent).
-                            None
-                        } else {
-                            Some(UpdaterCommand::SetCloudEnabled(true))
-                        }
-                    } else if cmd_str == "device_ota:connected" {
-                        // Device-level Connected mode toggle — enable network activity.
-                        Some(UpdaterCommand::SetCloudEnabled(true))
-                    } else if cmd_str == "device_ota:standalone" {
-                        // Device-level Standalone mode toggle — disable all network activity.
-                        Some(UpdaterCommand::SetCloudEnabled(false))
-                    } else if let Some(ch) = cmd_str.strip_prefix("set_channel:") {
-                        Some(UpdaterCommand::SetChannel(ch.to_string()))
-                    } else if cmd_str == "set_standalone" {
-                        Some(UpdaterCommand::SetCloudEnabled(false))
-                    // ── Sync level commands ────────────────────────────────────
-                    } else if let Some(level) = cmd_str.strip_prefix("set_sync_level:") {
-                        let p = &mut self.profile_manager.profile;
-                        let cloud = match level {
-                            "local" => {
-                                p.ota_enabled = false;
-                                p.sync_state.enabled = false;
-                                p.cloud_enabled = false;
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(false));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
-                                false
-                            }
-                            "connected" => {
-                                p.ota_enabled = true;
-                                p.sync_state.enabled = false;
-                                p.cloud_enabled = false;
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(false));
-                                false
-                            }
-                            "cloud" => {
-                                p.ota_enabled = true;
-                                p.sync_state.enabled = true;
-                                p.sync_state.sync_presets = true;
-                                p.sync_state.sync_templates = true;
-                                p.sync_state.sync_watchlists = true;
-                                p.sync_state.sync_theme = true;
-                                // Cloud = always ZT: vault + recovery key always synced
-                                p.sync_state.sync_vault = true;
-                                p.sync_state.sync_recovery_key = true;
-                                p.cloud_enabled = true;
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetCloudEnabled(true));
-                                let _ = handle.cmd_tx.send(UpdaterCommand::SetSyncEnabled(true));
-                                true
-                            }
-                            _ => {
-                                eprintln!("[App] unknown sync_level: {}", level);
-                                false
-                            }
-                        };
-                        self.profile.cloud_enabled = cloud;
-                        // Write sync_level into the profile itself (source of truth).
-                        self.profile_manager.profile.sync_level = level.to_string();
-                        let _ = zengeld_chart::set_profile_sync_level(&self.profile.profile_id, cloud, level);
-                        eprintln!("[App] sync_level = {}", level);
-                        // Persist immediately — OTA restart may kill the process before save_all().
-                        if let Err(e) = self.profile_manager.save_profile() {
-                            eprintln!("[App] failed to save profile after sync_level change: {}", e);
-                        }
-                        // Defer profile-list refresh to after the handle borrow ends
-                        // (sync_profiles_to_windows needs &mut self which conflicts with
-                        // the immutable `handle` borrow active through this entire block).
-                        sync_level_changed = true;
-                        None
-                    } else if cmd_str == "force_sync" {
-                        Some(UpdaterCommand::ForceSync)
-                    } else if cmd_str == "start_device_auth" {
-                        // OAuth device-link flow:
-                        // 1. POST /api/auth/link/init  → get token + link_url
-                        // 2. Open link_url in browser
-                        // 3. Poll /api/auth/link/poll?token=... every 2 s
-                        // 4. Send status updates via an mpsc channel to about_to_wait
-                        eprintln!("[App] start_device_auth requested — starting link flow");
-
-                        let device_id = zengeld_updater::telemetry::get_or_create_device_id();
-                        let device_name = self.app_state.device_name.clone();
-                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<LinkPollStatus>();
-                        self.link_poll_rx = Some(rx);
-
-                        // Update wizard UI immediately to show "Connecting…"
-                        for pw in self.windows.values_mut() {
-                            pw.chart.panel_app.user_settings_state.wizard_linking_status =
-                                "Connecting to server\u{2026}".to_string();
-                        }
-
-                        self.bridge.runtime().spawn(async move {
-                            let client = reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(15))
-                                .build()
-                                .unwrap_or_default();
-
-                            // Step 1: POST /api/auth/link/init
-                            let init_resp = client
-                                .post("https://chart.example/api/auth/link/init")
-                                .json(&serde_json::json!({
-                                    "device_name": device_name,
-                                    "device_id": device_id,
-                                }))
-                                .send()
-                                .await;
-
-                            let (token, link_url) = match init_resp {
-                                Ok(r) if r.status().is_success() => {
-                                    match r.json::<serde_json::Value>().await {
-                                        Ok(body) => {
-                                            let tok = body["token"].as_str().unwrap_or("").to_string();
-                                            let url = body["link_url"].as_str().unwrap_or("").to_string();
-                                            if tok.is_empty() || url.is_empty() {
-                                                let _ = tx.send(LinkPollStatus::Expired(
-                                                    "Server returned empty token.".to_string(),
-                                                ));
-                                                return;
-                                            }
-                                            (tok, url)
-                                        }
-                                        Err(e) => {
-                                            let _ = tx.send(LinkPollStatus::Expired(
-                                                format!("Failed to parse server response: {}", e),
-                                            ));
-                                            return;
-                                        }
-                                    }
-                                }
-                                Ok(r) => {
-                                    let status = r.status();
-                                    let _ = tx.send(LinkPollStatus::Expired(
-                                        format!("Server error: {}", status),
-                                    ));
-                                    return;
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(LinkPollStatus::Expired(
-                                        format!("Network error: {}", e),
-                                    ));
-                                    return;
-                                }
-                            };
-
-                            // Step 2: send init data (token + link_url) to UI, open browser
-                            let _ = tx.send(LinkPollStatus::Init {
-                                token: token.clone(),
-                                link_url: link_url.clone(),
-                            });
-
-                            // Step 3: poll every 2 seconds for up to 10 minutes
-                            let deadline = std::time::Instant::now()
-                                + std::time::Duration::from_secs(10 * 60);
-                            loop {
-                                if std::time::Instant::now() >= deadline {
-                                    let _ = tx.send(LinkPollStatus::Expired(
-                                        "Link expired. Try again.".to_string(),
-                                    ));
-                                    return;
-                                }
-
-                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-                                let poll_url = format!(
-                                    "https://chart.example/api/auth/link/poll?token={}",
-                                    token
-                                );
-                                let poll_result = client.get(&poll_url).send().await;
-
-                                match poll_result {
-                                    Ok(r) if r.status().is_success() => {
-                                        match r.json::<serde_json::Value>().await {
-                                            Ok(body) => {
-                                                let status_str = body["status"].as_str().unwrap_or("pending");
-                                                match status_str {
-                                                    "linked" => {
-                                                        let display_name = body["display_name"]
-                                                            .as_str()
-                                                            .unwrap_or("User")
-                                                            .to_string();
-                                                        let provider = body["provider"]
-                                                            .as_str()
-                                                            .unwrap_or("")
-                                                            .to_string();
-                                                        let auth_token = body["auth_token"]
-                                                            .as_str()
-                                                            .unwrap_or("")
-                                                            .to_string();
-                                                        let user_id = body["user_id"]
-                                                            .as_i64()
-                                                            .unwrap_or(0);
-                                                        let _ = tx.send(LinkPollStatus::Linked {
-                                                            display_name,
-                                                            provider,
-                                                            auth_token,
-                                                            user_id,
-                                                        });
-                                                        return;
-                                                    }
-                                                    "expired" => {
-                                                        let _ = tx.send(LinkPollStatus::Expired(
-                                                            "Link expired. Try again.".to_string(),
-                                                        ));
-                                                        return;
-                                                    }
-                                                    _ => {
-                                                        // "pending" — send Pending so UI stays updated
-                                                        let _ = tx.send(LinkPollStatus::Pending);
-                                                    }
-                                                }
-                                            }
-                                            Err(_) => {
-                                                let _ = tx.send(LinkPollStatus::Pending);
-                                            }
-                                        }
-                                    }
-                                    Ok(r) if r.status() == 404 => {
-                                        // Token not found or expired
-                                        let _ = tx.send(LinkPollStatus::Expired(
-                                            "Link expired. Try again.".to_string(),
-                                        ));
-                                        return;
-                                    }
-                                    _ => {
-                                        // Network error — keep polling
-                                        let _ = tx.send(LinkPollStatus::Pending);
-                                    }
-                                }
-                            }
-                        });
-                        None
-                    } else if cmd_str == "resolve_all:keep_local"
-                        || cmd_str == "resolve_all:keep_cloud"
-                    {
-                        // Resolve every pending conflict in bulk by sending individual
-                        // ResolveConflict messages — ResolveAllConflicts variant does not
-                        // exist in the updater yet.
-                        let resolution = if cmd_str == "resolve_all:keep_local" {
-                            zengeld_updater::ConflictResolution::KeepLocal
-                        } else {
-                            zengeld_updater::ConflictResolution::KeepCloud
-                        };
-                        eprintln!("[App] resolve_all: {:?}", cmd_str);
-                        // Borrow the current sync status to extract the conflict list.
-                        let conflicts: Vec<String> = {
-                            match &*handle.sync_status_rx.borrow() {
-                                zengeld_updater::SyncStatus::ConflictsDetected(list) => {
-                                    list.iter().map(|c| c.sync_id.clone()).collect()
-                                }
-                                _ => Vec::new(),
-                            }
-                        };
-                        for sync_id in conflicts {
-                            let _ = handle.cmd_tx.send(UpdaterCommand::ResolveConflict {
-                                sync_id,
-                                resolution: resolution.clone(),
-                            });
-                        }
-                        None
-                    } else if let Some(rest) = cmd_str.strip_prefix("resolve_conflict:") {
-                        if let Some((sync_id, resolution_str)) = rest.rsplit_once(':') {
-                            let resolution = if resolution_str == "keep_local" {
-                                zengeld_updater::ConflictResolution::KeepLocal
-                            } else {
-                                zengeld_updater::ConflictResolution::KeepCloud
-                            };
-                            Some(UpdaterCommand::ResolveConflict {
-                                sync_id: sync_id.to_string(),
-                                resolution,
-                            })
-                        } else {
-                            eprintln!("[App] malformed resolve_conflict command: {}", cmd_str);
-                            None
-                        }
-                    } else if cmd_str.starts_with("e2e_setup:") {
-                        // Vault unlock: upload vault salt + encrypted_master_key to the server
-                        // so that vault recovery is possible on another device.
-                        //
-                        // CloudSync items are NOT encrypted client-side.  This upload is solely
-                        // for vault recovery (salt + encrypted_master_key stored server-side).
-                        //
-                        // NOTE: Local vault key derivation (save_all) is done OUTSIDE this
-                        // block to avoid holding the `handle` borrow while calling save_all.
-
-                        // Read the vault salt from disk.  This salt was created when the vault
-                        // was first set up; it is the ground-truth salt for all key derivation.
-                        let salt_path = zengeld_chart::active_profile_data_dir().join("salt.hex");
-                        let vault_salt = std::fs::read_to_string(&salt_path)
-                            .unwrap_or_default()
-                            .trim()
-                            .to_string();
-
-                        if vault_salt.is_empty() {
-                            eprintln!("[App] e2e_setup: salt.hex not found or empty — skipping vault recovery upload");
-                        } else {
-                            // Upload vault salt + encrypted_master_key to the server so that
-                            // vault recovery is possible on another device.  This call is
-                            // idempotent — the server accepts repeated uploads of the same salt.
-                            // CloudSync items are NOT encrypted client-side; this upload is
-                            // solely for vault recovery purposes.
-                            let token = zengeld_updater::token_store::load_token();
-                            if let Some(tok) = token.filter(|_| self.profile.cloud_enabled) {
-                                let client = reqwest::Client::builder()
-                                    .timeout(std::time::Duration::from_secs(15))
-                                    .build()
-                                    .unwrap_or_default();
-                                let server_url = "https://chart.example".to_string();
-                                let token_str = tok.token.clone();
-                                let salt_hex_for_spawn = vault_salt;
-
-                                let encrypted_master_key_for_spawn =
-                                    self.profile_manager.take_encrypted_master_key();
-
-                                let build_attest_for_spawn = zengeld_updater::BuildAttestation {
-                                    attestation: env!("BUILD_ATTESTATION").to_string(),
-                                    version: env!("CARGO_PKG_VERSION").to_string(),
-                                    platform: env!("BUILD_PLATFORM").to_string(),
-                                    timestamp: env!("BUILD_TIMESTAMP").to_string(),
-                                };
-                                let profile_id_for_spawn = self.profile_manager.profile.profile_id.clone();
-                                let device_id_for_spawn = zengeld_updater::telemetry::get_or_create_device_id();
-                                let iterations = zengeld_updater::vault_params::PBKDF2_ITERATIONS as i32;
-                                self.bridge.runtime().spawn(async move {
-                                    match zengeld_updater::vault_params::upload_vault_params(
-                                        &client,
-                                        &server_url,
-                                        &token_str,
-                                        &salt_hex_for_spawn,
-                                        iterations,
-                                        encrypted_master_key_for_spawn.as_deref(),
-                                        &build_attest_for_spawn,
-                                        &profile_id_for_spawn,
-                                        &device_id_for_spawn,
-                                    )
-                                    .await {
-                                        Ok(_) => eprintln!("[App] E2E setup on server succeeded (salt + recovery key uploaded)"),
-                                        Err(e) => eprintln!("[App] E2E setup on server failed: {}", e),
-                                    }
-                                });
-                            } else {
-                                eprintln!("[App] e2e_setup: not logged in or cloud disabled — vault recovery upload deferred");
-                            }
-                        }
-                        None
-                    } else if cmd_str == "list_cloud_profiles" {
-                        Some(UpdaterCommand::ListCloudProfiles)
-                    } else if let Some(profile_id) = cmd_str.strip_prefix("restore_cloud_profile:") {
-                        Some(UpdaterCommand::RestoreCloudProfile {
-                            profile_id: profile_id.to_string(),
-                        })
-                    } else {
-                        eprintln!("[App] unknown updater command: {}", cmd_str);
-                        None
-                    };
-                    if let Some(command) = command {
-                        if let Err(e) = handle.cmd_tx.send(command) {
-                            eprintln!("[App] updater cmd_tx send failed: {}", e);
-                        }
-                    }
-                }
-                // ── Deferred: refresh profile list after sync_level change ────
-                // The `handle` borrow above is now released, so &mut self is safe.
-                if sync_level_changed {
-                    self.profile_manager.refresh_index();
-                    self.sync_profiles_to_windows();
-                    // Push updated toggle states to all windows.
-                    let ota = self.profile_manager.profile.ota_enabled;
-                    let sync_en = self.profile_manager.profile.sync_state.enabled;
-                    for pw in self.windows.values_mut() {
-                        let us = &mut pw.chart.panel_app.user_settings_state;
-                        us.ota_enabled = ota;
-                        us.sync_enabled = sync_en;
-                    }
-                }
-            }
-        }
-
-        // ── Poll auth_rx → sync to all windows ───────────────────────────
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        {
-            if let Some(ref mut handle) = self.updater_handle {
-                if handle.auth_rx.has_changed().unwrap_or(false) {
-                    let status = handle.auth_rx.borrow_and_update().clone();
-                    match &status {
-                        zengeld_updater::AuthStatus::LoggedIn { display_name, provider, user_id } => {
-                            let dn = display_name.clone();
-                            let prov = provider.clone();
-                            let uid = *user_id;
-                            for pw in self.windows.values_mut() {
-                                let s = &mut pw.chart.panel_app.user_settings_state;
-                                s.is_logged_in = true;
-                                s.auth_display_name = dn.clone();
-                                s.auth_provider = prov.clone();
-                                s.auth_user_id = uid;
-                            }
-                            // Mirror auth state into profile so it persists across restarts.
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            self.profile_manager.profile.linked_account =
-                                Some(zengeld_chart::user_profile::profile::LinkedAccount {
-                                    provider: prov.clone(),
-                                    provider_user_id: uid.to_string(),
-                                    display_name: dn.clone(),
-                                    linked_at: now,
-                                });
-                            // Auto-switch to Connected mode when user logs in.
-                            self.profile_manager.profile.cloud_enabled = true;
-                            self.profile.cloud_enabled = true;
-                            // Reflect the mode change in all open windows immediately.
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.client_mode_connected = true;
-                            }
-                            // Mirror the bearer token into the OS keychain as a
-                            // secondary encrypted store.  This is best-effort: a
-                            // failure here is non-fatal since auth_token.json is
-                            // still the primary storage.
-                            if let Some(stored) = zengeld_updater::token_store::load_token() {
-                                if let Err(e) = keychain::store_auth_token(&stored.token) {
-                                    eprintln!("[App] keychain: failed to mirror auth token: {}", e);
-                                }
-                            }
-                            // Wizard: update linking status but do NOT close the wizard.
-                            // The user must still enter a passphrase (mandatory zero-trust).
-                            for pw in self.windows.values_mut() {
-                                let uss = &mut pw.chart.panel_app.user_settings_state;
-                                if uss.show_welcome_wizard {
-                                    uss.wizard_linking_status = format!("Linked as {}", dn);
-                                }
-                            }
-                            eprintln!("[App] auth: logged in as {} ({})", dn, prov);
-                            // Auto-fetch cloud profiles on login so skeleton shows them immediately.
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.cloud_profiles_loading = true;
-                                pw.chart.panel_app.user_settings_state.cloud_profiles_error.clear();
-                            }
-                            let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
-                        }
-                        zengeld_updater::AuthStatus::NotLoggedIn => {
-                            for pw in self.windows.values_mut() {
-                                let s = &mut pw.chart.panel_app.user_settings_state;
-                                s.is_logged_in = false;
-                                s.auth_display_name = String::new();
-                                s.auth_provider = String::new();
-                                s.auth_user_id = 0;
-                                s.cloud_profiles.clear();
-                                s.cloud_profiles_loading = false;
-                                s.cloud_profiles_error.clear();
-                            }
-                            // Clear the profile mirror on logout / missing token.
-                            self.profile_manager.profile.linked_account = None;
-                            // Remove the keychain copy on logout (best-effort).
-                            if let Err(e) = keychain::delete_auth_token() {
-                                eprintln!("[App] keychain: failed to delete auth token: {}", e);
-                            }
-                            eprintln!("[App] auth: not logged in");
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Drain link-poll task updates → update wizard UI ──────────────
-        {
-            // Collect all pending messages from the link poll task (non-blocking).
-            let mut link_done = false;
-            if self.link_poll_rx.is_some() {
-                use tokio::sync::mpsc::error::TryRecvError;
-                let mut last_status: Option<LinkPollStatus> = None;
-                loop {
-                    match self.link_poll_rx.as_mut().unwrap().try_recv() {
-                        Ok(status) => { last_status = Some(status); }
-                        Err(TryRecvError::Empty) => break,
-                        Err(TryRecvError::Disconnected) => {
-                            link_done = true;
-                            break;
-                        }
-                    }
-                }
-                if let Some(status) = last_status {
-                    match status {
-                        LinkPollStatus::Init { token, link_url } => {
-                            // Truncate token for display (first 8 chars)
-                            let token_display = if token.len() > 8 {
-                                token[..8].to_string()
-                            } else {
-                                token.clone()
-                            };
-                            for pw in self.windows.values_mut() {
-                                let uss = &mut pw.chart.panel_app.user_settings_state;
-                                uss.wizard_device_code = token_display.clone();
-                                uss.wizard_linking_status =
-                                    "Waiting for confirmation\u{2026}".to_string();
-                                // Open the link URL in the browser
-                                pw.chart.pending_open_url = Some(link_url.clone());
-                            }
-                            eprintln!("[App] link flow: opened {}", link_url);
-                        }
-                        LinkPollStatus::Pending => {
-                            // Keep showing "Waiting…" — no change needed unless UI is stale
-                        }
-                        LinkPollStatus::Linked { display_name, provider, auth_token, user_id } => {
-                            eprintln!("[App] link flow: linked as {} ({}) auth_token_len={} user_id={}", display_name, provider, auth_token.len(), user_id);
-
-                            // Persist auth token to disk
-                            if !auth_token.is_empty() {
-                                let stored = zengeld_updater::token_store::StoredToken {
-                                    token: auth_token.clone(),
-                                    provider: provider.clone(),
-                                    display_name: display_name.clone(),
-                                    saved_at: std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs(),
-                                    user_id,
-                                };
-                                if let Err(e) = zengeld_updater::token_store::save_token(&stored) {
-                                    eprintln!("[App] failed to save auth token: {}", e);
-                                } else {
-                                    eprintln!("[App] auth token saved to disk");
-                                }
-                            }
-
-                            // Mirror auth state into profile so it persists across restarts.
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            self.profile_manager.profile.linked_account =
-                                Some(zengeld_chart::user_profile::profile::LinkedAccount {
-                                    provider: provider.clone(),
-                                    provider_user_id: user_id.to_string(),
-                                    display_name: display_name.clone(),
-                                    linked_at: now,
-                                });
-
-                            for pw in self.windows.values_mut() {
-                                let uss = &mut pw.chart.panel_app.user_settings_state;
-                                uss.wizard_linking_status = "Linked!".to_string();
-                                uss.is_logged_in = true;
-                                uss.auth_display_name = display_name.clone();
-                                uss.auth_provider = provider.clone();
-                                uss.auth_user_id = user_id;
-                                // Auto-fetch cloud profiles immediately after link auth.
-                                uss.cloud_profiles_loading = true;
-                                uss.cloud_profiles_error.clear();
-                                // Do NOT close wizard on link — passphrase still required (zero-trust).
-                                // Just update linking status for visual feedback.
-                            }
-                            // Mirror cloud_enabled into profile.
-                            self.profile_manager.profile.cloud_enabled = true;
-                            self.profile.cloud_enabled = true;
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.client_mode_connected = true;
-                            }
-                            // Mirror the bearer token into the OS keychain (best-effort).
-                            if let Some(stored) = zengeld_updater::token_store::load_token() {
-                                if let Err(e) = keychain::store_auth_token(&stored.token) {
-                                    eprintln!("[App] keychain: failed to mirror auth token: {}", e);
-                                }
-                            }
-                            // Trigger cloud profiles fetch via updater.
-                            #[cfg(all(feature = "updater", not(feature = "standalone")))]
-                            if let Some(ref handle) = self.updater_handle {
-                                let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
-                            }
-                            link_done = true;
-                        }
-                        LinkPollStatus::Expired(msg) => {
-                            eprintln!("[App] link flow expired: {}", msg);
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.wizard_linking_status =
-                                    msg.clone();
-                            }
-                            link_done = true;
-                        }
-                    }
-                }
-            }
-            if link_done {
-                self.link_poll_rx = None;
-            }
-        }
-
-        // ── Poll sync_status_rx → update all windows' user_settings_state ─
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref mut handle) = self.updater_handle {
-            if handle.sync_status_rx.has_changed().unwrap_or(false) {
-                let sync_status = handle.sync_status_rx.borrow_and_update().clone();
-
-                let (label, color, is_active, has_error) =
-                    match &sync_status {
-                        zengeld_updater::SyncStatus::Idle => (
-                            "Idle".to_string(),
-                            "#888888".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::Syncing => (
-                            "Syncing\u{2026}".to_string(),
-                            "#f0ad4e".to_string(),
-                            true,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::Completed { pushed, pulled } => {
-                            let lbl = if *pushed == 0 && *pulled == 0 {
-                                "Synced \u{2014} no changes".to_string()
-                            } else {
-                                format!("Synced \u{2014} \u{2191}{} \u{2193}{}", pushed, pulled)
-                            };
-                            (lbl, "#5cb85c".to_string(), false, false)
-                        }
-                        zengeld_updater::SyncStatus::Error(msg) => {
-                            let truncated = if msg.len() > 60 {
-                                let safe_end = msg.char_indices()
-                                    .take_while(|(i, _)| *i <= 57)
-                                    .last()
-                                    .map(|(i, c)| i + c.len_utf8())
-                                    .unwrap_or(msg.len());
-                                format!("{}\u{2026}", &msg[..safe_end])
-                            } else {
-                                msg.clone()
-                            };
-                            (
-                                format!("Error: {}", truncated),
-                                "#d9534f".to_string(),
-                                false,
-                                true,
-                            )
-                        }
-                        zengeld_updater::SyncStatus::NeedsSetup => (
-                            "Cloud data found".to_string(),
-                            "#f0ad4e".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::ConflictsDetected(conflicts) => (
-                            format!("{} conflict(s)", conflicts.len()),
-                            "#e67e22".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::CloudProfilesLoaded(_) => (
-                            "Idle".to_string(),
-                            "#888888".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::CloudProfilesError(msg) => (
-                            format!("Cloud profiles error: {}", msg),
-                            "#d9534f".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::ProfileRestored { .. } => (
-                            "Idle".to_string(),
-                            "#888888".to_string(),
-                            false,
-                            false,
-                        ),
-                        zengeld_updater::SyncStatus::ProfileRestoreError(msg) => (
-                            format!("Restore error: {}", msg),
-                            "#d9534f".to_string(),
-                            false,
-                            false,
-                        ),
-                    };
-
-                let is_completed = matches!(
-                    &sync_status,
-                    zengeld_updater::SyncStatus::Completed { .. }
-                );
-                let now_ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
-
-                // Pre-extract cloud profile state changes before the windows loop
-                // so we can call methods that need &mut self after the loop.
-                let cloud_profiles_loaded: Option<Vec<zengeld_chart::ui::modal_settings::CloudProfileEntry>> =
-                    if let zengeld_updater::SyncStatus::CloudProfilesLoaded(ref profiles) = sync_status {
-                        Some(profiles.iter().map(|p| zengeld_chart::ui::modal_settings::CloudProfileEntry {
-                            profile_id: p.profile_id.clone(),
-                            display_name: p.display_name.clone(),
-                            item_count: p.item_count,
-                            total_bytes: p.total_bytes,
-                            last_modified: p.last_modified,
-                            has_vault: p.has_vault,
-                            has_recovery_key: p.has_recovery_key,
-                        }).collect())
-                    } else {
-                        None
-                    };
-                let cloud_profiles_error: Option<String> =
-                    if let zengeld_updater::SyncStatus::CloudProfilesError(ref msg) = sync_status {
-                        Some(msg.clone())
-                    } else {
-                        None
-                    };
-                let profile_restored: Option<String> =
-                    if let zengeld_updater::SyncStatus::ProfileRestored { ref profile_id } = sync_status {
-                        Some(profile_id.clone())
-                    } else {
-                        None
-                    };
-                let profile_restore_error: Option<String> =
-                    if let zengeld_updater::SyncStatus::ProfileRestoreError(ref msg) = sync_status {
-                        Some(msg.clone())
-                    } else {
-                        None
-                    };
-
-                for pw in self.windows.values_mut() {
-                    let uss = &mut pw.chart.panel_app.user_settings_state;
-                    uss.sync_status_label = label.clone();
-                    uss.sync_status_color = color.clone();
-                    uss.sync_is_active = is_active;
-
-                    if is_completed {
-                        uss.last_sync_timestamp = now_ts;
-                    }
-
-                    // ── Cloud profile restore state updates ───────────────────
-                    if let Some(ref profiles) = cloud_profiles_loaded {
-                        uss.cloud_profiles = profiles.clone();
-                        uss.cloud_profiles_loading = false;
-                        uss.cloud_profiles_error.clear();
-                    }
-                    if let Some(ref msg) = cloud_profiles_error {
-                        uss.cloud_profiles_loading = false;
-                        uss.cloud_profiles_error = msg.clone();
-                    }
-                    if profile_restored.is_some() {
-                        uss.restoring_profile_id = None;
-                    }
-                    if let Some(ref msg) = profile_restore_error {
-                        uss.restoring_profile_id = None;
-                        uss.cloud_profiles_error = msg.clone();
-                    }
-
-                    // Reset attestation_rejected on any non-error status
-                    if !has_error {
-                        uss.attestation_rejected = false;
-                    }
-                    if has_error {
-                        // Check error message for attestation failures
-                        if let zengeld_updater::SyncStatus::Error(ref msg) = sync_status {
-                            if msg.contains("build attestation") || msg.contains("attestation failed") {
-                                uss.attestation_rejected = true;
-                            }
-                        }
-                    }
-
-                }
-
-                // ── ProfileRestored: refresh the local profile index ──────────
-                // Must be done after the windows loop because sync_profiles_to_windows
-                // needs &mut self which conflicts with the pw borrow above.
-                if let Some(ref restored_id) = profile_restored {
-                    eprintln!("[App] ProfileRestored: refreshing index for profile {}", restored_id);
-                    self.profile_manager.refresh_index();
-                    self.sync_profiles_to_windows();
-                    // Remove the restored profile from cloud_profiles in all windows
-                    // (it now exists locally, no need to offer restore again).
-                    let rid = restored_id.clone();
-                    for pw in self.windows.values_mut() {
-                        let uss = &mut pw.chart.panel_app.user_settings_state;
-                        uss.cloud_profiles.retain(|cp| cp.profile_id != rid);
-                    }
-                    // Re-fetch the cloud list so the server-side view is also current.
-                    if let Some(ref handle) = self.updater_handle {
-                        let _ = handle.cmd_tx.send(zengeld_updater::UpdaterCommand::ListCloudProfiles);
-                        for pw in self.windows.values_mut() {
-                            pw.chart.panel_app.user_settings_state.cloud_profiles_loading = true;
-                        }
-                    }
-                }
-
-                eprintln!("[App] sync_status: {}", label);
-            }
-        }
-
-        // ── Poll sync_checksums_rx → persist last_synced_checksums to profile ─
-        //
-        // After each successful sync cycle the updater broadcasts the updated
-        // checksum map so it survives the next restart.  Without this, an empty
-        // map after restart causes every locally-modified item to look like a
-        // conflict on the first sync of the new session.
-        #[cfg(all(feature = "updater", not(feature = "standalone")))]
-        if let Some(ref mut handle) = self.updater_handle {
-            if handle.sync_checksums_rx.has_changed().unwrap_or(false) {
-                let checksums = handle.sync_checksums_rx.borrow_and_update().clone();
-                if !checksums.is_empty() {
-                    self.profile_manager
-                        .profile
-                        .sync_state
-                        .last_synced_checksums = checksums;
-                }
-            }
-        }
+            } // if let Some(ref cmd_str) = cmd
+        } // drain updater command requests
 
         // ── Telegram test / detect users (async via bridge runtime) ────
         {
@@ -5168,13 +3897,11 @@ impl ApplicationHandler for App<'_> {
             let scene_build_us = self.cached_scene_us;
             let gpu_render_us = self.cached_gpu_us;
 
-            let mut total_bars_all: u64 = 0;
             for pw in self.windows.values_mut() {
                 let total_bars: usize = pw.chart.panel_app.panel_grid.windows()
                     .values()
                     .map(|w| w.bars.len())
                     .sum();
-                total_bars_all += total_bars as u64;
                 let lag_events = pw.chart.lag_event_count;
 
                 let perf = &mut pw.chart.sidebar_state.performance_data;
@@ -5212,24 +3939,6 @@ impl ApplicationHandler for App<'_> {
                 perf.moving_avg_us = pw.chart.last_moving_avg_us;
             }
 
-            // ── Write live values to telemetry shared atomics ──────────────────
-            {
-                use std::sync::atomic::Ordering::Relaxed;
-                self.telemetry_shared.window_count.store(window_count as u32, Relaxed);
-                self.telemetry_shared.avg_fps_bits.store(f32::to_bits(fps as f32), Relaxed);
-                self.telemetry_shared.total_bars.store(total_bars_all, Relaxed);
-                // Screen size from first available window's monitor.
-                if let Some(pw) = self.windows.values().next() {
-                    let (sw, sh) = pw.window.current_monitor()
-                        .map(|m| { let s = m.size(); (s.width, s.height) })
-                        .unwrap_or_else(|| {
-                            let s = pw.window.inner_size();
-                            (s.width, s.height)
-                        });
-                    self.telemetry_shared.screen_width.store(sw, Relaxed);
-                    self.telemetry_shared.screen_height.store(sh, Relaxed);
-                }
-            }
         }
         let _t6 = std::time::Instant::now();
 
@@ -5287,22 +3996,8 @@ impl ApplicationHandler for App<'_> {
             // Refresh connector metrics once per second — collect_metrics() locks
             // and allocates; calling it every frame at 60 fps is wasteful.
             {
-                use std::sync::atomic::Ordering::Relaxed;
                 let metrics = self.bridge.collect_metrics();
                 self.cached_connector_count = metrics.len(); // streams, used by perf panel
-                let ws_total: u32 = metrics.iter().map(|(_, _, ws)| *ws as u32).sum();
-                // Count unique exchanges that have active data streams.
-                // connector_enabled map is empty by default (all enabled), so we
-                // count unique ExchangeIds from active metrics instead.
-                let enabled_connectors = {
-                    let mut seen = std::collections::HashSet::new();
-                    for (eid, _, _) in &metrics {
-                        seen.insert(*eid);
-                    }
-                    seen.len() as u32
-                };
-                self.telemetry_shared.connector_count.store(enabled_connectors, Relaxed);
-                self.telemetry_shared.ws_connections.store(ws_total, Relaxed);
             }
 
             // Refresh CPU/RAM metrics (expensive — once per second).
@@ -5603,11 +4298,6 @@ impl ApplicationHandler for App<'_> {
 }
 
 fn main() {
-    // OTA: if launched with --wait-pid, wait for old process to exit first.
-    // Disabled in standalone builds — no OTA update process to wait for.
-    #[cfg(all(feature = "updater", not(feature = "standalone")))]
-    zengeld_updater::wait_for_parent_exit_if_needed();
-
     // ── Single-instance guard (Windows named mutex) ──────────────────
     // If another mylittlechart process is already running, exit immediately
     // instead of spawning a zombie that retries port binding forever.
