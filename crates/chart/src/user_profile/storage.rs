@@ -137,40 +137,9 @@ fn resolve_platform_data_dir() -> PathBuf {
 /// - Windows: `%APPDATA%\mylittlechart\`
 /// - macOS:   `~/Library/Application Support/mylittlechart/`
 /// - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
-///
-/// One-shot migration: if a legacy `zengeld/` directory exists and the new
-/// `mylittlechart/` directory has no `profile_index.json` (which means it
-/// either does not exist or was created empty by another helper such as
-/// `diagnostics::default_log_dir()` writing to `mylittlechart/logs/`), the
-/// legacy contents are merged into the new dir entry-by-entry. Existing
-/// entries in the new dir are kept untouched.
 pub fn app_data_dir() -> PathBuf {
     let base = resolve_platform_data_dir();
     let dir = base.join("mylittlechart");
-    let legacy = base.join("zengeld");
-    let index_path = dir.join("profile_index.json");
-    if legacy.exists() && legacy.is_dir() && !index_path.exists() {
-        // Ensure the destination exists before merging children.
-        let _ = fs::create_dir_all(&dir);
-        match merge_legacy_dir(&legacy, &dir) {
-            Ok(moved) => {
-                eprintln!(
-                    "[app_data_dir] migrated {} entries from legacy dir: {} -> {}",
-                    moved,
-                    legacy.display(),
-                    dir.display()
-                );
-                // Remove the (now empty) legacy dir if everything moved.
-                let _ = fs::remove_dir(&legacy);
-            }
-            Err(e) => eprintln!(
-                "[app_data_dir] WARN: legacy merge {} -> {} hit error: {} (some files may have been moved)",
-                legacy.display(),
-                dir.display(),
-                e
-            ),
-        }
-    }
     // Best-effort creation; callers receive an Io error on the actual
     // read/write if the directory cannot be created.
     let _ = fs::create_dir_all(&dir);
@@ -184,42 +153,6 @@ pub fn app_data_dir() -> PathBuf {
     }
     // TODO: Windows ACL via icacls or windows-sys
     dir
-}
-
-/// Move every child of `from` into `to`, skipping entries that already exist
-/// in `to`. Returns the number of top-level entries that were moved.
-///
-/// Used to merge the legacy `zengeld/` data dir into the new `mylittlechart/`
-/// directory when the latter was pre-created by another helper (e.g. the
-/// diagnostics logger creating `mylittlechart/logs/` before profile code
-/// runs). Standard `fs::rename(zengeld, mylittlechart)` would fail because
-/// the destination exists; entry-by-entry rename works since each child
-/// path is fresh on the destination side (or, if it already exists, the
-/// pre-created copy wins).
-fn merge_legacy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<usize> {
-    let mut moved = 0usize;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let src = entry.path();
-        let name = entry.file_name();
-        let dst = to.join(&name);
-        if dst.exists() {
-            // Destination already has this entry — leave the legacy copy in
-            // place; user can merge manually if needed.
-            continue;
-        }
-        if let Err(e) = fs::rename(&src, &dst) {
-            eprintln!(
-                "[merge_legacy_dir] skip {} -> {}: {}",
-                src.display(),
-                dst.display(),
-                e
-            );
-            continue;
-        }
-        moved += 1;
-    }
-    Ok(moved)
 }
 
 /// Returns the root application data directory.
