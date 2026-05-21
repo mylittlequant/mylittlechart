@@ -879,7 +879,11 @@ impl App<'_> {
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu) => RenderBackend::InstancedWgpu,
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu) => RenderBackend::VelloCpu,
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid) => RenderBackend::VelloHybrid,
-                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia) => RenderBackend::TinySkia,
+                    // TinySkia is dropped from the active backend list
+                    // (multi-window crash, missing chrome after the uzor
+                    // migration). Fall back to VelloCpu — the supported
+                    // CPU backend.
+                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia) => RenderBackend::VelloCpu,
                     None => RenderBackend::VelloGpu, // will be overridden by auto-detect
                 }
             },
@@ -956,12 +960,36 @@ impl App<'_> {
             attrs = attrs.with_undecorated_shadow(true);
         }
 
-        // Skeleton = loading screen: fixed 1200x800, centered on primary monitor.
-        // Live windows use saved geometry from the profile.
+        // Skeleton = loading screen shown while vault is being unlocked /
+        // wizard is run.
+        //
+        // - needs_vault_unlock: the user has a saved profile, we just need
+        //   the passphrase. Re-use the saved window geometry so the unlock
+        //   prompt appears exactly where the user left the app.
+        // - is_first_run / needs_migration: no saved geometry yet, center
+        //   a 1200x800 window on the primary monitor.
         let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
         if skeleton {
-            // Center on primary monitor
-            if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
+            // For an existing profile prefer the saved geometry over the
+            // centered placeholder.
+            let restored = if self.needs_vault_unlock {
+                self.saved_windows.first().and_then(|ws| {
+                    match (ws.x, ws.y, ws.width, ws.height) {
+                        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+                        _ => None,
+                    }
+                })
+            } else {
+                None
+            };
+
+            if let Some((x, y, w, h)) = restored {
+                use winit::dpi::Position;
+                attrs = attrs.with_position(Position::Physical(
+                    winit::dpi::PhysicalPosition::new(x, y),
+                ));
+                attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
+            } else if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
                 let screen = monitor.size();
                 let scale = monitor.scale_factor();
                 let win_w = (1200.0 * scale) as i32;
@@ -1026,7 +1054,7 @@ impl App<'_> {
                     wgpu::DeviceType::DiscreteGpu => RenderBackend::VelloGpu,
                     wgpu::DeviceType::IntegratedGpu => RenderBackend::VelloGpu,
                     wgpu::DeviceType::VirtualGpu => RenderBackend::VelloCpu,
-                    wgpu::DeviceType::Cpu => RenderBackend::TinySkia,
+                    wgpu::DeviceType::Cpu => RenderBackend::VelloCpu,
                     _ => RenderBackend::VelloGpu,
                 };
                 if self.render_backend != recommended {
@@ -1038,9 +1066,11 @@ impl App<'_> {
                 let (fps, msaa) = match recommended {
                     RenderBackend::VelloGpu      => (120u32, 8u8),
                     RenderBackend::VelloCpu      => (30,     0),
-                    RenderBackend::TinySkia      => (90,     8),
                     RenderBackend::InstancedWgpu => (90,     8),
                     RenderBackend::VelloHybrid   => (90,     8),
+                    // TinySkia retained as a variant for serde back-compat
+                    // but never selected here; treat as VelloCpu defaults.
+                    RenderBackend::TinySkia      => (30,     0),
                 };
 
                 // Save auto-detected choice and perf defaults so next launch skips auto-detect.
@@ -2536,13 +2566,19 @@ impl ApplicationHandler for App<'_> {
             || self.windows.values().any(|pw| pw.close_requested);
 
         if shutdown {
-            // Wait for any in-flight GPU frame before saving and exiting.
-            // This ensures the GPU thread is not writing to PerWindowState fields
-            // (pending_delivery_events, etc.) while we read them in save_all.
-            self.wait_for_gpu_frame();
-            // Shutdown the GPU render thread cleanly.
-            if let Some(ref tx) = self.gpu_cmd_tx {
+            // Block until any in-flight GPU frame finishes before we tear
+            // anything down. The GPU thread holds raw pointers into
+            // PerWindowState (surface.target_view + the swapchain semaphore
+            // owned by the surface); dropping those mid-flight crashes
+            // wgpu-hal at `SwapchainAcquireSemaphore … still in use`.
+            self.wait_for_gpu_frame_blocking();
+            // Shutdown the GPU render thread cleanly, then join it so the
+            // thread is fully gone before we drop the windows / surfaces.
+            if let Some(tx) = self.gpu_cmd_tx.take() {
                 let _ = tx.send(GpuCommand::Shutdown);
+            }
+            if let Some(handle) = self.gpu_thread.take() {
+                let _ = handle.join();
             }
             self.save_all(&[]);
             event_loop.exit();

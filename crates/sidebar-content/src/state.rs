@@ -589,13 +589,17 @@ impl RenderBackend {
     }
 
     /// Returns a slice of all available backends in cycle order.
+    ///
+    /// `TinySkia` is intentionally omitted: it crashes when more than one
+    /// window is open and does not render the chrome strip after the
+    /// recent uzor/vello migration. `VelloCpu` covers the CPU backend
+    /// use case.
     pub fn all() -> &'static [Self] {
         &[
             Self::VelloGpu,
             Self::InstancedWgpu,
             Self::VelloCpu,
             Self::VelloHybrid,
-            Self::TinySkia,
         ]
     }
 }
