@@ -2872,37 +2872,38 @@ impl ApplicationHandler for App<'_> {
                         // Legacy format without name — treat entire remainder as passphrase.
                         ("Default".to_string(), rest)
                     };
-                    if !self.is_first_run {
-                        // Creating a NEW profile from settings wizard.
-                        // The current profile is immutable — create a fresh one.
-                        match self.profile_manager.create_profile(None, "chart") {
-                            Ok(meta) => {
-                                eprintln!(
-                                    "[App] wizard_complete: created new profile '{}' ({})",
-                                    wizard_profile_name, meta.id
-                                );
-                                // Apply the user-chosen name immediately.
-                                let _ = self.profile_manager.rename_profile(&meta.id, &wizard_profile_name);
-                                // Switch active profile to the new one.
-                                if let Some(mut index) = zengeld_chart::load_profile_index() {
-                                    index.active_profile_id = meta.id.clone();
-                                    let _ = zengeld_chart::save_profile_index(&index);
-                                }
-                                // Reload ProfileManager from the new empty profile directory.
-                                self.profile_manager = zengeld_chart::ProfileManager::load(None);
-                                self.profile = self.profile_manager.profile.clone();
-                                // Clear presets/templates for fresh profile.
+                    // Always create a real profile directory on wizard completion.
+                    // On first-run the profile_manager is backed by a `_pending`
+                    // placeholder (no directory on disk), so we must materialise
+                    // a real profile before rename / vault-derive try to write files.
+                    // On non-first-run (adding a second profile) we do the same.
+                    match self.profile_manager.create_profile(None, "chart") {
+                        Ok(meta) => {
+                            eprintln!(
+                                "[App] wizard_complete: created profile directory '{}' ({})",
+                                wizard_profile_name, meta.id
+                            );
+                            // Switch active profile to the new one before reload.
+                            if let Some(mut index) = zengeld_chart::load_profile_index() {
+                                index.active_profile_id = meta.id.clone();
+                                let _ = zengeld_chart::save_profile_index(&index);
+                            }
+                            // Reload ProfileManager so active_profile_data_dir()
+                            // resolves to the real directory.
+                            self.profile_manager = zengeld_chart::ProfileManager::load(None);
+                            self.profile = self.profile_manager.profile.clone();
+                            if !self.is_first_run {
+                                // Adding a second profile — clear stale presets/templates.
                                 self.app_state.presets.clear();
                                 self.app_state.template_manager =
                                     self.profile_manager.template_manager.clone();
                             }
-                            Err(e) => {
-                                eprintln!("[App] wizard_complete: failed to create profile: {}", e);
-                                // Fall through — configure existing profile as fallback.
-                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[App] wizard_complete: failed to create profile: {}", e);
+                            // Fall through — attempt rename/vault on whatever dir we have.
                         }
                     }
-                    // First run — no profile creation needed, configure in-place.
                     // Apply the user-chosen profile name.
                     let active_id = self.profile_manager.profile.profile_id.clone();
                     let _ = self.profile_manager.rename_profile(&active_id, &wizard_profile_name);
@@ -4262,10 +4263,32 @@ fn main() {
     let bridge = std::sync::Arc::new(bridge);
 
     // Detect startup mode BEFORE loading the user manager.
-    let profile_dir = zengeld_chart::active_profile_data_dir();
-    let has_profile = profile_dir.join("profile.json").exists();
-    let has_salt = profile_dir.join("salt.hex").exists();
-    let has_vault = profile_dir.join("vault.enc").exists();
+    //
+    // Avoid calling `active_profile_data_dir()` here — that function
+    // *seeds* a Default profile on disk when the index is missing,
+    // which would mask the first-run state and skip the welcome wizard.
+    // Probe the index directly instead, and only resolve to the active
+    // profile directory when there really is one.
+    let (has_profile, has_salt, has_vault) = match zengeld_chart::load_profile_index() {
+        Some(index) if !index.profiles.is_empty() => {
+            let active = index
+                .profiles
+                .iter()
+                .find(|m| m.id == index.active_profile_id)
+                .or_else(|| index.profiles.first());
+            if let Some(meta) = active {
+                let dir = zengeld_chart::profiles_dir().join(&meta.dir_name);
+                (
+                    dir.join("profile.json").exists(),
+                    dir.join("salt.hex").exists(),
+                    dir.join("vault.enc").exists(),
+                )
+            } else {
+                (false, false, false)
+            }
+        }
+        _ => (false, false, false),
+    };
 
     // Startup scenarios:
     // 1. First run: no profile.json → show full wizard (page 0)
@@ -4295,10 +4318,14 @@ fn main() {
     // Record this launch (was previously done per-window
     // in load_user_state(); now done once here at the application level).
     profile_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
-    // profile.json is always plaintext — safe to save at startup.
+    // profile.json is always plaintext — safe to save at startup, but only
+    // when the profile directory already exists (i.e. not a first-run where
+    // the welcome wizard hasn't created the profile on disk yet).
     // vault.enc is NOT written here (no key yet) — credentials are untouched.
-    if let Err(e) = profile_manager.save_profile() {
-        eprintln!("[App] failed to save profile at startup: {}", e);
+    if !is_first_run {
+        if let Err(e) = profile_manager.save_profile() {
+            eprintln!("[App] failed to save profile at startup: {}", e);
+        }
     }
 
     let profile = profile_manager.profile.clone();

@@ -138,23 +138,33 @@ fn resolve_platform_data_dir() -> PathBuf {
 /// - macOS:   `~/Library/Application Support/mylittlechart/`
 /// - Linux:   `$XDG_DATA_HOME/mylittlechart/` (default `~/.local/share/mylittlechart/`)
 ///
-/// One-shot migration: if a legacy `zengeld/` directory exists in the same
-/// base location and the new `mylittlechart/` directory does not, the legacy
-/// dir is renamed in place. Both present → legacy is left alone (user must
-/// merge manually). Only present → nothing happens.
+/// One-shot migration: if a legacy `zengeld/` directory exists and the new
+/// `mylittlechart/` directory has no `profile_index.json` (which means it
+/// either does not exist or was created empty by another helper such as
+/// `diagnostics::default_log_dir()` writing to `mylittlechart/logs/`), the
+/// legacy contents are merged into the new dir entry-by-entry. Existing
+/// entries in the new dir are kept untouched.
 pub fn app_data_dir() -> PathBuf {
     let base = resolve_platform_data_dir();
     let dir = base.join("mylittlechart");
     let legacy = base.join("zengeld");
-    if legacy.exists() && !dir.exists() {
-        match fs::rename(&legacy, &dir) {
-            Ok(()) => eprintln!(
-                "[app_data_dir] migrated legacy data dir: {} -> {}",
-                legacy.display(),
-                dir.display()
-            ),
+    let index_path = dir.join("profile_index.json");
+    if legacy.exists() && legacy.is_dir() && !index_path.exists() {
+        // Ensure the destination exists before merging children.
+        let _ = fs::create_dir_all(&dir);
+        match merge_legacy_dir(&legacy, &dir) {
+            Ok(moved) => {
+                eprintln!(
+                    "[app_data_dir] migrated {} entries from legacy dir: {} -> {}",
+                    moved,
+                    legacy.display(),
+                    dir.display()
+                );
+                // Remove the (now empty) legacy dir if everything moved.
+                let _ = fs::remove_dir(&legacy);
+            }
             Err(e) => eprintln!(
-                "[app_data_dir] WARN: failed to migrate legacy dir {} -> {}: {} (will use empty new dir)",
+                "[app_data_dir] WARN: legacy merge {} -> {} hit error: {} (some files may have been moved)",
                 legacy.display(),
                 dir.display(),
                 e
@@ -174,6 +184,42 @@ pub fn app_data_dir() -> PathBuf {
     }
     // TODO: Windows ACL via icacls or windows-sys
     dir
+}
+
+/// Move every child of `from` into `to`, skipping entries that already exist
+/// in `to`. Returns the number of top-level entries that were moved.
+///
+/// Used to merge the legacy `zengeld/` data dir into the new `mylittlechart/`
+/// directory when the latter was pre-created by another helper (e.g. the
+/// diagnostics logger creating `mylittlechart/logs/` before profile code
+/// runs). Standard `fs::rename(zengeld, mylittlechart)` would fail because
+/// the destination exists; entry-by-entry rename works since each child
+/// path is fresh on the destination side (or, if it already exists, the
+/// pre-created copy wins).
+fn merge_legacy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<usize> {
+    let mut moved = 0usize;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let name = entry.file_name();
+        let dst = to.join(&name);
+        if dst.exists() {
+            // Destination already has this entry — leave the legacy copy in
+            // place; user can merge manually if needed.
+            continue;
+        }
+        if let Err(e) = fs::rename(&src, &dst) {
+            eprintln!(
+                "[merge_legacy_dir] skip {} -> {}: {}",
+                src.display(),
+                dst.display(),
+                e
+            );
+            continue;
+        }
+        moved += 1;
+    }
+    Ok(moved)
 }
 
 /// Returns the root application data directory.
@@ -370,39 +416,40 @@ pub fn save_profile_index(index: &ProfileIndex) -> Result<(), String> {
 
 /// Returns the data directory for the currently active profile.
 ///
-/// - If a `profiles/index.json` exists, reads the active profile's `dir_name`
-///   and returns `profiles/{dir_name}/`.
-/// - If no index exists (legacy install or fresh install), falls back to
-///   `app_data_dir()` so existing code continues to work unchanged.
+/// **Read-only**: this function never creates files or directories.
+///
+/// - If a `profiles/index.json` exists and the active profile is found,
+///   returns `profiles/{dir_name}/`.
+/// - If the index exists but the active id is missing, falls back to the
+///   first profile in the list.
+/// - If no index exists or the index is empty, returns a placeholder path
+///   `profiles/_pending` that does not exist on disk.  Callers that try to
+///   read `profile.json` from this path will get `NotFound` and fall back to
+///   an in-memory default.  The real profile directory is created only when
+///   the welcome wizard completes via `create_profile()`.
 pub fn active_profile_data_dir() -> PathBuf {
     if let Some(index) = load_profile_index() {
         if let Some(meta) = index
             .profiles
             .iter()
             .find(|m| m.id == index.active_profile_id)
+            .or_else(|| {
+                if index.profiles.first().is_some() {
+                    eprintln!(
+                        "[storage] WARNING: active_profile_id '{}' not found in index, falling back to first profile",
+                        index.active_profile_id
+                    );
+                }
+                index.profiles.first()
+            })
         {
-            let dir = profiles_dir().join(&meta.dir_name);
-            let _ = fs::create_dir_all(&dir);
-            return dir;
-        }
-        // Index exists but active_profile_id not found — pick the first profile
-        // or create a fresh one.  Never fall back to root app_data_dir().
-        if let Some(first) = index.profiles.first() {
-            eprintln!(
-                "[storage] WARNING: active_profile_id '{}' not found in index, falling back to first profile '{}'",
-                index.active_profile_id, first.id
-            );
-            let dir = profiles_dir().join(&first.dir_name);
-            let _ = fs::create_dir_all(&dir);
-            return dir;
+            return profiles_dir().join(&meta.dir_name);
         }
     }
-    // No index or empty index — create a default profile instead of falling
-    // back to the root app data dir (which causes cross-profile data leaks).
-    eprintln!("[storage] WARNING: no profile index — creating default profile");
-    let meta = create_profile("Default", "chart")
-        .expect("failed to create default profile");
-    profiles_dir().join(&meta.dir_name)
+    // No index or empty index — return a placeholder that does not exist on
+    // disk.  Callers receive NotFound on any read and fall back to defaults.
+    // The welcome wizard creates a real profile via create_profile().
+    profiles_dir().join("_pending")
 }
 
 // =============================================================================
