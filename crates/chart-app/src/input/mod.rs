@@ -2639,6 +2639,9 @@ impl ChartApp {
                 // Not enough room — close the sidebar entirely.
                 self.sidebar_state
                     .set_right_panel(sidebar_content::state::RightSidebarPanel::None);
+                // Persist the auto-close so it survives restart.
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
                 return;
             }
             // Enforce [MIN_SIDEBAR_WIDTH, right_toolbar_left_x - min_chart_w] clamp.
@@ -2646,6 +2649,8 @@ impl ChartApp {
             let new_width = (self.right_toolbar_left_x - x)
                 .clamp(sidebar_content::state::MIN_SIDEBAR_WIDTH, max_w);
             self.sidebar_state.set_right_width(new_width);
+            // NOTE: width is persisted on drag-end (on_drag_end), not on every
+            // mousemove — that would be hundreds of disk writes per second.
             return;
         }
 

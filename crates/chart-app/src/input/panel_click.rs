@@ -99,6 +99,11 @@ impl ChartApp {
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
                 eprintln!("[ChartApp] Sidebar closed via close button");
+                // Sidebar visibility is persisted in UserProfile; mirror the
+                // Toggle* handlers in chart_out_events.rs so the next launch
+                // restores the user's "closed" state.
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
             }
             return;
         }
