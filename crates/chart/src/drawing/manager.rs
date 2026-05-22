@@ -2,7 +2,9 @@
 //!
 //! Works with PrimitiveRegistry and Box<dyn Primitive> instead of hardcoded types.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, RwLock};
 use crate::{PriceScale, Viewport, Bar, find_bar_for_timestamp};
 use super::primitives_v2::{
@@ -44,6 +46,50 @@ fn apply_last_style_snapshot(prim: &mut Box<dyn Primitive>, style: &TemplateStyl
     for (prop_id, value) in &style.style_properties {
         prim.apply_style_property(prop_id, value);
     }
+}
+
+/// Compute a fingerprint for a `TemplateStyle` snapshot.
+///
+/// Used by `PreviewCache` to detect style changes without requiring `Hash` on
+/// `TemplateStyle` (it contains `f64` fields which do not implement `Hash`).
+/// We convert f64 bits to u64 before feeding them to `DefaultHasher` so the
+/// hash is well-defined for all finite values (NaN ≠ NaN is acceptable here —
+/// a NaN input means the primitive had no style yet, which is already edge-case).
+fn style_fingerprint(style: &TemplateStyle) -> u64 {
+    let mut h = DefaultHasher::new();
+    style.color.hash(&mut h);
+    // f64 → bits → u64, then hash the u64
+    style.width.map(f64::to_bits).hash(&mut h);
+    style.line_style.hash(&mut h);
+    style.fill_color.hash(&mut h);
+    style.fill_opacity.map(f64::to_bits).hash(&mut h);
+    style.show_labels.hash(&mut h);
+    style.show_prices.hash(&mut h);
+    // style_properties: Vec<(String, PropertyValue)>
+    // PropertyValue has f64 variants — hash the Debug representation which is
+    // stable for the same value and avoids the Hash-on-f64 problem.
+    for (k, v) in &style.style_properties {
+        k.hash(&mut h);
+        format!("{v:?}").hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Cached preview primitive to avoid per-frame rebuilds in `create_preview`.
+///
+/// The cache is invalidated whenever any of the key inputs change:
+/// - `tool_id` — which primitive type is being drawn
+/// - `points_len` — how many anchor points have been placed (append-only)
+/// - `cursor` — current cursor position in data-coordinates
+/// - `style_fp` — fingerprint of the active `TemplateStyle` for this tool
+/// - `variant` — tool variant string (e.g. emoji icon name)
+struct PreviewCache {
+    tool_id:    String,
+    points_len: usize,
+    cursor:     (u64, u64),   // f64 bits — equality-safe representation
+    style_fp:   u64,
+    variant:    Option<String>,
+    primitive:  Box<dyn Primitive>,
 }
 
 /// Drawing state - tracks multi-click primitive creation
@@ -158,6 +204,21 @@ pub struct DrawingManager {
     /// all peers (fixes bugs B1 + D1).  The handle is rebound via
     /// `bind_style_store` whenever this manager joins or leaves a group.
     style_store: Arc<RwLock<HashMap<String, TemplateStyle>>>,
+    /// Cached preview primitive from the last `create_preview` call.
+    ///
+    /// `RefCell` lets `create_preview(&self, …)` write to the cache without
+    /// requiring `&mut self` — the render path only has a shared reference to
+    /// `DrawingManager`, and changing that would cascade into all render
+    /// function signatures.  Interior mutability is safe here because
+    /// `DrawingManager` is never shared across threads (it lives inside
+    /// `ChartWindow`, not inside an `Arc`).
+    ///
+    /// `None` when no preview has been built yet, when the drawing state is
+    /// `Idle`, or after an explicit invalidation (tool change, style bind,
+    /// state reset).  Rebuilt only when the cache key differs from the
+    /// previous call; otherwise `clone_box()` is returned directly — much
+    /// cheaper than re-running the factory + style application.
+    preview_cache: RefCell<Option<PreviewCache>>,
 }
 
 impl Default for DrawingManager {
@@ -193,6 +254,9 @@ impl Clone for DrawingManager {
             // Clone the Arc — the cloned DM shares the same style store as the
             // source until it is bound to its own group via bind_style_store().
             style_store: Arc::clone(&self.style_store),
+            // Reset preview cache — will be rebuilt on first create_preview call
+            // in the cloned manager (cursor coords are per-window anyway).
+            preview_cache: RefCell::new(None),
         }
     }
 }
@@ -218,6 +282,7 @@ impl DrawingManager {
             current_exchange: String::new(),
             current_account_type: String::new(),
             style_store: Arc::new(RwLock::new(HashMap::new())),
+            preview_cache: RefCell::new(None),
         }
     }
 
@@ -244,6 +309,8 @@ impl DrawingManager {
         // Cancel any drawing in progress
         self.state.cancel();
         self.tool_variant = None;
+        // Tool change → cached preview is for the old tool, must rebuild.
+        *self.preview_cache.borrow_mut() = None;
 
         self.current_tool = match tool_id {
             None | Some("cursor") | Some("none") | Some("crosshair") | Some("hand") => None,
@@ -292,6 +359,8 @@ impl DrawingManager {
     /// immediately visible here, and vice-versa.
     pub fn bind_style_store(&mut self, store: Arc<RwLock<HashMap<String, TemplateStyle>>>) {
         self.style_store = store;
+        // Different store pointer means different style snapshots — drop cached preview.
+        *self.preview_cache.borrow_mut() = None;
     }
 
     /// Return a clone of the underlying `Arc` so callers can share it with
@@ -444,6 +513,7 @@ impl DrawingManager {
     /// Cancel current drawing operation
     pub fn cancel_drawing(&mut self) {
         self.state.cancel();
+        *self.preview_cache.borrow_mut() = None;
     }
 
     /// Set drawing state from a sync peer (for preview sync).
@@ -463,6 +533,7 @@ impl DrawingManager {
             None => {
                 if self.state.is_drawing() {
                     self.state = DrawingState::Idle;
+                    *self.preview_cache.borrow_mut() = None;
                 }
             }
         }
@@ -582,6 +653,7 @@ impl DrawingManager {
                         // is_drawing() now correctly returns false between strokes.
                         let _ = tool_id_clone;
                         self.state = DrawingState::Idle;
+                        *self.preview_cache.borrow_mut() = None;
                         self.current_pane_id = None;
                         return true;
                     }
@@ -592,6 +664,7 @@ impl DrawingManager {
             // current_tool; next press will start a fresh stroke.
             let _ = tool_id_clone;
             self.state = DrawingState::Idle;
+            *self.preview_cache.borrow_mut() = None;
             return false;
         }
         false
@@ -602,8 +675,16 @@ impl DrawingManager {
     /// This creates a temporary primitive using accumulated points + cursor position.
     /// Used for live preview while drawing multi-point primitives.
     /// Returns None if not currently drawing or if preview can't be created.
+    ///
+    /// The result is cached: the `Box<dyn Primitive>` is only rebuilt when one of
+    /// the inputs changes — `tool_id`, `points.len()`, cursor position, tool variant,
+    /// or the active `TemplateStyle` fingerprint for this tool.  On a cache hit a
+    /// cheap `clone_box()` is returned instead of running the factory + style
+    /// application again.
     pub fn create_preview(&self, cursor_bar: f64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
         let DrawingState::Creating { tool_id, points } = &self.state else {
+            // Not drawing — drop any stale cache entry.
+            *self.preview_cache.borrow_mut() = None;
             return None;
         };
 
@@ -611,6 +692,39 @@ impl DrawingManager {
             return None;
         }
 
+        // Read the style snapshot once — needed both for the fingerprint and for
+        // the rebuild path.  Keeping the lock held for a single clone and release
+        // avoids holding it across the (potentially slow) factory call below.
+        let style_snapshot: Option<TemplateStyle> = self.style_store.read().ok()
+            .and_then(|s| s.get(tool_id).cloned());
+
+        // Build the cache key.
+        let cur_fp  = style_snapshot.as_ref().map(style_fingerprint).unwrap_or(0);
+        let cur_key = (
+            tool_id.as_str(),
+            points.len(),
+            cursor_bar.to_bits(),
+            cursor_price.to_bits(),
+            cur_fp,
+            self.tool_variant.as_deref(),
+        );
+
+        // Cache hit: return a clone of the cached primitive.
+        {
+            let cache = self.preview_cache.borrow();
+            if let Some(ref c) = *cache {
+                if c.tool_id == cur_key.0
+                    && c.points_len == cur_key.1
+                    && c.cursor == (cur_key.2, cur_key.3)
+                    && c.style_fp == cur_key.4
+                    && c.variant.as_deref() == cur_key.5
+                {
+                    return Some(c.primitive.clone_box());
+                }
+            }
+        }
+
+        // Cache miss — rebuild.  Acquire the global registry only on this path.
         let registry = PrimitiveRegistry::global().read().unwrap();
         let meta = registry.get(tool_id)?;
 
@@ -638,8 +752,6 @@ impl DrawingManager {
         // Read from the group-shared style store so peer previews use the same
         // color as the source window (Bug B1 fix: previously read from per-DM
         // HashMap that was never synced to peers).
-        let style_snapshot: Option<TemplateStyle> = self.style_store.read().ok()
-            .and_then(|s| s.get(tool_id).cloned());
         let seed_color_owned: String;
         let seed_color = match style_snapshot.as_ref().and_then(|s| s.color.as_deref()) {
             Some(c) => c,
@@ -662,7 +774,18 @@ impl DrawingManager {
             self.apply_variant_to_primitive(&mut prim, tool_id, variant);
         }
 
-        Some(prim)
+        // Store in cache.
+        let cloned = prim.clone_box();
+        *self.preview_cache.borrow_mut() = Some(PreviewCache {
+            tool_id:    tool_id.clone(),
+            points_len: points.len(),
+            cursor:     (cursor_bar.to_bits(), cursor_price.to_bits()),
+            style_fp:   cur_fp,
+            variant:    self.tool_variant.clone(),
+            primitive:  prim,
+        });
+
+        Some(cloned)
     }
 
     // =========================================================================
@@ -2314,6 +2437,7 @@ impl DrawingManager {
         self.selected = None;
         self.dragging = None;
         self.drag_start = None;
+        *self.preview_cache.borrow_mut() = None;
     }
 
     /// DEPRECATED: Legacy single-primitive clone. Used by `propagate_new_primitive_to_sync_group`.
