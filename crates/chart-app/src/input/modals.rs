@@ -1025,13 +1025,26 @@ impl ChartApp {
                         sp.auto_scale = is_auto;
                     }
                 }
-                // Propagate scale_mode change to sync-group peers.
+                // Mutate group.scale_mode when sync_viewport is on so the group
+                // remembers the mode for new joiners.
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    let viewport_state = self.panel_app.panel_grid
-                        .active_window()
-                        .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
-                    if let Some((view_start, bar_spacing)) = viewport_state {
-                        self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next_mode));
+                    let viewport_sync_on = self.panel_app.panel_grid
+                        .chart_id_for_leaf(active_leaf)
+                        .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                        .and_then(|gid| {
+                            self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                                g.scale_mode = next_mode;
+                                g.sync_flags.sync_viewport
+                            })
+                        })
+                        .unwrap_or(false);
+                    if viewport_sync_on {
+                        let viewport_state = self.panel_app.panel_grid
+                            .active_window()
+                            .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                        if let Some((view_start, bar_spacing)) = viewport_state {
+                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next_mode));
+                        }
                     }
                 }
                 return;

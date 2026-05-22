@@ -12,6 +12,7 @@ fn default_account_type_spot() -> String {
     "S".to_string()
 }
 
+use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use crate::drawing::DrawingManager;
@@ -194,6 +195,10 @@ pub struct ChartWindowSnapshot {
     /// (above-main panes are stored first, then below-main panes).
     #[serde(default)]
     pub sub_pane_order: Vec<u64>,
+    /// Pre-join scale mode stashed when this window entered a group with
+    /// `sync_viewport = ON`. Restored on desync. `None` = not stashed.
+    #[serde(default)]
+    pub stashed_scale_mode: Option<ScaleMode>,
 }
 
 impl ChartWindowSnapshot {
@@ -274,6 +279,7 @@ impl ChartWindowSnapshot {
                 .iter()
                 .map(|p| p.instance_id)
                 .collect(),
+            stashed_scale_mode: window.stashed_scale_mode,
         }
     }
 }
@@ -427,6 +433,10 @@ pub struct SyncGroupSnapshot {
     /// Absent in old presets → empty map (first style change after load populates it).
     #[serde(default)]
     pub last_used_style: std::collections::HashMap<String, serde_json::Value>,
+    /// Group-persisted price-scale corner mode. Authoritative when
+    /// `sync_flags.sync_viewport = true`. Old presets default to Auto.
+    #[serde(default)]
+    pub scale_mode: ScaleMode,
 }
 
 impl SyncGroupSnapshot {
@@ -486,6 +496,7 @@ impl SyncGroupSnapshot {
             account_type: group.account_type.clone(),
             timeframe: group.timeframe.clone(),
             sync_flags: group.sync_flags.clone(),
+            scale_mode: group.scale_mode,
             indicator_configs: group.indicator_configs.clone(),
             members,
             panel_members,

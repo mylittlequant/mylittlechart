@@ -1697,7 +1697,6 @@ fn render_tags_section(
                         ("sync_timeframe",  "Timeframe",       group.sync_flags.sync_timeframe),
                         ("sync_drawings",   "Drawings",        group.sync_flags.sync_drawings),
                         ("sync_indicators", "Indicators",      group.sync_flags.sync_indicators),
-                        ("sync_scale_mode", "Scale Mode (A/M/F)", group.sync_flags.sync_scale_mode),
                     ];
 
                     for (flag_id, flag_label, flag_val) in &flags {

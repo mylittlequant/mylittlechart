@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::chart::types::price_scale::ScaleMode;
 use crate::drawing::primitives_v2::config::TemplateStyle;
 use crate::state::chart_window::ChartId;
 use crate::state::{CommandHistory, Timeframe};
@@ -53,14 +54,7 @@ pub struct SyncFlags {
     pub sync_timeframe: bool,
     pub sync_drawings: bool,
     pub sync_indicators: bool,
-    /// Sync the price-scale corner mode (Auto / Manual / Focus) across peers.
-    /// Each peer keeps its own concrete min/max/zoom — only the discrete mode
-    /// (A/M/F) follows the group.
-    #[serde(default = "sync_flag_default_true")]
-    pub sync_scale_mode: bool,
 }
-
-fn sync_flag_default_true() -> bool { true }
 
 impl Default for SyncFlags {
     fn default() -> Self {
@@ -71,7 +65,6 @@ impl Default for SyncFlags {
             sync_timeframe: true,
             sync_drawings: true,
             sync_indicators: true,
-            sync_scale_mode: true,
         }
     }
 }
@@ -134,6 +127,14 @@ pub struct SyncGroup {
     /// Which properties are synchronized.
     pub sync_flags: SyncFlags,
 
+    /// Group-persisted price-scale corner mode (Auto / Manual / Focus).
+    ///
+    /// Authoritative when `sync_flags.sync_viewport = true`. All members
+    /// display this mode; clicking A/M/F on any peer updates it here and
+    /// pushes to all peers via `propagate_viewport_to_sync_group`.
+    /// When `sync_viewport = false` each window manages its own mode independently.
+    pub scale_mode: ScaleMode,
+
     /// All members of this group: charts AND trading panels.
     pub members: std::collections::HashSet<SyncMemberId>,
 
@@ -178,16 +179,6 @@ impl SyncGroup {
             .unwrap_or(self.sync_flags.sync_crosshair)
     }
 
-    /// Effective `sync_scale_mode` for a specific member.
-    ///
-    /// Only the discrete A/M/F mode follows the group — min/max/zoom stay
-    /// per-member.
-    pub fn effective_scale_mode_sync(&self, member: SyncMemberId) -> bool {
-        self.member_overrides
-            .get(&member)
-            .and_then(|o| o.sync_scale_mode)
-            .unwrap_or(self.sync_flags.sync_scale_mode)
-    }
 }
 
 impl Clone for SyncGroup {
@@ -202,6 +193,7 @@ impl Clone for SyncGroup {
             account_type: self.account_type.clone(),
             timeframe: self.timeframe.clone(),
             sync_flags: self.sync_flags.clone(),
+            scale_mode: self.scale_mode,
             members: self.members.clone(),
             member_overrides: self.member_overrides.clone(),
             command_history: CommandHistory::new(250),
@@ -309,6 +301,7 @@ impl TagManager {
             account_type: String::new(),
             timeframe,
             sync_flags: SyncFlags::default(),
+            scale_mode: ScaleMode::Auto,
             members: std::collections::HashSet::new(),
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
@@ -343,8 +336,8 @@ impl TagManager {
                 sync_timeframe: false,
                 sync_drawings: false,
                 sync_indicators: false,
-                sync_scale_mode: false,
             },
+            scale_mode: ScaleMode::Auto,
             members: std::collections::HashSet::new(),
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
@@ -831,7 +824,6 @@ impl TagManager {
                 let override_val = MemberSyncOverride {
                     sync_symbol: o.sync_symbol,
                     sync_crosshair: o.sync_crosshair,
-                    sync_scale_mode: None,
                 };
                 (member, override_val)
             })
@@ -857,6 +849,7 @@ impl TagManager {
             account_type: snap.account_type.clone(),
             timeframe: snap.timeframe.clone(),
             sync_flags: snap.sync_flags.clone(),
+            scale_mode: snap.scale_mode,
             members,
             member_overrides,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),

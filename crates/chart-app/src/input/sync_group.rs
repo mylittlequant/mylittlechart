@@ -123,6 +123,20 @@ impl ChartApp {
                     window.command_history = stashed;
                     eprintln!("[TagManager] Desync: restored stashed command history");
                 }
+                // Restore the window's pre-join scale mode. The stash is populated
+                // when a window joins a group with sync_viewport=ON; restoring it
+                // here undoes the group-imposed A/M/F override.
+                if let Some(prev_mode) = window.stashed_scale_mode.take() {
+                    window.price_scale.scale_mode = prev_mode;
+                    let is_auto = prev_mode.is_auto_y();
+                    for sp in &mut window.sub_panes {
+                        sp.auto_scale = is_auto;
+                    }
+                    if is_auto {
+                        window.calc_auto_scale();
+                    }
+                    eprintln!("[TagManager] Desync: restored stashed scale mode {:?}", prev_mode);
+                }
             }
 
             // Remove tag indicators: all indicators for this window EXCEPT pre-tag ones.
@@ -241,6 +255,16 @@ impl ChartApp {
                 // NEW GROUP: seed tag with window's current state.
                 // Stash window's own primitives, copy them to group seed.
                 // Pre-render sync will fill drawing_manager from group each frame.
+
+                // Seed group.scale_mode from the creating window's current mode so the
+                // group starts with the correct A/M/F and any later joiners inherit it.
+                let seed_mode = self.panel_app.panel_grid
+                    .window_for_leaf(joining_leaf)
+                    .map(|w| w.price_scale.scale_mode);
+                if let (Some(mode), Some(group)) = (seed_mode, self.panel_app.tag_manager.group_mut(group_id)) {
+                    group.scale_mode = mode;
+                }
+
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {
                     window.group_id = Some(group_id);
                     window.pre_tag_indicator_ids = pre_tag_ids;
@@ -321,6 +345,33 @@ impl ChartApp {
 
             // EXISTING GROUP: stash window's own primitives and hide its indicators.
             // The window switches to showing tag content only.
+
+            // When sync_viewport is ON for this group, stash the window's current
+            // scale mode and apply the group mode. F (Focus) implies a pinned viewport,
+            // so A/M/F must follow the group while viewport sync is active.
+            let viewport_sync_on = self.panel_app.tag_manager.group(group_id)
+                .map(|g| g.sync_flags.sync_viewport)
+                .unwrap_or(false);
+            if viewport_sync_on {
+                let group_mode = self.panel_app.tag_manager.group(group_id)
+                    .map(|g| g.scale_mode);
+                if let (Some(group_mode), Some(window)) = (
+                    group_mode,
+                    self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf),
+                ) {
+                    if window.stashed_scale_mode.is_none() {
+                        window.stashed_scale_mode = Some(window.price_scale.scale_mode);
+                    }
+                    window.price_scale.scale_mode = group_mode;
+                    let is_auto = group_mode.is_auto_y();
+                    for sp in &mut window.sub_panes {
+                        sp.auto_scale = is_auto;
+                    }
+                    if is_auto {
+                        window.calc_auto_scale();
+                    }
+                }
+            }
 
             // Stash primitives: move window's own primitives into stashed_primitives.
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {

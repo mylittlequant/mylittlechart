@@ -327,6 +327,12 @@ pub struct ChartWindow {
     /// `None` = no restoration needed; `set_bars()` leaves the mode as-is.
     /// Runtime-only, not persisted.
     pub restore_scale_mode: Option<ScaleMode>,
+
+    /// Pre-join scale mode: saved when this window enters a group with
+    /// `sync_viewport = ON`. Restored automatically on desync so the window
+    /// returns to its own A/M/F choice. F (Focus) implies a pinned viewport,
+    /// so mode is tightly coupled to viewport sync state.
+    pub stashed_scale_mode: Option<ScaleMode>,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -423,6 +429,7 @@ impl ChartWindow {
             pending_symbol_load: false,
             needs_auto_scale_after_bars: false,
             restore_scale_mode: None,
+            stashed_scale_mode: None,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
         };
@@ -632,6 +639,8 @@ impl ChartWindow {
             needs_auto_scale_after_bars: false,
             // Split child has no scale mode to restore.
             restore_scale_mode: None,
+            // Split child has no stashed scale mode — it joins the group fresh.
+            stashed_scale_mode: None,
             // Split child has no in-flight scroll fetch.
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,

@@ -635,6 +635,9 @@ impl ChartApp {
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
 
+                                    // Restore stashed scale mode (pre-join A/M/F, restored on desync).
+                                    window.stashed_scale_mode = snap.stashed_scale_mode;
+
                                     // Restore bar_spacing (user's zoom level). chart_width is NOT restored вЂ”
                                     // it comes from layout on the first frame; view_start is NOT restored вЂ”
                                     // snap-to-end always positions to the latest bar.
@@ -777,6 +780,9 @@ impl ChartApp {
 
                                 // Restore per-symbol drawing cache
                                 window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
+
+                                // Restore stashed scale mode (pre-join A/M/F, restored on desync).
+                                window.stashed_scale_mode = snap.stashed_scale_mode;
 
                                 // Restore bar_spacing (user's zoom level).
                                 if snap.viewport.bar_spacing > 0.0 {
@@ -1798,25 +1804,79 @@ impl ChartApp {
             ChartOutEvent::InternalToggleSyncViewport => {
                 let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
                 let mut newly_enabled = false;
+                let mut newly_disabled = false;
                 if let Some(gid) = gid {
                     if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
-                        group.sync_flags.sync_viewport = !group.sync_flags.sync_viewport;
-                        newly_enabled = group.sync_flags.sync_viewport;
+                        let was_on = group.sync_flags.sync_viewport;
+                        group.sync_flags.sync_viewport = !was_on;
+                        newly_enabled = !was_on;
+                        newly_disabled = was_on;
                         eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, group.sync_flags.sync_viewport);
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
                 }
-                // When sync is turned ON, immediately propagate active window's viewport to peers
-                // so that peer price ranges are re-aligned before crosshair sync resumes.
+                // OFF → ON: adopt the active leaf's current scale_mode as the group mode,
+                // stash each peer's prior mode, then push mode + viewport to all peers.
                 if newly_enabled {
-                    if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                    let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                    if let Some(active_leaf) = active_leaf {
+                        // Capture the active window's current scale_mode as the new group mode.
+                        let active_mode = self.panel_app.panel_grid
+                            .active_window()
+                            .map(|w| w.price_scale.scale_mode);
+                        if let Some(mode) = active_mode {
+                            if let Some(gid) = gid {
+                                if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                                    group.scale_mode = mode;
+                                }
+                            }
+                        }
+                        // Stash each peer's current mode and apply the group mode.
+                        // propagate_viewport_to_sync_group applies mode to peers via the
+                        // scale_mode argument; stash happens here before the call.
+                        if let Some(gid) = gid {
+                            let peer_leaves: Vec<zengeld_chart::LeafId> =
+                                self.panel_app.tag_manager.chart_members(gid)
+                                    .into_iter()
+                                    .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                                    .filter(|&lid| lid != active_leaf)
+                                    .collect();
+                            for peer_leaf in peer_leaves {
+                                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(peer_leaf) {
+                                    // Stash existing mode if not already stashed (preserve
+                                    // the window's pre-join mode across multiple sync toggles).
+                                    if window.stashed_scale_mode.is_none() {
+                                        window.stashed_scale_mode = Some(window.price_scale.scale_mode);
+                                    }
+                                }
+                            }
+                        }
                         let viewport_state = self.panel_app
                             .panel_grid
                             .active_window()
                             .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
-                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, None);
+                            self.propagate_viewport_to_sync_group(
+                                active_leaf, view_start, bar_spacing,
+                                active_mode,
+                            );
+                        }
+                    }
+                }
+                // ON → OFF: clear stashed_scale_mode on all peers (they keep whatever
+                // mode they currently display, which was the group mode).
+                if newly_disabled {
+                    if let Some(gid) = gid {
+                        let all_leaves: Vec<zengeld_chart::LeafId> =
+                            self.panel_app.tag_manager.chart_members(gid)
+                                .into_iter()
+                                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                                .collect();
+                        for leaf in all_leaves {
+                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf) {
+                                window.stashed_scale_mode = None;
+                            }
                         }
                     }
                 }
@@ -1963,38 +2023,6 @@ impl ChartApp {
                     }
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncIndicators: no active group");
-                }
-                state_mutated = true;
-            }
-
-            ChartOutEvent::InternalToggleSyncScaleMode => {
-                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
-                let mut newly_enabled = false;
-                if let Some(gid) = gid {
-                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
-                        group.sync_flags.sync_scale_mode = !group.sync_flags.sync_scale_mode;
-                        newly_enabled = group.sync_flags.sync_scale_mode;
-                        eprintln!("[ChartApp] InternalToggleSyncScaleMode: group={:?} sync_scale_mode={}", gid, group.sync_flags.sync_scale_mode);
-                    }
-                } else {
-                    eprintln!("[ChartApp] InternalToggleSyncScaleMode: no active group");
-                }
-                // When sync is turned ON, immediately push the active window's
-                // scale mode to all peers so they land in a consistent state.
-                if newly_enabled {
-                    if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let mode = self.panel_app.panel_grid.active_window()
-                            .map(|w| w.price_scale.scale_mode);
-                        if let Some(mode) = mode {
-                            self.propagate_scale_mode_to_sync_group(leaf, mode);
-                            // Also attempt via viewport path in case sync_viewport is on.
-                            let vp = self.panel_app.panel_grid.active_window()
-                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
-                            if let Some((vs, bs)) = vp {
-                                self.propagate_viewport_to_sync_group(leaf, vs, bs, Some(mode));
-                            }
-                        }
-                    }
                 }
                 state_mutated = true;
             }

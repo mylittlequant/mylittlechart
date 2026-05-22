@@ -77,7 +77,4 @@ pub struct MemberSyncOverride {
     pub sync_symbol: Option<bool>,
     /// Override for crosshair synchronisation. `None` = use group default.
     pub sync_crosshair: Option<bool>,
-    /// Override for price-scale mode synchronisation. `None` = use group default.
-    #[serde(default)]
-    pub sync_scale_mode: Option<bool>,
 }

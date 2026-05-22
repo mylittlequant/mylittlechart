@@ -421,16 +421,27 @@ impl ChartApp {
                                     sp.auto_scale = is_auto;
                                 }
                             }
-                            // Propagate viewport + scale_mode when sync_viewport is on.
-                            let viewport_state = self.panel_app.panel_grid
-                                .window_for_leaf(leaf_id)
-                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
-                            if let Some((view_start, bar_spacing)) = viewport_state {
-                                self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, Some(next_mode));
+                            // Mutate group.scale_mode when sync_viewport is on so the
+                            // group remembers the mode for new joiners.
+                            let viewport_sync_on = self.panel_app.panel_grid
+                                .chart_id_for_leaf(leaf_id)
+                                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                .and_then(|gid| {
+                                    self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                                        g.scale_mode = next_mode;
+                                        g.sync_flags.sync_viewport
+                                    })
+                                })
+                                .unwrap_or(false);
+                            // Propagate viewport + scale_mode to peers when sync_viewport is on.
+                            if viewport_sync_on {
+                                let viewport_state = self.panel_app.panel_grid
+                                    .window_for_leaf(leaf_id)
+                                    .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                                if let Some((view_start, bar_spacing)) = viewport_state {
+                                    self.propagate_viewport_to_sync_group(leaf_id, view_start, bar_spacing, Some(next_mode));
+                                }
                             }
-                            // When sync_viewport is off but sync_scale_mode is on,
-                            // propagate only the A/M/F mode — not viewport coords.
-                            self.propagate_scale_mode_to_sync_group(leaf_id, next_mode);
                         }
                         ScaleCornerButton::Mode => {
                             self.process_output_actions(vec![zengeld_chart::ChartOutputAction::TogglePriceScaleMode]);
