@@ -3376,13 +3376,40 @@ impl ChartApp {
         // drawn (without this, on_mouse_move doesn't fire while button is held
         // and the crosshair freezes at its pre-press position, only "jumping"
         // when win32 cursor polling catches the cursor leaving the window).
+        //
+        // In split mode the crosshair is written to the active leaf (freehand
+        // drawing is locked to the leaf where the stroke started, which is the
+        // active leaf) via update_crosshair_split so the correct leaf layout is
+        // used (F1).  Propagation to sync-group peers is also applied (F11).
         {
             let extended = self.build_extended_layout();
             if self.panel_app.panel_grid.extend_freehand(x, y, &extended) {
                 let drag_mode = self.input_handler.state.drag_mode;
-                self.panel_app.panel_grid.update_crosshair(
-                    x, y, drag_mode, /* drawing_active */ true, &extended,
-                );
+                if self.panel_app.panel_grid.is_split() {
+                    // Freehand drawing is on the active leaf; use its layout for
+                    // the crosshair update so coordinates map correctly (F1).
+                    let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+                    if let Some(active_leaf) = active_leaf_opt {
+                        let leaf_rect_opt = self.get_leaf_absolute_rect(active_leaf);
+                        if let Some(leaf_rect) = leaf_rect_opt {
+                            let ext_opt = self.build_extended_layout_for_leaf(active_leaf, &leaf_rect);
+                            if let Some(ext) = ext_opt {
+                                if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
+                                    .update_crosshair_split(x, y, active_leaf, &ext)
+                                {
+                                    // Propagate to sync-group peers (F11).
+                                    self.propagate_crosshair_to_sync_group(
+                                        active_leaf, ts, price, vis, pane_idx,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.panel_app.panel_grid.update_crosshair(
+                        x, y, drag_mode, /* drawing_active */ true, &extended,
+                    );
+                }
                 return;
             }
         }
@@ -3429,9 +3456,36 @@ impl ChartApp {
         self.process_output_actions(actions);
 
         // Update crosshair during drag via ChartPanelGrid.
+        // In split mode, resolve the hovered leaf and use update_crosshair_split
+        // so the crosshair follows the hovered leaf (not the active leaf) — F2.
+        // Propagation also uses the hovered leaf — F3.
         let extended2 = self.build_extended_layout();
         let drag_mode = self.input_handler.state.drag_mode;
-        if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
+        if self.panel_app.panel_grid.is_split() {
+            use zengeld_chart::state::ChartInputTarget;
+            let hovered_leaf = match self.panel_app.panel_grid.resolve_input(
+                x, y, self.content_rect.x, self.content_rect.y,
+            ) {
+                ChartInputTarget::Chart { leaf_id }
+                | ChartInputTarget::PriceScale { leaf_id }
+                | ChartInputTarget::TimeScale { leaf_id }
+                | ChartInputTarget::ScaleCorner { leaf_id, .. } => Some(leaf_id),
+                _ => None,
+            };
+            if let Some(leaf_id) = hovered_leaf {
+                let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
+                if let Some(leaf_rect) = leaf_rect_opt {
+                    let ext_opt = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect);
+                    if let Some(ext) = ext_opt {
+                        if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
+                            .update_crosshair_split(x, y, leaf_id, &ext)
+                        {
+                            self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
+                        }
+                    }
+                }
+            }
+        } else if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
             .update_crosshair(x, y, drag_mode, false, &extended2)
         {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
@@ -4431,36 +4485,84 @@ impl ChartApp {
         // preview anchor stays visible when the cursor drifts outside the chart
         // pane. Freehand drawing does NOT bypass — the freehand stroke renders
         // its own preview, the crosshair is redundant and visually noisy.
+        //
+        // In split mode the crosshair follows the HOVERED leaf (not the active
+        // leaf). Resolve hovered leaf once here and reuse it throughout the
+        // split-mode crosshair and overlay update paths below (avoids duplicate
+        // resolve_input calls — I1).
+        let split_hovered_leaf: Option<zengeld_chart::LeafId> =
+            if self.panel_app.panel_grid.is_split() {
+                use zengeld_chart::state::ChartInputTarget;
+                match self.panel_app.panel_grid.resolve_input(
+                    x, y, self.content_rect.x, self.content_rect.y,
+                ) {
+                    ChartInputTarget::Chart { leaf_id }
+                    | ChartInputTarget::PriceScale { leaf_id }
+                    | ChartInputTarget::TimeScale { leaf_id }
+                    | ChartInputTarget::ScaleCorner { leaf_id, .. } => Some(leaf_id),
+                    _ => None,
+                }
+            } else {
+                None
+            };
         {
             let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
                 .map(|w| w.as_str().starts_with("chart:pane:"))
                 .unwrap_or(false);
-            // Drawing bypass: keep crosshair visible while ANY drawing is in progress
-            // (matches baseline pre-migration behavior — both click-tool and freehand
-            // bypassed the hide path).
-            let is_drawing = self.panel_app.panel_grid.active_window()
-                .map(|w| w.drawing_manager.is_drawing())
-                .unwrap_or(false);
+            // Drawing bypass: keep crosshair visible while the hovered leaf's
+            // drawing manager reports an in-progress primitive.  In split mode
+            // the hovered leaf (not the active leaf) is checked so a drawing on
+            // a non-active leaf does not incorrectly suppress the crosshair (F7).
+            let is_drawing = if let Some(hovered) = split_hovered_leaf {
+                // Split mode: read from hovered leaf's window.
+                self.panel_app.panel_grid.window_for_leaf(hovered)
+                    .map(|w| w.drawing_manager.is_drawing())
+                    .unwrap_or(false)
+            } else {
+                // Single-window mode: active leaf == hovered leaf.
+                self.panel_app.panel_grid.active_window()
+                    .map(|w| w.drawing_manager.is_drawing())
+                    .unwrap_or(false)
+            };
 
             // Inside-chart check: chart:pane covers canvas + scales + sub-pane seps,
             // but crosshair should only show over the canvas. Use the chart's own
             // hit-tester to distinguish canvas (Chart) from scale (PriceScale /
             // TimeScale / ScaleCorner) and separator (PaneSeparator).
+            //
+            // In split mode use the hovered leaf's layout so the hit-test reflects
+            // the correct coordinate space — the cursor is outside the active leaf's
+            // rect in split mode, making an active-leaf layout always return
+            // on_canvas=false and suppressing the crosshair incorrectly (F8).
             let on_canvas = if hovered_chart_pane {
                 use zengeld_chart::input::ChartHitTester;
                 use zengeld_chart::engine::input::HitResult;
-                let extended = self.build_extended_layout();
-                let overlays = self.panel_app.panel_grid.active_window()
-                    .map(|w| w.sub_pane_overlay_results.clone())
-                    .unwrap_or_default();
-                let tester = ExtendedLayoutHitTester::new(&extended).with_overlays(&overlays);
-                matches!(
-                    tester.hit_test(x, y),
-                    HitResult::Chart
-                        | HitResult::SubPaneChart { .. }
-                        | HitResult::PriceScale
-                        | HitResult::SubPanePriceScale { .. }
-                )
+                let (extended, overlays) = if let Some(hovered) = split_hovered_leaf {
+                    let leaf_rect_opt = self.get_leaf_absolute_rect(hovered);
+                    let ext = leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(hovered, &r));
+                    let ovl = self.panel_app.panel_grid.window_for_leaf(hovered)
+                        .map(|w| w.sub_pane_overlay_results.clone())
+                        .unwrap_or_default();
+                    (ext, ovl)
+                } else {
+                    let ext = Some(self.build_extended_layout());
+                    let ovl = self.panel_app.panel_grid.active_window()
+                        .map(|w| w.sub_pane_overlay_results.clone())
+                        .unwrap_or_default();
+                    (ext, ovl)
+                };
+                if let Some(ext) = extended {
+                    let tester = ExtendedLayoutHitTester::new(&ext).with_overlays(&overlays);
+                    matches!(
+                        tester.hit_test(x, y),
+                        HitResult::Chart
+                            | HitResult::SubPaneChart { .. }
+                            | HitResult::PriceScale
+                            | HitResult::SubPanePriceScale { .. }
+                    )
+                } else {
+                    false
+                }
             } else {
                 false
             };
@@ -4479,14 +4581,30 @@ impl ChartApp {
         // Skip this block when actively drawing — the is_drawing block below
         // must handle projection so the preview extrapolates correctly even when
         // the cursor moves to a sub-pane, neighbor leaf, or outside the window.
-        let is_drawing_skip = self.panel_app.panel_grid.active_window()
-            .map(|w| w.drawing_manager.is_drawing())
-            .unwrap_or(false);
+        //
+        // Read drawing state from the hovered leaf's window, not the active
+        // leaf's window — if the active leaf is drawing but the hovered leaf is
+        // not, the split crosshair block should still run for the hovered leaf (F9).
+        let is_drawing_skip = if let Some(hovered) = split_hovered_leaf {
+            self.panel_app.panel_grid.window_for_leaf(hovered)
+                .map(|w| w.drawing_manager.is_drawing())
+                .unwrap_or(false)
+        } else {
+            self.panel_app.panel_grid.active_window()
+                .map(|w| w.drawing_manager.is_drawing())
+                .unwrap_or(false)
+        };
         if self.panel_app.panel_grid.is_split() && !is_drawing_skip {
             use zengeld_chart::state::ChartInputTarget;
-            let target = self.panel_app.panel_grid.resolve_input(
-                x, y, self.content_rect.x, self.content_rect.y,
-            );
+            // Reuse split_hovered_leaf resolved above to avoid a redundant
+            // resolve_input call (I1 eliminated).  Convert back to a full
+            // ChartInputTarget so the Separator/None hide path still works.
+            let target = match split_hovered_leaf {
+                Some(leaf_id) => ChartInputTarget::Chart { leaf_id },
+                None => self.panel_app.panel_grid.resolve_input(
+                    x, y, self.content_rect.x, self.content_rect.y,
+                ),
+            };
             match target {
                 ChartInputTarget::Chart { leaf_id }
                 | ChartInputTarget::PriceScale { leaf_id }
@@ -4515,17 +4633,10 @@ impl ChartApp {
             }
 
             // --- Update sub-pane overlay visibility for split mode ---
-            // Determine which leaf the cursor is in and update its overlay states.
+            // Reuse split_hovered_leaf (resolved at the top of this mouse_move
+            // handler) instead of calling resolve_input again (I1 eliminated).
             {
-                let hovered_leaf = match self.panel_app.panel_grid.resolve_input(
-                    x, y, self.content_rect.x, self.content_rect.y,
-                ) {
-                    ChartInputTarget::Chart { leaf_id }
-                    | ChartInputTarget::PriceScale { leaf_id }
-                    | ChartInputTarget::TimeScale { leaf_id }
-                    | ChartInputTarget::ScaleCorner { leaf_id, .. } => Some(leaf_id),
-                    _ => None,
-                };
+                let hovered_leaf = split_hovered_leaf;
                 if let Some(leaf_id) = hovered_leaf {
                     let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
                     let extended_opt = leaf_rect_opt.and_then(|lr| self.build_extended_layout_for_leaf(leaf_id, &lr));
@@ -4679,23 +4790,69 @@ impl ChartApp {
         // When actively drawing a primitive keep the last crosshair position so
         // the preview line remains visible if the cursor briefly leaves the
         // canvas (e.g. moves into the OS window border).
-        let is_drawing = self.panel_app.panel_grid.active_window()
-            .map(|w| w.drawing_manager.is_drawing())
-            .unwrap_or(false);
+        //
+        // In split mode the drawing may be on any leaf, not just the active one.
+        // Check all leaves so a drawing-in-progress on a non-active leaf is not
+        // ignored (F4 — previously only active window was checked).
+        let is_drawing = if self.panel_app.panel_grid.is_split() {
+            let leaf_ids: Vec<zengeld_chart::LeafId> = self.panel_app
+                .panel_grid
+                .panel_rects()
+                .keys()
+                .copied()
+                .collect();
+            leaf_ids.iter().any(|&lid| {
+                self.panel_app.panel_grid.window_for_leaf(lid)
+                    .map(|w| w.drawing_manager.is_drawing())
+                    .unwrap_or(false)
+            })
+        } else {
+            self.panel_app.panel_grid.active_window()
+                .map(|w| w.drawing_manager.is_drawing())
+                .unwrap_or(false)
+        };
         if !is_drawing {
+            // hide_crosshair is split-aware: clears all leaves in split mode and
+            // propagates the hide to every sync-group's order-flow panels (F4).
             self.hide_crosshair();
         }
     }
 
     /// Hide the crosshair on the active window and propagate hide to sync group.
+    ///
+    /// In split mode all leaves are cleared (F5) and each leaf's sync-group peers
+    /// receive the hide via `propagate_crosshair_to_sync_group` (F6), so order-flow
+    /// panels attached to any group are also cleared.  In single-window mode the
+    /// active leaf is used — active leaf == only leaf, so no ambiguity.
     fn hide_crosshair(&mut self) {
-        let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
-        if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-            window.crosshair.visible = false;
-        }
-        // Propagate hide to sync group peers.
-        if let Some(active_leaf) = active_leaf_opt {
-            self.propagate_crosshair_to_sync_group(active_leaf, 0, 0.0, false, None);
+        if self.panel_app.panel_grid.is_split() {
+            // Collect leaf ids to avoid borrow conflicts.
+            let leaf_ids: Vec<zengeld_chart::LeafId> = self.panel_app
+                .panel_grid
+                .panel_rects()
+                .keys()
+                .copied()
+                .collect();
+            // Clear visible on all split leaves (F5).
+            for &lid in &leaf_ids {
+                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(lid) {
+                    window.crosshair.visible = false;
+                }
+            }
+            // Propagate hide from each leaf so order-flow panels in every sync
+            // group are notified (F6).
+            for lid in leaf_ids {
+                self.propagate_crosshair_to_sync_group(lid, 0, 0.0, false, None);
+            }
+        } else {
+            let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                window.crosshair.visible = false;
+            }
+            // Propagate hide to sync group peers.
+            if let Some(active_leaf) = active_leaf_opt {
+                self.propagate_crosshair_to_sync_group(active_leaf, 0, 0.0, false, None);
+            }
         }
     }
 

@@ -1000,8 +1000,26 @@ impl ChartApp {
         };
 
         // Propagate crosshair to peer chart windows in the same color-tag group.
+        // Per-member override (`effective_sync_crosshair`) takes precedence over
+        // the group-level flag — a peer with `sync_crosshair = Some(false)` must
+        // not receive updates even when the group default is enabled.
         let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
             .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+            .filter(|(&lid, _)| {
+                // Skip peers whose effective per-member override disables crosshair sync.
+                let peer_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(lid);
+                let peer_should_sync = group_id
+                    .zip(peer_chart_id)
+                    .and_then(|(gid, cid)| {
+                        self.panel_app.tag_manager.group(gid).map(|g| {
+                            g.effective_sync_crosshair(
+                                zengeld_chart::tag_manager::SyncMemberId::Chart(cid.0),
+                            )
+                        })
+                    })
+                    .unwrap_or(true);
+                peer_should_sync
+            })
             .map(|(&lid, _)| lid)
             .collect();
         for leaf_id in sync_leaves {
