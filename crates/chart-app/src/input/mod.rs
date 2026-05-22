@@ -3424,6 +3424,12 @@ impl ChartApp {
                         x, y, drag_mode, /* drawing_active */ true, &extended,
                     );
                 }
+                // Propagate the freehand stroke's growing point list to sync-group peers
+                // so they render the live projection. Click-based primitives already do this
+                // via modals.rs handlers; freehand never did until now (bug F-PROJ).
+                if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                    self.propagate_drawing_state_to_sync_group(active_leaf);
+                }
                 return;
             }
         }
@@ -4150,6 +4156,15 @@ impl ChartApp {
                     self.push_undo_command(cmd);
                     eprintln!("[ChartApp] Recorded CreatePrimitive (freehand, grouped) via group.primitives");
                 }
+            }
+            // Clear in-progress drawing state on sync peers. After
+            // complete_freehand the source DM has transitioned to Idle, but
+            // peers still hold `DrawingState::Creating` from the last drag-move
+            // propagation. Pushing the now-Idle state clears their live stroke
+            // so the only remaining freehand visible on peers is the finalized
+            // primitive (via add_synced_primitives / TagManager).
+            if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                self.propagate_drawing_state_to_sync_group(active_leaf);
             }
             // Save after both grouped and standalone paths — intercept may have moved the
             // primitive to TagManager, so the snapshot must be taken after that transfer.

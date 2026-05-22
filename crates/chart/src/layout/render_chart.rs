@@ -1895,11 +1895,14 @@ pub fn render_sub_pane_primitives(
         let cursor_bar = state.crosshair.bar_f64;
         let cursor_price = state.crosshair.price;
 
-        // For freehand tools (brush/highlighter), draw the accumulated points as a live stroke
-        if dm.is_freehand_tool() {
+        // For freehand tools (brush/highlighter), draw the accumulated points as a live stroke.
+        // Use `is_drawing_freehand()` (reads `DrawingState::Creating.tool_id` so peer windows
+        // that received a synced stroke via `set_synced_drawing_state` also render here even
+        // though their `current_tool` is None).
+        if dm.is_drawing_freehand() {
             if let Some(points) = dm.drawing_points() {
                 if points.len() >= 2 {
-                    let is_highlighter = dm.current_tool() == Some("highlighter");
+                    let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
                     let effective_color = dm.effective_color();
                     let stroke_color = if is_highlighter {
                         apply_opacity(&effective_color, 0.4)
@@ -2446,11 +2449,13 @@ pub fn render_main_chart_primitives(
         // Use snapped price in magnet mode so preview matches where primitive will be placed
         let cursor_price = state.crosshair.effective_price(false);
 
-        // For freehand tools (brush/highlighter), draw the accumulated stroke live
-        if dm.is_freehand_tool() {
+        // For freehand tools (brush/highlighter), draw the accumulated stroke live.
+        // `is_drawing_freehand()` covers peer DMs that have a synced stroke but no
+        // `current_tool` set.
+        if dm.is_drawing_freehand() {
             if let Some(points) = dm.drawing_points() {
                 if points.len() >= 2 {
-                    let is_highlighter = dm.current_tool() == Some("highlighter");
+                    let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
                     let effective_color = dm.effective_color();
                     let stroke_color = if is_highlighter {
                         apply_opacity(&effective_color, 0.4)

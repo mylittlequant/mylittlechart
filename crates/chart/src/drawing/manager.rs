@@ -379,12 +379,34 @@ impl DrawingManager {
         &self.default_color
     }
 
-    /// Get the effective color for the current tool
-    /// Returns the tool's metadata default_color if available, otherwise the manager's default_color
+    /// Get the effective color for the current tool.
+    ///
+    /// Priority: group-shared `style_store[tool_id]` (set by the inline
+    /// toolbar / last-used style) → registry `meta.default_color` → manager's
+    /// `default_color`. This matches the click-primitive creation path so the
+    /// live freehand preview, the click preview, and the finalized primitive
+    /// all share the same color source.
     pub fn effective_color(&self) -> String {
-        if let Some(tool_id) = &self.current_tool {
+        // Resolve tool_id from either current_tool (source DM) OR from the
+        // in-progress DrawingState (peer DMs receiving a synced freehand stroke
+        // never set current_tool — they only get state via set_synced_drawing_state).
+        let tool_id_opt: Option<String> = self
+            .current_tool
+            .clone()
+            .or_else(|| match &self.state {
+                DrawingState::Creating { tool_id, .. } => Some(tool_id.clone()),
+                _ => None,
+            });
+        if let Some(tool_id) = tool_id_opt {
+            if let Ok(store) = self.style_store.read() {
+                if let Some(style) = store.get(&tool_id) {
+                    if let Some(ref c) = style.color {
+                        return c.clone();
+                    }
+                }
+            }
             let registry = PrimitiveRegistry::global().read().unwrap();
-            if let Some(meta) = registry.get(tool_id) {
+            if let Some(meta) = registry.get(&tool_id) {
                 return meta.default_color.to_string();
             }
         }
@@ -612,6 +634,37 @@ impl DrawingManager {
             }
         }
         false
+    }
+
+    /// True if there is an in-progress freehand stroke — either started locally
+    /// (`current_tool` set + freehand) OR mirrored from a sync peer
+    /// (`DrawingState::Creating` carries a freehand `tool_id` while
+    /// `current_tool` is None on the peer). Used by render sites to draw the
+    /// live stroke uniformly on both source and peer windows.
+    pub fn is_drawing_freehand(&self) -> bool {
+        if self.is_freehand_tool() {
+            return true;
+        }
+        if let DrawingState::Creating { tool_id, .. } = &self.state {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            if let Some(meta) = registry.get(tool_id) {
+                return meta.click_behavior == ClickBehavior::FreehandDrag;
+            }
+        }
+        false
+    }
+
+    /// Tool_id of whatever is currently being drawn — local `current_tool`
+    /// first, then `DrawingState::Creating` (for peer-synced strokes where
+    /// `current_tool` is None).
+    pub fn drawing_tool_id(&self) -> Option<&str> {
+        if let Some(ref t) = self.current_tool {
+            return Some(t.as_str());
+        }
+        if let DrawingState::Creating { tool_id, .. } = &self.state {
+            return Some(tool_id.as_str());
+        }
+        None
     }
 
     /// Complete freehand drawing and create the primitive
