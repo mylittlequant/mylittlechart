@@ -163,22 +163,7 @@ fn render_page_profile_list(
     ctx.stroke();
     left_cy += 16.0;
 
-    // ── VERSION ────────────────────────────────────────────────────────────────
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x, left_cy);
-    left_cy += 22.0;
-
-    // ── PRIVACY section ──────────────────────────────────────────────────────
-    ctx.set_font("bold 10px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("PRIVACY", left_inner_x, left_cy);
-    left_cy += 18.0;
-
+    // ── Zero-trust badge + version (single row) ──────────────────────────────
     {
         let icon_size = 14.0;
         let row_h = 18.0;
@@ -189,31 +174,13 @@ fn render_page_profile_list(
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, mid_y);
+        // Version on the right edge of the left column.
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x + left_inner_w, mid_y);
         left_cy += row_h + 8.0;
     }
-
-    // ── Temporary: Run Setup Wizard button ───────────────────────────────────
-    left_cy += 12.0;
-    let wiz_btn_h = 28.0;
-    let wiz_id = "profile_mgr:run_wizard";
-    let is_wiz_hovered = hovered == Some(wiz_id);
-    let wiz_bg = if is_wiz_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    ctx.set_fill_color(wiz_bg);
-    ctx.fill_rounded_rect(left_inner_x, left_cy, left_inner_w, wiz_btn_h, 4.0);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Run Setup Wizard", left_inner_x + 8.0, left_cy + wiz_btn_h / 2.0);
-    let wiz_rect = WidgetRect::new(left_inner_x, left_cy, left_inner_w, wiz_btn_h);
-    result.content_items.push((wiz_id.to_string(), wiz_rect));
-    input_coordinator.register_on_layer(
-        format!("user_settings:{}", wiz_id).as_str(),
-        wiz_rect,
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-    let _left_cy = left_cy + wiz_btn_h;
+    let _left_cy = left_cy;
 
     // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
     let mascot_w = 140.0;
