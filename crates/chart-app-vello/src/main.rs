@@ -874,16 +874,13 @@ impl App<'_> {
             perf_log_enabled: false,
             render_backend: {
                 use sidebar_content::state::RenderBackend;
+                // Only VelloGpu and VelloCpu are exposed in the OSS build.
+                // Other persisted variants fall back to VelloCpu so legacy
+                // device_settings.json files keep loading without errors.
                 match ds_init.render_backend {
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloGpu) => RenderBackend::VelloGpu,
-                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::InstancedWgpu) => RenderBackend::InstancedWgpu,
                     Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloCpu) => RenderBackend::VelloCpu,
-                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::VelloHybrid) => RenderBackend::VelloHybrid,
-                    // TinySkia is dropped from the active backend list
-                    // (multi-window crash, missing chrome after the uzor
-                    // migration). Fall back to VelloCpu — the supported
-                    // CPU backend.
-                    Some(zengeld_chart::user_profile::device_settings::RenderBackend::TinySkia) => RenderBackend::VelloCpu,
+                    Some(_) => RenderBackend::VelloCpu,
                     None => RenderBackend::VelloGpu, // will be overridden by auto-detect
                 }
             },

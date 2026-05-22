@@ -590,16 +590,16 @@ impl RenderBackend {
 
     /// Returns a slice of all available backends in cycle order.
     ///
-    /// `TinySkia` is intentionally omitted: it crashes when more than one
-    /// window is open and does not render the chrome strip after the
-    /// recent uzor/vello migration. `VelloCpu` covers the CPU backend
-    /// use case.
+    /// For the OSS release only `VelloGpu` and `VelloCpu` are exposed —
+    /// `TinySkia` crashes with multiple windows, `VelloHybrid` panics
+    /// inside `vello_hybrid 0.0.7` on small scenes, and `InstancedWgpu`
+    /// is incomplete after the uzor 1.3 migration. The enum variants
+    /// stay for serde compatibility with old `device_settings.json`
+    /// files but never appear in the UI selector.
     pub fn all() -> &'static [Self] {
         &[
             Self::VelloGpu,
-            Self::InstancedWgpu,
             Self::VelloCpu,
-            Self::VelloHybrid,
         ]
     }
 }
