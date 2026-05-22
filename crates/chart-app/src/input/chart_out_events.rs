@@ -808,7 +808,20 @@ impl ChartApp {
                         let mut group = zengeld_chart::tag_manager::TagManager::group_from_snapshot(sg_snap);
                         if let Ok(reg) = zengeld_chart::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                             for ps in &sg_snap.primitives {
-                                if let Some(prim) = reg.from_json(&ps.type_id, &ps.json) {
+                                if let Some(mut prim) = reg.from_json(&ps.type_id, &ps.json) {
+                                    // Backfill symbol/exchange/account_type for primitives
+                                    // saved before these fields existed (serde(default) gives
+                                    // empty string). Use the group's shared instrument as
+                                    // source of truth — prevents them falling into Memory on load.
+                                    if prim.data().symbol.is_empty() && !sg_snap.symbol.is_empty() {
+                                        prim.data_mut().symbol = sg_snap.symbol.clone();
+                                    }
+                                    if prim.data().exchange.is_empty() && !sg_snap.exchange.is_empty() {
+                                        prim.data_mut().exchange = sg_snap.exchange.clone();
+                                    }
+                                    if prim.data().account_type.is_empty() && !sg_snap.account_type.is_empty() {
+                                        prim.data_mut().account_type = sg_snap.account_type.clone();
+                                    }
                                     group.primitives.push(prim);
                                 }
                             }
