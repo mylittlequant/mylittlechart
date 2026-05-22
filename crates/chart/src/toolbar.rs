@@ -181,6 +181,7 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Move")),
                 DropdownItemDef::action("sync_drawings", "Sync Drawings"),
                 DropdownItemDef::action("sync_indicators", "Sync Indicators"),
+                DropdownItemDef::action("sync_scale_mode", "Sync Scale Mode (A/M/F)"),
             ]).with_icon(ToolbarIconId::new("LayoutSingle"))
               .with_tooltip(t_toolbar(TK::Layout)),
         ]),
@@ -332,6 +333,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
                 DropdownItemDef::action("sync_viewport", "Sync Viewport").with_icon(ToolbarIconId::new("Move")),
                 DropdownItemDef::action("sync_drawings", "Sync Drawings"),
                 DropdownItemDef::action("sync_indicators", "Sync Indicators"),
+                DropdownItemDef::action("sync_scale_mode", "Sync Scale Mode (A/M/F)"),
             ]).with_icon(ToolbarIconId::new("LayoutSingle"))
               .with_tooltip(t_toolbar(TK::Layout)),
         ]),

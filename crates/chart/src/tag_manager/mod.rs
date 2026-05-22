@@ -49,7 +49,14 @@ pub struct SyncFlags {
     pub sync_timeframe: bool,
     pub sync_drawings: bool,
     pub sync_indicators: bool,
+    /// Sync the price-scale corner mode (Auto / Manual / Focus) across peers.
+    /// Each peer keeps its own concrete min/max/zoom — only the discrete mode
+    /// (A/M/F) follows the group.
+    #[serde(default = "sync_flag_default_true")]
+    pub sync_scale_mode: bool,
 }
+
+fn sync_flag_default_true() -> bool { true }
 
 impl Default for SyncFlags {
     fn default() -> Self {
@@ -60,6 +67,7 @@ impl Default for SyncFlags {
             sync_timeframe: true,
             sync_drawings: true,
             sync_indicators: true,
+            sync_scale_mode: true,
         }
     }
 }
@@ -156,6 +164,17 @@ impl SyncGroup {
             .get(&member)
             .and_then(|o| o.sync_crosshair)
             .unwrap_or(self.sync_flags.sync_crosshair)
+    }
+
+    /// Effective `sync_scale_mode` for a specific member.
+    ///
+    /// Only the discrete A/M/F mode follows the group — min/max/zoom stay
+    /// per-member.
+    pub fn effective_scale_mode_sync(&self, member: SyncMemberId) -> bool {
+        self.member_overrides
+            .get(&member)
+            .and_then(|o| o.sync_scale_mode)
+            .unwrap_or(self.sync_flags.sync_scale_mode)
     }
 }
 
@@ -309,6 +328,7 @@ impl TagManager {
                 sync_timeframe: false,
                 sync_drawings: false,
                 sync_indicators: false,
+                sync_scale_mode: false,
             },
             members: std::collections::HashSet::new(),
             member_overrides: std::collections::HashMap::new(),
@@ -795,6 +815,7 @@ impl TagManager {
                 let override_val = MemberSyncOverride {
                     sync_symbol: o.sync_symbol,
                     sync_crosshair: o.sync_crosshair,
+                    sync_scale_mode: None,
                 };
                 (member, override_val)
             })

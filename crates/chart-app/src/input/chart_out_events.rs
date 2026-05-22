@@ -1937,6 +1937,38 @@ impl ChartApp {
                 state_mutated = true;
             }
 
+            ChartOutEvent::InternalToggleSyncScaleMode => {
+                let gid = self.panel_app.panel_grid.active_window().and_then(|w| w.group_id);
+                let mut newly_enabled = false;
+                if let Some(gid) = gid {
+                    if let Some(group) = self.panel_app.tag_manager.group_mut(gid) {
+                        group.sync_flags.sync_scale_mode = !group.sync_flags.sync_scale_mode;
+                        newly_enabled = group.sync_flags.sync_scale_mode;
+                        eprintln!("[ChartApp] InternalToggleSyncScaleMode: group={:?} sync_scale_mode={}", gid, group.sync_flags.sync_scale_mode);
+                    }
+                } else {
+                    eprintln!("[ChartApp] InternalToggleSyncScaleMode: no active group");
+                }
+                // When sync is turned ON, immediately push the active window's
+                // scale mode to all peers so they land in a consistent state.
+                if newly_enabled {
+                    if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                        let mode = self.panel_app.panel_grid.active_window()
+                            .map(|w| w.price_scale.scale_mode);
+                        if let Some(mode) = mode {
+                            self.propagate_scale_mode_to_sync_group(leaf, mode);
+                            // Also attempt via viewport path in case sync_viewport is on.
+                            let vp = self.panel_app.panel_grid.active_window()
+                                .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
+                            if let Some((vs, bs)) = vp {
+                                self.propagate_viewport_to_sync_group(leaf, vs, bs, Some(mode));
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
+
             ChartOutEvent::InternalToggleSplitUntagged => {
                 self.split_without_group = !self.split_without_group;
                 eprintln!("[ChartApp] split_without_group toggled to {}", self.split_without_group);

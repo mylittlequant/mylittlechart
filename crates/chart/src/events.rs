@@ -91,6 +91,8 @@ pub enum ChartOutEvent {
     InternalToggleSyncDrawings,
     /// Toggle indicators synchronisation across panels.
     InternalToggleSyncIndicators,
+    /// Toggle price-scale mode (A/M/F) synchronisation across panels.
+    InternalToggleSyncScaleMode,
 
     // === Timeframe ===
     /// Request a timeframe change (e.g., from toolbar dropdown selection).

@@ -5903,6 +5903,76 @@ impl ChartApp {
         }
     }
 
+    /// Propagate only the price-scale corner mode (A/M/F) to sync-group peers.
+    ///
+    /// Called when the user clicks the A/M/F corner button and `sync_scale_mode`
+    /// is enabled for the group — even if `sync_viewport` is off. Each peer
+    /// keeps its own min/max/zoom; only the discrete mode follows.
+    pub(crate) fn propagate_scale_mode_to_sync_group(
+        &mut self,
+        source_leaf: zengeld_chart::LeafId,
+        mode: zengeld_chart::ScaleMode,
+    ) {
+        let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
+        let group_id = source_chart_id
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+
+        // If sync_viewport is on, propagate_viewport_to_sync_group already handled
+        // this. Skip here to avoid double-applying.
+        let viewport_sync_on = group_id
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_viewport)
+            .unwrap_or(true);
+        if viewport_sync_on {
+            return;
+        }
+
+        let scale_mode_sync_on = group_id
+            .and_then(|gid| self.panel_app.tag_manager.group(gid))
+            .map(|g| g.sync_flags.sync_scale_mode)
+            .unwrap_or(true);
+        if !scale_mode_sync_on {
+            return;
+        }
+
+        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let sync_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
+            .filter(|(&lid, &c)| lid != source_leaf && input::sync_colors_match(c, source_color))
+            .filter(|(&lid, _)| {
+                let peer_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(lid);
+                group_id
+                    .zip(peer_chart_id)
+                    .and_then(|(gid, cid)| {
+                        self.panel_app.tag_manager.group(gid).map(|g| {
+                            g.effective_scale_mode_sync(
+                                zengeld_chart::tag_manager::SyncMemberId::Chart(cid.0),
+                            )
+                        })
+                    })
+                    .unwrap_or(true)
+            })
+            .map(|(&lid, _)| lid)
+            .collect();
+
+        for leaf_id in sync_leaves {
+            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
+                // Only mode propagates — peers keep their own min/max/zoom.
+                window.price_scale.scale_mode = mode;
+                let is_auto = mode.is_auto_y();
+                for sp in &mut window.sub_panes {
+                    sp.auto_scale = is_auto;
+                }
+                if is_auto {
+                    window.calc_auto_scale();
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // User profile persistence
     // -------------------------------------------------------------------------

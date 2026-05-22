@@ -1691,12 +1691,13 @@ fn render_tags_section(
                     // Sync flags
                     let gid = group.id.0;
                     let flags = [
-                        ("sync_crosshair", "Crosshair",  group.sync_flags.sync_crosshair),
-                        ("sync_viewport",  "Viewport",   group.sync_flags.sync_viewport),
-                        ("sync_symbol",    "Symbol",     group.sync_flags.sync_symbol),
-                        ("sync_timeframe", "Timeframe",  group.sync_flags.sync_timeframe),
-                        ("sync_drawings",  "Drawings",   group.sync_flags.sync_drawings),
-                        ("sync_indicators","Indicators", group.sync_flags.sync_indicators),
+                        ("sync_crosshair",  "Crosshair",       group.sync_flags.sync_crosshair),
+                        ("sync_viewport",   "Viewport",        group.sync_flags.sync_viewport),
+                        ("sync_symbol",     "Symbol",          group.sync_flags.sync_symbol),
+                        ("sync_timeframe",  "Timeframe",       group.sync_flags.sync_timeframe),
+                        ("sync_drawings",   "Drawings",        group.sync_flags.sync_drawings),
+                        ("sync_indicators", "Indicators",      group.sync_flags.sync_indicators),
+                        ("sync_scale_mode", "Scale Mode (A/M/F)", group.sync_flags.sync_scale_mode),
                     ];
 
                     for (flag_id, flag_label, flag_val) in &flags {

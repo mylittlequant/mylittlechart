@@ -3105,6 +3105,7 @@ impl ChartApp {
                                     "sync_timeframe"  => group.sync_flags.sync_timeframe  = !group.sync_flags.sync_timeframe,
                                     "sync_drawings"   => group.sync_flags.sync_drawings   = !group.sync_flags.sync_drawings,
                                     "sync_indicators" => group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators,
+                                    "sync_scale_mode" => group.sync_flags.sync_scale_mode = !group.sync_flags.sync_scale_mode,
                                     _ => {}
                                 }
                                 eprintln!("[TagsTabs] Toggled {} on group {}", flag_str, gid_val);
