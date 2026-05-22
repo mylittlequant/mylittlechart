@@ -72,46 +72,37 @@ impl App<'_> {
                     window_id, chart_id, type_id, params, agent_id: _,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        // Find the symbol for this chart
-                        let symbol = pw.chart.panel_app.panel_grid.windows()
-                            .values().find(|cw| cw.id.0 == chart_id)
-                            .map(|cw| cw.symbol.clone());
                         let bars: Vec<zengeld_chart::Bar> = pw.chart.panel_app.panel_grid.windows()
                             .values().find(|cw| cw.id.0 == chart_id)
                             .map(|cw| cw.bars.clone())
                             .unwrap_or_default();
 
-                        if let Some(symbol) = symbol {
-                            if let Some(new_id) = pw.chart.indicator_manager.create_instance(&type_id, &symbol) {
-                                // Set window_id scope
-                                if let Some(inst) = pw.chart.indicator_manager.get_instance_mut(new_id) {
-                                    inst.window_id = Some(chart_id);
-                                    // Apply custom params
-                                    for (k, v) in &params {
-                                        use zengeld_terminal_indicators::IndicatorParamValue;
-                                        let iv = match v {
-                                            serde_json::Value::Number(n) => {
-                                                if let Some(i) = n.as_i64() {
-                                                    IndicatorParamValue::Int(i as i32)
-                                                } else {
-                                                    IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
-                                                }
+                        if let Some(new_id) = pw.chart.indicator_manager.create_instance(&type_id) {
+                            pw.chart.indicator_manager.assign_window(new_id, Some(chart_id));
+                            if let Some(inst) = pw.chart.indicator_manager.get_instance_mut(new_id) {
+                                // Apply custom params
+                                for (k, v) in &params {
+                                    use zengeld_terminal_indicators::IndicatorParamValue;
+                                    let iv = match v {
+                                        serde_json::Value::Number(n) => {
+                                            if let Some(i) = n.as_i64() {
+                                                IndicatorParamValue::Int(i as i32)
+                                            } else {
+                                                IndicatorParamValue::Float(n.as_f64().unwrap_or(0.0))
                                             }
-                                            serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
-                                            serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
-                                            _ => continue,
-                                        };
-                                        inst.set_param(k, iv);
-                                    }
+                                        }
+                                        serde_json::Value::Bool(b) => IndicatorParamValue::Bool(*b),
+                                        serde_json::Value::String(s) => IndicatorParamValue::String(s.clone()),
+                                        _ => continue,
+                                    };
+                                    inst.set_param(k, iv);
                                 }
-                                pw.chart.indicator_manager.calculate(new_id, &bars);
-                                pw.chart.sync_sub_panes_from_manager();
-                                eprintln!("[AgentCommand] AddIndicator: type={}, id={}, chart={}", type_id, new_id, chart_id);
-                            } else {
-                                eprintln!("[AgentCommand] AddIndicator: unknown type_id '{}'", type_id);
                             }
+                            pw.chart.indicator_manager.calculate(new_id, &bars);
+                            pw.chart.sync_sub_panes_from_manager();
+                            eprintln!("[AgentCommand] AddIndicator: type={}, id={}, chart={}", type_id, new_id, chart_id);
                         } else {
-                            eprintln!("[AgentCommand] AddIndicator: chart not found: {}", chart_id);
+                            eprintln!("[AgentCommand] AddIndicator: unknown type_id '{}'", type_id);
                         }
                     } else {
                         eprintln!("[AgentCommand] AddIndicator: window not found: {}", window_id);
@@ -139,11 +130,12 @@ impl App<'_> {
                                 };
                                 inst.set_param(k, iv);
                             }
-                            let symbol = inst.symbol.clone();
-                            // Get bars for recalculation
-                            let bars: Vec<zengeld_chart::Bar> = pw.chart.panel_app.panel_grid.windows()
-                                .values().find(|cw| cw.symbol == symbol)
-                                .map(|cw| cw.bars.clone())
+                            let wid = inst.window_id;
+                            // Get bars from the window this indicator is bound to.
+                            let bars: Vec<zengeld_chart::Bar> = wid
+                                .and_then(|w| pw.chart.panel_app.panel_grid.windows()
+                                    .values().find(|cw| cw.id.0 == w)
+                                    .map(|cw| cw.bars.clone()))
                                 .unwrap_or_default();
                             pw.chart.indicator_manager.calculate(indicator_id, &bars);
                             eprintln!("[AgentCommand] UpdateIndicator: id={}", indicator_id);

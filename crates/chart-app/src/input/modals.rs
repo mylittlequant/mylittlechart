@@ -579,12 +579,10 @@ impl ChartApp {
 
         // Create new indicators from the set with full params/outputs
         for tmpl in &set.indicators {
-            if let Some(new_id) = self.indicator_manager.create_instance(&tmpl.type_id, &symbol) {
+            if let Some(new_id) = self.indicator_manager.create_instance(&tmpl.type_id) {
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
-                        if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
-                            inst.window_id = Some(chart_id.0);
-                        }
+                        self.indicator_manager.assign_window(new_id, Some(chart_id.0));
                     }
                 }
                 // Apply saved params, output styles, and visibility from the template
@@ -620,10 +618,12 @@ impl ChartApp {
             }
         }
 
-        let bars = self.panel_app.panel_grid.active_window()
-            .map(|w| w.bars.clone())
+        let (active_window_id, bars) = self.panel_app.panel_grid.docking().active_leaf()
+            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf).map(|cid| (cid.0, leaf)))
+            .and_then(|(cid, leaf)| self.panel_app.panel_grid.window_for_leaf(leaf).map(|w| (cid, w.bars.clone())))
             .unwrap_or_default();
-        self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+        let _ = symbol; // legacy, no longer needed for indicator calc
+        self.indicator_manager.calculate_all_for_window(active_window_id, &bars);
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
@@ -836,11 +836,15 @@ impl ChartApp {
                                 self.propagate_symbol_to_sync_group(leaf, &new_symbol_str, resolved_exchange.as_str(), &search_at_label);
                             }
                         }
-                        // Recalculate all indicators for the new symbol.
-                        let (sym, bars) = self.panel_app.panel_grid.active_window()
-                            .map(|w| (w.symbol.clone(), w.bars.clone()))
+                        // Recalculate all indicators for the new bars in this window.
+                        let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
+                            .and_then(|leaf| {
+                                let cid = self.panel_app.panel_grid.chart_id_for_leaf(leaf)?;
+                                let bars = self.panel_app.panel_grid.window_for_leaf(leaf)?.bars.clone();
+                                Some((cid.0, bars))
+                            })
                             .unwrap_or_default();
-                        self.indicator_manager.calculate_all_for_symbol(&sym, &bars);
+                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                         self.sync_sub_panes_from_manager();
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
@@ -878,23 +882,17 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::IndicatorSearch => {
-                        // Create indicator instance from catalog.
-                        let (symbol, active_exchange, active_account_type) = self.panel_app.panel_grid.active_window()
-                            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
-                            .unwrap_or_default();
+                        // Create indicator instance from catalog — bound to the active
+                        // window, NOT to the symbol it currently displays.
                         let type_id_str = item_id.to_string();
+                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                        let active_chart_id = active_leaf
+                            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf));
                         // Determine auto-color for overlay duplicates BEFORE create_instance
                         // (borrowck: create_instance needs &mut, query needs &).
-                        let auto_color: Option<String> = self
-                            .panel_app
-                            .panel_grid
-                            .docking()
-                            .active_leaf()
-                            .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
-                            .and_then(|cid| {
-                                self.indicator_manager.pick_overlay_color(item_id, &symbol, cid.0)
-                            });
-                        if let Some(new_id) = self.indicator_manager.create_instance(item_id, &symbol) {
+                        let auto_color: Option<String> = active_chart_id
+                            .and_then(|cid| self.indicator_manager.pick_overlay_color(item_id, cid.0));
+                        if let Some(new_id) = self.indicator_manager.create_instance(item_id) {
                             // Apply auto-color when this is a duplicate overlay indicator.
                             if let Some(ref color) = auto_color {
                                 if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
@@ -903,63 +901,59 @@ impl ChartApp {
                                     }
                                 }
                             }
-                            // Set window_id for the new instance so it's scoped to this window.
-                            if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                                if let Some(chart_id) = self.panel_app.panel_grid.chart_id_for_leaf(active_leaf) {
-                                    if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
-                                        inst.window_id = Some(chart_id.0);
-                                    }
-                                    // If this window is in a sync group and indicators are synced,
-                                    // track the config in the group and push to peers.
-                                    if let Some(group_id) = self.panel_app.panel_grid
-                                        .window_for_leaf(active_leaf)
-                                        .and_then(|w| w.group_id)
-                                    {
-                                        let sync_on = self.panel_app.tag_manager.group(group_id)
-                                            .map(|g| g.sync_flags.sync_indicators)
-                                            .unwrap_or(true);
-                                        if sync_on {
-                                            let inst_pane = self.indicator_manager
-                                                .get_instance(new_id)
-                                                .map(|i| i.pane as u32)
-                                                .unwrap_or(0);
-                                            let inst_name = self.indicator_manager
-                                                .get_instance(new_id)
-                                                .map(|i| i.name.clone())
-                                                .unwrap_or_else(|| item_id.to_string());
-                                            if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
-                                                group.indicator_configs.push(
-                                                    zengeld_chart::tag_manager::IndicatorGroupConfig {
-                                                        id: new_id,
-                                                        type_id: item_id.to_string(),
-                                                        name: inst_name,
-                                                        params: std::collections::HashMap::new(),
-                                                        pane: inst_pane,
-                                                        visible: true,
-                                                        symbol: symbol.clone(),
-                                                        exchange: active_exchange.clone(),
-                                                        account_type: active_account_type.clone(),
-                                                    },
-                                                );
-                                                eprintln!(
-                                                    "[TagManager] Added indicator config id={} '{}' to group {:?}",
-                                                    new_id, item_id, group_id
-                                                );
-                                            }
-                                            // Sync the new indicator to all peer windows in the group.
-                                            self.sync_group_indicator_to_peers(group_id, item_id, active_leaf);
-                                        } else {
-                                            // sync_indicators is OFF — this indicator belongs to this
-                                            // window only. Record it in pre_tag_indicator_ids so that
-                                            // if the window is later desynced (untagged), the desync
-                                            // logic does NOT treat it as a group indicator and delete it.
-                                            if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
-                                                window.pre_tag_indicator_ids.push(new_id);
-                                                eprintln!(
-                                                    "[TagManager] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
-                                                    new_id, active_leaf
-                                                );
-                                            }
+                            // Bind to the active window so it is scoped correctly.
+                            if let (Some(active_leaf), Some(chart_id)) = (active_leaf, active_chart_id) {
+                                self.indicator_manager.assign_window(new_id, Some(chart_id.0));
+                                // If this window is in a sync group and indicators are synced,
+                                // track the config in the group and push to peers.
+                                if let Some(group_id) = self.panel_app.panel_grid
+                                    .window_for_leaf(active_leaf)
+                                    .and_then(|w| w.group_id)
+                                {
+                                    let sync_on = self.panel_app.tag_manager.group(group_id)
+                                        .map(|g| g.sync_flags.sync_indicators)
+                                        .unwrap_or(true);
+                                    if sync_on {
+                                        let inst_pane = self.indicator_manager
+                                            .get_instance(new_id)
+                                            .map(|i| i.pane as u32)
+                                            .unwrap_or(0);
+                                        let inst_name = self.indicator_manager
+                                            .get_instance(new_id)
+                                            .map(|i| i.name.clone())
+                                            .unwrap_or_else(|| item_id.to_string());
+                                        if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {
+                                            group.indicator_configs.push(
+                                                zengeld_chart::tag_manager::IndicatorGroupConfig {
+                                                    id: new_id,
+                                                    type_id: item_id.to_string(),
+                                                    name: inst_name,
+                                                    params: std::collections::HashMap::new(),
+                                                    pane: inst_pane,
+                                                    visible: true,
+                                                    symbol: String::new(),
+                                                    exchange: String::new(),
+                                                    account_type: String::new(),
+                                                },
+                                            );
+                                            eprintln!(
+                                                "[TagManager] Added indicator config id={} '{}' to group {:?}",
+                                                new_id, item_id, group_id
+                                            );
+                                        }
+                                        // Sync the new indicator to all peer windows in the group.
+                                        self.sync_group_indicator_to_peers(group_id, item_id, active_leaf);
+                                    } else {
+                                        // sync_indicators is OFF — this indicator belongs to this
+                                        // window only. Record it in pre_tag_indicator_ids so that
+                                        // if the window is later desynced (untagged), the desync
+                                        // logic does NOT treat it as a group indicator and delete it.
+                                        if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
+                                            window.pre_tag_indicator_ids.push(new_id);
+                                            eprintln!(
+                                                "[TagManager] sync_indicators=off: recorded id={} in pre_tag_indicator_ids for leaf {:?}",
+                                                new_id, active_leaf
+                                            );
                                         }
                                     }
                                 }
@@ -972,12 +966,11 @@ impl ChartApp {
                             });
                             eprintln!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
                             // Recalculate the new indicator with current bars.
-                            let bars: Option<Vec<zengeld_chart::Bar>> = self.panel_app
-                                .panel_grid
-                                .active_window()
-                                .map(|w| w.bars.clone());
-                            if let Some(bars) = bars {
-                                self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                            if let (Some(cid), Some(bars)) = (
+                                active_chart_id,
+                                active_leaf.and_then(|leaf| self.panel_app.panel_grid.window_for_leaf(leaf)).map(|w| w.bars.clone()),
+                            ) {
+                                self.indicator_manager.calculate_all_for_window(cid.0, &bars);
                             }
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();

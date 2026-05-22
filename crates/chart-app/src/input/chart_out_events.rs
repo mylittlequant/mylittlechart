@@ -930,15 +930,17 @@ impl ChartApp {
                         if self.indicator_manager.create_instance_with_id(
                             ind_snap.id,
                             &ind_snap.type_id,
-                            &ind_snap.symbol,
                         ) {
+                            // Bind to the persisted window_id via the index — direct
+                            // field assignment would leak the instance into the
+                            // wrong by_window_id bucket.
+                            self.indicator_manager.assign_window(ind_snap.id, ind_snap.window_id);
                             if let Some(inst) = self.indicator_manager.get_instance_mut(ind_snap.id) {
                                 inst.name = ind_snap.name.clone();
                                 inst.pane = ind_snap.pane;
                                 inst.order = ind_snap.order;
                                 inst.visible = ind_snap.visible;
                                 inst.locked = ind_snap.locked;
-                                inst.window_id = ind_snap.window_id;
                                 inst.origin_id = ind_snap.origin_id;
                                 inst.signals_enabled = ind_snap.signals_enabled;
                                 inst.timeframe_visibility = ind_snap.timeframe_visibility.clone();
@@ -975,16 +977,16 @@ impl ChartApp {
                     // Collect (symbol, window_id, bars) first to avoid a split borrow of
                     // `self` (panel_grid vs indicator_manager both live on `self`).
                     // ----------------------------------------------------------------
-                    let window_bar_data: Vec<(String, u64, Vec<zengeld_chart::Bar>)> = self
+                    let window_bar_data: Vec<(u64, Vec<zengeld_chart::Bar>)> = self
                         .panel_app
                         .panel_grid
                         .iter_windows()
                         .filter(|(_, w)| !w.bars.is_empty())
-                        .map(|(_, w)| (w.symbol.clone(), w.id.0, w.bars.clone()))
+                        .map(|(_, w)| (w.id.0, w.bars.clone()))
                         .collect();
 
-                    for (symbol, window_id, bars) in window_bar_data {
-                        self.indicator_manager.calculate_for_window(&symbol, window_id, &bars);
+                    for (window_id, bars) in window_bar_data {
+                        self.indicator_manager.calculate_for_window(window_id, &bars);
                     }
                     eprintln!("[ChartApp] recalculated indicators for all windows with bars");
 

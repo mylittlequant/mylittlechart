@@ -6608,11 +6608,12 @@ impl ChartApp {
                                 };
                                 inst.set_param(param_name, value);
                             }
+                            let active_cid = self.panel_app.panel_grid.docking().active_leaf()
+                                .and_then(|leaf| self.panel_app.panel_grid.chart_id_for_leaf(leaf))
+                                .map(|c| c.0);
                             let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                            let symbol = self.panel_app.panel_grid.active_window()
-                                .map(|w| w.symbol.clone()).unwrap_or_default();
-                            if let Some(bars) = bars_opt {
-                                self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                            if let (Some(cid), Some(bars)) = (active_cid, bars_opt) {
+                                self.indicator_manager.calculate_all_for_window(cid, &bars);
                             }
                         }
                         eprintln!("[ChartApp] ind_settings param '{}' committed: {}", param_name, text);
@@ -7659,14 +7660,12 @@ impl ChartApp {
                 }
             }
             Command::AddIndicator { instance_id, type_id, .. } => {
-                let (symbol, bars_snapshot, chart_id_val) = match self.panel_app.panel_grid.active_window() {
-                    Some(w) => (w.symbol.clone(), w.bars.clone(), w.id),
+                let (bars_snapshot, chart_id_val) = match self.panel_app.panel_grid.active_window() {
+                    Some(w) => (w.bars.clone(), w.id),
                     None => return,
                 };
-                if self.indicator_manager.create_instance_with_id(*instance_id, type_id, &symbol) {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(*instance_id) {
-                        inst.window_id = Some(chart_id_val.0);
-                    }
+                if self.indicator_manager.create_instance_with_id(*instance_id, type_id) {
+                    self.indicator_manager.assign_window(*instance_id, Some(chart_id_val.0));
                     self.indicator_manager.calculate(*instance_id, &bars_snapshot);
                     // Re-add to pre_tag_indicator_ids for Object Tree visibility.
                     // indicator_manager borrows are released before this block.
@@ -8022,10 +8021,14 @@ impl ChartApp {
         match cmd {
             Command::ChangeSymbol { new_symbol, .. } => {
                 // Recalculate indicators for new bars
-                let (sym, bars) = self.panel_app.panel_grid.active_window()
-                    .map(|w| (w.symbol.clone(), w.bars.clone()))
+                let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
+                    .and_then(|leaf| {
+                        let cid = self.panel_app.panel_grid.chart_id_for_leaf(leaf)?;
+                        let bars = self.panel_app.panel_grid.window_for_leaf(leaf)?.bars.clone();
+                        Some((cid.0, bars))
+                    })
                     .unwrap_or_default();
-                self.indicator_manager.calculate_all_for_symbol(&sym, &bars);
+                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -8038,10 +8041,14 @@ impl ChartApp {
             }
             Command::ChangeTimeframe { new_timeframe, .. } => {
                 // Recalculate indicators for new bars
-                let (sym, bars) = self.panel_app.panel_grid.active_window()
-                    .map(|w| (w.symbol.clone(), w.bars.clone()))
+                let (active_cid, bars) = self.panel_app.panel_grid.docking().active_leaf()
+                    .and_then(|leaf| {
+                        let cid = self.panel_app.panel_grid.chart_id_for_leaf(leaf)?;
+                        let bars = self.panel_app.panel_grid.window_for_leaf(leaf)?.bars.clone();
+                        Some((cid.0, bars))
+                    })
                     .unwrap_or_default();
-                self.indicator_manager.calculate_all_for_symbol(&sym, &bars);
+                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -8289,7 +8296,7 @@ impl ChartApp {
                 order: inst.order,
                 visible: inst.visible,
                 locked: inst.locked,
-                symbol: inst.symbol.clone(),
+                symbol: String::new(),
                 window_id: inst.window_id,
                 origin_id: inst.origin_id,
                 signals_enabled: inst.signals_enabled,

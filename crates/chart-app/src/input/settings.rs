@@ -2604,10 +2604,9 @@ impl ChartApp {
                             }
                             // Recalculate
                             let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                            let symbol = self.panel_app.panel_grid.active_window()
-                                .map(|w| w.symbol.clone()).unwrap_or_default();
+                            let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                             if let Some(bars) = bars_opt {
-                                self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                                self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                             }
                         }
                         self.snapshot_indicator_settings_to_user_manager();
@@ -2645,10 +2644,9 @@ impl ChartApp {
                                     }
                                 }
                                 let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                                let symbol = self.panel_app.panel_grid.active_window()
-                                    .map(|w| w.symbol.clone()).unwrap_or_default();
+                                let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                                 if let Some(bars) = bars_opt {
-                                    self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                                 }
                             }
                             self.snapshot_indicator_settings_to_user_manager();
@@ -2670,10 +2668,9 @@ impl ChartApp {
                             inst.signals_enabled = enabled;
                         }
                         let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                        let symbol = self.panel_app.panel_grid.active_window()
-                            .map(|w| w.symbol.clone()).unwrap_or_default();
+                        let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                         if let Some(bars) = bars_opt {
-                            self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                            self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                         }
                         eprintln!("[ChartApp] Signals toggle: {}", enabled);
                     }
@@ -2708,10 +2705,9 @@ impl ChartApp {
                     inst.set_param(param_name, value);
                 }
                 let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                let symbol = self.panel_app.panel_grid.active_window()
-                    .map(|w| w.symbol.clone()).unwrap_or_default();
+                let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
-                    self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 }
             }
             eprintln!("[ChartApp] ind_settings param '{}' auto-committed: {}", param_name, text);
@@ -2820,10 +2816,9 @@ impl ChartApp {
                     }
                     // Recalculate.
                     let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                    let symbol = self.panel_app.panel_grid.active_window()
-                        .map(|w| w.symbol.clone()).unwrap_or_default();
+                    let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
-                        self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
@@ -2848,10 +2843,9 @@ impl ChartApp {
                     inst.set_param(&param_name, IndValue::String(value.clone()));
                 }
                 let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                let symbol = self.panel_app.panel_grid.active_window()
-                    .map(|w| w.symbol.clone()).unwrap_or_default();
+                let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                 if let Some(bars) = bars_opt {
-                    self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                    self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                 }
                 self.autosave_snapshot();
                 self.snapshot_indicator_settings_to_user_manager();
@@ -2873,10 +2867,9 @@ impl ChartApp {
                         inst.set_param(param_name, IndValue::Bool(!cur));
                     }
                     let bars_opt = self.panel_app.panel_grid.active_window().map(|w| w.bars.clone());
-                    let symbol = self.panel_app.panel_grid.active_window()
-                        .map(|w| w.symbol.clone()).unwrap_or_default();
+                    let active_cid = self.panel_app.panel_grid.active_chart_id().map(|c| c.0).unwrap_or(0);
                     if let Some(bars) = bars_opt {
-                        self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                        self.indicator_manager.calculate_all_for_window(active_cid, &bars);
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();

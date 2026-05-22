@@ -223,7 +223,7 @@ impl ChartApp {
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
                     for (wid, bars_for_window) in &matched_ids {
-                        self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
+                        self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                     }
 
                     // Only autosave and subscribe trades if at least one window matched.
@@ -272,7 +272,7 @@ impl ChartApp {
                         .map(|(cid, w)| (cid.0, w.bars.clone()))
                         .collect();
                     for (wid, bars_for_window) in &matched_ids {
-                        self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
+                        self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                     }
                     // Backfill wrote new bars into the bridge cache — mark for disk flush.
                     self.bars_cache_dirty = true;
@@ -334,7 +334,7 @@ impl ChartApp {
                             .map(|(cid, w)| (cid.0, w.bars.clone()))
                             .collect();
                         for (wid, bars_for_window) in &matched_ids {
-                            self.indicator_manager.calculate_for_window(&symbol, *wid, bars_for_window);
+                            self.indicator_manager.calculate_for_window(*wid, bars_for_window);
                         }
                     }
                     // Scroll-load wrote new bars into the bridge cache — mark for disk flush.
@@ -888,9 +888,10 @@ impl ChartApp {
                 for window_id in matching_ids {
                     let chart_id = ChartId(window_id);
                     if let Some(w) = self.panel_app.panel_grid.windows().get(&chart_id) {
-                        self.indicator_manager.calculate_for_window(symbol, window_id, &w.bars);
+                        self.indicator_manager.calculate_for_window(window_id, &w.bars);
                     }
                 }
+                let _ = symbol; // legacy — `calculate_for_window` filters by window_id, no longer by symbol
                 // Count one recalc per symbol (regardless of window count).
                 self.recalc_count += 1;
             }

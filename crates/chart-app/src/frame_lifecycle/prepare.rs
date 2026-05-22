@@ -443,25 +443,16 @@ impl ChartApp {
                     self.sidebar_state.object_tree_items.push(item);
                 }
 
-                // Indicators from indicator_manager for this window — all symbols, annotated by state.
+                // Indicators bound to this window — always Active, regardless of
+                // the symbol the window currently displays. Indicators follow the
+                // window, not the instrument.
                 let window_id = active_cid.map(|cid| cid.0);
                 if let Some(wid) = window_id {
                     let insts: Vec<_> = self.indicator_manager.instances_iter()
                         .filter(|i| i.window_id == Some(wid))
-                        .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked, i.symbol.clone()))
+                        .map(|i| (i.id, i.name.clone(), i.type_id.clone(), i.visible, i.locked))
                         .collect();
-                    for (id, name, type_id, visible, locked, inst_sym) in &insts {
-                        let is_active_sym = *inst_sym == active_window_sym;
-                        let item_state = if is_active_sym {
-                            sidebar_content::types::ObjectItemState::Active
-                        } else {
-                            sidebar_content::types::ObjectItemState::Memory
-                        };
-                        let memory_kind = if is_active_sym {
-                            sidebar_content::types::MemoryKind::None
-                        } else {
-                            sidebar_content::types::MemoryKind::WindowOtherKey
-                        };
+                    for (id, name, type_id, visible, locked) in &insts {
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             *id,
                             name,
@@ -470,9 +461,9 @@ impl ChartApp {
                         )
                         .with_visible(*visible)
                         .with_locked(*locked)
-                        .with_key(inst_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(item_state)
-                        .with_memory_kind(memory_kind);
+                        .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(sidebar_content::types::ObjectItemState::Active)
+                        .with_memory_kind(sidebar_content::types::MemoryKind::None);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }

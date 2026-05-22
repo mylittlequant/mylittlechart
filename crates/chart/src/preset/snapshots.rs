@@ -332,7 +332,11 @@ pub struct IndicatorSnapshot {
     pub visible: bool,
     /// Whether the indicator is locked (no editing).
     pub locked: bool,
-    /// Symbol the indicator is bound to.
+    /// Legacy: symbol the indicator was bound to.
+    /// Indicators are now bound to a *window*, not an instrument — this field
+    /// is preserved on disk for backwards-compatible profile loading but is
+    /// ignored at restore time.
+    #[serde(default, skip_serializing)]
     pub symbol: String,
     /// Window ID (for multi-window support).
     pub window_id: Option<u64>,

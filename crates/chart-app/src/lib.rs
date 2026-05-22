@@ -2181,9 +2181,10 @@ impl ChartApp {
         for window_id in matching_ids {
             let chart_id = ChartId(window_id);
             if let Some(w) = self.panel_app.panel_grid.windows().get(&chart_id) {
-                self.indicator_manager.calculate_for_window(symbol, window_id, &w.bars);
+                self.indicator_manager.calculate_for_window(window_id, &w.bars);
             }
         }
+        let _ = symbol; // legacy — recalc filters by window_id, not symbol
         self.recalc_count += 1;
         self.sync_sub_panes_from_manager();
     }

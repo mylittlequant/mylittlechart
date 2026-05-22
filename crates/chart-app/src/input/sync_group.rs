@@ -1280,11 +1280,6 @@ impl ChartApp {
         }
 
         for &(leaf_id, chart_id) in new_leaf_chart_ids {
-            let symbol = self.panel_app.panel_grid
-                .window_for_leaf(leaf_id)
-                .map(|w| w.symbol.clone())
-                .unwrap_or_default();
-
             for (type_id, name) in &configs {
                 // Check if this window already has this indicator type.
                 let already_has = self.indicator_manager.instances_iter()
@@ -1293,10 +1288,8 @@ impl ChartApp {
                     continue;
                 }
 
-                if let Some(new_id) = self.indicator_manager.create_instance(type_id, &symbol) {
-                    if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
-                        inst.window_id = Some(chart_id.0);
-                    }
+                if let Some(new_id) = self.indicator_manager.create_instance(type_id) {
+                    self.indicator_manager.assign_window(new_id, Some(chart_id.0));
                     eprintln!(
                         "[TagManager] Split sync: created indicator '{}' (id={}) for chart {:?}",
                         name, new_id, chart_id
@@ -1309,7 +1302,7 @@ impl ChartApp {
                 .window_for_leaf(leaf_id)
                 .map(|w| w.bars.clone());
             if let Some(bars) = bars {
-                self.indicator_manager.calculate_all_for_symbol(&symbol, &bars);
+                self.indicator_manager.calculate_all_for_window(chart_id.0, &bars);
             }
         }
         self.sync_sub_panes_from_manager();
@@ -1334,22 +1327,19 @@ impl ChartApp {
             }
         }
 
-        // Collect peer chart_ids and their symbols (excluding source).
+        // Collect peer chart_ids (excluding source). Symbol no longer matters
+        // — each peer recalculates indicators against its own bars.
         let source_chart_id = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf);
-        let peer_info: Vec<(zengeld_chart::ChartId, String)> = self.panel_app.tag_manager
+        let peer_cids: Vec<zengeld_chart::ChartId> = self.panel_app.tag_manager
             .chart_members(group_id)
             .into_iter()
             .filter(|&cid| Some(cid) != source_chart_id)
-            .filter_map(|cid| {
-                self.panel_app.panel_grid.windows().get(&cid)
-                    .map(|w| (cid, w.symbol.clone()))
-            })
             .collect();
 
-        for (peer_cid, peer_symbol) in peer_info {
-            if let Some(new_id) = self.indicator_manager.create_instance(type_id, &peer_symbol) {
+        for peer_cid in peer_cids {
+            if let Some(new_id) = self.indicator_manager.create_instance(type_id) {
+                self.indicator_manager.assign_window(new_id, Some(peer_cid.0));
                 if let Some(inst) = self.indicator_manager.get_instance_mut(new_id) {
-                    inst.window_id = Some(peer_cid.0);
                     inst.origin_id = None; // It's a group-managed indicator, not a clone.
                 }
                 // Calculate with peer's bars.
@@ -1357,7 +1347,7 @@ impl ChartApp {
                     .windows().get(&peer_cid)
                     .map(|w| w.bars.clone());
                 if let Some(bars) = bars {
-                    self.indicator_manager.calculate_all_for_symbol(&peer_symbol, &bars);
+                    self.indicator_manager.calculate_all_for_window(peer_cid.0, &bars);
                 }
                 eprintln!(
                     "[TagManager] Synced indicator '{}' (id={}) to peer chart {:?}",

@@ -358,8 +358,6 @@ pub struct IndicatorInstance {
     pub locked: bool,
     /// Timeframe visibility config (same as primitives)
     pub timeframe_visibility: Option<zengeld_chart::drawing::TimeframeVisibilityConfig>,
-    /// Symbol this indicator is on
-    pub symbol: String,
     /// Pane index (0 = main chart, 1+ = separate panes)
     pub pane: usize,
     /// Order within pane
@@ -406,7 +404,7 @@ impl Default for OutputConfig {
 
 impl IndicatorInstance {
     /// Create a new indicator instance
-    pub fn new(id: u64, definition: &IndicatorDefinition, symbol: &str) -> Self {
+    pub fn new(id: u64, definition: &IndicatorDefinition) -> Self {
         let mut params = HashMap::new();
         for param in &definition.params {
             params.insert(param.name.clone(), param.default_value.clone());
@@ -426,7 +424,6 @@ impl IndicatorInstance {
             visible: true,
             locked: false,
             timeframe_visibility: None, // None = visible on all timeframes
-            symbol: symbol.to_string(),
             pane: if definition.overlay { 0 } else { 1 },
             order: 0,
             values: Arc::new(HashMap::new()),
@@ -536,8 +533,10 @@ pub struct IndicatorManager {
     definitions: HashMap<String, IndicatorDefinition>,
     /// Active indicator instances
     instances: HashMap<u64, IndicatorInstance>,
-    /// Instances by symbol
-    by_symbol: HashMap<String, Vec<u64>>,
+    /// Instances by window_id. Instances with `window_id = None` (legacy/unscoped)
+    /// are indexed under window_id key 0 — they only show up when the manager is
+    /// queried in legacy mode (current_render_window_id = None).
+    by_window_id: HashMap<u64, Vec<u64>>,
     /// Next instance ID
     next_id: u64,
     /// Transient: set before a render call to scope queries to a specific window.
@@ -583,7 +582,7 @@ impl IndicatorManager {
         let mut manager = Self {
             definitions: HashMap::new(),
             instances: HashMap::new(),
-            by_symbol: HashMap::new(),
+            by_window_id: HashMap::new(),
             next_id: 1,
             current_render_window_id: Cell::new(None),
             recalc_mode: RecalcMode::default(),
@@ -605,7 +604,7 @@ impl IndicatorManager {
     /// to be rebuilt after a clear.
     pub fn clear_all(&mut self) {
         self.instances.clear();
-        self.by_symbol.clear();
+        self.by_window_id.clear();
         self.next_id = 1;
         self.current_render_window_id.set(None);
         self.dirty_symbols.clear();
@@ -651,26 +650,26 @@ impl IndicatorManager {
             .collect()
     }
 
-    /// Create a new indicator instance
-    pub fn create_instance(&mut self, type_id: &str, symbol: &str) -> Option<u64> {
+    /// Create a new indicator instance. `window_id = None` keeps the instance
+    /// unscoped (legacy / single-window).  Caller usually follows up with
+    /// `assign_window` to bind it to a window — until then it lives in the
+    /// "no-window" bucket (key 0).
+    pub fn create_instance(&mut self, type_id: &str) -> Option<u64> {
         let definition = self.definitions.get(type_id)?.clone();
         let id = self.next_id;
         self.next_id += 1;
 
-        let instance = IndicatorInstance::new(id, &definition, symbol);
+        let instance = IndicatorInstance::new(id, &definition);
 
         self.instances.insert(id, instance);
-        self.by_symbol
-            .entry(symbol.to_string())
-            .or_default()
-            .push(id);
+        self.by_window_id.entry(0).or_default().push(id);
 
         Some(id)
     }
 
     /// Create instance with a specific ID (for undo/redo)
     /// Returns true if created successfully, false if definition not found or ID already exists
-    pub fn create_instance_with_id(&mut self, id: u64, type_id: &str, symbol: &str) -> bool {
+    pub fn create_instance_with_id(&mut self, id: u64, type_id: &str) -> bool {
         // Check if ID already exists
         if self.instances.contains_key(&id) {
             return false;
@@ -681,13 +680,10 @@ impl IndicatorManager {
             None => return false,
         };
 
-        let instance = IndicatorInstance::new(id, &definition, symbol);
+        let instance = IndicatorInstance::new(id, &definition);
 
         self.instances.insert(id, instance);
-        self.by_symbol
-            .entry(symbol.to_string())
-            .or_default()
-            .push(id);
+        self.by_window_id.entry(0).or_default().push(id);
 
         // Update next_id if needed
         if id >= self.next_id {
@@ -697,10 +693,37 @@ impl IndicatorManager {
         true
     }
 
+    /// Bind / rebind an existing indicator instance to a window.
+    /// Updates `instance.window_id` and the `by_window_id` index so future
+    /// queries route the instance to the correct bucket.
+    pub fn assign_window(&mut self, id: u64, window_id: Option<u64>) {
+        let prev = match self.instances.get(&id) {
+            Some(inst) => inst.window_id,
+            None => return,
+        };
+        let prev_key = prev.unwrap_or(0);
+        let new_key = window_id.unwrap_or(0);
+        if prev_key == new_key {
+            // Still update the field in case window_id changed Some↔None at same numeric value (rare).
+            if let Some(inst) = self.instances.get_mut(&id) {
+                inst.window_id = window_id;
+            }
+            return;
+        }
+        if let Some(ids) = self.by_window_id.get_mut(&prev_key) {
+            ids.retain(|&i| i != id);
+        }
+        self.by_window_id.entry(new_key).or_default().push(id);
+        if let Some(inst) = self.instances.get_mut(&id) {
+            inst.window_id = window_id;
+        }
+    }
+
     /// Remove an instance
     pub fn remove_instance(&mut self, id: u64) -> Option<IndicatorInstance> {
         if let Some(instance) = self.instances.remove(&id) {
-            if let Some(ids) = self.by_symbol.get_mut(&instance.symbol) {
+            let key = instance.window_id.unwrap_or(0);
+            if let Some(ids) = self.by_window_id.get_mut(&key) {
                 ids.retain(|&i| i != id);
             }
             self.compute_caches.remove(&id);
@@ -726,7 +749,8 @@ impl IndicatorManager {
 
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                if let Some(ids) = self.by_symbol.get_mut(&inst.symbol) {
+                let key = inst.window_id.unwrap_or(0);
+                if let Some(ids) = self.by_window_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
@@ -749,7 +773,8 @@ impl IndicatorManager {
         let count = to_remove.len();
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                if let Some(ids) = self.by_symbol.get_mut(&inst.symbol) {
+                let key = inst.window_id.unwrap_or(0);
+                if let Some(ids) = self.by_window_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
@@ -771,7 +796,8 @@ impl IndicatorManager {
         let count = to_remove.len();
         for id in to_remove {
             if let Some(inst) = self.instances.remove(&id) {
-                if let Some(ids) = self.by_symbol.get_mut(&inst.symbol) {
+                let key = inst.window_id.unwrap_or(0);
+                if let Some(ids) = self.by_window_id.get_mut(&key) {
                     ids.retain(|&i| i != id);
                 }
             }
@@ -810,42 +836,36 @@ impl IndicatorManager {
         self.instances.get_mut(&id)
     }
 
-    /// Get all instances for a symbol.
-    /// When `current_render_window_id` is set, only returns instances that
-    /// belong strictly to that window — instances with `window_id = None` are
-    /// excluded so they do not bleed across tabs in split-window mode.
-    /// When `current_render_window_id` is `None` (single-window / legacy mode)
-    /// all instances for the symbol are returned for backwards compatibility.
-    pub fn get_instances_for_symbol(&self, symbol: &str) -> Vec<&IndicatorInstance> {
-        self.by_symbol
-            .get(symbol)
+    /// Get all instances scoped to the current render window
+    /// (`current_render_window_id`). The `symbol` parameter is ignored — indicators
+    /// are bound to a *window*, not an instrument, and follow whatever the
+    /// window happens to display at any moment. In legacy mode
+    /// (`current_render_window_id = None`) all instances are returned.
+    pub fn get_instances_for_symbol(&self, _symbol: &str) -> Vec<&IndicatorInstance> {
+        match self.current_render_window_id.get() {
+            Some(wid) => self.get_instances_for_window(wid),
+            None => self.instances.values().collect(),
+        }
+    }
+
+    /// Get indicator instances bound to a specific window.
+    /// Only returns instances whose `window_id` exactly matches `window_id`.
+    /// Instances with `window_id = None` are NOT included to prevent cross-tab leakage.
+    pub fn get_instances_for_window(&self, window_id: u64) -> Vec<&IndicatorInstance> {
+        self.by_window_id
+            .get(&window_id)
             .map(|ids| {
                 ids.iter()
                     .filter_map(|id| self.instances.get(id))
-                    .filter(|inst| match self.current_render_window_id.get() {
-                        // Strict match: only show instances that belong to this window.
-                        Some(wid) => inst.window_id == Some(wid),
-                        // No render window set — show all (single-window / legacy).
-                        None => true,
-                    })
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// Get indicator instances for a symbol scoped to a specific window.
-    /// Only returns instances whose `window_id` exactly matches `window_id`.
-    /// Instances with `window_id = None` are NOT included to prevent cross-tab leakage.
-    pub fn get_instances_for_symbol_in_window(&self, symbol: &str, window_id: u64) -> Vec<&IndicatorInstance> {
-        self.by_symbol
-            .get(symbol)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.instances.get(id))
-                    .filter(|inst| inst.window_id == Some(window_id))
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Legacy adapter — `symbol` is ignored, kept for call sites that still
+    /// pass it. Use [`get_instances_for_window`] in new code.
+    pub fn get_instances_for_symbol_in_window(&self, _symbol: &str, window_id: u64) -> Vec<&IndicatorInstance> {
+        self.get_instances_for_window(window_id)
     }
 
     /// Pick a distinct palette color for a new overlay indicator instance.
@@ -861,7 +881,7 @@ impl IndicatorManager {
     ///
     /// Returns `None` when no auto-color is needed (non-overlay, no existing
     /// instances of the same type, or the palette is exhausted).
-    pub fn pick_overlay_color(&self, type_id: &str, symbol: &str, window_id: u64) -> Option<String> {
+    pub fn pick_overlay_color(&self, type_id: &str, window_id: u64) -> Option<String> {
         /// Colors evenly spread across the visible spectrum, ordered so that
         /// successive duplicates contrast clearly with each other and with the
         /// typical default blue (#2196F3).
@@ -890,7 +910,7 @@ impl IndicatorManager {
         }
 
         let existing_same_type: Vec<&IndicatorInstance> = self
-            .get_instances_for_symbol_in_window(symbol, window_id)
+            .get_instances_for_window(window_id)
             .into_iter()
             .filter(|i| i.type_id == type_id)
             .collect();
@@ -1001,18 +1021,18 @@ impl IndicatorManager {
         }
     }
 
-    /// Calculate all instances for a symbol in parallel using rayon.
+    /// Calculate all instances bound to a window in parallel using rayon.
     ///
     /// Each indicator computation is independent (reads params, writes values),
     /// so all instances can be computed concurrently on the rayon thread pool.
     /// Results are written back sequentially after the parallel phase.
-    pub fn calculate_all_for_symbol(&mut self, symbol: &str, bars: &[zengeld_chart::Bar]) {
+    pub fn calculate_all_for_window(&mut self, window_id: u64, bars: &[zengeld_chart::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
 
         let ids: Vec<u64> = self
-            .by_symbol
-            .get(symbol)
+            .by_window_id
+            .get(&window_id)
             .cloned()
             .unwrap_or_default();
 
@@ -1088,14 +1108,14 @@ impl IndicatorManager {
     /// cases: first call, parameter changes, scroll prepend, last-bar update.
     ///
     /// Instances whose `window_id` is `None` (unscoped / legacy) are skipped;
-    /// they should be handled by `calculate_all_for_symbol` when appropriate.
-    pub fn calculate_for_window(&mut self, symbol: &str, window_id: u64, bars: &[zengeld_chart::Bar]) {
+    /// they should be handled by `calculate_all_for_window(0, …)` when appropriate.
+    pub fn calculate_for_window(&mut self, window_id: u64, bars: &[zengeld_chart::Bar]) {
         use rayon::prelude::*;
         use super::indicator_calculator::IndicatorCalculator;
 
         let ids: Vec<u64> = self
-            .by_symbol
-            .get(symbol)
+            .by_window_id
+            .get(&window_id)
             .cloned()
             .unwrap_or_default();
 
@@ -2049,11 +2069,10 @@ mod tests {
     fn test_create_instance() {
         let mut manager = IndicatorManager::new();
 
-        let id = manager.create_instance("sma", "BTCUSD").unwrap();
+        let id = manager.create_instance("sma").unwrap();
         let instance = manager.get_instance(id).unwrap();
 
         assert_eq!(instance.type_id, "sma");
-        assert_eq!(instance.symbol, "BTCUSD");
         assert!(instance.visible);
     }
 
@@ -2061,7 +2080,7 @@ mod tests {
     fn test_modify_params() {
         let mut manager = IndicatorManager::new();
 
-        let id = manager.create_instance("rsi", "AAPL").unwrap();
+        let id = manager.create_instance("rsi").unwrap();
         let instance = manager.get_instance_mut(id).unwrap();
 
         instance.set_param("period", IndicatorValue::Int(21));
@@ -2112,7 +2131,7 @@ mod tests {
     fn test_instance_title() {
         let mut manager = IndicatorManager::new();
 
-        let id = manager.create_instance("sma", "TEST").unwrap();
+        let id = manager.create_instance("sma").unwrap();
         let instance = manager.get_instance(id).unwrap();
 
         // Title format depends on params from catalog
@@ -2124,7 +2143,7 @@ mod tests {
         let mut manager = IndicatorManager::new();
 
         // Create RSI instance
-        let id = manager.create_instance("rsi", "TEST").unwrap();
+        let id = manager.create_instance("rsi").unwrap();
 
         // Create test bars (using zengeld_chart::Bar which has `timestamp`)
         let bars: Vec<zengeld_chart::Bar> = (0..100).map(|i| zengeld_chart::Bar {

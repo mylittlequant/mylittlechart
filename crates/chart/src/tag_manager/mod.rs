@@ -70,8 +70,14 @@ impl Default for SyncFlags {
 
 /// Configuration for an indicator that belongs to a sync group.
 ///
-/// All windows in the group share these configs so that adding an indicator
-/// to one window can optionally propagate it to peers.
+/// Bound to the *group* (its windows), NOT to an instrument. Each peer window
+/// recalculates the indicator against whatever bars its current symbol
+/// produces — switching symbol/exchange/account_type does not migrate the
+/// indicator.
+///
+/// Legacy `symbol` / `exchange` / `account_type` fields are kept on disk via
+/// `#[serde(default)]` for backwards-compatible profile loading, but they are
+/// never read by runtime code.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndicatorGroupConfig {
     pub id: u64,
@@ -81,13 +87,15 @@ pub struct IndicatorGroupConfig {
     pub params: std::collections::HashMap<String, String>,
     pub pane: u32,
     pub visible: bool,
-    /// The symbol this indicator was created for.
+    /// Legacy: symbol this indicator was created for. Unused at runtime —
+    /// indicators are window-scoped, not symbol-scoped.
+    #[serde(default, skip_serializing)]
     pub symbol: String,
-    /// Exchange this indicator was created for (e.g. `"binance"`).
-    #[serde(default)]
+    /// Legacy: exchange. Unused at runtime.
+    #[serde(default, skip_serializing)]
     pub exchange: String,
-    /// Account type label this indicator was created for (e.g. `"S"`, `"F"`).
-    #[serde(default)]
+    /// Legacy: account type. Unused at runtime.
+    #[serde(default, skip_serializing)]
     pub account_type: String,
 }
 
@@ -575,9 +583,6 @@ impl TagManager {
         type_id: &str,
         name: &str,
         pane: u32,
-        symbol: &str,
-        exchange: &str,
-        account_type: &str,
     ) -> Result<u64, TagManagerError> {
         let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
@@ -598,9 +603,9 @@ impl TagManager {
             params: std::collections::HashMap::new(),
             pane,
             visible: true,
-            symbol: symbol.to_string(),
-            exchange: exchange.to_string(),
-            account_type: account_type.to_string(),
+            symbol: String::new(),
+            exchange: String::new(),
+            account_type: String::new(),
         });
         Ok(config_id)
     }

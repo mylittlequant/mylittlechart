@@ -83,7 +83,7 @@ impl App<'_> {
 
                     let indicators: Vec<IndicatorSummary> = pw.chart.indicator_manager
                         .instances_iter()
-                        .filter(|inst| inst.symbol == cw.symbol)
+                        .filter(|inst| inst.window_id == Some(cw.id.0))
                         .map(|inst| IndicatorSummary {
                             id: inst.id,
                             type_id: inst.type_id.clone(),
@@ -161,6 +161,16 @@ impl App<'_> {
         let mut snapshot = IndicatorSnapshot::default();
 
         for pw in self.windows.values() {
+            // Map chart_id → symbol for this window so we can attribute
+            // each indicator instance to whatever its window currently displays.
+            let chart_symbols: std::collections::HashMap<u64, String> = pw
+                .chart
+                .panel_app
+                .panel_grid
+                .windows()
+                .iter()
+                .map(|(cid, cw)| (cid.0, cw.symbol.clone()))
+                .collect();
             for inst in pw.chart.indicator_manager.instances_iter() {
                 // Convert params: IndicatorParamValue → serde_json::Value
                 let params: std::collections::HashMap<String, serde_json::Value> = inst
@@ -190,11 +200,15 @@ impl App<'_> {
                     })
                     .collect();
 
+                let resolved_symbol = inst
+                    .window_id
+                    .and_then(|w| chart_symbols.get(&w).cloned())
+                    .unwrap_or_default();
                 let instance_snap = IndicatorInstanceSnapshot {
                     id: inst.id,
                     type_id: inst.type_id.clone(),
                     type_name: inst.name.clone(),
-                    symbol: inst.symbol.clone(),
+                    symbol: resolved_symbol.clone(),
                     window_id: inst.window_id,
                     params,
                     outputs,
@@ -202,7 +216,7 @@ impl App<'_> {
 
                 snapshot
                     .symbols
-                    .entry(inst.symbol.clone())
+                    .entry(resolved_symbol)
                     .or_default()
                     .push(instance_snap);
             }
