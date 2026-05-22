@@ -83,6 +83,12 @@ pub struct IndicatorGroupConfig {
     pub visible: bool,
     /// The symbol this indicator was created for.
     pub symbol: String,
+    /// Exchange this indicator was created for (e.g. `"binance"`).
+    #[serde(default)]
+    pub exchange: String,
+    /// Account type label this indicator was created for (e.g. `"S"`, `"F"`).
+    #[serde(default)]
+    pub account_type: String,
 }
 
 // =============================================================================
@@ -570,6 +576,8 @@ impl TagManager {
         name: &str,
         pane: u32,
         symbol: &str,
+        exchange: &str,
+        account_type: &str,
     ) -> Result<u64, TagManagerError> {
         let member = SyncMemberId::Chart(chart_id.0);
         let group_id = self
@@ -591,6 +599,8 @@ impl TagManager {
             pane,
             visible: true,
             symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            account_type: account_type.to_string(),
         });
         Ok(config_id)
     }

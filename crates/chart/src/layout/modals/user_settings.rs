@@ -10,6 +10,7 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
+use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
@@ -1324,9 +1325,11 @@ fn render_server_tab(
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
+    // Server tab content is short (status row + endpoint info), no scroll needed.
+    let no_scroll = ScrollState::default();
     let container = ScrollableContainer::new(
         viewport_rect,
-        &state.server_keys_scroll,
+        &no_scroll,
         None,
     );
     container.begin(ctx);
@@ -1403,20 +1406,28 @@ fn render_server_tab(
     ctx.fill_text(&status_text, dot_cx + dot_r + 6.0, dot_cy);
     cy += row_h + 16.0;
 
-    // ── Section: API KEYS ─────────────────────────────────────────────────────
-    // This unified section replaces the old "API KEY" + "MANAGED KEYS" sections.
-    let bottom = render_local_agent_keys_section(
-        ctx,
+    // ── Access info (replaces the old API KEYS section) ──────────────────────
+    // The OSS build serves the Agent API openly on 127.0.0.1, so there are no
+    // user-managed keys. Tell the user where the API is reachable instead.
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(
+        "Open access on 127.0.0.1 — no authentication required.",
         x,
         cy,
-        available_w,
-        state,
-        toolbar_theme,
-        frame_theme,
-        input_coordinator,
-        layer_id,
-        result,
     );
+    cy += 18.0;
+    ctx.fill_text(
+        &format!("Endpoint: http://127.0.0.1:{}/", state.server_port),
+        x,
+        cy,
+    );
+    let bottom = cy + 18.0;
+    // Silence the now-unused parameter warning.
+    let _ = frame_theme;
+    let _ = available_w;
 
     let total_content_h = bottom - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
@@ -1453,320 +1464,6 @@ fn render_server_tab(
     }
 }
 
-/// Render the unified API KEYS section:
-///   1. "New key" row (label input + tier toggle + Create button)
-///   2. "Created key" one-time reveal box (if last_created_key is Some)
-///   3. "Registered keys" scrollable list with Delete buttons
-#[allow(clippy::too_many_arguments)]
-fn render_local_agent_keys_section(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    y: f64,
-    available_w: f64,
-    state: &UserSettingsState,
-    toolbar_theme: &ToolbarTheme,
-    frame_theme: &FrameTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) -> f64 {
-    let row_h = 24.0;
-    let section_gap = 18.0;
-
-    // Section header
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("API KEYS", x, y);
-
-    let mut cursor_y = y + section_gap;
-
-    // ── "New key" sub-label ──────────────────────────────────────────────────
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("New key:", x, cursor_y);
-    cursor_y += 16.0;
-
-    // ── Create form row ───────────────────────────────────────────────────────
-    let form_row_h = 26.0;
-    let tier_btn_w = 84.0;
-    let create_btn_w = 64.0;
-    let input_gap = 6.0;
-    let label_input_w = available_w - tier_btn_w - create_btn_w - input_gap * 2.0;
-
-    // Label text input box
-    let label_input_x = x;
-    let is_label_focused = state.new_key_label_focused;
-
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rounded_rect(label_input_x, cursor_y, label_input_w, form_row_h, 4.0);
-    let border_color = if is_label_focused {
-        &toolbar_theme.accent
-    } else {
-        &toolbar_theme.separator
-    };
-    ctx.set_stroke_color(border_color);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(label_input_x, cursor_y, label_input_w, form_row_h, 4.0);
-
-    if state.new_key_label.is_empty() && !is_label_focused {
-        ctx.set_fill_color(&toolbar_theme.item_text_muted);
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Label…", label_input_x + 6.0, cursor_y + form_row_h / 2.0);
-    } else {
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            &state.new_key_label,
-            label_input_x + 6.0,
-            cursor_y + form_row_h / 2.0,
-        );
-    }
-
-    let label_input_rect = WidgetRect::new(label_input_x, cursor_y, label_input_w, form_row_h);
-    result.content_items.push(("server_key_label_input".to_string(), label_input_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:server_key_label_input",
-        uzor::types::Rect::new(label_input_x, cursor_y, label_input_w, form_row_h),
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    // Tier toggle button (read_only / read_write)
-    let tier_btn_x = label_input_x + label_input_w + input_gap;
-    let tier_label = match state.new_key_tier.as_str() {
-        "read_write" => "read-write",
-        "admin" => "admin",
-        _ => "read-only",
-    };
-    let tier_color = match state.new_key_tier.as_str() {
-        "read_write" => "#2196f3",
-        "admin" => "#e74c3c",
-        _ => "#26a69a",
-    };
-    ctx.set_stroke_color(tier_color);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(tier_btn_x, cursor_y, tier_btn_w, form_row_h, 4.0);
-    ctx.set_fill_color(tier_color);
-    ctx.set_font("10px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(tier_label, tier_btn_x + tier_btn_w / 2.0, cursor_y + form_row_h / 2.0);
-
-    let tier_rect = WidgetRect::new(tier_btn_x, cursor_y, tier_btn_w, form_row_h);
-    result.content_items.push(("server_key_tier_toggle".to_string(), tier_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:server_key_tier_toggle",
-        uzor::types::Rect::new(tier_btn_x, cursor_y, tier_btn_w, form_row_h),
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    // Create button
-    let create_btn_x = tier_btn_x + tier_btn_w + input_gap;
-    let label_is_empty = state.new_key_label.trim().is_empty();
-    let create_color = if label_is_empty {
-        &toolbar_theme.item_text_muted
-    } else {
-        &toolbar_theme.accent
-    };
-    ctx.set_stroke_color(create_color);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(create_btn_x, cursor_y, create_btn_w, form_row_h, 4.0);
-    ctx.set_fill_color(create_color);
-    ctx.set_font("11px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(
-        "Create",
-        create_btn_x + create_btn_w / 2.0,
-        cursor_y + form_row_h / 2.0,
-    );
-
-    let create_rect = WidgetRect::new(create_btn_x, cursor_y, create_btn_w, form_row_h);
-    result.content_items.push(("server_key_create".to_string(), create_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:server_key_create",
-        uzor::types::Rect::new(create_btn_x, cursor_y, create_btn_w, form_row_h),
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    cursor_y += form_row_h + 10.0;
-
-    // ── Last-created key reveal box ───────────────────────────────────────────
-    if let Some(ref raw_key) = state.last_created_key {
-        let box_h = 52.0;
-        ctx.set_fill_color("#0d2a1a");
-        ctx.fill_rounded_rect(x, cursor_y, available_w, box_h, 4.0);
-        ctx.set_stroke_color("#26a69a");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cursor_y, available_w, box_h, 4.0);
-
-        ctx.set_fill_color("#26a69a");
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(
-            "Copy now — won't be shown again:",
-            x + 8.0,
-            cursor_y + 6.0,
-        );
-
-        // Show full raw key in monospace (it's already visible in the box)
-        let display = if raw_key.len() > 32 {
-            format!("{}…", &raw_key[..32])
-        } else {
-            raw_key.clone()
-        };
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_font("11px monospace");
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&display, x + 8.0, cursor_y + 22.0);
-
-        // Copy button — right side, vertically centered
-        let copy_w = 56.0;
-        let copy_x = x + available_w - copy_w - 4.0;
-        let copy_y = cursor_y + (box_h - row_h) / 2.0;
-        ctx.set_stroke_color("#26a69a");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(copy_x, copy_y, copy_w, row_h, 4.0);
-        ctx.set_fill_color("#26a69a");
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Copy", copy_x + copy_w / 2.0, copy_y + row_h / 2.0);
-
-        let copy_rect = WidgetRect::new(copy_x, copy_y, copy_w, row_h);
-        result.content_items.push(("server_key_copy_new".to_string(), copy_rect));
-        input_coordinator.register_on_layer(
-            "user_settings:server_key_copy_new",
-            uzor::types::Rect::new(copy_x, copy_y, copy_w, row_h),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-
-        cursor_y += box_h + 10.0;
-    }
-
-    // ── "Registered keys" separator + label ──────────────────────────────────
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x, cursor_y + 7.0);
-    ctx.line_to(x + available_w, cursor_y + 7.0);
-    ctx.stroke();
-
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Registered keys", x, cursor_y + 7.0);
-    cursor_y += 20.0;
-
-    // ── Keys list ─────────────────────────────────────────────────────────────
-    // The outer tab ScrollableContainer handles clipping and scrolling.
-    let item_h = 28.0;
-    let num_keys = state.local_agent_keys_ui.len();
-
-    if state.local_agent_keys_ui.is_empty() {
-        ctx.set_fill_color(&toolbar_theme.item_text_muted);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No keys yet.", x, cursor_y + row_h / 2.0);
-        cursor_y += row_h + 4.0;
-    } else {
-        for (idx, key_info) in state.local_agent_keys_ui.iter().enumerate() {
-            let item_y = cursor_y + idx as f64 * (item_h + 4.0);
-            let delete_btn_w = 24.0;
-            let delete_btn_x = x + available_w - delete_btn_w;
-
-            // Row hover highlight
-            let item_id = format!("server_key_row_{}", key_info.label);
-            let is_hovered = state.hovered_item_id.as_deref() == Some(&item_id);
-            if is_hovered {
-                ctx.set_fill_color(&frame_theme.toolbar_bg);
-                ctx.fill_rounded_rect(x, item_y, available_w, item_h, 2.0);
-            }
-
-            // Tier badge
-            let badge_color = match key_info.tier.as_str() {
-                "read_write" => "#2196f3",
-                "admin" => "#ef5350",
-                _ => "#26a69a",
-            };
-            let badge_w = 72.0;
-            let badge_h = 18.0;
-            let badge_y = item_y + (item_h - badge_h) / 2.0;
-            ctx.set_fill_color(badge_color);
-            ctx.fill_rounded_rect(x, badge_y, badge_w, badge_h, 9.0);
-            ctx.set_fill_color("#ffffff");
-            ctx.set_font("10px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            let tier_label = match key_info.tier.as_str() {
-                "read_write" => "read-write",
-                "admin" => "admin",
-                _ => "read-only",
-            };
-            ctx.fill_text(tier_label, x + badge_w / 2.0, badge_y + badge_h / 2.0);
-
-            // Label text (truncate if needed)
-            ctx.set_fill_color(&toolbar_theme.item_text);
-            ctx.set_font("12px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            let label_x = x + badge_w + 8.0;
-            let label_max_w = delete_btn_x - label_x - 4.0;
-            let display_label = if ctx.measure_text(&key_info.label) > label_max_w {
-                let mut truncated = key_info.label.clone();
-                while !truncated.is_empty()
-                    && ctx.measure_text(&format!("{}…", truncated)) > label_max_w
-                {
-                    truncated.pop();
-                }
-                format!("{}…", truncated)
-            } else {
-                key_info.label.clone()
-            };
-            ctx.fill_text(&display_label, label_x, item_y + item_h / 2.0);
-
-            // Delete [×] button — keyed by label (not index) for robustness
-            let del_btn_y = item_y + (item_h - row_h) / 2.0;
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(delete_btn_x, del_btn_y, delete_btn_w, row_h, 4.0);
-            ctx.set_fill_color("#ef5350");
-            ctx.set_font("12px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("×", delete_btn_x + delete_btn_w / 2.0, item_y + item_h / 2.0);
-
-            // Register hit zone using the key's label (not index)
-            let del_item_id = format!("server_key_delete_{}", key_info.label);
-            let del_rect = WidgetRect::new(delete_btn_x, del_btn_y, delete_btn_w, row_h);
-            result.content_items.push((del_item_id.clone(), del_rect));
-            input_coordinator.register_on_layer(
-                format!("user_settings:{}", del_item_id).as_str(),
-                uzor::types::Rect::new(delete_btn_x, del_btn_y, delete_btn_w, row_h),
-                Sense::CLICK | Sense::HOVER,
-                layer_id,
-            );
-        }
-        cursor_y += num_keys as f64 * (item_h + 4.0);
-    }
-
-    // Return the bottom of the last rendered element.
-    cursor_y
-}
 
 // =============================================================================
 // Mode-transition confirmation dialogs

@@ -412,9 +412,6 @@ pub use panel_app::{
 };
 pub use ui::toolbar_render::{ToolbarRect, ToolbarTheme, ToolbarRenderResult};
 pub use ui::dropdown::DropdownTheme;
-pub use ui::modal_settings::ManagedKeyInfo;
-/// New preferred name for the key display info type.
-pub use ui::modal_settings::ManagedKeyInfo as LocalAgentKeyInfo;
 
 // Demo Data (for testing - can be replaced with real API)
 pub use demo::{

@@ -3284,7 +3284,10 @@ impl UserSettingsTab {
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::General, Self::Sync, Self::Performance, Self::Server]
+        // `Sync` retained as a variant for serde back-compat but hidden
+        // from the tab strip — the cloud sync surface was removed in the
+        // OSS strip and the empty tab confuses users.
+        &[Self::General, Self::Performance, Self::Server]
     }
 
     pub fn from_id(s: &str) -> Option<Self> {
@@ -3335,22 +3338,6 @@ pub enum ProfileManagerPage {
 }
 
 
-/// Display info for a local agent CLI connector key shown in the key manager list.
-///
-/// Only metadata is stored here — the raw key is never shown after creation.
-#[derive(Debug, Clone)]
-pub struct ManagedKeyInfo {
-    /// Human-readable label chosen at creation.
-    pub label: String,
-    /// Tier string: `"read_only"`, `"read_write"`, or `"admin"`.
-    pub tier: String,
-    /// Optional agent identifier attached to this key.
-    pub agent_id: Option<String>,
-}
-
-/// Preferred new name for the key display info type.
-pub type LocalAgentKeyInfo = ManagedKeyInfo;
-
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
 pub struct UserSettingsState {
@@ -3383,26 +3370,12 @@ pub struct UserSettingsState {
     /// Current server status: "running", "stopped", "error".
     pub server_status: String,
 
-    // ── Key Manager ──────────────────────────────────────────────────────────
-    /// List of local agent CLI connector keys (metadata only — no raw key values).
-    /// Refreshed from AgentState each time the Server tab is opened or a
-    /// create/delete action completes.
-    pub local_agent_keys_ui: Vec<ManagedKeyInfo>,
-    /// Label text being typed for the new key creation form.
-    pub new_key_label: String,
-    /// Tier selected for the new key: `"read_only"` or `"read_write"`.
-    pub new_key_tier: String,
-    /// Raw key shown once immediately after creation. Cleared when the user
-    /// clicks Copy or closes the modal.
-    pub last_created_key: Option<String>,
-    /// Whether the new-key label input field is currently focused for typing.
-    pub new_key_label_focused: bool,
-    /// Scroll state for the registered keys list in the Server tab.
-    pub server_keys_scroll: ScrollState,
     /// Scroll state for the General tab content.
     pub general_tab_scroll: ScrollState,
     /// Scroll state for the Sync tab content.
     pub sync_tab_scroll: ScrollState,
+    /// Scroll state for the Server tab content.
+    pub server_tab_scroll: ScrollState,
     /// Scroll state for the Performance tab content.
     pub performance_tab_scroll: ScrollState,
 
@@ -3550,14 +3523,9 @@ impl Default for UserSettingsState {
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),
-            local_agent_keys_ui: Vec::new(),
-            new_key_label: String::new(),
-            new_key_tier: "read_only".to_string(),
-            last_created_key: None,
-            new_key_label_focused: false,
-            server_keys_scroll: ScrollState::default(),
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
+            server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,

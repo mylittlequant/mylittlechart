@@ -831,9 +831,9 @@ impl ChartApp {
                                 new_symbol: new_symbol_str.clone(),
                             });
                             eprintln!("[ChartApp] Recorded ChangeSymbol {} -> {}", previous_symbol, new_symbol_str);
-                            // Propagate new symbol to all leaves in the same sync group.
+                            // Propagate new symbol+exchange+account_type to all leaves in the same sync group.
                             if let Some(leaf) = active_leaf {
-                                self.propagate_symbol_to_sync_group(leaf, &new_symbol_str);
+                                self.propagate_symbol_to_sync_group(leaf, &new_symbol_str, resolved_exchange.as_str(), &search_at_label);
                             }
                         }
                         // Recalculate all indicators for the new symbol.
@@ -879,8 +879,8 @@ impl ChartApp {
                     }
                     OpenModal::IndicatorSearch => {
                         // Create indicator instance from catalog.
-                        let symbol = self.panel_app.panel_grid.active_window()
-                            .map(|w| w.symbol.clone())
+                        let (symbol, active_exchange, active_account_type) = self.panel_app.panel_grid.active_window()
+                            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                             .unwrap_or_default();
                         let type_id_str = item_id.to_string();
                         // Determine auto-color for overlay duplicates BEFORE create_instance
@@ -937,6 +937,8 @@ impl ChartApp {
                                                         pane: inst_pane,
                                                         visible: true,
                                                         symbol: symbol.clone(),
+                                                        exchange: active_exchange.clone(),
+                                                        account_type: active_account_type.clone(),
                                                     },
                                                 );
                                                 eprintln!(

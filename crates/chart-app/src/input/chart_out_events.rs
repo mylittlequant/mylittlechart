@@ -1680,14 +1680,14 @@ impl ChartApp {
                 } else {
                     eprintln!("[ChartApp] InternalToggleSyncSymbol: no active group");
                 }
-                // When sync is turned ON, immediately propagate active leaf's symbol to peers
+                // When sync is turned ON, immediately propagate active leaf's instrument key to peers
                 if newly_enabled {
                     if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                        let symbol = self.panel_app.panel_grid.active_window()
-                            .map(|w| w.symbol.clone())
+                        let (symbol, exchange, account_type) = self.panel_app.panel_grid.active_window()
+                            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                             .unwrap_or_default();
                         if !symbol.is_empty() {
-                            self.propagate_symbol_to_sync_group(leaf, &symbol);
+                            self.propagate_symbol_to_sync_group(leaf, &symbol, &exchange, &account_type);
                         }
                     }
                 }

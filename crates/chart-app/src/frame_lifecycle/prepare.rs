@@ -266,11 +266,20 @@ impl ChartApp {
                         let kind = p.kind();
                         let display = p.display_name().to_string();
                         let name = if display.is_empty() { data.type_id.as_str() } else { display.as_str() };
-                        // Group primitives inherit the window's exchange/account_type since
-                        // PrimitiveData has no exchange/account_type fields. If multi-exchange
-                        // groups are added in the future, PrimitiveData would need those fields.
+                        // Compare the full instrument key (symbol, exchange, account_type).
+                        // For primitives created before exchange/account_type fields existed,
+                        // exchange will be empty — fall back to symbol-only comparison so they
+                        // are not incorrectly shown as "other key".
                         let prim_sym = data.symbol.clone();
-                        let is_active_sym = prim_sym == active_window_sym;
+                        let prim_exchange = data.exchange.clone();
+                        let prim_account_type = data.account_type.clone();
+                        let is_active_sym = if prim_exchange.is_empty() {
+                            prim_sym == active_window_sym
+                        } else {
+                            prim_sym == active_window_sym
+                                && prim_exchange == active_window_exchange
+                                && prim_account_type == active_window_account_type
+                        };
                         let item_state = if is_active_sym {
                             sidebar_content::types::ObjectItemState::Active
                         } else {
@@ -309,27 +318,18 @@ impl ChartApp {
                             Some(inst) => (inst.id, inst.name.clone(), inst.type_id.clone(), inst.visible, inst.locked),
                             None => (cfg.id, cfg.name.clone(), cfg.type_id.clone(), cfg.visible, false),
                         };
-                        let cfg_sym = cfg.symbol.clone();
-                        let is_active_sym = cfg_sym == active_window_sym;
-                        let item_state = if is_active_sym {
-                            sidebar_content::types::ObjectItemState::Active
-                        } else {
-                            sidebar_content::types::ObjectItemState::Memory
-                        };
-                        let memory_kind = if is_active_sym {
-                            sidebar_content::types::MemoryKind::None
-                        } else {
-                            sidebar_content::types::MemoryKind::GroupIndicatorOtherKey
-                        };
+                        // Group indicators are shared across all windows in the group.
+                        // The active window is always in this group (tagged_group is its group),
+                        // so group indicators are always "Active" — no per-key comparison needed.
                         let item = sidebar_content::types::ObjectTreeItem::new(
                             id, &name, zengeld_chart::ObjectCategory::Indicator, &type_id,
                         )
                         .with_visible(visible)
                         .with_locked(locked)
                         .with_section("Group")
-                        .with_key(&cfg_sym, &active_window_exchange, &active_window_account_type)
-                        .with_item_state(item_state)
-                        .with_memory_kind(memory_kind);
+                        .with_key(&active_window_sym, &active_window_exchange, &active_window_account_type)
+                        .with_item_state(sidebar_content::types::ObjectItemState::Active)
+                        .with_memory_kind(sidebar_content::types::MemoryKind::None);
                         self.sidebar_state.object_tree_items.push(item);
                     }
                 }
@@ -404,14 +404,21 @@ impl ChartApp {
                             let data = p.data();
                             let kind = p.kind();
                             let display = p.display_name().to_string();
-                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
+                            (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone(), data.exchange.clone(), data.account_type.clone())
                         })
                         .collect())
                     .unwrap_or_default();
 
-                for (id, display, type_id, kind, visible, locked, stroke, prim_sym) in &local_prims {
+                for (id, display, type_id, kind, visible, locked, stroke, prim_sym, prim_exchange, prim_account_type) in &local_prims {
                     let name = if display.is_empty() { type_id.as_str() } else { display.as_str() };
-                    let is_active_sym = *prim_sym == active_window_sym;
+                    // Compare full instrument key; fall back to symbol-only for primitives without exchange (legacy).
+                    let is_active_sym = if prim_exchange.is_empty() {
+                        *prim_sym == active_window_sym
+                    } else {
+                        *prim_sym == active_window_sym
+                            && *prim_exchange == active_window_exchange
+                            && *prim_account_type == active_window_account_type
+                    };
                     let item_state = if is_active_sym {
                         sidebar_content::types::ObjectItemState::Active
                     } else {
@@ -422,13 +429,15 @@ impl ChartApp {
                     } else {
                         sidebar_content::types::MemoryKind::WindowOtherKey
                     };
+                    let key_exchange = if prim_exchange.is_empty() { &active_window_exchange } else { prim_exchange };
+                    let key_account_type = if prim_account_type.is_empty() { &active_window_account_type } else { prim_account_type };
                     let item = sidebar_content::types::ObjectTreeItem::new(
                         *id, name, prim_category(*kind), type_id,
                     )
                     .with_visible(*visible)
                     .with_locked(*locked)
                     .with_color(Some(stroke.clone()))
-                    .with_key(prim_sym, &active_window_exchange, &active_window_account_type)
+                    .with_key(prim_sym, key_exchange, key_account_type)
                     .with_item_state(item_state)
                     .with_memory_kind(memory_kind);
                     self.sidebar_state.object_tree_items.push(item);

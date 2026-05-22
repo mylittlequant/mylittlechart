@@ -1495,7 +1495,7 @@ impl ChartApp {
                     let scroll = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
                     scroll.start_drag(y);
@@ -2049,7 +2049,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
 
@@ -3221,7 +3221,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                        UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
 
@@ -3925,7 +3925,7 @@ impl ChartApp {
             let ended = try_end_scrollbar_drag(&mut [
                 &mut self.panel_app.user_settings_state.general_tab_scroll,
                 &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                &mut self.panel_app.user_settings_state.server_keys_scroll,
+                &mut self.panel_app.user_settings_state.server_tab_scroll,
                 &mut self.panel_app.user_settings_state.performance_tab_scroll,
             ]);
             if ended {
@@ -5056,7 +5056,7 @@ impl ChartApp {
                                 let scroll_state = match self.panel_app.user_settings_state.active_tab {
                                     UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                                     UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
-                                    UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_keys_scroll,
+                                    UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                                     UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                                 };
                                 let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
@@ -5973,40 +5973,6 @@ impl ChartApp {
                     let byte_idx = editing.text.char_indices().nth(editing.cursor).map(|(i, _)| i).unwrap_or(editing.text.len());
                     editing.text.insert(byte_idx, c);
                     editing.cursor += 1;
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        // Handle new API key label input in User Settings Server tab
-        if self.panel_app.user_settings_state.is_open
-            && self.panel_app.user_settings_state.new_key_label_focused
-        {
-            match ch {
-                '\r' | '\n' => {
-                    // Enter submits the create form if label is non-empty
-                    let label = self.panel_app.user_settings_state.new_key_label.trim().to_string();
-                    let tier = self.panel_app.user_settings_state.new_key_tier.clone();
-                    if !label.is_empty() {
-                        self.key_create_request = Some((label, tier));
-                        self.panel_app.user_settings_state.new_key_label.clear();
-                    }
-                    self.panel_app.user_settings_state.new_key_label_focused = false;
-                }
-                '\x1b' => {
-                    // Escape unfocuses without submitting
-                    self.panel_app.user_settings_state.new_key_label_focused = false;
-                }
-                '\x08' => {
-                    // Backspace
-                    let label = &mut self.panel_app.user_settings_state.new_key_label;
-                    if !label.is_empty() {
-                        label.pop();
-                    }
-                }
-                c if !c.is_control() => {
-                    self.panel_app.user_settings_state.new_key_label.push(c);
                 }
                 _ => {}
             }
@@ -8063,7 +8029,10 @@ impl ChartApp {
                 self.sync_sub_panes_from_manager();
                 // Propagate to sync group peers
                 if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    self.propagate_symbol_to_sync_group(leaf, new_symbol);
+                    let (exchange, account_type) = self.panel_app.panel_grid.active_window()
+                        .map(|w| (w.exchange.clone(), w.account_type.clone()))
+                        .unwrap_or_default();
+                    self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
                 }
                 self.autosave_snapshot();
             }

@@ -344,9 +344,10 @@ impl ChartApp {
                             self.bridge.ensure_connector(resolved_exchange);
                             self.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.panel_app.user_manager.profile.bar_count as usize), false);
                         }
-                        // Propagate the new symbol to all other windows in the same sync group.
+                        // Propagate the new symbol+exchange+account_type to all other windows
+                        // in the same sync group so the full instrument key is consistent.
                         if let Some(leaf) = active_leaf {
-                            self.propagate_symbol_to_sync_group(leaf, &symbol);
+                            self.propagate_symbol_to_sync_group(leaf, &symbol, &item_exchange, &item_account_type);
                         }
                         self.sidebar_data_dirty = true;
                         self.autosave_snapshot();
@@ -3532,44 +3533,6 @@ impl ChartApp {
                         !self.panel_app.user_settings_state.server_enabled;
                     self.server_enabled_changed = Some(self.panel_app.user_settings_state.server_enabled);
                     eprintln!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
-                }
-                "server_key_create" => {
-                    let label = self.panel_app.user_settings_state.new_key_label.trim().to_string();
-                    let tier = self.panel_app.user_settings_state.new_key_tier.clone();
-                    if !label.is_empty() {
-                        self.key_create_request = Some((label, tier));
-                        self.panel_app.user_settings_state.new_key_label.clear();
-                        self.panel_app.user_settings_state.new_key_label_focused = false;
-                    }
-                    eprintln!("[ChartApp] server_key_create requested");
-                }
-                "server_key_tier_toggle" => {
-                    let state = &mut self.panel_app.user_settings_state;
-                    state.new_key_tier = match state.new_key_tier.as_str() {
-                        "read_only" => "read_write".to_string(),
-                        "read_write" => "admin".to_string(),
-                        _ => "read_only".to_string(),
-                    };
-                    eprintln!("[ChartApp] server_key_tier_toggle: {}", state.new_key_tier);
-                }
-                "server_key_copy_new" => {
-                    if let Some(ref key) = self.panel_app.user_settings_state.last_created_key {
-                        self.clipboard_text = Some(key.clone());
-                        eprintln!("[ChartApp] new key copied to clipboard");
-                    }
-                    // Clear after copy so the reveal box disappears
-                    self.panel_app.user_settings_state.last_created_key = None;
-                }
-                "server_key_label_input" => {
-                    self.panel_app.user_settings_state.new_key_label_focused = true;
-                    eprintln!("[ChartApp] server_key_label_input focused");
-                }
-                rest if rest.starts_with("server_key_delete_") => {
-                    let label = rest.strip_prefix("server_key_delete_").unwrap_or("");
-                    if !label.is_empty() {
-                        self.key_delete_request = Some(label.to_string());
-                        eprintln!("[ChartApp] server_key_delete: {}", label);
-                    }
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 // Page order: 0=Welcome+Lang, 1=Theme, 2=Profile+Passphrase

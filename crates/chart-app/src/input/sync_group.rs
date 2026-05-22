@@ -240,8 +240,9 @@ impl ChartApp {
                 }
 
                 // Seed primitives into group (clone from stash).
-                let prim_symbol = self.panel_app.panel_grid.window_for_leaf(joining_leaf)
-                    .map(|w| w.symbol.clone())
+                let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
+                    .window_for_leaf(joining_leaf)
+                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid.window_for_leaf(joining_leaf)
@@ -252,7 +253,10 @@ impl ChartApp {
                         })
                         .unwrap_or_default();
                 for p in &mut source_prims {
-                    p.data_mut().symbol = prim_symbol.clone();
+                    let d = p.data_mut();
+                    d.symbol = prim_symbol.clone();
+                    d.exchange = prim_exchange.clone();
+                    d.account_type = prim_account_type.clone();
                 }
                 // Re-ID the group copies so they are globally unique.
                 // The stash retains the original IDs for restoration on leave.
@@ -264,8 +268,9 @@ impl ChartApp {
                 }
 
                 // Seed indicator configs.
-                let seed_symbol = self.panel_app.panel_grid.window_for_leaf(joining_leaf)
-                    .map(|w| w.symbol.clone())
+                let (seed_symbol, seed_exchange, seed_account_type) = self.panel_app.panel_grid
+                    .window_for_leaf(joining_leaf)
+                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
                     .indicator_manager
@@ -279,6 +284,8 @@ impl ChartApp {
                         pane: i.pane as u32,
                         visible: i.visible,
                         symbol: seed_symbol.clone(),
+                        exchange: seed_exchange.clone(),
+                        account_type: seed_account_type.clone(),
                     })
                     .collect();
                 // Sort by id to preserve original creation order (HashMap iteration is random).
@@ -550,9 +557,9 @@ impl ChartApp {
                 // Everything in the window at tag creation time becomes tag state.
 
                 // Primitives: clone source originals into the group.
-                let prim_sym = self.panel_app.panel_grid
+                let (prim_sym, prim_exch, prim_at) = self.panel_app.panel_grid
                     .window_for_leaf(new_leaves[0])
-                    .map(|w| w.symbol.clone())
+                    .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                     .unwrap_or_default();
                 let mut source_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                     self.panel_app.panel_grid
@@ -565,7 +572,10 @@ impl ChartApp {
                         })
                         .unwrap_or_default();
                 for p in &mut source_prims {
-                    p.data_mut().symbol = prim_sym.clone();
+                    let d = p.data_mut();
+                    d.symbol = prim_sym.clone();
+                    d.exchange = prim_exch.clone();
+                    d.account_type = prim_at.clone();
                 }
                 // Re-ID the group copies so they are globally unique.
                 // The source window's drawing_manager keeps the original IDs.
@@ -584,9 +594,9 @@ impl ChartApp {
 
                 // Indicators: snapshot source window's indicators into group configs.
                 if let Some(source_chart_id) = leaf_chart_ids.first().map(|(_, cid)| *cid) {
-                    let source_symbol = leaf_chart_ids.first()
+                    let (source_symbol, source_exchange, source_account_type) = leaf_chart_ids.first()
                         .and_then(|(lid, _)| self.panel_app.panel_grid.window_for_leaf(*lid))
-                        .map(|w| w.symbol.clone())
+                        .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
                         .unwrap_or_default();
                     let mut configs: Vec<zengeld_chart::tag_manager::IndicatorGroupConfig> = self
                         .indicator_manager
@@ -602,6 +612,8 @@ impl ChartApp {
                             pane: i.pane as u32,
                             visible: i.visible,
                             symbol: source_symbol.clone(),
+                            exchange: source_exchange.clone(),
+                            account_type: source_account_type.clone(),
                         })
                         .collect();
                     // Sort by id to preserve original creation order (HashMap iteration is random).
@@ -679,8 +691,15 @@ impl ChartApp {
     /// Propagate a symbol change to all leaves in the same sync color group.
     ///
     /// `source_leaf` is the leaf that already had its symbol changed.
-    /// All other leaves sharing the same color tag get the same symbol applied.
-    pub(super) fn propagate_symbol_to_sync_group(&mut self, source_leaf: zengeld_chart::LeafId, symbol: &str) {
+    /// All other leaves sharing the same color tag get the same symbol, exchange,
+    /// and account_type applied so the full instrument key is consistent.
+    pub(super) fn propagate_symbol_to_sync_group(
+        &mut self,
+        source_leaf: zengeld_chart::LeafId,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+    ) {
         let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
             .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
@@ -697,47 +716,51 @@ impl ChartApp {
             .map(|(&lid, _)| lid)
             .collect();
         let symbol_owned = symbol.to_string();
+        let exchange_owned = exchange.to_string();
+        let account_type_owned = account_type.to_string();
 
-        // Collect (exchange_string, old_symbol, timeframe, account_type) for each peer BEFORE mutating
-        // windows so we can call bridge.request_bars() after the window mutations.
-        let mut peer_requests: Vec<(String, String, zengeld_chart::state::Timeframe, String)> = Vec::new();
+        // Collect (old_symbol, old_exchange, old_account_type, timeframe) for each peer BEFORE
+        // mutating windows so we can restore drawings and request bars after the mutations.
+        let mut peer_info: Vec<(String, String, String, zengeld_chart::state::Timeframe)> = Vec::new();
         for leaf_id in &sync_leaves {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf(*leaf_id) {
-                peer_requests.push((
-                    window.exchange.clone(),
+                peer_info.push((
                     window.symbol.clone(),
-                    window.timeframe.clone(),
+                    window.exchange.clone(),
                     window.account_type.clone(),
+                    window.timeframe.clone(),
                 ));
             }
         }
 
-        // Apply the symbol change to each peer window directly, bypassing
-        // change_symbol() which uses NullDataProvider and always fails.
-        for (leaf_id, (old_exchange, old_symbol, _, old_account_type)) in sync_leaves.iter().zip(peer_requests.iter()) {
+        // Apply the full instrument key change (symbol + exchange + account_type) to each peer
+        // window directly, bypassing change_symbol() which uses NullDataProvider and always fails.
+        for (leaf_id, (old_symbol, old_exchange, old_account_type, _)) in sync_leaves.iter().zip(peer_info.iter()) {
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(*leaf_id) {
                 window.snapshot_drawings_for_symbol(old_symbol, old_exchange, old_account_type);
                 window.symbol = symbol_owned.clone();
+                window.exchange = exchange_owned.clone();
+                window.account_type = account_type_owned.clone();
                 window.drawing_manager.set_current_symbol_key(&window.symbol, &window.exchange, &window.account_type);
                 window.bars.clear();
                 window.viewport.bar_count = 0;
                 window.viewport.view_start = 0.0;
                 window.pending_symbol_load = true;
                 window.drawing_manager.clear_all_primitives();
-                window.restore_drawings_for_symbol(&symbol_owned, old_exchange, old_account_type);
+                window.restore_drawings_for_symbol(&symbol_owned, &exchange_owned, &account_type_owned);
                 window.update_title();
             }
         }
 
-        // Request fresh bars for each peer via the bridge.
+        // Request fresh bars for each peer via the bridge using the new exchange + account_type.
         let bar_count = self.panel_app.user_manager.profile.bar_count as usize;
-        for (exchange_str, _, timeframe, at_label) in peer_requests {
+        for (_, _, _, timeframe) in peer_info {
             if symbol_owned.is_empty() {
                 continue;
             }
             let resolved_exchange = self.exchange_symbols
                 .keys()
-                .find(|eid| eid.as_str() == exchange_str)
+                .find(|eid| eid.as_str() == exchange_owned)
                 .copied()
                 .unwrap_or(self.active_exchange);
             let eid_str = resolved_exchange.as_str();
@@ -748,7 +771,7 @@ impl ChartApp {
                 );
                 continue;
             }
-            let at = crate::account_type_from_label(&at_label);
+            let at = crate::account_type_from_label(&account_type_owned);
             self.bridge.ensure_connector(resolved_exchange);
             self.bridge.request_bars(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
             eprintln!(
@@ -1123,12 +1146,20 @@ impl ChartApp {
             }
         };
 
-        // Stamp the symbol on the primitive so per-symbol tracking works.
+        // Stamp the full instrument key (symbol, exchange, account_type) on the primitive
+        // so per-instrument tracking works correctly across multi-exchange groups.
         let mut prim = prim;
-        let prim_symbol = self.panel_app.panel_grid.windows().get(&chart_id)
-            .map(|w| w.symbol.clone())
+        let (prim_symbol, prim_exchange, prim_account_type) = self.panel_app.panel_grid
+            .windows()
+            .get(&chart_id)
+            .map(|w| (w.symbol.clone(), w.exchange.clone(), w.account_type.clone()))
             .unwrap_or_default();
-        prim.data_mut().symbol = prim_symbol;
+        {
+            let d = prim.data_mut();
+            d.symbol = prim_symbol;
+            d.exchange = prim_exchange;
+            d.account_type = prim_account_type;
+        }
 
         // Add the primitive to the TagManager group so all members share it.
         if let Some(group) = self.panel_app.tag_manager.group_mut(group_id) {

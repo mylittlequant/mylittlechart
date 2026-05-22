@@ -134,6 +134,12 @@ pub struct PrimitiveData {
     /// The symbol this primitive was created for.
     #[serde(default)]
     pub symbol: String,
+    /// Exchange this primitive was created for (e.g. `"binance"`).
+    #[serde(default)]
+    pub exchange: String,
+    /// Account type label this primitive was created for (e.g. `"S"`, `"F"`).
+    #[serde(default)]
+    pub account_type: String,
 }
 
 impl Default for PrimitiveData {
@@ -156,6 +162,8 @@ impl Default for PrimitiveData {
             point_timestamps: Vec::new(),
             origin_id: None,
             symbol: String::new(),
+            exchange: String::new(),
+            account_type: String::new(),
         }
     }
 }
