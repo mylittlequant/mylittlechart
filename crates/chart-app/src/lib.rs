@@ -175,7 +175,10 @@ pub struct ChartApp {
 
     /// Hit-zone results from last render (used for click dispatch)
     pub(crate) frame_result: Option<ChartModalRenderResult>,
-    pub(crate) scale_corner_zones: ScaleCornerHitZones,
+    /// Per-leaf scale-corner hit zones, populated each frame.
+    /// Single-window mode stores one entry for the active leaf;
+    /// split mode stores one entry per visible leaf.
+    pub(crate) scale_corner_zones_by_leaf: std::collections::HashMap<zengeld_chart::LeafId, ScaleCornerHitZones>,
 
     /// Search overlay render result from last frame (used for rect-based hit testing).
     pub(crate) search_modal_result: Option<ModalSearchResult>,
@@ -753,8 +756,8 @@ pub(crate) struct SplitSeparatorDragState {
 /// this struct to [`ChartApp::apply_render_output`] to persist the values.
 #[derive(Default)]
 pub struct RenderOutput {
-    /// Scale-corner hit zones computed during chart content rendering.
-    pub scale_corner_zones: ScaleCornerHitZones,
+    /// Per-leaf scale-corner hit zones computed during chart content rendering.
+    pub scale_corner_zones_by_leaf: std::collections::HashMap<zengeld_chart::LeafId, ScaleCornerHitZones>,
     /// Toolbar render result (hit zones, dropdown state) for this frame.
     pub last_toolbar_result: Option<zengeld_chart::ChartToolbarRenderResult>,
     /// Modal render result (settings panels, color pickers).
@@ -822,7 +825,7 @@ impl ChartApp {
             width: 1280,
             height: 800,
             frame_result: None,
-            scale_corner_zones: ScaleCornerHitZones::default(),
+            scale_corner_zones_by_leaf: std::collections::HashMap::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -1132,7 +1135,7 @@ impl ChartApp {
             width: 1280,
             height: 800,
             frame_result: None,
-            scale_corner_zones: ScaleCornerHitZones::default(),
+            scale_corner_zones_by_leaf: std::collections::HashMap::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -1332,7 +1335,7 @@ impl ChartApp {
             width: 1280,
             height: 800,
             frame_result: None,
-            scale_corner_zones: ScaleCornerHitZones::default(),
+            scale_corner_zones_by_leaf: std::collections::HashMap::new(),
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
@@ -2356,6 +2359,9 @@ impl ChartApp {
 
             let mut sub_pane_writebacks: Vec<(zengeld_chart::LeafId, Vec<(usize, f64, f64)>)> = Vec::new();
             let mut overlay_writebacks: Vec<(zengeld_chart::LeafId, Vec<zengeld_chart::SubPaneOverlayResult>)> = Vec::new();
+            // Collect rendered scale-corner zones per leaf so handle_canvas_click
+            // can hit-test them in split mode (avoids the empty-default bug).
+            let mut split_corner_zones: Vec<(zengeld_chart::LeafId, ScaleCornerHitZones)> = Vec::new();
 
             for (leaf_id, sub_rect) in leaf_rects {
                 let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
@@ -2452,6 +2458,8 @@ impl ChartApp {
                 };
 
                 let render_result = render_full_chart_panel(ctx, &leaf_rect, &panel_data);
+                // Capture exact rendered button rects for this leaf's scale corner.
+                split_corner_zones.push((leaf_id, render_result.corner_zones.clone()));
                 if !render_result.sub_pane_ranges.is_empty() {
                     sub_pane_writebacks.push((leaf_id, render_result.sub_pane_ranges));
                 }
@@ -2806,7 +2814,7 @@ impl ChartApp {
                 ctx.fill_rect(rect_x, rect_y, rect_w, rect_h);
             }
 
-            ScaleCornerHitZones::default()
+            split_corner_zones.into_iter().collect::<std::collections::HashMap<_, _>>()
         } else {
             let scale_corner_state = self.panel_app.panel_grid.active_window()
                 .map(|w| w.to_corner_state())
@@ -3139,7 +3147,16 @@ impl ChartApp {
                 }
             }
 
-            corner_zones_single
+            // Wrap single-window corner zones in a per-leaf map so the
+            // type matches the split path and handle_canvas_click can use
+            // a unified walk regardless of split/single mode.
+            let single_leaf_id = self.panel_app.panel_grid.docking()
+                .active_leaf()
+                .unwrap_or(zengeld_chart::LeafId(0));
+            let mut single_map: std::collections::HashMap<zengeld_chart::LeafId, ScaleCornerHitZones> =
+                std::collections::HashMap::new();
+            single_map.insert(single_leaf_id, corner_zones_single);
+            single_map
         };
         let out_scale_corner_zones = corner_zones;
         let _rt2 = std::time::Instant::now(); // checkpoint: after chart render
@@ -3935,7 +3952,7 @@ impl ChartApp {
         let _responses = self.input_coordinator.borrow_mut().end_frame();
 
         RenderOutput {
-            scale_corner_zones: out_scale_corner_zones,
+            scale_corner_zones_by_leaf: out_scale_corner_zones,
             last_toolbar_result: out_last_toolbar_result,
             frame_result: out_frame_result,
             search_modal_result: out_search_modal_result,
@@ -3959,7 +3976,7 @@ impl ChartApp {
     ///
     /// Call this immediately after `render_to_scene` completes.
     pub fn apply_render_output(&mut self, output: RenderOutput) {
-        self.scale_corner_zones = output.scale_corner_zones;
+        self.scale_corner_zones_by_leaf = output.scale_corner_zones_by_leaf;
         self.last_toolbar_result = output.last_toolbar_result;
         self.frame_result = output.frame_result;
         self.search_modal_result = output.search_modal_result;

@@ -1002,34 +1002,46 @@ impl ChartApp {
     /// Handle a click that landed on the chart canvas (not a widget).
     pub(super) fn handle_canvas_click(&mut self, x: f64, y: f64) {
         // 1. Check scale corner buttons first.
-        match self.scale_corner_zones.hit_test(x, y) {
-            ScaleCornerButton::AutoManual => {
-                let current_mode = self.panel_app.panel_grid
-                    .active_window()
-                    .map(|w| w.price_scale.scale_mode)
-                    .unwrap_or(ScaleMode::Auto);
-                let next_mode = current_mode.next();
-                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                    window.price_scale.scale_mode = next_mode;
-                    if next_mode.is_follow() {
-                        window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
+        //
+        // Walk per-leaf zones. In single-window mode the map has one entry
+        // (the active leaf). In split mode resolve_input already handles
+        // ScaleCorner before we reach here, but the map is populated for all
+        // leaves as a second-chance safety net.
+        let corner_hit = self.scale_corner_zones_by_leaf
+            .iter()
+            .find_map(|(&lid, zones)| {
+                let btn = zones.hit_test(x, y);
+                if btn != ScaleCornerButton::None { Some((lid, btn)) } else { None }
+            });
+        if let Some((hit_leaf_id, button)) = corner_hit {
+            self.panel_app.panel_grid.set_active_leaf(hit_leaf_id);
+            match button {
+                ScaleCornerButton::AutoManual => {
+                    let current_mode = self.panel_app.panel_grid
+                        .window_for_leaf(hit_leaf_id)
+                        .map(|w| w.price_scale.scale_mode)
+                        .unwrap_or(ScaleMode::Auto);
+                    let next_mode = current_mode.next();
+                    if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(hit_leaf_id) {
+                        window.price_scale.scale_mode = next_mode;
+                        if next_mode.is_follow() {
+                            window.snap_to_end(zengeld_chart::DEFAULT_SNAP_MARGIN);
+                        }
+                        if next_mode.is_auto_y() {
+                            window.calc_auto_scale();
+                        }
+                        let is_auto = next_mode.is_auto_y();
+                        for sp in &mut window.sub_panes {
+                            // update_sub_pane_ranges() already bakes in symmetrization
+                            // and 5% padding, so price_min/price_max already match
+                            // what is displayed.  Just flip the flag.
+                            sp.auto_scale = is_auto;
+                        }
                     }
-                    if next_mode.is_auto_y() {
-                        window.calc_auto_scale();
-                    }
-                    let is_auto = next_mode.is_auto_y();
-                    for sp in &mut window.sub_panes {
-                        // update_sub_pane_ranges() already bakes in symmetrization
-                        // and 5% padding, so price_min/price_max already match
-                        // what is displayed.  Just flip the flag.
-                        sp.auto_scale = is_auto;
-                    }
-                }
-                // Mutate group.scale_mode when sync_viewport is on so the group
-                // remembers the mode for new joiners.
-                if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
+                    // Mutate group.scale_mode when sync_viewport is on so the group
+                    // remembers the mode for new joiners.
                     let viewport_sync_on = self.panel_app.panel_grid
-                        .chart_id_for_leaf(active_leaf)
+                        .chart_id_for_leaf(hit_leaf_id)
                         .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
                         .and_then(|gid| {
                             self.panel_app.tag_manager.group_mut(gid).map(|g| {
@@ -1040,21 +1052,21 @@ impl ChartApp {
                         .unwrap_or(false);
                     if viewport_sync_on {
                         let viewport_state = self.panel_app.panel_grid
-                            .active_window()
+                            .window_for_leaf(hit_leaf_id)
                             .map(|w| (w.viewport.view_start, w.viewport.bar_spacing));
                         if let Some((view_start, bar_spacing)) = viewport_state {
-                            self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(next_mode));
+                            self.propagate_viewport_to_sync_group(hit_leaf_id, view_start, bar_spacing, Some(next_mode));
                         }
                     }
+                    return;
                 }
-                return;
+                ScaleCornerButton::Mode => {
+                    // Cycle lin/log/% mode via existing output action.
+                    self.process_output_actions(vec![ChartOutputAction::TogglePriceScaleMode]);
+                    return;
+                }
+                ScaleCornerButton::None => {}
             }
-            ScaleCornerButton::Mode => {
-                // Cycle lin/log/% mode via existing output action.
-                self.process_output_actions(vec![ChartOutputAction::TogglePriceScaleMode]);
-                return;
-            }
-            ScaleCornerButton::None => {}
         }
 
         // 2. Sub-pane overlay button check — clicks on delete/hide/move-up/expand
