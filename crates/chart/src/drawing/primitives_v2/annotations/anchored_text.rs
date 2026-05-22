@@ -3,7 +3,7 @@
 //! Uses centralized PrimitiveText system for text configuration.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
@@ -15,7 +15,7 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchoredText {
     pub data: PrimitiveData,
-    pub bar: f64,
+    pub ts_ms: i64,
     pub price: f64,
     // Legacy fields for backwards compatibility
     #[serde(default)]
@@ -29,7 +29,7 @@ fn default_font_size() -> f64 { 14.0 }
 fn default_background() -> bool { true }
 
 impl AnchoredText {
-    pub fn new(bar: f64, price: f64, color: &str) -> Self {
+    pub fn new(ts_ms: i64, price: f64, color: &str) -> Self {
         let mut data = PrimitiveData {
             type_id: "anchored_text".to_string(),
             display_name: "Anchored Text".to_string(),
@@ -37,12 +37,11 @@ impl AnchoredText {
             width: 1.0,
             ..Default::default()
         };
-        // Initialize centralized text system
         data.text = Some(PrimitiveText::new("Anchored Text"));
 
         Self {
             data,
-            bar,
+            ts_ms,
             price,
             text: String::new(),
             font_size: 14.0,
@@ -76,14 +75,15 @@ impl Primitive for AnchoredText {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::SingleClick }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar, self.price)] }
-    fn set_points(&mut self, points: &[(f64, f64)]) { if let Some(&(b, p)) = points.first() { self.bar = b; self.price = p; } }
-    fn translate(&mut self, bd: f64, pd: f64) { self.bar += bd; self.price += pd; }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
-        if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) { self.bar = bar; self.price = price; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts_ms, self.price)] }
+    fn set_points(&mut self, points: &[(i64, f64)]) { if let Some(&(t, p)) = points.first() { self.ts_ms = t; self.price = p; } }
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { self.ts_ms += ts_delta_ms; self.price += pd; }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
+        if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) { self.ts_ms = ts_ms; self.price = price; }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let (x, y) = (vp.bar_to_x_f64(self.bar), vp.price_to_y(self.price, ps.price_min, ps.price_max));
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let (x, y) = (vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max));
         let text_content = self.get_text();
         let font_size = self.get_font_size();
         let w = text_content.len() as f64 * font_size * 0.6;
@@ -91,11 +91,12 @@ impl Primitive for AnchoredText {
         if sx >= x && sx <= x + w && sy >= y - h && sy <= y { return HitTestResult::Body; }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        vec![ControlPoint::point1(vp.bar_to_x_f64(self.bar), vp.price_to_y(self.price, ps.price_min, ps.price_max))]
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        vec![ControlPoint::point1(vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max))]
     }
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
-        let x = ctx.bar_to_x(self.bar);
+        let x = ctx.ts_to_x_ms(self.ts_ms);
         let y = ctx.price_to_y(self.price);
 
         // Render text directly
@@ -203,7 +204,7 @@ pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "anchored_text", display_name: "Anchored Text", kind: PrimitiveKind::Annotation,
         click_behavior: ClickBehavior::SingleClick, tooltip: "Text anchored to price/time", icon: "anchored_text", default_color: "#FFFFFF",
-        factory: |points, color| { let (b, p) = points.first().copied().unwrap_or((0.0, 0.0)); Box::new(AnchoredText::new(b, p, color)) },
+        factory: |points, color| { let (t, p) = points.first().copied().unwrap_or((0, 0.0)); Box::new(AnchoredText::new(t, p, color)) },
         supports_text: true,
         has_levels: false,
         has_points_config: false,

@@ -4,7 +4,7 @@
 //! Similar to speed resistance but with different angle calculations.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -22,12 +22,12 @@ use super::retracement::default_level_configs;
 pub struct FibFan {
     /// Common primitive data
     pub data: PrimitiveData,
-    /// Origin bar
-    pub bar1: f64,
+    /// Origin timestamp in ms
+    pub ts1: i64,
     /// Origin price
     pub price1: f64,
-    /// Target bar
-    pub bar2: f64,
+    /// Target timestamp in ms
+    pub ts2: i64,
     /// Target price
     pub price2: f64,
     /// Fibonacci level configurations (with individual colors/widths)
@@ -77,7 +77,7 @@ where
 
 impl FibFan {
     /// Create a new Fibonacci fan
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "fib_fan".to_string(),
@@ -86,9 +86,9 @@ impl FibFan {
                 width: 1.0,
                 ..Default::default()
             },
-            bar1,
+            ts1,
             price1,
-            bar2,
+            ts2,
             price2,
             level_configs: default_level_configs(),
             show_labels: true,
@@ -99,12 +99,12 @@ impl FibFan {
         }
     }
 
-    /// Get the endpoint for a fan line at given level
-    /// Level determines where on the vertical price range the line passes through
-    pub fn fan_endpoint(&self, level: f64) -> (f64, f64) {
+    /// Get the endpoint for a fan line at given level.
+    /// Returns (timestamp_ms, price) of the endpoint.
+    pub fn fan_endpoint(&self, level: f64) -> (i64, f64) {
         let price_range = self.price2 - self.price1;
         let fan_price = self.price1 + price_range * level;
-        (self.bar2, fan_price)
+        (self.ts2, fan_price)
     }
 }
 
@@ -133,42 +133,42 @@ impl Primitive for FibFan {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
-        vec![(self.bar1, self.price1), (self.bar2, self.price2)]
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(self.ts1, self.price1), (self.ts2, self.price2)]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.bar1 = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.ts1 = ts;
             self.price1 = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
-            self.bar2 = bar;
+        if let Some(&(ts, price)) = points.get(1) {
+            self.ts2 = ts;
             self.price2 = price;
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.bar1 += bar_delta;
-        self.bar2 += bar_delta;
+    fn translate(&mut self, ts_delta: i64, price_delta: f64) {
+        self.ts1 += ts_delta;
+        self.ts2 += ts_delta;
         self.price1 += price_delta;
         self.price2 += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 => {
-                self.bar1 = bar;
+                self.ts1 = ts_ms;
                 self.price1 = price;
             }
             ControlPointType::Point2 => {
-                self.bar2 = bar;
+                self.ts2 = ts_ms;
                 self.price2 = price;
             }
             ControlPointType::Move => {
-                let bar_delta = bar - self.bar1;
+                let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
-                self.translate(bar_delta, price_delta);
+                self.translate(ts_delta, price_delta);
             }
             _ => {}
         }
@@ -178,12 +178,15 @@ impl Primitive for FibFan {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         // Check control points
@@ -205,7 +208,8 @@ impl Primitive for FibFan {
                 continue;
             }
 
-            let (fan_bar, fan_price) = self.fan_endpoint(cfg.level);
+            let (fan_ts, fan_price) = self.fan_endpoint(cfg.level);
+            let fan_bar = timestamp_ms_to_bar_f64(bars, fan_ts);
             let fx = viewport.bar_to_x_f64(fan_bar);
             let fy = viewport.price_to_y(fan_price, price_scale.price_min, price_scale.price_max);
 
@@ -225,12 +229,15 @@ impl Primitive for FibFan {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         vec![
@@ -241,9 +248,9 @@ impl Primitive for FibFan {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
         let chart_width = ctx.chart_width();
 
@@ -270,8 +277,8 @@ impl Primitive for FibFan {
             .enumerate()
             .filter(|(_, cfg)| cfg.visible)
             .map(|(idx, cfg)| {
-                let (fan_bar, fan_price) = self.fan_endpoint(cfg.level);
-                let fx = ctx.bar_to_x(fan_bar);
+                let (fan_ts, fan_price) = self.fan_endpoint(cfg.level);
+                let fx = ctx.ts_to_x_ms(fan_ts);
                 let fy = ctx.price_to_y(fan_price);
                 (idx, cfg.level, fx, fy)
             })
@@ -543,7 +550,7 @@ impl Primitive for FibFan {
                             };
 
                             let (_, fan_price) = self.fan_endpoint(level);
-                            let fx = ctx.bar_to_x(self.bar2);
+                            let fx = ctx.ts_to_x_ms(self.ts2);
                             let fy = ctx.price_to_y(fan_price);
                             (x1, y1, fx, fy)
                         }
@@ -551,7 +558,7 @@ impl Primitive for FibFan {
                     TextAlign::Center => {
                         // On median (0.5 level) line
                         let (_, fan_price) = self.fan_endpoint(0.5);
-                        let fx = ctx.bar_to_x(self.bar2);
+                        let fx = ctx.ts_to_x_ms(self.ts2);
                         let fy = ctx.price_to_y(fan_price);
                         (x1, y1, fx, fy)
                     }
@@ -688,10 +695,10 @@ fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -
 // Factory Registration
 // =============================================================================
 
-fn create_fib_fan(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
-    let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 20.0, price1 + 10.0));
-    Box::new(FibFan::new(bar1, price1, bar2, price2, color))
+fn create_fib_fan(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts1, price1) = points.first().copied().unwrap_or((0, 0.0));
+    let (ts2, price2) = points.get(1).copied().unwrap_or((ts1 + 1_200_000, price1 + 10.0));
+    Box::new(FibFan::new(ts1, price1, ts2, price2, color))
 }
 
 pub fn metadata() -> PrimitiveMetadata {

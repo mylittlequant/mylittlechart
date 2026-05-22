@@ -1,7 +1,7 @@
 //! Price Date Range - combined price and time measurement
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
@@ -12,8 +12,8 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceDateRange {
     pub data: PrimitiveData,
-    pub bar1: f64, pub price1: f64,
-    pub bar2: f64, pub price2: f64,
+    pub ts1: i64, pub price1: f64,
+    pub ts2: i64, pub price2: f64,
     #[serde(default = "default_true")] pub show_percentage: bool,
     #[serde(default = "default_true")] pub show_bars: bool,
     #[serde(default = "default_true")] pub show_pips: bool,
@@ -21,10 +21,10 @@ pub struct PriceDateRange {
 fn default_true() -> bool { true }
 
 impl PriceDateRange {
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "price_date_range".to_string(), display_name: "Price/Date Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
-            bar1, price1, bar2, price2, show_percentage: true, show_bars: true, show_pips: true,
+            ts1, price1, ts2, price2, show_percentage: true, show_bars: true, show_pips: true,
         }
     }
 }
@@ -36,41 +36,45 @@ impl Primitive for PriceDateRange {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar1, self.price1), (self.bar2, self.price2)] }
-    fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.first() { self.bar1 = b; self.price1 = p; }
-        if let Some(&(b, p)) = pts.get(1) { self.bar2 = b; self.price2 = p; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts1, self.price1), (self.ts2, self.price2)] }
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        if let Some(&(ts, p)) = pts.first() { self.ts1 = ts; self.price1 = p; }
+        if let Some(&(ts, p)) = pts.get(1) { self.ts2 = ts; self.price2 = p; }
     }
-    fn translate(&mut self, bd: f64, pd: f64) { self.bar1 += bd; self.bar2 += bd; self.price1 += pd; self.price2 += pd; }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { self.ts1 += ts_delta_ms; self.ts2 += ts_delta_ms; self.price1 += pd; self.price2 += pd; }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Point1 => { self.bar1 = bar; self.price1 = price; }
-            ControlPointType::Point2 => { self.bar2 = bar; self.price2 = price; }
-            ControlPointType::Move => { let bd = bar - self.bar1; let pd = price - self.price1; self.translate(bd, pd); }
+            ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
+            ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Move => { let td = ts_ms - self.ts1; let pd = price - self.price1; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let (x1, y1) = (vp.bar_to_x_f64(self.bar1), vp.price_to_y(self.price1, ps.price_min, ps.price_max));
-        let (x2, y2) = (vp.bar_to_x_f64(self.bar2), vp.price_to_y(self.price2, ps.price_min, ps.price_max));
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let (x1, y1) = (vp.bar_to_x_f64(b1), vp.price_to_y(self.price1, ps.price_min, ps.price_max));
+        let (x2, y2) = (vp.bar_to_x_f64(b2), vp.price_to_y(self.price2, ps.price_min, ps.price_max));
         let r = 8.0;
         if (sx - x1).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         if point_to_line_distance(sx, sy, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
         vec![
-            ControlPoint::point1(vp.bar_to_x_f64(self.bar1), vp.price_to_y(self.price1, ps.price_min, ps.price_max)),
-            ControlPoint::point2(vp.bar_to_x_f64(self.bar2), vp.price_to_y(self.price2, ps.price_min, ps.price_max)),
+            ControlPoint::point1(vp.bar_to_x_f64(b1), vp.price_to_y(self.price1, ps.price_min, ps.price_max)),
+            ControlPoint::point2(vp.bar_to_x_f64(b2), vp.price_to_y(self.price2, ps.price_min, ps.price_max)),
         ]
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
 
         let min_x = x1.min(x2);
@@ -95,7 +99,8 @@ impl Primitive for PriceDateRange {
         } else {
             0.0
         };
-        let bar_count = (self.bar2 - self.bar1).abs();
+        let duration_ms = (self.ts2 - self.ts1).abs();
+        let duration_secs = duration_ms / 1000;
 
         // Draw labels
         ctx.set_fill_color(&self.data.color.stroke);
@@ -116,10 +121,18 @@ impl Primitive for PriceDateRange {
             y_offset += 15.0;
         }
 
-        // Bar count label
+        // Time duration label
         if self.show_bars {
-            let bar_label = format!("{:.0} bars", bar_count);
-            ctx.fill_text(&bar_label, center_x, y_offset);
+            let time_label = if duration_secs >= 86400 {
+                format!("{:.1}d", duration_secs as f64 / 86400.0)
+            } else if duration_secs >= 3600 {
+                format!("{:.1}h", duration_secs as f64 / 3600.0)
+            } else if duration_secs >= 60 {
+                format!("{:.0}m", duration_secs as f64 / 60.0)
+            } else {
+                format!("{}s", duration_secs)
+            };
+            ctx.fill_text(&time_label, center_x, y_offset);
         }
 
         // Draw control points if selected
@@ -150,7 +163,6 @@ impl Primitive for PriceDateRange {
                     TextAlign::Center => (min_x + max_x) / 2.0,
                     TextAlign::End => max_x,
                 };
-                // Start = ABOVE upper boundary, Center = middle, End = BELOW lower boundary
                 let text_y = match text.v_align {
                     TextAlign::Start => min_y - text_offset,
                     TextAlign::Center => (min_y + max_y) / 2.0,
@@ -169,7 +181,11 @@ pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "price_date_range", display_name: "Price/Date Range", kind: PrimitiveKind::Measurement,
         click_behavior: ClickBehavior::TwoPoint, tooltip: "Measure price and time", icon: "price_date_range", default_color: "#FF9800",
-        factory: |points, color| { let (b1, p1) = points.first().copied().unwrap_or((0.0, 100.0)); let (b2, p2) = points.get(1).copied().unwrap_or((b1 + 20.0, p1 + 10.0)); Box::new(PriceDateRange::new(b1, p1, b2, p2, color)) },
+        factory: |points, color| {
+            let (ts1, p1) = points.first().copied().unwrap_or((0, 100.0));
+            let (ts2, p2) = points.get(1).copied().unwrap_or((ts1 + 1_200_000, p1 + 10.0));
+            Box::new(PriceDateRange::new(ts1, p1, ts2, p2, color))
+        },
         supports_text: true,
         has_levels: false,
         has_points_config: false,

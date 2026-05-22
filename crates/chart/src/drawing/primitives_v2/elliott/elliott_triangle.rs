@@ -1,7 +1,7 @@
 //! Elliott Triangle - ABCDE corrective pattern
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -15,27 +15,22 @@ fn default_true() -> bool { true }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ElliottTriangle {
     pub data: PrimitiveData,
-    /// 6 points: Start, A, B, C, D, E
-    pub points: [(f64, f64); 6],
-    /// Show wave labels
+    /// 6 points: Start, A, B, C, D, E. Each is (timestamp_ms, price).
+    pub points: [(i64, f64); 6],
     #[serde(default = "default_true")]
     pub show_labels: bool,
-    /// Show converging trendlines
     #[serde(default = "default_true")]
     pub show_trendlines: bool,
-    /// Wave degree determines notation style
     #[serde(default)]
     pub degree: WaveDegree,
-    /// Label styling configuration
     #[serde(default)]
     pub label_style: LabelStyle,
-    /// Show connecting lines between points
     #[serde(default = "default_true")]
     pub show_lines: bool,
 }
 
 impl ElliottTriangle {
-    pub fn new(points: [(f64, f64); 6], color: &str) -> Self {
+    pub fn new(points: [(i64, f64); 6], color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "elliott_triangle".to_string(),
@@ -53,8 +48,6 @@ impl ElliottTriangle {
         }
     }
 
-    /// Get the wave labels for current degree
-    /// Returns labels for points 0-5: Start (empty), A, B, C, D, E
     pub fn wave_labels(&self) -> [&'static str; 6] {
         let triangle = self.degree.triangle_labels();
         ["", triangle[0], triangle[1], triangle[2], triangle[3], triangle[4]]
@@ -68,18 +61,21 @@ impl Primitive for ElliottTriangle {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(6) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { self.points.to_vec() }
-    fn set_points(&mut self, pts: &[(f64, f64)]) { for (i, &p) in pts.iter().take(6).enumerate() { self.points[i] = p; } }
-    fn translate(&mut self, bd: f64, pd: f64) { for p in &mut self.points { p.0 += bd; p.1 += pd; } }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
+    fn set_points(&mut self, pts: &[(i64, f64)]) { for (i, &p) in pts.iter().take(6).enumerate() { self.points[i] = p; } }
+    fn translate(&mut self, td: i64, pd: f64) { for p in &mut self.points { p.0 += td; p.1 += pd; } }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Index(i) if (i as usize) < 6 => self.points[i as usize] = (bar, price),
-            ControlPointType::Move => { let bd = bar - self.points[0].0; let pd = price - self.points[0].1; self.translate(bd, pd); }
+            ControlPointType::Index(i) if (i as usize) < 6 => self.points[i as usize] = (ts_ms, price),
+            ControlPointType::Move => { let td = ts_ms - self.points[0].0; let pd = price - self.points[0].1; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let screen: Vec<_> = self.points.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let screen: Vec<_> = self.points.iter().map(|(ts, p)| {
+            let b = timestamp_ms_to_bar_f64(bars, *ts);
+            (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect();
         for (i, &(x, y)) in screen.iter().enumerate() {
             if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
@@ -88,24 +84,20 @@ impl Primitive for ElliottTriangle {
         }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        self.points.iter().enumerate().map(|(i, (b, p))| ControlPoint::index(i as u8, vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect()
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        self.points.iter().enumerate().map(|(i, (ts, p))| {
+            let b = timestamp_ms_to_bar_f64(bars, *ts);
+            ControlPoint::index(i as u8, vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect()
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
+        let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();
 
-        // Convert points to screen coordinates
-        let screen: Vec<(f64, f64)> = self.points
-            .iter()
-            .map(|(bar, price)| (ctx.bar_to_x(*bar), ctx.price_to_y(*price)))
-            .collect();
-
-        // Set stroke style
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
 
-        // Set line dash based on style
         match self.data.style {
             LineStyle::Solid => ctx.set_line_dash(&[]),
             LineStyle::Dashed => ctx.set_line_dash(&[8.0, 4.0]),
@@ -114,7 +106,6 @@ impl Primitive for ElliottTriangle {
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
 
-        // Draw wave lines (Start->A->B->C->D->E)
         if self.show_lines {
             ctx.begin_path();
             ctx.move_to(crisp(screen[0].0, dpr), crisp(screen[0].1, dpr));
@@ -124,19 +115,16 @@ impl Primitive for ElliottTriangle {
             ctx.stroke();
         }
 
-        // Draw converging trendlines if enabled
         if self.show_trendlines {
             ctx.set_line_dash(&[4.0, 4.0]);
             ctx.set_stroke_width(self.data.width * 0.7);
 
-            // Upper trendline connecting peaks (Start, B, D)
             ctx.begin_path();
             ctx.move_to(crisp(screen[0].0, dpr), crisp(screen[0].1, dpr));
             ctx.line_to(crisp(screen[2].0, dpr), crisp(screen[2].1, dpr));
             ctx.line_to(crisp(screen[4].0, dpr), crisp(screen[4].1, dpr));
             ctx.stroke();
 
-            // Lower trendline connecting troughs (A, C, E)
             ctx.begin_path();
             ctx.move_to(crisp(screen[1].0, dpr), crisp(screen[1].1, dpr));
             ctx.line_to(crisp(screen[3].0, dpr), crisp(screen[3].1, dpr));
@@ -144,10 +132,8 @@ impl Primitive for ElliottTriangle {
             ctx.stroke();
         }
 
-        // Reset line dash
         ctx.set_line_dash(&[]);
 
-        // Draw wave labels if enabled
         if self.show_labels {
             let labels = self.wave_labels();
             let label_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
@@ -157,17 +143,10 @@ impl Primitive for ElliottTriangle {
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
             for (i, label) in labels.iter().enumerate() {
-                if label.is_empty() {
-                    continue;
-                }
+                if label.is_empty() { continue; }
                 let (x, y) = screen[i];
-                let offset = if i > 0 && screen[i].1 < screen[i - 1].1 {
-                    -self.label_style.offset_y
-                } else {
-                    self.label_style.offset_y
-                };
+                let offset = if i > 0 && screen[i].1 < screen[i - 1].1 { -self.label_style.offset_y } else { self.label_style.offset_y };
 
-                // Draw background if configured
                 if let Some(ref bg_color) = self.label_style.background_color {
                     let text_width = ctx.measure_text(label);
                     let padding = self.label_style.background_padding;
@@ -195,7 +174,6 @@ impl Primitive for ElliottTriangle {
             }
         }
 
-        // Draw control points if selected
         if is_selected {
             ctx.set_stroke_color(CONTROL_POINT_STROKE);
             ctx.set_fill_color(CONTROL_POINT_FILL);
@@ -209,10 +187,8 @@ impl Primitive for ElliottTriangle {
             }
         }
 
-        // Render text if present
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
-                // Get bounding box from all points
                 let min_y = screen.iter().fold(f64::INFINITY, |a, (_, y)| a.min(*y));
                 let max_y = screen.iter().fold(f64::NEG_INFINITY, |a, (_, y)| a.max(*y));
                 let min_x = screen.iter().fold(f64::INFINITY, |a, (x, _)| a.min(*x));
@@ -224,7 +200,6 @@ impl Primitive for ElliottTriangle {
                     super::super::TextAlign::Center => (min_x + max_x) / 2.0,
                     super::super::TextAlign::End => max_x,
                 };
-                // Start = ABOVE upper boundary, Center = middle, End = BELOW lower boundary
                 let text_y = match text.v_align {
                     super::super::TextAlign::Start => min_y - text_offset,
                     super::super::TextAlign::Center => (min_y + max_y) / 2.0,
@@ -245,49 +220,23 @@ impl Primitive for ElliottTriangle {
             .collect();
 
         vec![
-            ConfigProperty::show_labels(self.show_labels)
-                .with_category(PropertyCategory::Style)
-                .with_order(10),
-            ConfigProperty::show_lines(self.show_lines)
-                .with_category(PropertyCategory::Style)
-                .with_order(11),
-            ConfigProperty::show_trendlines(self.show_trendlines)
-                .with_category(PropertyCategory::Style)
-                .with_order(12),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options)
-                .with_category(PropertyCategory::Style)
-                .with_order(13),
-            ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::Style)
-                .with_order(14),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::Style)
-                .with_order(15),
+            ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::Style).with_order(10),
+            ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::Style).with_order(11),
+            ConfigProperty::show_trendlines(self.show_trendlines).with_category(PropertyCategory::Style).with_order(12),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::Style).with_order(13),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::Style).with_order(14),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::Style).with_order(15),
         ]
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
-            "show_labels" => {
-                if let Some(v) = value.as_bool() { self.show_labels = v; return true; }
-            }
-            "show_lines" => {
-                if let Some(v) = value.as_bool() { self.show_lines = v; return true; }
-            }
-            "show_trendlines" => {
-                if let Some(v) = value.as_bool() { self.show_trendlines = v; return true; }
-            }
-            "degree" => {
-                if let Some(s) = value.as_string() {
-                    if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; }
-                }
-            }
-            "label_font_size" => {
-                if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
-            }
-            "label_color" => {
-                if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; }
-            }
+            "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
+            "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
+            "show_trendlines" => { if let Some(v) = value.as_bool() { self.show_trendlines = v; return true; } }
+            "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
+            "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
+            "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
         }
         false
@@ -307,7 +256,7 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "elliott_triangle", display_name: "Elliott Triangle", kind: PrimitiveKind::Pattern,
         click_behavior: ClickBehavior::MultiPoint(6), tooltip: "ABCDE triangle correction", icon: "elliott_triangle", default_color: "#4CAF50",
         factory: |points, color| {
-            let mut arr = [(0.0, 0.0); 6];
+            let mut arr = [(0i64, 0.0f64); 6];
             for (i, &p) in points.iter().take(6).enumerate() { arr[i] = p; }
             Box::new(ElliottTriangle::new(arr, color))
         },

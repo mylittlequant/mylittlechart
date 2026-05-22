@@ -4,7 +4,7 @@
 //! delegates all drawing operations to the instanced wgpu backend and adds chart-domain
 //! coordinate conversion (bar → X, price → Y) on top.
 
-use zengeld_chart::{PriceScale, Viewport};
+use zengeld_chart::{Bar, PriceScale, Viewport};
 use zengeld_chart::render::RenderContext as ChartRenderContext;
 use uzor::render::{
     RenderContext as UzorRenderContext, RenderContextExt,
@@ -40,6 +40,8 @@ pub struct InstancedChartRenderContext<'a> {
     viewport: Option<&'a Viewport>,
     price_scale: Option<&'a PriceScale>,
     coord_override: Option<CoordinateSpaceOverride>,
+    /// Bar slice for timestamp → X conversion in primitives.
+    bars: &'a [Bar],
 }
 
 impl<'a> InstancedChartRenderContext<'a> {
@@ -62,7 +64,13 @@ impl<'a> InstancedChartRenderContext<'a> {
             viewport,
             price_scale,
             coord_override: None,
+            bars: &[],
         }
+    }
+
+    /// Attach a bar slice so that `ts_to_x_ms` works correctly when rendering primitives.
+    pub fn set_bars(&mut self, bars: &'a [Bar]) {
+        self.bars = bars;
     }
 
     /// Access the inner context to retrieve accumulated instance buffers.
@@ -276,5 +284,9 @@ impl<'a> ChartRenderContext for InstancedChartRenderContext<'a> {
             price_min,
             price_max,
         });
+    }
+
+    fn bars(&self) -> &[Bar] {
+        self.bars
     }
 }

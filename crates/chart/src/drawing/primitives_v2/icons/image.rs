@@ -3,7 +3,7 @@
 //! Uses 5 data-coordinate points: center + 4 edge points (top, right, bottom, left)
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
@@ -13,29 +13,30 @@ use super::super::{
 /// Image primitive with 5 data-coordinate anchor points
 ///
 /// Points are stored as:
-/// - center_bar, center_price: Center point
-/// - radius_bars: Horizontal half-size in bars
+/// - center_ts, center_price: Center point (ms timestamp, price)
+/// - radius_ms: Horizontal half-size in milliseconds
 /// - radius_price: Vertical half-size in price units
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Image {
     pub data: PrimitiveData,
-    /// Center bar
-    pub center_bar: f64,
+    /// Center timestamp (ms)
+    pub center_ts: i64,
     /// Center price
     pub center_price: f64,
-    /// Horizontal radius in bars (distance from center to left/right edge)
-    pub radius_bars: f64,
+    /// Horizontal radius in milliseconds (distance from center to left/right edge)
+    #[serde(default = "default_radius_ms")]
+    pub radius_ms: i64,
     /// Vertical radius in price units (distance from center to top/bottom edge)
     pub radius_price: f64,
     /// Image URL (data URL or http URL)
     pub url: String,
 }
 
-fn default_radius_bars() -> f64 { 5.0 }
+fn default_radius_ms() -> i64 { 300_000 }
 fn default_radius_price() -> f64 { 100.0 }
 
 impl Image {
-    pub fn new(bar: f64, price: f64, color: &str) -> Self {
+    pub fn new(center_ts: i64, center_price: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "image".to_string(),
@@ -44,20 +45,20 @@ impl Image {
                 width: 1.0,
                 ..Default::default()
             },
-            center_bar: bar,
-            center_price: price,
-            radius_bars: default_radius_bars(),
+            center_ts,
+            center_price,
+            radius_ms: default_radius_ms(),
             radius_price: default_radius_price(),
             url: String::new(),
         }
     }
 
     /// Create from center and edge point
-    pub fn from_points(center_bar: f64, center_price: f64, edge_bar: f64, edge_price: f64, color: &str) -> Self {
-        let radius_bars = (edge_bar - center_bar).abs().max(1.0);
+    pub fn from_points(center_ts: i64, center_price: f64, edge_ts: i64, edge_price: f64, color: &str) -> Self {
+        let radius_ms = (edge_ts - center_ts).abs().max(60_000);
         let radius_price = (edge_price - center_price).abs().max(1.0);
-        let mut image = Self::new(center_bar, center_price, color);
-        image.radius_bars = radius_bars;
+        let mut image = Self::new(center_ts, center_price, color);
+        image.radius_ms = radius_ms;
         image.radius_price = radius_price;
         image
     }
@@ -72,34 +73,34 @@ impl Primitive for Image {
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
 
     /// Returns 2 points: center and corner (for TwoPoint behavior)
-    fn points(&self) -> Vec<(f64, f64)> {
+    fn points(&self) -> Vec<(i64, f64)> {
         vec![
-            (self.center_bar, self.center_price),
-            (self.center_bar + self.radius_bars, self.center_price + self.radius_price),
+            (self.center_ts, self.center_price),
+            (self.center_ts + self.radius_ms, self.center_price + self.radius_price),
         ]
     }
 
-    fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.first() {
-            self.center_bar = b;
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        if let Some(&(ts, p)) = pts.first() {
+            self.center_ts = ts;
             self.center_price = p;
         }
         // Second point defines the corner (for TwoPoint creation)
-        if let Some(&(b2, p2)) = pts.get(1) {
-            self.radius_bars = (b2 - self.center_bar).abs().max(0.5);
+        if let Some(&(ts2, p2)) = pts.get(1) {
+            self.radius_ms = (ts2 - self.center_ts).abs().max(60_000);
             self.radius_price = (p2 - self.center_price).abs().max(1.0);
         }
     }
 
-    fn translate(&mut self, bd: f64, pd: f64) {
-        self.center_bar += bd;
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) {
+        self.center_ts += ts_delta_ms;
         self.center_price += pd;
     }
 
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
             ControlPointType::Move => {
-                self.center_bar = bar;
+                self.center_ts = ts_ms;
                 self.center_price = price;
             }
             // Edge points (cross pattern) - resize one dimension
@@ -108,8 +109,8 @@ impl Primitive for Image {
                 self.radius_price = (price - self.center_price).abs().max(1.0);
             }
             ControlPointType::Edge(1) => {
-                // Right - adjust horizontal radius (bars)
-                self.radius_bars = (bar - self.center_bar).abs().max(0.5);
+                // Right - adjust horizontal radius (ms)
+                self.radius_ms = (ts_ms - self.center_ts).abs().max(60_000);
             }
             ControlPointType::Edge(2) => {
                 // Bottom - adjust vertical radius
@@ -117,39 +118,41 @@ impl Primitive for Image {
             }
             ControlPointType::Edge(3) => {
                 // Left - adjust horizontal radius
-                self.radius_bars = (self.center_bar - bar).abs().max(0.5);
+                self.radius_ms = (self.center_ts - ts_ms).abs().max(60_000);
             }
             // Corner points - resize both dimensions
             ControlPointType::Edge(4) => {
                 // Top-left corner
-                self.radius_bars = (self.center_bar - bar).abs().max(0.5);
+                self.radius_ms = (self.center_ts - ts_ms).abs().max(60_000);
                 self.radius_price = (price - self.center_price).abs().max(1.0);
             }
             ControlPointType::Edge(5) => {
                 // Top-right corner
-                self.radius_bars = (bar - self.center_bar).abs().max(0.5);
+                self.radius_ms = (ts_ms - self.center_ts).abs().max(60_000);
                 self.radius_price = (price - self.center_price).abs().max(1.0);
             }
             ControlPointType::Edge(6) => {
                 // Bottom-right corner
-                self.radius_bars = (bar - self.center_bar).abs().max(0.5);
+                self.radius_ms = (ts_ms - self.center_ts).abs().max(60_000);
                 self.radius_price = (self.center_price - price).abs().max(1.0);
             }
             ControlPointType::Edge(7) => {
                 // Bottom-left corner
-                self.radius_bars = (self.center_bar - bar).abs().max(0.5);
+                self.radius_ms = (self.center_ts - ts_ms).abs().max(60_000);
                 self.radius_price = (self.center_price - price).abs().max(1.0);
             }
             _ => {}
         }
     }
 
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let cx = vp.bar_to_x_f64(self.center_bar);
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let center_b = timestamp_ms_to_bar_f64(bars, self.center_ts);
+        let cx = vp.bar_to_x_f64(center_b);
         let cy = vp.price_to_y(self.center_price, ps.price_min, ps.price_max);
 
         // Calculate screen-space radii
-        let rx = (vp.bar_to_x_f64(self.center_bar + self.radius_bars) - cx).abs();
+        let edge_b = timestamp_ms_to_bar_f64(bars, self.center_ts + self.radius_ms);
+        let rx = (vp.bar_to_x_f64(edge_b) - cx).abs();
         let ry = (vp.price_to_y(self.center_price + self.radius_price, ps.price_min, ps.price_max) - cy).abs();
 
         let hit_radius = CONTROL_POINT_RADIUS + 4.0;
@@ -193,12 +196,14 @@ impl Primitive for Image {
         HitTestResult::Miss
     }
 
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let cx = vp.bar_to_x_f64(self.center_bar);
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let center_b = timestamp_ms_to_bar_f64(bars, self.center_ts);
+        let cx = vp.bar_to_x_f64(center_b);
         let cy = vp.price_to_y(self.center_price, ps.price_min, ps.price_max);
 
         // Calculate screen-space radii
-        let rx = (vp.bar_to_x_f64(self.center_bar + self.radius_bars) - cx).abs();
+        let edge_b = timestamp_ms_to_bar_f64(bars, self.center_ts + self.radius_ms);
+        let rx = (vp.bar_to_x_f64(edge_b) - cx).abs();
         let ry = (vp.price_to_y(self.center_price + self.radius_price, ps.price_min, ps.price_max) - cy).abs();
 
         vec![
@@ -219,11 +224,11 @@ impl Primitive for Image {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let cx = ctx.bar_to_x(self.center_bar);
+        let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
 
         // Calculate screen-space half-sizes from data coordinates
-        let half_w = (ctx.bar_to_x(self.center_bar + self.radius_bars) - cx).abs();
+        let half_w = (ctx.ts_to_x_ms(self.center_ts + self.radius_ms) - cx).abs();
         let half_h = (ctx.price_to_y(self.center_price + self.radius_price) - cy).abs();
 
         // Top-left corner for image drawing
@@ -321,8 +326,8 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "image", display_name: "Image", kind: PrimitiveKind::Annotation,
         click_behavior: ClickBehavior::SingleClick, tooltip: "Embedded image", icon: "image", default_color: "#607D8B",
         factory: |points, color| {
-            let (b, p) = points.first().copied().unwrap_or((0.0, 100.0));
-            Box::new(Image::new(b, p, color))
+            let (ts, p) = points.first().copied().unwrap_or((0, 100.0));
+            Box::new(Image::new(ts, p, color))
         },
         supports_text: false,
         has_levels: false,

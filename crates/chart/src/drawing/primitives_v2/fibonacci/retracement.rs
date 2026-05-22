@@ -4,7 +4,7 @@
 //! Standard levels: 0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -71,12 +71,12 @@ pub fn filled_level_configs() -> Vec<FibLevelConfig> {
 pub struct FibRetracement {
     /// Common primitive data
     pub data: PrimitiveData,
-    /// Start bar (point 1)
-    pub bar1: f64,
+    /// Start timestamp in ms (point 1)
+    pub ts1: i64,
     /// Start price (point 1 - usually swing high or low)
     pub price1: f64,
-    /// End bar (point 2)
-    pub bar2: f64,
+    /// End timestamp in ms (point 2)
+    pub ts2: i64,
     /// End price (point 2 - usually swing low or high)
     pub price2: f64,
     /// Fibonacci level configurations (with individual colors/widths)
@@ -140,7 +140,7 @@ where
 
 impl FibRetracement {
     /// Create a new Fibonacci retracement
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "fib_retracement".to_string(),
@@ -149,9 +149,9 @@ impl FibRetracement {
                 width: 1.0,
                 ..Default::default()
             },
-            bar1,
+            ts1,
             price1,
-            bar2,
+            ts2,
             price2,
             level_configs: default_level_configs(),
             show_prices: true,
@@ -206,42 +206,42 @@ impl Primitive for FibRetracement {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
-        vec![(self.bar1, self.price1), (self.bar2, self.price2)]
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(self.ts1, self.price1), (self.ts2, self.price2)]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.bar1 = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.ts1 = ts;
             self.price1 = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
-            self.bar2 = bar;
+        if let Some(&(ts, price)) = points.get(1) {
+            self.ts2 = ts;
             self.price2 = price;
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.bar1 += bar_delta;
-        self.bar2 += bar_delta;
+    fn translate(&mut self, ts_delta: i64, price_delta: f64) {
+        self.ts1 += ts_delta;
+        self.ts2 += ts_delta;
         self.price1 += price_delta;
         self.price2 += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 => {
-                self.bar1 = bar;
+                self.ts1 = ts_ms;
                 self.price1 = price;
             }
             ControlPointType::Point2 => {
-                self.bar2 = bar;
+                self.ts2 = ts_ms;
                 self.price2 = price;
             }
             ControlPointType::Move => {
-                let bar_delta = bar - self.bar1;
+                let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
-                self.translate(bar_delta, price_delta);
+                self.translate(ts_delta, price_delta);
             }
             _ => {}
         }
@@ -251,12 +251,15 @@ impl Primitive for FibRetracement {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let bar1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(bar1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(bar2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         // Check control points
@@ -300,12 +303,15 @@ impl Primitive for FibRetracement {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let bar1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(bar1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(bar2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         vec![
@@ -316,8 +322,8 @@ impl Primitive for FibRetracement {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let chart_width = ctx.chart_width();
 
         let left_x = if self.extend_left { 0.0 } else { x1.min(x2) };
@@ -729,10 +735,10 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
 // Factory Registration
 // =============================================================================
 
-fn create_fib_retracement(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
-    let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 10.0, price1));
-    Box::new(FibRetracement::new(bar1, price1, bar2, price2, color))
+fn create_fib_retracement(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts1, price1) = points.first().copied().unwrap_or((0, 0.0));
+    let (ts2, price2) = points.get(1).copied().unwrap_or((ts1 + 1_200_000, price1));
+    Box::new(FibRetracement::new(ts1, price1, ts2, price2, color))
 }
 
 pub fn metadata() -> PrimitiveMetadata {

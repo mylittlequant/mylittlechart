@@ -1,7 +1,7 @@
 //! Brush - freehand drawing
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -11,13 +11,13 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Brush {
     pub data: PrimitiveData,
-    pub points: Vec<(f64, f64)>,
+    pub points: Vec<(i64, f64)>,
     #[serde(default = "default_size")] pub brush_size: f64,
 }
 fn default_size() -> f64 { 3.0 }
 
 impl Brush {
-    pub fn new(points: Vec<(f64, f64)>, color: &str) -> Self {
+    pub fn new(points: Vec<(i64, f64)>, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "brush".to_string(), display_name: "Brush".to_string(), color: PrimitiveColor::new(color), width: 3.0, ..Default::default() },
             points, brush_size: 3.0,
@@ -32,20 +32,25 @@ impl Primitive for Brush {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::FreehandDrag }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { self.points.clone() }
-    fn set_points(&mut self, pts: &[(f64, f64)]) { self.points = pts.to_vec(); }
-    fn translate(&mut self, bd: f64, pd: f64) { for p in &mut self.points { p.0 += bd; p.1 += pd; } }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn points(&self) -> Vec<(i64, f64)> { self.points.clone() }
+    fn set_points(&mut self, pts: &[(i64, f64)]) { self.points = pts.to_vec(); }
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) {
+        for p in &mut self.points { p.0 += ts_delta_ms; p.1 += pd; }
+    }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         if let ControlPointType::Move = pt {
             if let Some(first) = self.points.first() {
-                let bd = bar - first.0;
+                let td = ts_ms - first.0;
                 let pd = price - first.1;
-                self.translate(bd, pd);
+                self.translate(td, pd);
             }
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let screen: Vec<_> = self.points.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let screen: Vec<_> = self.points.iter().map(|(ts, p)| {
+            let bar = timestamp_ms_to_bar_f64(bars, *ts);
+            (vp.bar_to_x_f64(bar), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect();
         for i in 0..screen.len().saturating_sub(1) {
             if point_to_line_dist(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE + self.brush_size {
                 return HitTestResult::Body;
@@ -53,7 +58,7 @@ impl Primitive for Brush {
         }
         HitTestResult::Miss
     }
-    fn control_points(&self, _vp: &Viewport, _ps: &PriceScale) -> Vec<ControlPoint> { vec![] }
+    fn control_points(&self, _bars: &[Bar], _vp: &Viewport, _ps: &PriceScale) -> Vec<ControlPoint> { vec![] }
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         if self.points.is_empty() {
@@ -69,50 +74,43 @@ impl Primitive for Brush {
 
         // Convert to screen coordinates
         let screen_pts: Vec<(f64, f64)> = self.points.iter()
-            .map(|&(bar, price)| (ctx.bar_to_x(bar), ctx.price_to_y(price)))
+            .map(|&(ts, price)| (ctx.ts_to_x_ms(ts), ctx.price_to_y(price)))
             .collect();
 
         // Draw smooth curve using quadratic bezier interpolation
         ctx.begin_path();
         if screen_pts.len() == 1 {
-            // Single point - just draw a dot
             let (x, y) = screen_pts[0];
             ctx.arc(x, y, self.data.width / 2.0, 0.0, std::f64::consts::TAU);
             ctx.fill();
             return;
         } else if screen_pts.len() == 2 {
-            // Two points - draw a line
             ctx.move_to(screen_pts[0].0, screen_pts[0].1);
             ctx.line_to(screen_pts[1].0, screen_pts[1].1);
         } else {
-            // 3+ points - use quadratic bezier through midpoints for smooth curves
             ctx.move_to(screen_pts[0].0, screen_pts[0].1);
 
-            // First segment: line to midpoint of first two points
             let mid_x = (screen_pts[0].0 + screen_pts[1].0) / 2.0;
             let mid_y = (screen_pts[0].1 + screen_pts[1].1) / 2.0;
             ctx.line_to(mid_x, mid_y);
 
-            // Middle segments: quadratic curves through points, ending at midpoints
             for i in 1..screen_pts.len() - 1 {
                 let next_mid_x = (screen_pts[i].0 + screen_pts[i + 1].0) / 2.0;
                 let next_mid_y = (screen_pts[i].1 + screen_pts[i + 1].1) / 2.0;
                 ctx.quadratic_curve_to(screen_pts[i].0, screen_pts[i].1, next_mid_x, next_mid_y);
             }
 
-            // Last segment: line to final point
             let last = screen_pts.last().unwrap();
             ctx.line_to(last.0, last.1);
         }
         ctx.stroke();
 
         if is_selected {
-            // Draw control points at first and last point
             ctx.set_stroke_color(CONTROL_POINT_STROKE);
             ctx.set_fill_color(CONTROL_POINT_FILL);
             ctx.set_stroke_width(1.5);
-            for &(bar, price) in [self.points.first(), self.points.last()].iter().filter_map(|p| *p) {
-                let x = ctx.bar_to_x(bar);
+            for &(ts, price) in [self.points.first(), self.points.last()].iter().filter_map(|p| *p) {
+                let x = ctx.ts_to_x_ms(ts);
                 let y = ctx.price_to_y(price);
                 ctx.begin_path();
                 ctx.arc(x, y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);

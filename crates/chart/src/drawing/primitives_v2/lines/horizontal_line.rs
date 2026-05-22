@@ -3,7 +3,7 @@
 //! A horizontal line at a specific price level.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -69,22 +69,21 @@ impl Primitive for HorizontalLine {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
-        // Return (0, price) - bar doesn't matter for horizontal line
-        vec![(0.0, self.price)]
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(0, self.price)]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
+    fn set_points(&mut self, points: &[(i64, f64)]) {
         if let Some((_, price)) = points.first() {
             self.price = *price;
         }
     }
 
-    fn translate(&mut self, _bar_delta: f64, price_delta: f64) {
+    fn translate(&mut self, _ts_delta_ms: i64, price_delta: f64) {
         self.price += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, _bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, _ts_ms: i64, price: f64) {
         if matches!(point_type, ControlPointType::Move) {
             self.price = price;
         }
@@ -94,6 +93,7 @@ impl Primitive for HorizontalLine {
         &self,
         _screen_x: f64,
         screen_y: f64,
+        _bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
@@ -108,11 +108,11 @@ impl Primitive for HorizontalLine {
 
     fn control_points(
         &self,
+        _bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
         let y = viewport.price_to_y(self.price, price_scale.price_min, price_scale.price_max);
-        // Position control point at chart center X
         let x = viewport.chart_width / 2.0;
 
         vec![ControlPoint::new(
@@ -235,7 +235,7 @@ impl Primitive for HorizontalLine {
 // Factory Registration
 // =============================================================================
 
-fn create_horizontal_line(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
+fn create_horizontal_line(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
     let price = points.first().map(|(_, p)| *p).unwrap_or(0.0);
     Box::new(HorizontalLine::new(price, color))
 }

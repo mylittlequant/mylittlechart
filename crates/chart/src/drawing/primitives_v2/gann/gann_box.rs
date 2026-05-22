@@ -4,7 +4,7 @@
 //! Shows price/time relationships with diagonal lines.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -88,12 +88,12 @@ fn default_true() -> bool { true }
 pub struct GannBox {
     /// Common primitive data
     pub data: PrimitiveData,
-    /// Top-left corner bar
-    pub bar1: f64,
+    /// Top-left corner timestamp (ms)
+    pub ts1: i64,
     /// Top-left corner price
     pub price1: f64,
-    /// Bottom-right corner bar
-    pub bar2: f64,
+    /// Bottom-right corner timestamp (ms)
+    pub ts2: i64,
     /// Bottom-right corner price
     pub price2: f64,
     /// Grid level configurations (0.0-1.0 fraction of box dimensions)
@@ -112,7 +112,7 @@ pub struct GannBox {
 
 impl GannBox {
     /// Create a new Gann box
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "gann_box".to_string(),
@@ -121,9 +121,9 @@ impl GannBox {
                 width: 1.0,
                 ..Default::default()
             },
-            bar1,
+            ts1,
             price1,
-            bar2,
+            ts2,
             price2,
             level_configs: default_gann_box_configs(),
             show_labels: true,
@@ -158,42 +158,42 @@ impl Primitive for GannBox {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
-        vec![(self.bar1, self.price1), (self.bar2, self.price2)]
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(self.ts1, self.price1), (self.ts2, self.price2)]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.bar1 = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.ts1 = ts;
             self.price1 = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
-            self.bar2 = bar;
+        if let Some(&(ts, price)) = points.get(1) {
+            self.ts2 = ts;
             self.price2 = price;
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.bar1 += bar_delta;
-        self.bar2 += bar_delta;
+    fn translate(&mut self, ts_delta_ms: i64, price_delta: f64) {
+        self.ts1 += ts_delta_ms;
+        self.ts2 += ts_delta_ms;
         self.price1 += price_delta;
         self.price2 += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 => {
-                self.bar1 = bar;
+                self.ts1 = ts_ms;
                 self.price1 = price;
             }
             ControlPointType::Point2 => {
-                self.bar2 = bar;
+                self.ts2 = ts_ms;
                 self.price2 = price;
             }
             ControlPointType::Move => {
-                let bar_delta = bar - self.bar1;
+                let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
-                self.translate(bar_delta, price_delta);
+                self.translate(ts_delta, price_delta);
             }
             _ => {}
         }
@@ -203,12 +203,15 @@ impl Primitive for GannBox {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         // Check control points
@@ -253,12 +256,15 @@ impl Primitive for GannBox {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         vec![
@@ -269,9 +275,9 @@ impl Primitive for GannBox {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
 
         let min_x = x1.min(x2);
@@ -489,10 +495,10 @@ fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) 
 // Factory Registration
 // =============================================================================
 
-fn create_gann_box(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
-    let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 20.0, price1 - 10.0));
-    Box::new(GannBox::new(bar1, price1, bar2, price2, color))
+fn create_gann_box(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts1, price1) = points.first().copied().unwrap_or((0, 0.0));
+    let (ts2, price2) = points.get(1).copied().unwrap_or((ts1 + 1_200_000, price1 - 10.0));
+    Box::new(GannBox::new(ts1, price1, ts2, price2, color))
 }
 
 pub fn metadata() -> PrimitiveMetadata {

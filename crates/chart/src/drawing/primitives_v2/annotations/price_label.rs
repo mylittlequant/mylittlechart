@@ -3,7 +3,7 @@
 //! Uses centralized PrimitiveText system for text configuration.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
@@ -14,7 +14,7 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceLabel {
     pub data: PrimitiveData,
-    pub bar: f64,
+    pub ts_ms: i64,
     pub price: f64,
     // Legacy field for backwards compatibility
     #[serde(default)] pub custom_text: Option<String>,
@@ -23,7 +23,7 @@ pub struct PriceLabel {
 fn default_true() -> bool { true }
 
 impl PriceLabel {
-    pub fn new(bar: f64, price: f64, color: &str) -> Self {
+    pub fn new(ts_ms: i64, price: f64, color: &str) -> Self {
         let mut data = PrimitiveData {
             type_id: "price_label".to_string(),
             display_name: "Price Label".to_string(),
@@ -31,12 +31,11 @@ impl PriceLabel {
             width: 1.0,
             ..Default::default()
         };
-        // Initialize centralized text system for styling
         data.text = Some(PrimitiveText::new(""));
 
         Self {
             data,
-            bar,
+            ts_ms,
             price,
             custom_text: None,
             show_line: true,
@@ -59,24 +58,26 @@ impl Primitive for PriceLabel {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::SingleClick }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar, self.price)] }
-    fn set_points(&mut self, points: &[(f64, f64)]) { if let Some(&(b, p)) = points.first() { self.bar = b; self.price = p; } }
-    fn translate(&mut self, bd: f64, pd: f64) { self.bar += bd; self.price += pd; }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
-        if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) { self.bar = bar; self.price = price; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts_ms, self.price)] }
+    fn set_points(&mut self, points: &[(i64, f64)]) { if let Some(&(t, p)) = points.first() { self.ts_ms = t; self.price = p; } }
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { self.ts_ms += ts_delta_ms; self.price += pd; }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
+        if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) { self.ts_ms = ts_ms; self.price = price; }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let (x, y) = (vp.bar_to_x_f64(self.bar), vp.price_to_y(self.price, ps.price_min, ps.price_max));
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let (x, y) = (vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max));
         let size = 30.0;
         if ((sx - x).powi(2) + (sy - y).powi(2)).sqrt() < size { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        vec![ControlPoint::point1(vp.bar_to_x_f64(self.bar), vp.price_to_y(self.price, ps.price_min, ps.price_max))]
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        vec![ControlPoint::point1(vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max))]
     }
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x = ctx.bar_to_x(self.bar);
+        let x = ctx.ts_to_x_ms(self.ts_ms);
         let y = ctx.price_to_y(self.price);
 
         // Get text styling from centralized system
@@ -231,7 +232,7 @@ pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "price_label", display_name: "Price Label", kind: PrimitiveKind::Annotation,
         click_behavior: ClickBehavior::SingleClick, tooltip: "Price value label", icon: "price_label", default_color: "#FF9800",
-        factory: |points, color| { let (b, p) = points.first().copied().unwrap_or((0.0, 0.0)); Box::new(PriceLabel::new(b, p, color)) },
+        factory: |points, color| { let (t, p) = points.first().copied().unwrap_or((0, 0.0)); Box::new(PriceLabel::new(t, p, color)) },
         supports_text: true, // Has custom text_properties
         has_levels: false,
         has_points_config: false,

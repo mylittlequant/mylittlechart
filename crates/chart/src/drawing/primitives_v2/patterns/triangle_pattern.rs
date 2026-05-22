@@ -1,7 +1,7 @@
 //! Triangle Pattern primitive - consolidation pattern
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -16,8 +16,8 @@ pub enum TriangleType { #[default] Symmetrical, Ascending, Descending, Expanding
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrianglePattern {
     pub data: PrimitiveData,
-    pub bar1: f64, pub price1_top: f64, pub price1_bottom: f64,
-    pub bar2: f64, pub price2_top: f64, pub price2_bottom: f64,
+    pub ts1: i64, pub price1_top: f64, pub price1_bottom: f64,
+    pub ts2: i64, pub price2_top: f64, pub price2_bottom: f64,
     pub triangle_type: TriangleType,
     #[serde(default = "default_true")] pub show_labels: bool,
     #[serde(default)] pub label_style: LabelStyle,
@@ -26,10 +26,10 @@ pub struct TrianglePattern {
 fn default_true() -> bool { true }
 
 impl TrianglePattern {
-    pub fn new(bar1: f64, price1_top: f64, price1_bottom: f64, bar2: f64, price2_top: f64, price2_bottom: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1_top: f64, price1_bottom: f64, ts2: i64, price2_top: f64, price2_bottom: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "triangle_pattern".to_string(), display_name: "Triangle Pattern".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
-            bar1, price1_top, price1_bottom, bar2, price2_top, price2_bottom, triangle_type: TriangleType::Symmetrical, show_labels: true,
+            ts1, price1_top, price1_bottom, ts2, price2_top, price2_bottom, triangle_type: TriangleType::Symmetrical, show_labels: true,
             label_style: LabelStyle::default(), show_lines: true,
         }
     }
@@ -42,29 +42,31 @@ impl Primitive for TrianglePattern {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(4) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar1, self.price1_top), (self.bar1, self.price1_bottom), (self.bar2, self.price2_top), (self.bar2, self.price2_bottom)] }
-    fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.first() { self.bar1 = b; self.price1_top = p; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts1, self.price1_top), (self.ts1, self.price1_bottom), (self.ts2, self.price2_top), (self.ts2, self.price2_bottom)] }
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        if let Some(&(ts, p)) = pts.first() { self.ts1 = ts; self.price1_top = p; }
         if let Some(&(_, p)) = pts.get(1) { self.price1_bottom = p; }
-        if let Some(&(b, p)) = pts.get(2) { self.bar2 = b; self.price2_top = p; }
+        if let Some(&(ts, p)) = pts.get(2) { self.ts2 = ts; self.price2_top = p; }
         if let Some(&(_, p)) = pts.get(3) { self.price2_bottom = p; }
     }
-    fn translate(&mut self, bd: f64, pd: f64) {
-        self.bar1 += bd; self.bar2 += bd;
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) {
+        self.ts1 += ts_delta_ms; self.ts2 += ts_delta_ms;
         self.price1_top += pd; self.price1_bottom += pd; self.price2_top += pd; self.price2_bottom += pd;
     }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Index(0) => { self.bar1 = bar; self.price1_top = price; }
+            ControlPointType::Index(0) => { self.ts1 = ts_ms; self.price1_top = price; }
             ControlPointType::Index(1) => { self.price1_bottom = price; }
-            ControlPointType::Index(2) => { self.bar2 = bar; self.price2_top = price; }
+            ControlPointType::Index(2) => { self.ts2 = ts_ms; self.price2_top = price; }
             ControlPointType::Index(3) => { self.price2_bottom = price; }
-            ControlPointType::Move => { let bd = bar - self.bar1; let pd = price - self.price1_top; self.translate(bd, pd); }
+            ControlPointType::Move => { let td = ts_ms - self.ts1; let pd = price - self.price1_top; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let pts = [(self.bar1, self.price1_top), (self.bar1, self.price1_bottom), (self.bar2, self.price2_top), (self.bar2, self.price2_bottom)];
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let pts = [(b1, self.price1_top), (b1, self.price1_bottom), (b2, self.price2_top), (b2, self.price2_bottom)];
         let screen: Vec<_> = pts.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
         for (i, &(x, y)) in screen.iter().enumerate() {
             if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
@@ -74,16 +76,18 @@ impl Primitive for TrianglePattern {
         if point_to_line_dist(sx, sy, screen[1].0, screen[1].1, screen[3].0, screen[3].1) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let pts = [(self.bar1, self.price1_top), (self.bar1, self.price1_bottom), (self.bar2, self.price2_top), (self.bar2, self.price2_bottom)];
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let pts = [(b1, self.price1_top), (b1, self.price1_bottom), (b2, self.price2_top), (b2, self.price2_bottom)];
         pts.iter().enumerate().map(|(i, (b, p))| ControlPoint::index(i as u8, vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect()
     }
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1_top = ctx.price_to_y(self.price1_top);
         let y1_bot = ctx.price_to_y(self.price1_bottom);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2_top = ctx.price_to_y(self.price2_top);
         let y2_bot = ctx.price_to_y(self.price2_bottom);
 
@@ -288,11 +292,11 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "triangle_pattern", display_name: "Triangle Pattern", kind: PrimitiveKind::Pattern,
         click_behavior: ClickBehavior::MultiPoint(4), tooltip: "Triangle consolidation pattern", icon: "triangle_pattern", default_color: "#009688",
         factory: |points, color| {
-            let (b1, p1t) = points.first().copied().unwrap_or((0.0, 100.0));
-            let (_, p1b) = points.get(1).copied().unwrap_or((b1, 90.0));
-            let (b2, p2t) = points.get(2).copied().unwrap_or((b1 + 20.0, 97.0));
-            let (_, p2b) = points.get(3).copied().unwrap_or((b2, 93.0));
-            Box::new(TrianglePattern::new(b1, p1t, p1b, b2, p2t, p2b, color))
+            let (ts1, p1t) = points.first().copied().unwrap_or((0, 100.0));
+            let (_, p1b) = points.get(1).copied().unwrap_or((ts1, 90.0));
+            let (ts2, p2t) = points.get(2).copied().unwrap_or((ts1 + 1_200_000, 97.0));
+            let (_, p2b) = points.get(3).copied().unwrap_or((ts2, 93.0));
+            Box::new(TrianglePattern::new(ts1, p1t, p1b, ts2, p2t, p2b, color))
         },
         supports_text: true,
         has_levels: false,

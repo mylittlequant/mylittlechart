@@ -4,7 +4,7 @@
 //! Standard angles: 1x8, 1x4, 1x3, 1x2, 1x1, 2x1, 3x1, 4x1, 8x1
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -102,13 +102,13 @@ fn default_true() -> bool { true }
 pub struct GannFan {
     /// Common primitive data
     pub data: PrimitiveData,
-    /// Origin bar
-    pub bar1: f64,
+    /// Origin timestamp (ms)
+    pub ts1: i64,
     /// Origin price
     pub price1: f64,
-    /// Target bar (defines scale)
-    pub bar2: f64,
-    /// Target price
+    /// Target timestamp (ms) — defines the time scale of the fan
+    pub ts2: i64,
+    /// Target price — defines the price scale of the fan
     pub price2: f64,
     /// Gann angle configurations (ratio values: 8.0=8x1, 1.0=1x1, 0.5=1x2, etc.)
     #[serde(default = "default_gann_fan_configs", deserialize_with = "deserialize_level_configs")]
@@ -126,7 +126,7 @@ pub struct GannFan {
 
 impl GannFan {
     /// Create a new Gann fan
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "gann_fan".to_string(),
@@ -135,9 +135,9 @@ impl GannFan {
                 width: 1.0,
                 ..Default::default()
             },
-            bar1,
+            ts1,
             price1,
-            bar2,
+            ts2,
             price2,
             level_configs: default_gann_fan_configs(),
             show_labels: true,
@@ -146,11 +146,11 @@ impl GannFan {
         }
     }
 
-    /// Get the price scale (price per bar) based on the two points
-    pub fn price_per_bar(&self) -> f64 {
-        let bar_diff = (self.bar2 - self.bar1).abs();
+    /// Get the price scale (price per ms) based on the two points
+    pub fn price_per_ms(&self) -> f64 {
+        let ts_diff = (self.ts2 - self.ts1).abs();
         let price_diff = (self.price2 - self.price1).abs();
-        if bar_diff == 0.0 { 1.0 } else { price_diff / bar_diff }
+        if ts_diff == 0 { 1.0 } else { price_diff / ts_diff as f64 }
     }
 
     /// Get visible levels sorted by ratio (for fill rendering between adjacent angles)
@@ -188,42 +188,42 @@ impl Primitive for GannFan {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
-        vec![(self.bar1, self.price1), (self.bar2, self.price2)]
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(self.ts1, self.price1), (self.ts2, self.price2)]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.bar1 = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.ts1 = ts;
             self.price1 = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
-            self.bar2 = bar;
+        if let Some(&(ts, price)) = points.get(1) {
+            self.ts2 = ts;
             self.price2 = price;
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.bar1 += bar_delta;
-        self.bar2 += bar_delta;
+    fn translate(&mut self, ts_delta_ms: i64, price_delta: f64) {
+        self.ts1 += ts_delta_ms;
+        self.ts2 += ts_delta_ms;
         self.price1 += price_delta;
         self.price2 += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 => {
-                self.bar1 = bar;
+                self.ts1 = ts_ms;
                 self.price1 = price;
             }
             ControlPointType::Point2 => {
-                self.bar2 = bar;
+                self.ts2 = ts_ms;
                 self.price2 = price;
             }
             ControlPointType::Move => {
-                let bar_delta = bar - self.bar1;
+                let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
-                self.translate(bar_delta, price_delta);
+                self.translate(ts_delta, price_delta);
             }
             _ => {}
         }
@@ -233,12 +233,15 @@ impl Primitive for GannFan {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         // Check control points
@@ -249,8 +252,11 @@ impl Primitive for GannFan {
             return HitTestResult::ControlPoint(ControlPointType::Point2);
         }
 
-        let ppb = self.price_per_bar();
+        let ppms = self.price_per_ms();
         let direction = if self.upward { 1.0 } else { -1.0 };
+        // Fixed time delta for computing fan ray direction: use ts2 - ts1
+        let ts_delta = (self.ts2 - self.ts1).abs();
+        let ts_delta = if ts_delta == 0 { 1_200_000 } else { ts_delta };
 
         // Check each visible fan line
         for config in &self.level_configs {
@@ -259,14 +265,11 @@ impl Primitive for GannFan {
             }
             let ratio = config.level;
 
-            // Calculate a point along this angle
-            let bar_delta = 100.0; // Fixed bar distance for the line
-            let price_delta = bar_delta * ppb * ratio * direction;
+            let end_ts = self.ts1 + ts_delta;
+            let end_price = self.price1 + ts_delta as f64 * ppms * ratio * direction;
 
-            let end_bar = self.bar1 + bar_delta;
-            let end_price = self.price1 + price_delta;
-
-            let end_x = viewport.bar_to_x_f64(end_bar);
+            let end_b = timestamp_ms_to_bar_f64(bars, end_ts);
+            let end_x = viewport.bar_to_x_f64(end_b);
             let end_y = viewport.price_to_y(end_price, price_scale.price_min, price_scale.price_max);
 
             let dist = if self.extend {
@@ -285,12 +288,15 @@ impl Primitive for GannFan {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         vec![
@@ -301,9 +307,9 @@ impl Primitive for GannFan {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
         let chart_width = ctx.chart_width();
         let chart_height = ctx.chart_height();
@@ -318,12 +324,13 @@ impl Primitive for GannFan {
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
 
-        let ppb = self.price_per_bar();
+        let ppms = self.price_per_ms();
         let direction = if self.upward { 1.0 } else { -1.0 };
+        // Fixed time delta for ray direction
+        let ts_delta = (self.ts2 - self.ts1).abs();
+        let ts_delta = if ts_delta == 0 { 1_200_000 } else { ts_delta };
 
         // === FILL RENDERING (before lines so lines are on top) ===
-        // For GannFan, fill is drawn between adjacent angle lines (sectors)
-        // Get visible levels sorted by ratio (descending: steepest first)
         let visible = self.visible_levels_sorted();
 
         for i in 0..visible.len() {
@@ -332,12 +339,10 @@ impl Primitive for GannFan {
                 continue;
             }
 
-            // Fill goes from this angle to the next one (or to horizontal if last)
             let ratio1 = config.level;
             let ratio2 = if i + 1 < visible.len() {
                 visible[i + 1].level
             } else {
-                // Last visible angle - fill to horizontal (ratio 0)
                 0.0
             };
 
@@ -345,18 +350,17 @@ impl Primitive for GannFan {
                 .or(config.color.as_deref())
                 .unwrap_or(&self.data.color.stroke);
 
-            // Calculate end points for both angles
             let ext = if self.extend {
                 (chart_width + chart_height) * 2.0
             } else {
-                100.0 * ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt() / 100.0
+                ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
             };
 
             // Angle 1 (steeper)
-            let bar_delta1 = 100.0;
-            let price_delta1 = bar_delta1 * ppb * ratio1 * direction;
-            let end_x1_raw = ctx.bar_to_x(self.bar1 + bar_delta1);
-            let end_y1_raw = ctx.price_to_y(self.price1 + price_delta1);
+            let end_ts1 = self.ts1 + ts_delta;
+            let end_price1 = self.price1 + ts_delta as f64 * ppms * ratio1 * direction;
+            let end_x1_raw = ctx.ts_to_x_ms(end_ts1);
+            let end_y1_raw = ctx.price_to_y(end_price1);
             let dx1 = end_x1_raw - x1;
             let dy1 = end_y1_raw - y1;
             let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
@@ -367,10 +371,10 @@ impl Primitive for GannFan {
             };
 
             // Angle 2 (shallower)
-            let bar_delta2 = 100.0;
-            let price_delta2 = bar_delta2 * ppb * ratio2 * direction;
-            let end_x2_raw = ctx.bar_to_x(self.bar1 + bar_delta2);
-            let end_y2_raw = ctx.price_to_y(self.price1 + price_delta2);
+            let end_ts2 = self.ts1 + ts_delta;
+            let end_price2 = self.price1 + ts_delta as f64 * ppms * ratio2 * direction;
+            let end_x2_raw = ctx.ts_to_x_ms(end_ts2);
+            let end_y2_raw = ctx.price_to_y(end_price2);
             let dx2 = end_x2_raw - x1;
             let dy2 = end_y2_raw - y1;
             let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
@@ -420,13 +424,10 @@ impl Primitive for GannFan {
                 LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
             }
 
-            let bar_delta = 100.0;
-            let price_delta = bar_delta * ppb * ratio * direction;
+            let end_ts = self.ts1 + ts_delta;
+            let end_price = self.price1 + ts_delta as f64 * ppms * ratio * direction;
 
-            let end_bar = self.bar1 + bar_delta;
-            let end_price = self.price1 + price_delta;
-
-            let end_x = ctx.bar_to_x(end_bar);
+            let end_x = ctx.ts_to_x_ms(end_ts);
             let end_y = ctx.price_to_y(end_price);
 
             ctx.begin_path();
@@ -453,18 +454,16 @@ impl Primitive for GannFan {
         // Render text if present
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
-                // For fan shapes, calculate bounding box from the rays
-                // The fan originates from (x1, y1) and spreads out
-                // Use the outermost rays (8x1 and 1x8) to determine the bounding area
-                let bar_delta = 50.0; // Use a fixed distance for text positioning
-                let top_price = self.price1 + bar_delta * ppb * 8.0 * direction;
-                let bottom_price = self.price1 + bar_delta * ppb * 0.125 * direction;
-                let end_bar = self.bar1 + bar_delta;
+                let ppms = self.price_per_ms();
+                let ts_half = ts_delta / 2;
+                let top_price = self.price1 + ts_half as f64 * ppms * 8.0 * direction;
+                let bottom_price = self.price1 + ts_half as f64 * ppms * 0.125 * direction;
+                let end_ts_half = self.ts1 + ts_half;
 
-                let end_x = ctx.bar_to_x(end_bar);
+                let end_x = ctx.ts_to_x_ms(end_ts_half);
                 let top_y = ctx.price_to_y(top_price);
                 let bottom_y = ctx.price_to_y(bottom_price);
-                let mid_price = self.price1 + bar_delta * ppb * 1.0 * direction;
+                let mid_price = self.price1 + ts_half as f64 * ppms * 1.0 * direction;
                 let mid_y = ctx.price_to_y(mid_price);
 
                 let min_x = x1.min(end_x);
@@ -473,13 +472,11 @@ impl Primitive for GannFan {
                 let max_y = top_y.max(bottom_y);
 
                 let text_offset = 8.0 + text.font_size / 2.0;
-                // Calculate X based on h_align
                 let text_x = match text.h_align {
                     super::super::TextAlign::Start => min_x,
                     super::super::TextAlign::Center => (min_x + max_x) / 2.0,
                     super::super::TextAlign::End => max_x,
                 };
-                // Start = ABOVE upper boundary, Center = middle, End = BELOW lower boundary
                 let text_y = match text.v_align {
                     super::super::TextAlign::Start => min_y - text_offset,
                     super::super::TextAlign::Center => mid_y,
@@ -566,10 +563,10 @@ fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -
 // Factory Registration
 // =============================================================================
 
-fn create_gann_fan(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
-    let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 20.0, price1 + 20.0));
-    Box::new(GannFan::new(bar1, price1, bar2, price2, color))
+fn create_gann_fan(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts1, price1) = points.first().copied().unwrap_or((0, 0.0));
+    let (ts2, price2) = points.get(1).copied().unwrap_or((ts1 + 1_200_000, price1 + 20.0));
+    Box::new(GannFan::new(ts1, price1, ts2, price2, color))
 }
 
 pub fn metadata() -> PrimitiveMetadata {

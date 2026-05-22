@@ -3,6 +3,8 @@
 //! This module extends uzor-render's RenderContext with chart-specific
 //! coordinate conversion methods for bar/price data.
 
+use crate::{Bar, timestamp_ms_to_bar_f64};
+
 /// Chart-specific rendering context
 ///
 /// Extends the base RenderContext from uzor-render with coordinate conversion
@@ -36,6 +38,24 @@ pub trait RenderContext: uzor::render::RenderContext {
 
     /// Convert price to Y coordinate
     fn price_to_y(&self, price: f64) -> f64;
+
+    /// Provide the bar slice used for timestamp → X conversion.
+    ///
+    /// Implementations that carry a bars reference override this to return it.
+    /// The default returns an empty slice; callers fall back to `bar_to_x(0.0)`.
+    fn bars(&self) -> &[Bar] {
+        &[]
+    }
+
+    /// Convert a Unix timestamp in **milliseconds** to an X screen coordinate.
+    ///
+    /// Internally converts ms → fractional bar index using `timestamp_ms_to_bar_f64`,
+    /// then delegates to `bar_to_x`.  When `bars()` is empty the position is
+    /// approximated as `bar_to_x(0.0)`.
+    fn ts_to_x_ms(&self, ts_ms: i64) -> f64 {
+        let bar = timestamp_ms_to_bar_f64(self.bars(), ts_ms);
+        self.bar_to_x(bar)
+    }
 
     /// Update coordinate conversion parameters for a specific window
     /// This is called before rendering primitives for each window in multi-window layouts

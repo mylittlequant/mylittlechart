@@ -335,6 +335,62 @@ pub fn find_bar_for_timestamp(bars: &[Bar], timestamp: i64) -> Option<usize> {
     }
 }
 
+/// Compute the bar interval in seconds from a bars slice.
+///
+/// Returns the difference between the last two bar timestamps,
+/// or 3600 (1 hour) as a default when fewer than 2 bars are available.
+#[inline]
+pub fn bar_interval_seconds(bars: &[Bar]) -> i64 {
+    if bars.len() >= 2 {
+        bars[bars.len() - 1].timestamp - bars[bars.len() - 2].timestamp
+    } else {
+        3600
+    }
+}
+
+/// Find the bar index for a given timestamp in **milliseconds**.
+///
+/// Converts `ts_ms` to seconds and delegates to `find_bar_for_timestamp`.
+#[inline]
+pub fn find_bar_for_timestamp_ms(bars: &[Bar], ts_ms: i64) -> Option<usize> {
+    find_bar_for_timestamp(bars, ts_ms / 1000)
+}
+
+/// Convert a timestamp in **milliseconds** to a fractional bar index.
+///
+/// Returns `0.0` when `bars` is empty.  Extrapolates beyond the last bar
+/// using the bar interval so primitives drawn in "future" space remain stable.
+#[inline]
+pub fn timestamp_ms_to_bar_f64(bars: &[Bar], ts_ms: i64) -> f64 {
+    match find_bar_for_timestamp_ms(bars, ts_ms) {
+        Some(idx) => idx as f64,
+        None => 0.0,
+    }
+}
+
+/// Convert a fractional bar index to a timestamp in **milliseconds**.
+///
+/// Used to round-trip from bar position back to timestamp for drag math.
+#[inline]
+pub fn bar_f64_to_timestamp_ms(bars: &[Bar], bar_f64: f64) -> i64 {
+    let interval_ms = bar_interval_seconds(bars) * 1000;
+    let idx = bar_f64.floor() as i64;
+    if bars.is_empty() {
+        return 0;
+    }
+    if idx < 0 {
+        let before = (-idx) as i64;
+        return bars[0].timestamp * 1000 - before * interval_ms;
+    }
+    let idx_u = idx as usize;
+    if idx_u < bars.len() {
+        bars[idx_u].timestamp * 1000
+    } else {
+        let beyond = (idx_u - (bars.len() - 1)) as i64;
+        bars[bars.len() - 1].timestamp * 1000 + beyond * interval_ms
+    }
+}
+
 /// Convert bar index to timestamp using the bars array.
 ///
 /// # Arguments

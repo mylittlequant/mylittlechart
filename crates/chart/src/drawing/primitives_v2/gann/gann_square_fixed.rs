@@ -4,7 +4,7 @@
 //! The square maintains equal price/time units.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -71,18 +71,21 @@ where
 
 fn default_true() -> bool { true }
 
+fn default_bar_size_ms() -> i64 { 1_200_000 }
+
 /// Gann Square Fixed
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GannSquareFixed {
     /// Common primitive data
     pub data: PrimitiveData,
-    /// Center bar
-    pub center_bar: f64,
+    /// Center timestamp (ms)
+    pub center_ts: i64,
     /// Center price
     pub center_price: f64,
-    /// Size in bars (horizontal)
-    pub bar_size: f64,
-    /// Size in price (vertical) - typically equal to bar_size * price_per_bar
+    /// Size in milliseconds (horizontal half = bar_size_ms / 2)
+    #[serde(default = "default_bar_size_ms")]
+    pub bar_size_ms: i64,
+    /// Size in price (vertical)
     pub price_size: f64,
     /// Ring level configurations (0.0-1.0 fraction from center to edge)
     #[serde(default = "default_gann_square_fixed_configs", deserialize_with = "deserialize_level_configs")]
@@ -97,7 +100,7 @@ pub struct GannSquareFixed {
 
 impl GannSquareFixed {
     /// Create a new fixed Gann square
-    pub fn new(center_bar: f64, center_price: f64, color: &str) -> Self {
+    pub fn new(center_ts: i64, center_price: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "gann_square_fixed".to_string(),
@@ -106,9 +109,9 @@ impl GannSquareFixed {
                 width: 1.0,
                 ..Default::default()
             },
-            center_bar,
+            center_ts,
             center_price,
-            bar_size: 20.0,
+            bar_size_ms: 1_200_000,
             price_size: 10.0,
             level_configs: default_gann_square_fixed_configs(),
             show_labels: true,
@@ -116,15 +119,15 @@ impl GannSquareFixed {
         }
     }
 
-    /// Get the corners of the square
-    pub fn corners(&self) -> [(f64, f64); 4] {
-        let half_bar = self.bar_size / 2.0;
+    /// Get the corners as (timestamp_ms, price) — top-left, top-right, bottom-right, bottom-left
+    pub fn corners(&self) -> [(i64, f64); 4] {
+        let half_ts = self.bar_size_ms / 2;
         let half_price = self.price_size / 2.0;
         [
-            (self.center_bar - half_bar, self.center_price + half_price), // top-left
-            (self.center_bar + half_bar, self.center_price + half_price), // top-right
-            (self.center_bar + half_bar, self.center_price - half_price), // bottom-right
-            (self.center_bar - half_bar, self.center_price - half_price), // bottom-left
+            (self.center_ts - half_ts, self.center_price + half_price), // top-left
+            (self.center_ts + half_ts, self.center_price + half_price), // top-right
+            (self.center_ts + half_ts, self.center_price - half_price), // bottom-right
+            (self.center_ts - half_ts, self.center_price - half_price), // bottom-left
         ]
     }
 }
@@ -154,40 +157,42 @@ impl Primitive for GannSquareFixed {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
+    fn points(&self) -> Vec<(i64, f64)> {
         // Return center and corner (for two-point creation)
         vec![
-            (self.center_bar, self.center_price),
-            (self.center_bar + self.bar_size / 2.0, self.center_price + self.price_size / 2.0),
+            (self.center_ts, self.center_price),
+            (self.center_ts + self.bar_size_ms / 2, self.center_price + self.price_size / 2.0),
         ]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.center_bar = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.center_ts = ts;
             self.center_price = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
+        if let Some(&(ts, price)) = points.get(1) {
             // Second point defines the corner, so calculate size
-            self.bar_size = ((bar - self.center_bar).abs() * 2.0).max(1.0);
+            let ts_diff = (ts - self.center_ts).abs() * 2;
+            self.bar_size_ms = ts_diff.max(60_000);
             self.price_size = ((price - self.center_price).abs() * 2.0).max(1.0);
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.center_bar += bar_delta;
+    fn translate(&mut self, ts_delta_ms: i64, price_delta: f64) {
+        self.center_ts += ts_delta_ms;
         self.center_price += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 | ControlPointType::Move => {
-                self.center_bar = bar;
+                self.center_ts = ts_ms;
                 self.center_price = price;
             }
             ControlPointType::Corner(_) => {
                 // Corner resize - proportional
-                self.bar_size = ((bar - self.center_bar).abs() * 2.0).max(1.0);
+                let ts_diff = (ts_ms - self.center_ts).abs() * 2;
+                self.bar_size_ms = ts_diff.max(60_000);
                 self.price_size = ((price - self.center_price).abs() * 2.0).max(1.0);
             }
             ControlPointType::Edge(0) => {
@@ -195,16 +200,18 @@ impl Primitive for GannSquareFixed {
                 self.price_size = ((price - self.center_price).abs() * 2.0).max(1.0);
             }
             ControlPointType::Edge(1) => {
-                // Right edge - adjust bar_size
-                self.bar_size = ((bar - self.center_bar).abs() * 2.0).max(1.0);
+                // Right edge - adjust bar_size_ms
+                let ts_diff = (ts_ms - self.center_ts).abs() * 2;
+                self.bar_size_ms = ts_diff.max(60_000);
             }
             ControlPointType::Edge(2) => {
                 // Bottom edge - adjust price_size
                 self.price_size = ((self.center_price - price).abs() * 2.0).max(1.0);
             }
             ControlPointType::Edge(3) => {
-                // Left edge - adjust bar_size
-                self.bar_size = ((self.center_bar - bar).abs() * 2.0).max(1.0);
+                // Left edge - adjust bar_size_ms
+                let ts_diff = (self.center_ts - ts_ms).abs() * 2;
+                self.bar_size_ms = ts_diff.max(60_000);
             }
             _ => {}
         }
@@ -214,17 +221,20 @@ impl Primitive for GannSquareFixed {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let cx = viewport.bar_to_x_f64(self.center_bar);
+        let center_b = timestamp_ms_to_bar_f64(bars, self.center_ts);
+        let cx = viewport.bar_to_x_f64(center_b);
         let cy = viewport.price_to_y(self.center_price, price_scale.price_min, price_scale.price_max);
 
         let corners = self.corners();
         let screen_corners: Vec<(f64, f64)> = corners.iter()
-            .map(|(bar, price)| {
+            .map(|(ts, price)| {
+                let b = timestamp_ms_to_bar_f64(bars, *ts);
                 (
-                    viewport.bar_to_x_f64(*bar),
+                    viewport.bar_to_x_f64(b),
                     viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max),
                 )
             })
@@ -241,10 +251,10 @@ impl Primitive for GannSquareFixed {
         let half_bar_screen = (screen_corners[1].0 - cx).abs();
         let half_price_screen = (cy - screen_corners[0].1).abs();
         let edges = [
-            (cx, cy - half_price_screen, 0), // top
-            (cx + half_bar_screen, cy, 1),   // right
-            (cx, cy + half_price_screen, 2), // bottom
-            (cx - half_bar_screen, cy, 3),   // left
+            (cx, cy - half_price_screen, 0u8), // top
+            (cx + half_bar_screen, cy, 1),      // right
+            (cx, cy + half_price_screen, 2),    // bottom
+            (cx - half_bar_screen, cy, 3),      // left
         ];
         for (ex, ey, idx) in edges {
             if check_point_hit(screen_x, screen_y, ex, ey) {
@@ -279,17 +289,20 @@ impl Primitive for GannSquareFixed {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let cx = viewport.bar_to_x_f64(self.center_bar);
+        let center_b = timestamp_ms_to_bar_f64(bars, self.center_ts);
+        let cx = viewport.bar_to_x_f64(center_b);
         let cy = viewport.price_to_y(self.center_price, price_scale.price_min, price_scale.price_max);
 
         let corners = self.corners();
         let screen_corners: Vec<(f64, f64)> = corners.iter()
-            .map(|(bar, price)| {
+            .map(|(ts, price)| {
+                let b = timestamp_ms_to_bar_f64(bars, *ts);
                 (
-                    viewport.bar_to_x_f64(*bar),
+                    viewport.bar_to_x_f64(b),
                     viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max),
                 )
             })
@@ -316,12 +329,12 @@ impl Primitive for GannSquareFixed {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let cx = ctx.bar_to_x(self.center_bar);
+        let cx = ctx.ts_to_x_ms(self.center_ts);
         let cy = ctx.price_to_y(self.center_price);
 
         let corners = self.corners();
         let screen_corners: Vec<(f64, f64)> = corners.iter()
-            .map(|(bar, price)| (ctx.bar_to_x(*bar), ctx.price_to_y(*price)))
+            .map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price)))
             .collect();
 
         // Calculate half dimensions in screen space
@@ -429,13 +442,11 @@ impl Primitive for GannSquareFixed {
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
                 let text_offset = 8.0 + text.font_size / 2.0;
-                // Calculate X based on h_align
                 let text_x = match text.h_align {
                     super::super::TextAlign::Start => min_x,
                     super::super::TextAlign::Center => (min_x + max_x) / 2.0,
                     super::super::TextAlign::End => max_x,
                 };
-                // Start = ABOVE upper boundary, Center = middle, End = BELOW lower boundary
                 let text_y = match text.v_align {
                     super::super::TextAlign::Start => min_y - text_offset,
                     super::super::TextAlign::Center => (min_y + max_y) / 2.0,
@@ -527,11 +538,12 @@ fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) 
 // Factory Registration
 // =============================================================================
 
-fn create_gann_square_fixed(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar, price) = points.first().copied().unwrap_or((0.0, 100.0));
-    let mut gann = GannSquareFixed::new(bar, price, color);
-    if let Some(&(bar2, price2)) = points.get(1) {
-        gann.bar_size = ((bar2 - bar).abs() * 2.0).max(1.0);
+fn create_gann_square_fixed(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts, price) = points.first().copied().unwrap_or((0, 100.0));
+    let mut gann = GannSquareFixed::new(ts, price, color);
+    if let Some(&(ts2, price2)) = points.get(1) {
+        let ts_diff = (ts2 - ts).abs() * 2;
+        gann.bar_size_ms = ts_diff.max(60_000);
         gann.price_size = ((price2 - price).abs() * 2.0).max(1.0);
     }
     Box::new(gann)

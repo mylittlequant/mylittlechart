@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, RwLock};
-use crate::{PriceScale, Viewport, Bar, find_bar_for_timestamp};
+use crate::{PriceScale, Viewport, Bar};
 use super::primitives_v2::{
     Primitive, PrimitiveRegistry, ClickBehavior,
     ControlPoint, ControlPointType, HitTestResult,
@@ -102,8 +102,8 @@ pub enum DrawingState {
     Creating {
         /// Tool type_id being created
         tool_id: String,
-        /// Accumulated points so far
-        points: Vec<(f64, f64)>,
+        /// Accumulated points as (timestamp_ms, price) pairs
+        points: Vec<(i64, f64)>,
     },
 }
 
@@ -114,7 +114,7 @@ impl DrawingState {
     }
 
     /// Get the first point if creating
-    pub fn first_point(&self) -> Option<(f64, f64)> {
+    pub fn first_point(&self) -> Option<(i64, f64)> {
         match self {
             DrawingState::Creating { points, .. } => points.first().copied(),
             _ => None,
@@ -129,8 +129,8 @@ impl DrawingState {
         }
     }
 
-    /// Get all points accumulated so far
-    pub fn points(&self) -> &[(f64, f64)] {
+    /// Get all points accumulated so far as (timestamp_ms, price)
+    pub fn points(&self) -> &[(i64, f64)] {
         match self {
             DrawingState::Creating { points, .. } => points,
             _ => &[],
@@ -180,8 +180,8 @@ pub struct DrawingManager {
     dragging: Option<usize>,
     /// Type of drag operation
     drag_type: DragType,
-    /// Drag start position (bar, price)
-    drag_start: Option<(f64, f64)>,
+    /// Drag start position (timestamp_ms, price)
+    drag_start: Option<(i64, f64)>,
     /// Lock drawings (prevent editing/dragging)
     locked: bool,
     /// Drawings visible
@@ -525,7 +525,7 @@ impl DrawingManager {
     }
 
     /// Get accumulated points during drawing (for anchor point display)
-    pub fn drawing_points(&self) -> Option<&[(f64, f64)]> {
+    pub fn drawing_points(&self) -> Option<&[(i64, f64)]> {
         match &self.state {
             DrawingState::Creating { points, .. } => Some(points.as_slice()),
             DrawingState::Idle => None,
@@ -547,7 +547,7 @@ impl DrawingManager {
     /// `tool_id = None` means the peer finished or cancelled — clears our
     /// synced state, but only when we are not drawing ourselves (to avoid
     /// clobbering a locally-started drawing).
-    pub fn set_synced_drawing_state(&mut self, tool_id: Option<String>, points: Vec<(f64, f64)>) {
+    pub fn set_synced_drawing_state(&mut self, tool_id: Option<String>, points: Vec<(i64, f64)>) {
         match tool_id {
             Some(id) => {
                 self.state = DrawingState::Creating { tool_id: id, points };
@@ -568,7 +568,7 @@ impl DrawingManager {
     /// `is_drawing()` to true for freehand tools — `set_tool` no longer does it.
     ///
     /// Returns true if a stroke was started.
-    pub fn start_freehand(&mut self, bar: f64, price: f64) -> bool {
+    pub fn start_freehand(&mut self, ts_ms: i64, price: f64) -> bool {
         let tool_id = match self.current_tool.clone() {
             Some(id) => id,
             None => return false,
@@ -586,38 +586,42 @@ impl DrawingManager {
         self.state.cancel();
         self.state = DrawingState::Creating {
             tool_id,
-            points: vec![(bar, price)],
+            points: vec![(ts_ms, price)],
         };
         true
     }
 
-    /// Add a point during freehand drawing
-    /// Returns true if point was added
-    /// Uses minimum distance filtering to avoid too many close points
-    pub fn add_freehand_point(&mut self, bar: f64, price: f64) -> bool {
-        // Minimum distance threshold (in data coordinates) - points closer than this are skipped
-        // This helps reduce jitter while still capturing the overall stroke shape
-        const MIN_BAR_DIST: f64 = 0.15;  // ~15% of a bar width
-        const MIN_PRICE_RATIO: f64 = 0.0002; // ~0.02% of price (works across different price scales)
+    /// Add a point during freehand drawing.
+    ///
+    /// `ts_ms` is Unix timestamp in milliseconds; `bar_interval_ms` is the
+    /// current timeframe bar size in milliseconds (used for distance filtering).
+    ///
+    /// Returns true if the point was added.
+    pub fn add_freehand_point(&mut self, ts_ms: i64, price: f64, bar_interval_ms: i64) -> bool {
+        // Minimum time distance threshold — ~15% of one bar width.
+        const MIN_TS_FRAC: f64 = 0.15;
+        const MIN_PRICE_RATIO: f64 = 0.0002;
+
+        let min_ts_dist = (bar_interval_ms as f64 * MIN_TS_FRAC) as i64;
 
         if let DrawingState::Creating { tool_id, points } = &mut self.state {
             let registry = PrimitiveRegistry::global().read().unwrap();
             if let Some(meta) = registry.get(tool_id) {
                 if meta.click_behavior == ClickBehavior::FreehandDrag {
                     // Check distance from last point
-                    if let Some(&(last_bar, last_price)) = points.last() {
-                        let bar_dist = (bar - last_bar).abs();
+                    if let Some(&(last_ts, last_price)) = points.last() {
+                        let ts_dist = (ts_ms - last_ts).abs();
                         let price_dist = (price - last_price).abs();
                         let avg_price = (price + last_price).abs() / 2.0;
                         let price_threshold = avg_price * MIN_PRICE_RATIO;
 
                         // Skip if too close to last point
-                        if bar_dist < MIN_BAR_DIST && price_dist < price_threshold {
+                        if ts_dist < min_ts_dist && price_dist < price_threshold {
                             return false;
                         }
                     }
 
-                    points.push((bar, price));
+                    points.push((ts_ms, price));
                     return true;
                 }
             }
@@ -736,7 +740,7 @@ impl DrawingManager {
     /// or the active `TemplateStyle` fingerprint for this tool.  On a cache hit a
     /// cheap `clone_box()` is returned instead of running the factory + style
     /// application again.
-    pub fn create_preview(&self, cursor_bar: f64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
+    pub fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
         let DrawingState::Creating { tool_id, points } = &self.state else {
             // Not drawing — drop any stale cache entry.
             *self.preview_cache.borrow_mut() = None;
@@ -754,11 +758,12 @@ impl DrawingManager {
             .and_then(|s| s.get(tool_id).cloned());
 
         // Build the cache key.
+        // Use cursor_ts_ms as two u32s for the cursor field (reusing the (u64, u64) field).
         let cur_fp  = style_snapshot.as_ref().map(style_fingerprint).unwrap_or(0);
         let cur_key = (
             tool_id.as_str(),
             points.len(),
-            cursor_bar.to_bits(),
+            cursor_ts_ms as u64,
             cursor_price.to_bits(),
             cur_fp,
             self.tool_variant.as_deref(),
@@ -785,7 +790,7 @@ impl DrawingManager {
 
         // Build preview points: existing points + cursor
         let mut preview_points = points.clone();
-        preview_points.push((cursor_bar, cursor_price));
+        preview_points.push((cursor_ts_ms, cursor_price));
 
         // For primitives with fixed point count, pad with cursor position
         // This creates a "collapsed" shape that expands as user clicks
@@ -800,7 +805,7 @@ impl DrawingManager {
         };
 
         while preview_points.len() < min_points {
-            preview_points.push((cursor_bar, cursor_price));
+            preview_points.push((cursor_ts_ms, cursor_price));
         }
 
         // Create the primitive with preview points.
@@ -834,7 +839,7 @@ impl DrawingManager {
         *self.preview_cache.borrow_mut() = Some(PreviewCache {
             tool_id:    tool_id.clone(),
             points_len: points.len(),
-            cursor:     (cursor_bar.to_bits(), cursor_price.to_bits()),
+            cursor:     (cursor_ts_ms as u64, cursor_price.to_bits()),
             style_fp:   cur_fp,
             variant:    self.tool_variant.clone(),
             primitive:  prim,
@@ -847,10 +852,11 @@ impl DrawingManager {
     // Click Handling
     // =========================================================================
 
-    /// Handle a click at the given data coordinates
+    /// Handle a click at the given data coordinates.
     ///
-    /// Returns true if a primitive was created
-    pub fn on_click(&mut self, bar: f64, price: f64) -> bool {
+    /// `ts_ms` is the Unix timestamp in **milliseconds** of the click position.
+    /// Returns true if a primitive was created.
+    pub fn on_click(&mut self, ts_ms: i64, price: f64) -> bool {
         let tool_id = match &self.current_tool {
             Some(id) => id.clone(),
             None => return false,
@@ -869,7 +875,7 @@ impl DrawingManager {
         match click_behavior {
             ClickBehavior::SingleClick => {
                 // Create immediately with single point
-                if let Some(mut prim) = registry.create(&tool_id, &[(bar, price)], Some(&self.default_color)) {
+                if let Some(mut prim) = registry.create(&tool_id, &[(ts_ms, price)], Some(&self.default_color)) {
                     prim.data_mut().id = crate::drawing::alloc_primitive_id();
                     prim.data_mut().pane_id = self.current_pane_id;
                     prim.data_mut().window_id = self.current_window_id;
@@ -897,12 +903,12 @@ impl DrawingManager {
                         // First click - start creating
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                     DrawingState::Creating { points, tool_id: creating_tool } if creating_tool == &tool_id => {
                         // Second click - create primitive
-                        points.push((bar, price));
+                        points.push((ts_ms, price));
                         if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
                             prim.data_mut().id = crate::drawing::alloc_primitive_id();
                             prim.data_mut().pane_id = self.current_pane_id;
@@ -931,7 +937,7 @@ impl DrawingManager {
                         // Different tool - restart
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                 }
@@ -941,11 +947,11 @@ impl DrawingManager {
                     DrawingState::Idle => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                     DrawingState::Creating { points, tool_id: creating_tool } if creating_tool == &tool_id => {
-                        points.push((bar, price));
+                        points.push((ts_ms, price));
                         if points.len() >= 3 {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
                                 prim.data_mut().id = crate::drawing::alloc_primitive_id();
@@ -967,7 +973,7 @@ impl DrawingManager {
                     _ => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                 }
@@ -977,11 +983,11 @@ impl DrawingManager {
                     DrawingState::Idle => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                     DrawingState::Creating { points, tool_id: creating_tool } if creating_tool == &tool_id => {
-                        points.push((bar, price));
+                        points.push((ts_ms, price));
                         if points.len() >= 4 {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
                                 prim.data_mut().id = crate::drawing::alloc_primitive_id();
@@ -1002,7 +1008,7 @@ impl DrawingManager {
                     _ => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                 }
@@ -1014,11 +1020,11 @@ impl DrawingManager {
                     DrawingState::Idle => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                     DrawingState::Creating { points, tool_id: creating_tool } if creating_tool == &tool_id => {
-                        points.push((bar, price));
+                        points.push((ts_ms, price));
                         // Auto-finish when we have enough points
                         if points.len() >= min_points as usize {
                             if let Some(mut prim) = registry.create(&tool_id, points, Some(&self.default_color)) {
@@ -1040,7 +1046,7 @@ impl DrawingManager {
                     _ => {
                         self.state = DrawingState::Creating {
                             tool_id: tool_id.clone(),
-                            points: vec![(bar, price)],
+                            points: vec![(ts_ms, price)],
                         };
                     }
                 }
@@ -1183,99 +1189,6 @@ impl DrawingManager {
         self.primitives.clear();
         self.selected = None;
         self.dragging = None;
-    }
-
-    /// Recalculate bar positions for all primitives from their stored timestamps.
-    ///
-    /// Should be called when timeframe changes to update primitive positions.
-    /// Uses centralized point_timestamps in PrimitiveData.
-    pub fn recalculate_all_bar_caches(&mut self, bars: &[Bar]) {
-        for prim in &mut self.primitives {
-            let timestamps = &prim.data().point_timestamps;
-            if timestamps.is_empty() {
-                // No timestamps stored yet - skip (primitive will use current bar positions)
-                continue;
-            }
-
-            // Get current points to extract prices
-            let current_points = prim.points();
-            if current_points.len() != timestamps.len() {
-                // Mismatch - skip to avoid corruption
-                continue;
-            }
-
-            // Convert timestamps to new bar indices, keeping prices
-            let new_points: Vec<(f64, f64)> = timestamps
-                .iter()
-                .zip(current_points.iter())
-                .map(|(ts, (old_bar, price))| {
-                    let bar = match find_bar_for_timestamp(bars, *ts) {
-                        Some(idx) => idx as f64,
-                        None => *old_bar,
-                    };
-                    (bar, *price)
-                })
-                .collect();
-
-            prim.set_points(&new_points);
-        }
-    }
-
-    /// Ensure all primitives have point_timestamps populated.
-    ///
-    /// For primitives with empty timestamps, compute them from current bar indices.
-    /// This is a one-time migration for old presets that did not save timestamps.
-    /// Must be called BEFORE recalculate_all_bar_caches so that method has
-    /// timestamps to work with and will not skip these primitives.
-    pub fn ensure_timestamps_populated(&mut self, bars: &[Bar]) {
-        for prim in &mut self.primitives {
-            if prim.data().point_timestamps.is_empty() && !bars.is_empty() {
-                Self::sync_primitive_timestamps(prim.as_mut(), bars);
-            }
-        }
-    }
-
-    /// Update timestamps from current bar indices for all primitives.
-    ///
-    /// Should be called after primitive creation or drag operations to sync timestamps.
-    /// Uses centralized point_timestamps in PrimitiveData.
-    pub fn update_all_timestamps_from_bars(&mut self, bars: &[Bar]) {
-        for prim in &mut self.primitives {
-            Self::sync_primitive_timestamps(prim.as_mut(), bars);
-        }
-    }
-
-    /// Sync timestamps for a single primitive from its current bar positions.
-    pub fn sync_primitive_timestamps(prim: &mut dyn Primitive, bars: &[Bar]) {
-        let points = prim.points();
-        let timestamps: Vec<i64> = points
-            .iter()
-            .map(|(bar, _price)| Self::bar_idx_to_timestamp(*bar as usize, bars))
-            .collect();
-        prim.data_mut().point_timestamps = timestamps;
-    }
-
-    /// Convert bar index to timestamp, with extrapolation for future bars.
-    fn bar_idx_to_timestamp(bar_idx: usize, bars: &[Bar]) -> i64 {
-        if bars.is_empty() {
-            return 0;
-        }
-
-        // Within bounds - direct lookup
-        if bar_idx < bars.len() {
-            return bars[bar_idx].timestamp;
-        }
-
-        // Out of bounds (future) - extrapolate based on bar interval
-        let interval = if bars.len() >= 2 {
-            bars[bars.len() - 1].timestamp - bars[bars.len() - 2].timestamp
-        } else {
-            3600 // Default to 1 hour
-        };
-
-        let last_timestamp = bars[bars.len() - 1].timestamp;
-        let bars_beyond = bar_idx - (bars.len() - 1);
-        last_timestamp + (bars_beyond as i64 * interval)
     }
 
     // =========================================================================
@@ -1444,11 +1357,12 @@ impl DrawingManager {
     // Hit Testing
     // =========================================================================
 
-    /// Hit test at screen coordinates (for main chart primitives only)
+    /// Hit test at screen coordinates (for main chart primitives only).
     ///
+    /// `bars` is required to convert stored timestamps to screen X.
     /// Note: Locked primitives CAN be selected (to allow unlocking them),
     /// but drag/resize operations are blocked separately.
-    pub fn hit_test(&self, x: f64, y: f64, viewport: &Viewport, price_scale: &PriceScale) -> Option<usize> {
+    pub fn hit_test(&self, x: f64, y: f64, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> Option<usize> {
         // If hidden or globally locked, no primitives are selectable
         if !self.visible || self.locked {
             return None;
@@ -1461,17 +1375,17 @@ impl DrawingManager {
                 continue; // Skip sub-pane primitives
             }
             // Note: We DO allow selecting locked primitives so user can unlock them
-            if !matches!(prim.hit_test(x, y, viewport, price_scale), HitTestResult::Miss) {
+            if !matches!(prim.hit_test(x, y, bars, viewport, price_scale), HitTestResult::Miss) {
                 return Some(idx);
             }
         }
         None
     }
 
-    /// Hit test at screen coordinates within a specific pane
+    /// Hit test at screen coordinates within a specific pane.
     ///
-    /// The x, y coordinates should be relative to the pane's rect (not the whole chart).
-    /// The viewport should have chart_height set to the pane's height.
+    /// `bars` is required to convert stored timestamps to screen X.
+    /// The x, y coordinates should be relative to the pane's rect.
     /// Note: Locked primitives CAN be selected (to allow unlocking them),
     /// but drag/resize operations are blocked separately.
     pub fn hit_test_in_pane(
@@ -1479,6 +1393,7 @@ impl DrawingManager {
         x: f64,
         y: f64,
         pane_id: u64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<usize> {
@@ -1494,20 +1409,22 @@ impl DrawingManager {
                 continue; // Skip primitives not in this pane
             }
             // Note: We DO allow selecting locked primitives so user can unlock them
-            if !matches!(prim.hit_test(x, y, viewport, price_scale), HitTestResult::Miss) {
+            if !matches!(prim.hit_test(x, y, bars, viewport, price_scale), HitTestResult::Miss) {
                 return Some(idx);
             }
         }
         None
     }
 
-    /// Hit test control points of selected primitive
+    /// Hit test control points of selected primitive.
     ///
+    /// `bars` is required for timestamp → screen X conversion.
     /// Returns None if globally locked or the selected primitive is locked.
     pub fn hit_test_control_point(
         &self,
         x: f64,
         y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<ControlPointType> {
@@ -1524,22 +1441,23 @@ impl DrawingManager {
             return None;
         }
 
-        match prim.hit_test(x, y, viewport, price_scale) {
+        match prim.hit_test(x, y, bars, viewport, price_scale) {
             HitTestResult::ControlPoint(cp) => Some(cp),
             _ => None,
         }
     }
 
-    /// Hit test control points of selected primitive in a specific pane
+    /// Hit test control points of selected primitive in a specific pane.
     ///
+    /// `bars` is required for timestamp → screen X conversion.
     /// The x, y coordinates should be relative to the pane's rect.
-    /// Returns the control point type if hit, and verifies the selected primitive belongs to the pane.
     /// Returns None if globally locked or the selected primitive is locked.
     pub fn hit_test_control_point_in_pane(
         &self,
         x: f64,
         y: f64,
         pane_id: u64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<ControlPointType> {
@@ -1558,7 +1476,7 @@ impl DrawingManager {
             return None;
         }
 
-        let result = prim.hit_test(x, y, viewport, price_scale);
+        let result = prim.hit_test(x, y, bars, viewport, price_scale);
         match result {
             HitTestResult::ControlPoint(cp) => Some(cp),
             _ => None,
@@ -1569,11 +1487,12 @@ impl DrawingManager {
     // Drag and Drop
     // =========================================================================
 
-    /// Start dragging a primitive (whole object move)
+    /// Start dragging a primitive (whole object move).
     ///
-    /// Returns false if globally locked or the primitive is locked (drag should pass through to chart).
+    /// `ts_ms` is the drag-start position in Unix milliseconds.
+    /// Returns false if globally locked or the primitive is locked.
     /// Returns true if drag was started successfully.
-    pub fn start_drag(&mut self, index: usize, bar: f64, price: f64) -> bool {
+    pub fn start_drag(&mut self, index: usize, ts_ms: i64, price: f64) -> bool {
         // Don't allow dragging if globally locked
         if self.locked {
             return false;
@@ -1587,20 +1506,21 @@ impl DrawingManager {
             self.dragging = Some(index);
             self.selected = Some(index);
             self.drag_type = DragType::Move;
-            self.drag_start = Some((bar, price));
+            self.drag_start = Some((ts_ms, price));
             return true;
         }
         false
     }
 
-    /// Start dragging a control point (resize/reshape)
+    /// Start dragging a control point (resize/reshape).
     ///
+    /// `ts_ms` is the drag-start position in Unix milliseconds.
     /// Does nothing if globally locked or the primitive is locked.
     pub fn start_control_point_drag(
         &mut self,
         index: usize,
         control_point: ControlPointType,
-        bar: f64,
+        ts_ms: i64,
         price: f64,
     ) {
         // Don't allow dragging if globally locked
@@ -1616,54 +1536,59 @@ impl DrawingManager {
             self.dragging = Some(index);
             self.selected = Some(index);
             self.drag_type = DragType::ControlPoint(control_point);
-            self.drag_start = Some((bar, price));
+            self.drag_start = Some((ts_ms, price));
         }
     }
 
-    /// Update drag position (data coordinates)
-    pub fn update_drag(&mut self, current_bar: f64, current_price: f64) {
-        if let (Some(idx), Some((start_bar, start_price))) = (self.dragging, self.drag_start) {
+    /// Update drag position.
+    ///
+    /// `current_ts_ms` is the current cursor position in Unix milliseconds.
+    pub fn update_drag(&mut self, current_ts_ms: i64, current_price: f64) {
+        if let (Some(idx), Some((start_ts, start_price))) = (self.dragging, self.drag_start) {
             if idx < self.primitives.len() {
                 match &self.drag_type {
                     DragType::Move => {
-                        let bar_delta = current_bar - start_bar;
+                        let ts_delta = current_ts_ms - start_ts;
                         let price_delta = current_price - start_price;
 
-                        if bar_delta.abs() > 0.001 || price_delta.abs() > 0.0001 {
-                            self.primitives[idx].translate(bar_delta, price_delta);
-                            self.drag_start = Some((current_bar, current_price));
+                        if ts_delta.abs() > 0 || price_delta.abs() > 0.0001 {
+                            self.primitives[idx].translate(ts_delta, price_delta);
+                            self.drag_start = Some((current_ts_ms, current_price));
                         }
                     }
                     DragType::ControlPoint(point_type) => {
-                        self.primitives[idx].move_control_point(*point_type, current_bar, current_price);
-                        self.drag_start = Some((current_bar, current_price));
+                        self.primitives[idx].move_control_point(*point_type, current_ts_ms, current_price);
+                        self.drag_start = Some((current_ts_ms, current_price));
                     }
                 }
             }
         }
     }
 
-    /// Update drag position using screen coordinates
-    /// This is needed for primitives like emoji/image that store size in pixels
+    /// Update drag position using screen coordinates.
+    ///
+    /// Used for primitives like emoji/image that store size in screen pixels.
+    /// `bars` is required so `move_control_point_screen` can convert X → timestamp.
     pub fn update_drag_screen(
         &mut self,
         screen_x: f64,
         screen_y: f64,
-        current_bar: f64,
+        current_ts_ms: i64,
         current_price: f64,
+        bars: &[crate::Bar],
         viewport: &crate::Viewport,
         price_scale: &crate::PriceScale,
     ) {
-        if let (Some(idx), Some((start_bar, start_price))) = (self.dragging, self.drag_start) {
+        if let (Some(idx), Some((start_ts, start_price))) = (self.dragging, self.drag_start) {
             if idx < self.primitives.len() {
                 match &self.drag_type {
                     DragType::Move => {
-                        let bar_delta = current_bar - start_bar;
+                        let ts_delta = current_ts_ms - start_ts;
                         let price_delta = current_price - start_price;
 
-                        if bar_delta.abs() > 0.001 || price_delta.abs() > 0.0001 {
-                            self.primitives[idx].translate(bar_delta, price_delta);
-                            self.drag_start = Some((current_bar, current_price));
+                        if ts_delta.abs() > 0 || price_delta.abs() > 0.0001 {
+                            self.primitives[idx].translate(ts_delta, price_delta);
+                            self.drag_start = Some((current_ts_ms, current_price));
                         }
                     }
                     DragType::ControlPoint(point_type) => {
@@ -1672,10 +1597,11 @@ impl DrawingManager {
                             *point_type,
                             screen_x,
                             screen_y,
+                            bars,
                             viewport,
                             price_scale,
                         );
-                        self.drag_start = Some((current_bar, current_price));
+                        self.drag_start = Some((current_ts_ms, current_price));
                     }
                 }
             }
@@ -1898,9 +1824,9 @@ impl DrawingManager {
     }
 
     /// Get control points for selected primitive (in screen coordinates)
-    pub fn selected_control_points(&self, viewport: &Viewport, price_scale: &PriceScale) -> Vec<ControlPoint> {
+    pub fn selected_control_points(&self, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> Vec<ControlPoint> {
         if let Some(prim) = self.selected_primitive() {
-            prim.control_points(viewport, price_scale)
+            prim.control_points(bars, viewport, price_scale)
         } else {
             Vec::new()
         }
@@ -2150,7 +2076,7 @@ impl DrawingManager {
         &mut self,
         index: usize,
         type_id: &str,
-        points: &[(f64, f64)],
+        points: &[(i64, f64)],
         data: &super::primitives_v2::PrimitiveData,
     ) -> bool {
         let registry = PrimitiveRegistry::global().read().unwrap();
@@ -2178,12 +2104,12 @@ impl DrawingManager {
     }
 
     /// Get points of primitive at index
-    pub fn get_points_at(&self, index: usize) -> Option<Vec<(f64, f64)>> {
+    pub fn get_points_at(&self, index: usize) -> Option<Vec<(i64, f64)>> {
         self.primitives.get(index).map(|p| p.points())
     }
 
     /// Set points of primitive at index
-    pub fn set_points_at(&mut self, index: usize, points: &[(f64, f64)]) {
+    pub fn set_points_at(&mut self, index: usize, points: &[(i64, f64)]) {
         if let Some(prim) = self.primitives.get_mut(index) {
             prim.set_points(points);
         }
@@ -2207,7 +2133,6 @@ impl DrawingManager {
             prim_data.display_name = data.display_name.clone();
             prim_data.text = data.text.clone();
             prim_data.timeframe_visibility = data.timeframe_visibility.clone();
-            prim_data.point_timestamps = data.point_timestamps.clone();
             // Note: we don't change id, type_id, origin_id, symbol, or other immutable identity properties
         }
     }
@@ -2251,7 +2176,7 @@ impl DrawingManager {
     }
 
     /// Snapshot primitive at index for undo/redo (type_id, points, data)
-    pub fn snapshot_at(&self, index: usize) -> Option<(String, Vec<(f64, f64)>, super::primitives_v2::PrimitiveData)> {
+    pub fn snapshot_at(&self, index: usize) -> Option<(String, Vec<(i64, f64)>, super::primitives_v2::PrimitiveData)> {
         let prim = self.primitives.get(index)?;
         let type_id = prim.type_id().to_string();
         let points = prim.points().to_vec();
@@ -2260,7 +2185,7 @@ impl DrawingManager {
     }
 
     /// Snapshot all primitives for undo/redo
-    pub fn snapshot_all(&self) -> Vec<(String, Vec<(f64, f64)>, super::primitives_v2::PrimitiveData)> {
+    pub fn snapshot_all(&self) -> Vec<(String, Vec<(i64, f64)>, super::primitives_v2::PrimitiveData)> {
         (0..self.primitives.len())
             .filter_map(|i| self.snapshot_at(i))
             .collect()
@@ -2273,7 +2198,7 @@ impl DrawingManager {
         &mut self,
         index: usize,
         type_id: &str,
-        points: &[(f64, f64)],
+        points: &[(i64, f64)],
         data: &super::primitives_v2::PrimitiveData,
     ) -> bool {
         self.create_at(index, type_id, points, data)
@@ -2523,7 +2448,7 @@ impl DrawingManager {
     /// DEPRECATED: Legacy origin_id-based point update. TagManager uses
     /// `update_group_primitive_after_drag` + pre-render sync instead.
     /// Still used as fallback in `propagate_primitive_update_to_sync_group`.
-    pub fn update_synced_primitive_points(&mut self, origin_id: u64, new_points: &[(f64, f64)]) {
+    pub fn update_synced_primitive_points(&mut self, origin_id: u64, new_points: &[(i64, f64)]) {
         if let Some(prim) = self.primitives.iter_mut()
             .find(|p| p.data().origin_id == Some(origin_id))
         {
@@ -2533,7 +2458,7 @@ impl DrawingManager {
 
     /// Get the current points of the first original (non-synced) primitive with
     /// the given `id`.  Returns `None` if the primitive is not found.
-    pub fn get_points_by_id(&self, id: u64) -> Option<Vec<(f64, f64)>> {
+    pub fn get_points_by_id(&self, id: u64) -> Option<Vec<(i64, f64)>> {
         self.primitives.iter()
             .find(|p| p.data().id == id && p.data().origin_id.is_none())
             .map(|p| p.points())

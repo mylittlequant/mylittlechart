@@ -1,7 +1,7 @@
 //! Price Range - vertical price measurement
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -12,7 +12,7 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceRange {
     pub data: PrimitiveData,
-    pub bar: f64,
+    pub ts_ms: i64,
     pub price1: f64,
     pub price2: f64,
     #[serde(default = "default_true")] pub show_percentage: bool,
@@ -21,10 +21,10 @@ pub struct PriceRange {
 fn default_true() -> bool { true }
 
 impl PriceRange {
-    pub fn new(bar: f64, price1: f64, price2: f64, color: &str) -> Self {
+    pub fn new(ts_ms: i64, price1: f64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "price_range".to_string(), display_name: "Price Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
-            bar, price1, price2, show_percentage: true, show_pips: true,
+            ts_ms, price1, price2, show_percentage: true, show_pips: true,
         }
     }
 }
@@ -36,22 +36,23 @@ impl Primitive for PriceRange {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar, self.price1), (self.bar, self.price2)] }
-    fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.first() { self.bar = b; self.price1 = p; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts_ms, self.price1), (self.ts_ms, self.price2)] }
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        if let Some(&(ts, p)) = pts.first() { self.ts_ms = ts; self.price1 = p; }
         if let Some(&(_, p)) = pts.get(1) { self.price2 = p; }
     }
-    fn translate(&mut self, bd: f64, pd: f64) { self.bar += bd; self.price1 += pd; self.price2 += pd; }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { self.ts_ms += ts_delta_ms; self.price1 += pd; self.price2 += pd; }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Point1 => { self.bar = bar; self.price1 = price; }
+            ControlPointType::Point1 => { self.ts_ms = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => self.price2 = price,
-            ControlPointType::Move => { let bd = bar - self.bar; let pd = price - self.price1; self.translate(bd, pd); }
+            ControlPointType::Move => { let td = ts_ms - self.ts_ms; let pd = price - self.price1; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let x = vp.bar_to_x_f64(self.bar);
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let x = vp.bar_to_x_f64(b);
         let y1 = vp.price_to_y(self.price1, ps.price_min, ps.price_max);
         let y2 = vp.price_to_y(self.price2, ps.price_min, ps.price_max);
         let r = 8.0;
@@ -61,14 +62,15 @@ impl Primitive for PriceRange {
         if (sx - x).abs() < HIT_TOLERANCE && sy >= min_y && sy <= max_y { return HitTestResult::Body; }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let x = vp.bar_to_x_f64(self.bar);
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let x = vp.bar_to_x_f64(b);
         vec![ControlPoint::point1(x, vp.price_to_y(self.price1, ps.price_min, ps.price_max)), ControlPoint::point2(x, vp.price_to_y(self.price2, ps.price_min, ps.price_max))]
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x = ctx.bar_to_x(self.bar);
+        let x = ctx.ts_to_x_ms(self.ts_ms);
         let y1 = ctx.price_to_y(self.price1);
         let y2 = ctx.price_to_y(self.price2);
 
@@ -144,7 +146,6 @@ impl Primitive for PriceRange {
                     TextAlign::Center => ctx.chart_width() / 2.0,
                     TextAlign::End => ctx.chart_width(),
                 };
-                // Start = ABOVE upper boundary, Center = middle, End = BELOW lower boundary
                 let text_y = match text.v_align {
                     TextAlign::Start => min_y - text_offset,
                     TextAlign::Center => (min_y + max_y) / 2.0,
@@ -163,7 +164,11 @@ pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "price_range", display_name: "Price Range", kind: PrimitiveKind::Measurement,
         click_behavior: ClickBehavior::TwoPoint, tooltip: "Measure price difference", icon: "price_range", default_color: "#4CAF50",
-        factory: |points, color| { let (b, p1) = points.first().copied().unwrap_or((0.0, 100.0)); let (_, p2) = points.get(1).copied().unwrap_or((b, p1 + 10.0)); Box::new(PriceRange::new(b, p1, p2, color)) },
+        factory: |points, color| {
+            let (ts, p1) = points.first().copied().unwrap_or((0, 100.0));
+            let (_, p2) = points.get(1).copied().unwrap_or((ts, p1 + 10.0));
+            Box::new(PriceRange::new(ts, p1, p2, color))
+        },
         supports_text: true,
         has_levels: false,
         has_points_config: false,

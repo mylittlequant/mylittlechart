@@ -8,7 +8,7 @@ use std::sync::{RwLock, OnceLock};
 use super::traits::{Primitive, PrimitiveKind, ClickBehavior};
 
 /// Factory function type for creating primitives
-pub type PrimitiveFactory = fn(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive>;
+pub type PrimitiveFactory = fn(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive>;
 
 /// Metadata about a primitive type
 #[derive(Clone)]
@@ -83,7 +83,7 @@ impl PrimitiveRegistry {
     }
 
     /// Create a primitive by type ID
-    pub fn create(&self, type_id: &str, points: &[(f64, f64)], color: Option<&str>) -> Option<Box<dyn Primitive>> {
+    pub fn create(&self, type_id: &str, points: &[(i64, f64)], color: Option<&str>) -> Option<Box<dyn Primitive>> {
         let meta = self.primitives.get(type_id)?;
         let color = color.unwrap_or(meta.default_color);
         Some((meta.factory)(points, color))
@@ -174,10 +174,10 @@ impl PrimitiveRegistry {
                 // Try to extract points from JSON and recreate
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
                     if let Some(points_arr) = value.get("points").and_then(|p| p.as_array()) {
-                        let points: Vec<(f64, f64)> = points_arr.iter()
+                        let points: Vec<(i64, f64)> = points_arr.iter()
                             .filter_map(|p| {
                                 let arr = p.as_array()?;
-                                Some((arr.first()?.as_f64()?, arr.get(1)?.as_f64()?))
+                                Some((arr.first()?.as_i64()?, arr.get(1)?.as_f64()?))
                             })
                             .collect();
                         let color = value.get("data")

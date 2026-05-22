@@ -4,7 +4,7 @@
 //! modifying the DrawingManager.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::types::{ControlPoint, ControlPointType, LineStyle, PrimitiveColor, PrimitiveText, TextAlign, CONTROL_POINT_RADIUS};
 use crate::render::{RenderContext, crisp};
 use super::config::{TimeframeVisibilityConfig, ConfigProperty, PropertyValue, PropertyCategory};
@@ -122,9 +122,10 @@ pub struct PrimitiveData {
     /// Window ID where primitive was created (for multi-window support)
     #[serde(default)]
     pub window_id: Option<u64>,
-    /// Timestamps for each point (Unix seconds) - source of truth for timeframe-independent positioning
-    /// Indices correspond to points() order. Empty if not yet synced.
-    #[serde(default)]
+    /// Legacy field — kept as a read-only serde stub so old JSON that still has
+    /// `point_timestamps` doesn't fail to deserialize.  Not written on save.
+    /// Coordinates are now stored directly as `(ts_ms, price)` in each primitive.
+    #[serde(default, skip_serializing)]
     pub point_timestamps: Vec<i64>,
     /// Origin primitive ID — if Some, this is a synced clone from another window.
     /// When sync is disabled, clones (origin_id.is_some()) are purged.
@@ -393,50 +394,62 @@ pub trait Primitive: Send + Sync {
     // Geometry
     // =========================================================================
 
-    /// Get all coordinate points as (bar, price) pairs
-    fn points(&self) -> Vec<(f64, f64)>;
+    /// Get all coordinate points as (timestamp_ms, price) pairs.
+    ///
+    /// `timestamp_ms` is Unix time in **milliseconds**.
+    fn points(&self) -> Vec<(i64, f64)>;
 
-    /// Set coordinate points (for creation and editing)
-    fn set_points(&mut self, points: &[(f64, f64)]);
+    /// Set coordinate points.  `points[n].0` is Unix timestamp in **milliseconds**.
+    fn set_points(&mut self, points: &[(i64, f64)]);
 
-    /// Translate the primitive by bar/price delta
-    fn translate(&mut self, bar_delta: f64, price_delta: f64);
+    /// Translate the primitive by a timestamp delta (ms) and a price delta.
+    fn translate(&mut self, ts_delta_ms: i64, price_delta: f64);
 
-    /// Move a specific control point to new coordinates
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64);
+    /// Move a specific control point to (timestamp_ms, price).
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64);
 
-    /// Move a specific control point using screen coordinates
-    /// Default implementation converts to data coords and calls move_control_point
-    /// Override for primitives that need screen-space resize (emoji, image)
+    /// Move a specific control point using screen coordinates.
+    ///
+    /// Default implementation converts screen → timestamp_ms + price and calls
+    /// `move_control_point`.  Override for primitives that store size in screen
+    /// pixels (emoji, image) so they can skip the timestamp conversion.
     fn move_control_point_screen(
         &mut self,
         point_type: ControlPointType,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) {
-        let bar = viewport.x_to_bar_f64(screen_x);
+        let bar_f = viewport.x_to_bar_f64(screen_x);
+        let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
         let price = viewport.y_to_price(screen_y, price_scale.price_min, price_scale.price_max);
-        self.move_control_point(point_type, bar, price);
+        self.move_control_point(point_type, ts_ms, price);
     }
 
     // =========================================================================
     // Hit Testing
     // =========================================================================
 
-    /// Hit test at screen coordinates
+    /// Hit test at screen coordinates.
+    ///
+    /// `bars` is required to convert the primitive's stored timestamps to screen X.
     fn hit_test(
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult;
 
-    /// Get control points in screen coordinates
+    /// Get control points in screen coordinates.
+    ///
+    /// `bars` is required to convert stored timestamps to screen X.
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint>;
@@ -464,10 +477,10 @@ pub trait Primitive: Send + Sync {
             return;
         }
 
-        // Convert to screen coordinates
+        // Convert to screen coordinates (timestamps → X via ts_to_x_ms)
         let screen_points: Vec<(f64, f64)> = points
             .iter()
-            .map(|(bar, price)| (ctx.bar_to_x(*bar), ctx.price_to_y(*price)))
+            .map(|(ts_ms, price)| (ctx.ts_to_x_ms(*ts_ms), ctx.price_to_y(*price)))
             .collect();
 
         // Set stroke style

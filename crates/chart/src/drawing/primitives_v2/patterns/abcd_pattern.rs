@@ -1,7 +1,7 @@
 //! ABCD Pattern primitive - 4-point harmonic pattern
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -15,7 +15,7 @@ fn default_true() -> bool { true }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AbcdPattern {
     pub data: PrimitiveData,
-    pub points: [(f64, f64); 4], // A, B, C, D
+    pub points: [(i64, f64); 4], // A, B, C, D
     #[serde(default = "default_true")]
     pub show_labels: bool,
     #[serde(default = "default_true")]
@@ -27,7 +27,7 @@ pub struct AbcdPattern {
 }
 
 impl AbcdPattern {
-    pub fn new(points: [(f64, f64); 4], color: &str) -> Self {
+    pub fn new(points: [(i64, f64); 4], color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "abcd_pattern".to_string(),
@@ -52,18 +52,21 @@ impl Primitive for AbcdPattern {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(4) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { self.points.to_vec() }
-    fn set_points(&mut self, pts: &[(f64, f64)]) { for (i, &p) in pts.iter().take(4).enumerate() { self.points[i] = p; } }
-    fn translate(&mut self, bd: f64, pd: f64) { for p in &mut self.points { p.0 += bd; p.1 += pd; } }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
+    fn set_points(&mut self, pts: &[(i64, f64)]) { for (i, &p) in pts.iter().take(4).enumerate() { self.points[i] = p; } }
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { for p in &mut self.points { p.0 += ts_delta_ms; p.1 += pd; } }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Index(i) if (i as usize) < 4 => self.points[i as usize] = (bar, price),
-            ControlPointType::Move => { let bd = bar - self.points[0].0; let pd = price - self.points[0].1; self.translate(bd, pd); }
+            ControlPointType::Index(i) if (i as usize) < 4 => self.points[i as usize] = (ts_ms, price),
+            ControlPointType::Move => { let td = ts_ms - self.points[0].0; let pd = price - self.points[0].1; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let screen: Vec<_> = self.points.iter().map(|(b, p)| (vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect();
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let screen: Vec<_> = self.points.iter().map(|(ts, p)| {
+            let b = timestamp_ms_to_bar_f64(bars, *ts);
+            (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect();
         for (i, &(x, y)) in screen.iter().enumerate() {
             if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
@@ -72,12 +75,15 @@ impl Primitive for AbcdPattern {
         }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        self.points.iter().enumerate().map(|(i, (b, p))| ControlPoint::index(i as u8, vp.bar_to_x_f64(*b), vp.price_to_y(*p, ps.price_min, ps.price_max))).collect()
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        self.points.iter().enumerate().map(|(i, (ts, p))| {
+            let b = timestamp_ms_to_bar_f64(bars, *ts);
+            ControlPoint::index(i as u8, vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect()
     }
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let screen: Vec<_> = self.points.iter().map(|(b, p)| (ctx.bar_to_x(*b), ctx.price_to_y(*p))).collect();
+        let screen: Vec<_> = self.points.iter().map(|(ts, p)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*p))).collect();
         let labels = ["A", "B", "C", "D"];
 
         ctx.set_stroke_color(&self.data.color.stroke);
@@ -275,7 +281,7 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "abcd_pattern", display_name: "ABCD Pattern", kind: PrimitiveKind::Pattern,
         click_behavior: ClickBehavior::MultiPoint(4), tooltip: "4-point harmonic pattern", icon: "abcd_pattern", default_color: "#3F51B5",
         factory: |points, color| {
-            let mut arr = [(0.0, 0.0); 4];
+            let mut arr = [(0i64, 0.0); 4];
             for (i, &p) in points.iter().take(4).enumerate() { arr[i] = p; }
             Box::new(AbcdPattern::new(arr, color))
         },

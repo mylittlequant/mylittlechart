@@ -143,6 +143,7 @@ pub use utils::catmull_rom_spline;
 pub use types::{
     crisp, crisp_rect, Bar, DragMode, Theme,
     find_bar_for_timestamp, bar_to_timestamp,
+    find_bar_for_timestamp_ms, timestamp_ms_to_bar_f64, bar_f64_to_timestamp_ms, bar_interval_seconds,
     // Price scale constants
     PRICE_SCALE_BORDER_SIZE, PRICE_SCALE_FONT, PRICE_SCALE_FONT_SIZE,
     PRICE_SCALE_FONT_SIZE_MAX, PRICE_SCALE_FONT_SIZE_MIN,
