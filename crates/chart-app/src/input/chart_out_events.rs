@@ -811,6 +811,30 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.sync_groups.len());
 
+                    // Rebind every window's DM to its group's shared style store now
+                    // that all groups are fully reconstructed.  Windows whose group_id
+                    // is set but the group has no entry yet keep their own private Arc
+                    // (fresh HashMap) as a safe fallback.
+                    {
+                        // Collect (chart_id, group_id) pairs without holding borrow.
+                        let rebind_info: Vec<(zengeld_chart::ChartId, zengeld_chart::tag_manager::SyncGroupId)> =
+                            self.panel_app.panel_grid.windows().iter()
+                                .filter_map(|(&cid, w)| w.group_id.map(|gid| (cid, gid)))
+                                .collect();
+                        for (chart_id, group_id) in rebind_info {
+                            if let Some(style_arc) = self.panel_app.tag_manager
+                                .group(group_id)
+                                .map(|g| g.last_used_style.clone())
+                            {
+                                if let Some(window) = self.panel_app.panel_grid.windows_mut()
+                                    .get_mut(&chart_id)
+                                {
+                                    window.drawing_manager.bind_style_store(style_arc);
+                                }
+                            }
+                        }
+                    }
+
                     // Bump SyncGroupId counter past any restored group IDs so
                     // future create_group / create_group_auto calls never collide.
                     for sg_snap in &preset.sync_groups {
@@ -913,10 +937,16 @@ impl ChartApp {
                             self.panel_app.panel_grid.iter_windows()
                                 .map(|(leaf_id, w)| (leaf_id, w.id))
                                 .collect();
+                        let style_arc = self.panel_app.tag_manager
+                            .group(group_id)
+                            .map(|g| g.last_used_style.clone());
                         for &(leaf_id, chart_id) in &leaf_chart_ids {
                             let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                                 window.group_id = Some(group_id);
+                                if let Some(ref arc) = style_arc {
+                                    window.drawing_manager.bind_style_store(arc.clone());
+                                }
                             }
                         }
                         eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());

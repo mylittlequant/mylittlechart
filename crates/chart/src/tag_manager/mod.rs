@@ -6,8 +6,12 @@
 pub mod member_id;
 pub use member_id::{MemberSyncOverride, SyncMemberId};
 
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
 use serde::{Deserialize, Serialize};
 
+use crate::drawing::primitives_v2::config::TemplateStyle;
 use crate::state::chart_window::ChartId;
 use crate::state::{CommandHistory, Timeframe};
 
@@ -145,6 +149,14 @@ pub struct SyncGroup {
     /// Invisible default group — auto-created so every window has a group.
     /// No color tag shown in UI. Set to false when user manually tags.
     pub auto_created: bool,
+
+    /// Group-level last-used drawing style per tool type.
+    ///
+    /// Shared via `Arc` with every member window's `DrawingManager` so that a
+    /// style change in *any* window of the group is immediately visible in all
+    /// peers (fixes bugs B1 + D1).  The `Arc` handle in the DM is rebounded
+    /// whenever a window joins or leaves this group.
+    pub last_used_style: Arc<RwLock<HashMap<String, TemplateStyle>>>,
 }
 
 impl SyncGroup {
@@ -194,6 +206,8 @@ impl Clone for SyncGroup {
             member_overrides: self.member_overrides.clone(),
             command_history: CommandHistory::new(250),
             auto_created: self.auto_created,
+            // Clone the Arc — both copies point to the same shared store.
+            last_used_style: Arc::clone(&self.last_used_style),
         }
     }
 }
@@ -299,6 +313,7 @@ impl TagManager {
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             auto_created: false,
+            last_used_style: Arc::new(RwLock::new(HashMap::new())),
         };
         self.groups.insert(id, group);
         id
@@ -334,6 +349,7 @@ impl TagManager {
             member_overrides: std::collections::HashMap::new(),
             command_history: CommandHistory::new(250),
             auto_created: true,
+            last_used_style: Arc::new(RwLock::new(HashMap::new())),
         };
         self.groups.insert(id, group);
         id
@@ -821,6 +837,16 @@ impl TagManager {
             })
             .collect();
 
+        // Restore per-tool last-used styles from the snapshot.
+        // Old presets have no `last_used_style` field → start empty; the first
+        // style change after load will populate it.
+        let mut style_map = HashMap::new();
+        for (type_id, raw) in &snap.last_used_style {
+            if let Ok(style) = serde_json::from_value::<TemplateStyle>(raw.clone()) {
+                style_map.insert(type_id.clone(), style);
+            }
+        }
+
         SyncGroup {
             id: SyncGroupId(snap.id),
             color: snap.color,
@@ -835,6 +861,7 @@ impl TagManager {
             member_overrides,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
             auto_created: snap.auto_created,
+            last_used_style: Arc::new(RwLock::new(style_map)),
         }
     }
 }

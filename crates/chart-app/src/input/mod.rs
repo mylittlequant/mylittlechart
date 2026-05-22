@@ -8366,6 +8366,12 @@ impl ChartApp {
                 let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(active_leaf) {
                     window.group_id = Some(group_id);
+                    if let Some(style_arc) = self.panel_app.tag_manager
+                        .group(group_id)
+                        .map(|g| g.last_used_style.clone())
+                    {
+                        window.drawing_manager.bind_style_store(style_arc);
+                    }
                 }
                 eprintln!("[ChartApp] Auto-created invisible sync group {:?} for new chart", group_id);
             }

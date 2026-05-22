@@ -165,6 +165,14 @@ impl ChartApp {
             let _ = self.panel_app.tag_manager.connect_chart(chart_id, new_group_id);
             if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                 window.group_id = Some(new_group_id);
+                // Rebind to the fresh auto-group's style store.  The desynced window
+                // is now independent; its DM must not share the old group's Arc.
+                if let Some(style_arc) = self.panel_app.tag_manager
+                    .group(new_group_id)
+                    .map(|g| g.last_used_style.clone())
+                {
+                    window.drawing_manager.bind_style_store(style_arc);
+                }
             }
             // Move restored primitives from drawing_manager into the new group.
             let dm_prims: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
@@ -210,6 +218,17 @@ impl ChartApp {
                 "[TagManager] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
             );
+
+            // Rebind the joining window's DM to the group's shared style store so
+            // last-used style changes are immediately visible to all group peers.
+            if let Some(style_arc) = self.panel_app.tag_manager
+                .group(group_id)
+                .map(|g| g.last_used_style.clone())
+            {
+                if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(joining_leaf) {
+                    window.drawing_manager.bind_style_store(style_arc);
+                }
+            }
 
             // Snapshot pre-tag indicator ids (these survive desync).
             let pre_tag_ids: Vec<u64> = self.indicator_manager
@@ -496,9 +515,16 @@ impl ChartApp {
             for &(_, chart_id) in &leaf_chart_ids {
                 let _ = self.panel_app.tag_manager.connect_chart(chart_id, group_id);
             }
+            // Rebind every new window's DM to the group's shared style store.
+            let style_arc = self.panel_app.tag_manager
+                .group(group_id)
+                .map(|g| g.last_used_style.clone());
             for &(leaf_id, _) in &leaf_chart_ids {
                 if let Some(window) = self.panel_app.panel_grid.window_for_leaf_mut(leaf_id) {
                     window.group_id = Some(group_id);
+                    if let Some(ref arc) = style_arc {
+                        window.drawing_manager.bind_style_store(arc.clone());
+                    }
                 }
             }
 
@@ -1063,24 +1089,40 @@ impl ChartApp {
         &mut self,
         source_leaf: zengeld_chart::LeafId,
     ) {
-        let should_sync = self.panel_app.panel_grid.chart_id_for_leaf(source_leaf)
-            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+        // Resolve the source window's TagManager group.
+        // Bug F5 fix: fan-out is gated on actual TagManager group membership, not
+        // on the `leaf_color_tags` map which can include windows from different groups
+        // that happen to share the same color value.
+        let group_id = self.panel_app.panel_grid
+            .chart_id_for_leaf(source_leaf)
+            .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid));
+
+        let should_sync = group_id
             .and_then(|gid| self.panel_app.tag_manager.group(gid))
             .map(|g| g.sync_flags.sync_drawings)
             .unwrap_or(true);
         if !should_sync { return; }
 
-        // Determine the source window's color tag.
-        let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
-            Some(c) => c,
-            None => return,
+        // Collect peer leaf IDs using the TagManager group boundary.
+        let peer_leaves: Vec<zengeld_chart::LeafId> = if let Some(gid) = group_id {
+            // Every chart member of the group except the source leaf itself.
+            self.panel_app.tag_manager
+                .chart_members(gid)
+                .into_iter()
+                .filter_map(|cid| self.panel_app.panel_grid.leaf_for_chart_id(cid))
+                .filter(|&lid| lid != source_leaf)
+                .collect()
+        } else {
+            // No group — fall back to color-tag matching for ungrouped legacy windows.
+            let source_color = match self.panel_app.leaf_color_tags.get(&source_leaf).copied() {
+                Some(c) => c,
+                None => return,
+            };
+            self.panel_app.leaf_color_tags.iter()
+                .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
+                .map(|(&lid, _)| lid)
+                .collect()
         };
-
-        // Collect peer leaf IDs that share the same color tag.
-        let peer_leaves: Vec<zengeld_chart::LeafId> = self.panel_app.leaf_color_tags.iter()
-            .filter(|(&lid, &c)| lid != source_leaf && sync_colors_match(c, source_color))
-            .map(|(&lid, _)| lid)
-            .collect();
 
         if peer_leaves.is_empty() {
             return;

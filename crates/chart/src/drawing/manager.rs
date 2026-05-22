@@ -3,6 +3,7 @@
 //! Works with PrimitiveRegistry and Box<dyn Primitive> instead of hardcoded types.
 
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use crate::{PriceScale, Viewport, Bar, find_bar_for_timestamp};
 use super::primitives_v2::{
     Primitive, PrimitiveRegistry, ClickBehavior,
@@ -150,10 +151,13 @@ pub struct DrawingManager {
     current_exchange: String,
     /// Account type label (e.g. "S", "F") for the current symbol context.
     current_account_type: String,
-    /// Per-tool-type last-used style settings.
-    /// Key: type_id (e.g. "trend_line"). Value: last style the user applied.
-    /// Applied automatically when a new primitive of the same type is created.
-    last_used_style: HashMap<String, TemplateStyle>,
+    /// Shared per-tool last-used drawing style, group-level.
+    ///
+    /// All `DrawingManager`s that belong to the same `SyncGroup` share the
+    /// same `Arc` pointer — writes from any window are immediately visible to
+    /// all peers (fixes bugs B1 + D1).  The handle is rebound via
+    /// `bind_style_store` whenever this manager joins or leaves a group.
+    style_store: Arc<RwLock<HashMap<String, TemplateStyle>>>,
 }
 
 impl Default for DrawingManager {
@@ -186,7 +190,9 @@ impl Clone for DrawingManager {
             current_symbol: self.current_symbol.clone(),
             current_exchange: self.current_exchange.clone(),
             current_account_type: self.current_account_type.clone(),
-            last_used_style: self.last_used_style.clone(),
+            // Clone the Arc — the cloned DM shares the same style store as the
+            // source until it is bound to its own group via bind_style_store().
+            style_store: Arc::clone(&self.style_store),
         }
     }
 }
@@ -211,7 +217,7 @@ impl DrawingManager {
             current_symbol: String::new(),
             current_exchange: String::new(),
             current_account_type: String::new(),
-            last_used_style: HashMap::new(),
+            style_store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -276,6 +282,22 @@ impl DrawingManager {
                 }
             }
         };
+    }
+
+    /// Rebind this manager to a different group-level style store.
+    ///
+    /// Called when a window joins a `SyncGroup` (or leaves one and gets its own
+    /// auto-group).  After this call all reads and writes go through the new
+    /// `Arc`, so changes made by any other window in the same group are
+    /// immediately visible here, and vice-versa.
+    pub fn bind_style_store(&mut self, store: Arc<RwLock<HashMap<String, TemplateStyle>>>) {
+        self.style_store = store;
+    }
+
+    /// Return a clone of the underlying `Arc` so callers can share it with
+    /// peer managers or with the owning `SyncGroup`.
+    pub fn style_store_arc(&self) -> Arc<RwLock<HashMap<String, TemplateStyle>>> {
+        Arc::clone(&self.style_store)
     }
 
     /// Set default color for new primitives
@@ -538,9 +560,14 @@ impl DrawingManager {
             let registry = PrimitiveRegistry::global().read().unwrap();
             if let Some(meta) = registry.get(&tool_id_clone) {
                 if meta.click_behavior == ClickBehavior::FreehandDrag {
-                    // Use tool's default color from metadata
-                    let color = meta.default_color;
-                    if let Some(mut prim) = registry.create(&tool_id_clone, &points_clone, Some(color)) {
+                    // Bug A1 fix: use the group-shared last-used style color (same as
+                    // on_click and create_preview), falling back to self.default_color.
+                    // Previously used meta.default_color (registry constant), diverging
+                    // from all other creation paths.
+                    let color_str: String = self.style_store.read().ok()
+                        .and_then(|s| s.get(&tool_id_clone).and_then(|st| st.color.clone()))
+                        .unwrap_or_else(|| self.default_color.clone());
+                    if let Some(mut prim) = registry.create(&tool_id_clone, &points_clone, Some(&color_str)) {
                         drop(registry); // Release lock before mutable borrow
                         prim.data_mut().id = crate::drawing::alloc_primitive_id();
                         prim.data_mut().pane_id = self.current_pane_id;
@@ -608,18 +635,25 @@ impl DrawingManager {
         }
 
         // Create the primitive with preview points.
-        // Use the last-used style color as the seed color for the factory so the
-        // preview already has the right hue even before style is applied below.
-        let seed_color = self.last_used_style
-            .get(tool_id)
-            .and_then(|s| s.color.as_deref())
-            .unwrap_or(&self.default_color);
+        // Read from the group-shared style store so peer previews use the same
+        // color as the source window (Bug B1 fix: previously read from per-DM
+        // HashMap that was never synced to peers).
+        let style_snapshot: Option<TemplateStyle> = self.style_store.read().ok()
+            .and_then(|s| s.get(tool_id).cloned());
+        let seed_color_owned: String;
+        let seed_color = match style_snapshot.as_ref().and_then(|s| s.color.as_deref()) {
+            Some(c) => c,
+            None => {
+                seed_color_owned = self.default_color.clone();
+                &seed_color_owned
+            }
+        };
         let mut prim = (meta.factory)(&preview_points, seed_color);
 
         // Apply the full last-used style (color, width, line_style, fill, extended
         // style_properties) so the preview matches what a finished primitive would
         // look like instead of falling back to hardcoded factory defaults.
-        if let Some(style) = self.last_used_style.get(tool_id) {
+        if let Some(ref style) = style_snapshot {
             apply_last_style_snapshot(&mut prim, style);
         }
 
@@ -645,7 +679,8 @@ impl DrawingManager {
         };
 
         // Look up last-used style BEFORE borrowing self.state in match arms below.
-        let last_style = self.last_used_style.get(&tool_id).cloned();
+        let last_style = self.style_store.read().ok()
+            .and_then(|s| s.get(&tool_id).cloned());
 
         let registry = PrimitiveRegistry::global().read().unwrap();
         let click_behavior = match registry.click_behavior(&tool_id) {
@@ -2154,7 +2189,9 @@ impl DrawingManager {
             show_prices: None,
             style_properties: Vec::new(),
         };
-        self.last_used_style.insert(data.type_id.clone(), style);
+        if let Ok(mut store) = self.style_store.write() {
+            store.insert(data.type_id.clone(), style);
+        }
     }
 
     /// Save the full style of the primitive at `index` as the last-used style for
@@ -2186,7 +2223,11 @@ impl DrawingManager {
             show_prices: None,
             style_properties: style_props,
         };
-        self.last_used_style.insert(type_id, style);
+        // Write through the shared Arc → all peer DMs in the same group see the
+        // update immediately (Bug D1 fix: previously wrote only to per-DM HashMap).
+        if let Ok(mut store) = self.style_store.write() {
+            store.insert(type_id, style);
+        }
     }
 
     /// Look up the last-used style snapshot for `tool_id` and return a clone.
@@ -2194,7 +2235,7 @@ impl DrawingManager {
     /// Use this BEFORE entering a `match &mut self.state` block to avoid
     /// overlapping borrows.  Pass the result to `apply_last_style_snapshot`.
     pub fn last_style_for(&self, tool_id: &str) -> Option<TemplateStyle> {
-        self.last_used_style.get(tool_id).cloned()
+        self.style_store.read().ok()?.get(tool_id).cloned()
     }
 
     /// Bulk-load last-used drawing styles from a persisted snapshot map.
@@ -2206,13 +2247,14 @@ impl DrawingManager {
     /// Only inserts styles that are not already present; styles set during
     /// preset loading take precedence over persisted ones.
     pub fn load_last_styles(&mut self, stored: &std::collections::HashMap<String, serde_json::Value>) {
+        let Ok(mut store) = self.style_store.write() else { return };
         for (type_id, value) in stored {
-            if self.last_used_style.contains_key(type_id) {
+            if store.contains_key(type_id) {
                 continue;
             }
             match serde_json::from_value::<TemplateStyle>(value.clone()) {
                 Ok(style) => {
-                    self.last_used_style.insert(type_id.clone(), style);
+                    store.insert(type_id.clone(), style);
                 }
                 Err(e) => {
                     eprintln!(
@@ -2227,8 +2269,9 @@ impl DrawingManager {
     /// Apply last-used style for this tool type (if any) to a freshly-created
     /// primitive.  Pass the result of `last_style_for` here.
     fn apply_last_style_to_prim(&self, prim: &mut Box<dyn Primitive>, tool_id: &str) {
-        if let Some(style) = self.last_used_style.get(tool_id) {
-            apply_last_style_snapshot(prim, style);
+        let style = self.style_store.read().ok().and_then(|s| s.get(tool_id).cloned());
+        if let Some(ref s) = style {
+            apply_last_style_snapshot(prim, s);
         }
     }
 

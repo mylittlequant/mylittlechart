@@ -423,6 +423,10 @@ pub struct SyncGroupSnapshot {
     /// Invisible auto-created group (no color tag in UI).
     #[serde(default)]
     pub auto_created: bool,
+    /// Per-tool last-used drawing style for the group.
+    /// Absent in old presets → empty map (first style change after load populates it).
+    #[serde(default)]
+    pub last_used_style: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl SyncGroupSnapshot {
@@ -462,6 +466,18 @@ impl SyncGroupSnapshot {
             })
             .collect();
 
+        // Serialize per-tool last-used style from the shared store.
+        let last_used_style: std::collections::HashMap<String, serde_json::Value> = group
+            .last_used_style
+            .read()
+            .map(|store| {
+                store
+                    .iter()
+                    .filter_map(|(k, v)| serde_json::to_value(v).ok().map(|val| (k.clone(), val)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Self {
             id: group.id.0,
             color: group.color,
@@ -478,6 +494,7 @@ impl SyncGroupSnapshot {
             primitives,
             command_history: Some(group.command_history.clone()),
             auto_created: group.auto_created,
+            last_used_style,
         }
     }
 }
