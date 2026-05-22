@@ -1225,19 +1225,19 @@ impl ChartApp {
         // If sync_drawings is OFF for this group, leave the primitive in the
         // drawing_manager for this window only — forward sync is blocked anyway,
         // so moving it to the group would cause it to disappear visually.
-        let (sync_drawings_on, is_mono) = self.panel_app.tag_manager
+        let (sync_drawings_on, is_auto_mono) = self.panel_app.tag_manager
             .group(group_id)
-            .map(|g| (g.sync_flags.sync_drawings, g.members.len() <= 1))
+            .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
             .unwrap_or((true, false));
         if !sync_drawings_on {
             return false;
         }
-        // Symmetric mono-group guard: forward sync (group → window) in
-        // prepare_frame skips when members <= 1 to avoid wiping local
-        // primitives. Intercept must do the same — otherwise the primitive
-        // is moved into group.primitives and never returns to drawing_manager,
-        // becoming invisible on the chart while still listed in Object Tree.
-        if is_mono {
+        // Symmetric auto-mono guard: forward sync skips auto-created solo groups to
+        // avoid wiping their locally-managed drawing_manager primitives. Intercept
+        // mirrors this so primitives aren't moved to a group that never syncs back.
+        // Non-auto tagged groups with a single member DO use the group path — their
+        // primitives are stored in group.primitives and synced via prepare_frame.
+        if is_auto_mono {
             return false;
         }
 

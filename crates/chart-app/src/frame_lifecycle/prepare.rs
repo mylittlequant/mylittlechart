@@ -880,7 +880,12 @@ impl ChartApp {
                             .and_then(|w| w.group_id)
                         {
                             if let Some(group) = self.panel_app.tag_manager.group(group_id) {
-                                if group.sync_flags.sync_drawings && group.members.len() > 1 {
+                                // Skip sync only for auto-created solo groups — their primitives
+                                // live directly in drawing_manager (intercept returns false for them).
+                                // Non-auto tagged groups with a single member still need the forward
+                                // sync so group.primitives are visible after preset restore.
+                                let is_auto_mono = group.auto_created && group.members.len() <= 1;
+                                if group.sync_flags.sync_drawings && !is_auto_mono {
                                     let cloned: Vec<Box<dyn zengeld_chart::drawing::primitives_v2::Primitive>> =
                                         group.primitives.iter()
                                             .filter(|p| {
@@ -930,11 +935,15 @@ impl ChartApp {
                 if let (Some(group_id), Some(chart_id)) = (group_id_opt, chart_id_opt) {
                     if !is_dragging {
                         // Respect the sync_drawings flag — skip forward sync if disabled.
-                        let (drawings_on, is_mono) = self.panel_app.tag_manager
+                        // Skip sync only for auto-created solo groups — their primitives live
+                        // directly in drawing_manager. Non-auto tagged groups with ≤1 member
+                        // still need the forward sync (group.primitives → drawing_manager) so
+                        // drawings loaded from a preset are visible on the canvas.
+                        let (drawings_on, is_auto_mono) = self.panel_app.tag_manager
                             .group(group_id)
-                            .map(|g| (g.sync_flags.sync_drawings, g.members.len() <= 1))
+                            .map(|g| (g.sync_flags.sync_drawings, g.auto_created && g.members.len() <= 1))
                             .unwrap_or((true, false));
-                        if drawings_on && !is_mono {
+                        if drawings_on && !is_auto_mono {
                             // Capture the window's current symbol so we can filter
                             // primitives — stale drawings from the previous symbol
                             // must not be re-injected by the forward sync.
