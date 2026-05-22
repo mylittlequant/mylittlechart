@@ -684,13 +684,15 @@ impl DrawingManager {
             let registry = PrimitiveRegistry::global().read().unwrap();
             if let Some(meta) = registry.get(&tool_id_clone) {
                 if meta.click_behavior == ClickBehavior::FreehandDrag {
-                    // Bug A1 fix: use the group-shared last-used style color (same as
-                    // on_click and create_preview), falling back to self.default_color.
-                    // Previously used meta.default_color (registry constant), diverging
-                    // from all other creation paths.
+                    // Resolve color with the same priority as effective_color() and
+                    // create_preview(): style_store[tool_id] → meta.default_color →
+                    // self.default_color. The previous fallback (self.default_color only)
+                    // diverged from effective_color's fallback (meta.default_color), causing
+                    // the preview to render in the tool's registered color (e.g. red for brush)
+                    // while the finalized primitive used the DM default (#2196F3 blue).
                     let color_str: String = self.style_store.read().ok()
                         .and_then(|s| s.get(&tool_id_clone).and_then(|st| st.color.clone()))
-                        .unwrap_or_else(|| self.default_color.clone());
+                        .unwrap_or_else(|| meta.default_color.to_string());
                     if let Some(mut prim) = registry.create(&tool_id_clone, &points_clone, Some(&color_str)) {
                         drop(registry); // Release lock before mutable borrow
                         prim.data_mut().id = crate::drawing::alloc_primitive_id();
