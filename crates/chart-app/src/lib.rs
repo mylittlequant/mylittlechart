@@ -5238,7 +5238,7 @@ impl ChartApp {
                         window.price_scale.price_min = center - half_range;
                         window.price_scale.price_max = center + half_range;
                     }
-                    // Propagate viewport change to sync group (horizontal zoom only).
+                    // Propagate viewport change to sync group.
                     let view_start = window.viewport.view_start;
                     let bar_spacing = window.viewport.bar_spacing;
                     // End the mutable borrow so we can call propagate_viewport_to_sync_group.
@@ -5247,6 +5247,31 @@ impl ChartApp {
                         let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
                         if let Some(active_leaf) = active_leaf_opt {
                             self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, None);
+                        }
+                    }
+                    if factor_y != 1.0 {
+                        // Y-scale drag: mirror the A/M button click pattern — update
+                        // group.scale_mode then propagate so sync-group peers switch to M.
+                        let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
+                        if let Some(active_leaf) = active_leaf_opt {
+                            let viewport_sync_on = self.panel_app.panel_grid
+                                .chart_id_for_leaf(active_leaf)
+                                .and_then(|cid| self.panel_app.tag_manager.group_for_window(cid))
+                                .and_then(|gid| {
+                                    self.panel_app.tag_manager.group_mut(gid).map(|g| {
+                                        g.scale_mode = ScaleMode::Manual;
+                                        g.sync_flags.sync_viewport
+                                    })
+                                })
+                                .unwrap_or(false);
+                            if viewport_sync_on {
+                                self.propagate_viewport_to_sync_group(
+                                    active_leaf,
+                                    view_start,
+                                    bar_spacing,
+                                    Some(ScaleMode::Manual),
+                                );
+                            }
                         }
                     }
                 }
