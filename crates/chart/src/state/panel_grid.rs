@@ -884,6 +884,14 @@ impl ChartPanelGrid {
         self.windows.remove(&chart_id);
         self.docking.tree_mut().remove_leaf(leaf_id);
 
+        // DockingTree::remove_leaf reassigns its own active_leaf when the
+        // removed leaf was active.  DockState::active_leaf is a separate field
+        // that doesn't get updated automatically — sync it so active_window()
+        // doesn't return None and blank the renderer.
+        if let Some(new_active) = self.docking.tree().active_leaf_id() {
+            self.docking.set_active_leaf(new_active);
+        }
+
         // Exit expand mode; the layout changed.
         self.expanded = false;
 
