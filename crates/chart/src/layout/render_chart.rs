@@ -1822,6 +1822,7 @@ pub fn render_sub_pane_primitives(
         pane_min,
         pane_max,
     );
+    ctx.set_bars(state.bars);
 
     // Clip to content area (skip for Glass styles)
     if !state.disable_clip {
@@ -2356,6 +2357,7 @@ pub fn render_main_chart_primitives(
         state.price_scale.price_min,
         state.price_scale.price_max,
     );
+    ctx.set_bars(state.bars);
 
     // Clip to chart area
     if !state.disable_clip {

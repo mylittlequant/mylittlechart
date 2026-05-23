@@ -40,8 +40,8 @@ pub struct InstancedChartRenderContext<'a> {
     viewport: Option<&'a Viewport>,
     price_scale: Option<&'a PriceScale>,
     coord_override: Option<CoordinateSpaceOverride>,
-    /// Bar slice for timestamp → X conversion in primitives.
-    bars: &'a [Bar],
+    /// Bar data for timestamp → X conversion in primitives.
+    bars: Vec<Bar>,
 }
 
 impl<'a> InstancedChartRenderContext<'a> {
@@ -64,13 +64,8 @@ impl<'a> InstancedChartRenderContext<'a> {
             viewport,
             price_scale,
             coord_override: None,
-            bars: &[],
+            bars: Vec::new(),
         }
-    }
-
-    /// Attach a bar slice so that `ts_to_x_ms` works correctly when rendering primitives.
-    pub fn set_bars(&mut self, bars: &'a [Bar]) {
-        self.bars = bars;
     }
 
     /// Access the inner context to retrieve accumulated instance buffers.
@@ -287,6 +282,11 @@ impl<'a> ChartRenderContext for InstancedChartRenderContext<'a> {
     }
 
     fn bars(&self) -> &[Bar] {
-        self.bars
+        &self.bars
+    }
+
+    fn set_bars(&mut self, bars: &[Bar]) {
+        self.bars.clear();
+        self.bars.extend_from_slice(bars);
     }
 }

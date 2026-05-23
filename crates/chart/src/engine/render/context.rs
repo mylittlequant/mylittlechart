@@ -47,6 +47,15 @@ pub trait RenderContext: uzor::render::RenderContext {
         &[]
     }
 
+    /// Store a bar slice so that `ts_to_x_ms` works correctly.
+    ///
+    /// Called before rendering primitives for each window so that the context
+    /// has the correct bar data for timestamp → bar-index conversion.
+    /// The default implementation is a no-op; backends that own a `Vec<Bar>`
+    /// field override this to clone the slice in.
+    fn set_bars(&mut self, _bars: &[Bar]) {}
+
+
     /// Convert a Unix timestamp in **milliseconds** to an X screen coordinate.
     ///
     /// Internally converts ms → fractional bar index using `timestamp_ms_to_bar_f64`,

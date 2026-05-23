@@ -5,7 +5,7 @@
 //! coordinate conversion (bar → X, price → Y) on top.
 
 use vello::Scene;
-use zengeld_chart::{PriceScale, Viewport};
+use zengeld_chart::{Bar, PriceScale, Viewport};
 use zengeld_chart::render::RenderContext as ChartRenderContext;
 use uzor::render::{
     RenderContext as UzorRenderContext, RenderContextExt,
@@ -41,6 +41,8 @@ pub struct VelloGpuRenderContext<'a> {
     viewport: Option<&'a Viewport>,
     price_scale: Option<&'a PriceScale>,
     coord_override: Option<CoordinateSpaceOverride>,
+    /// Bar slice for timestamp → X conversion in primitives.
+    bars: Vec<Bar>,
 }
 
 impl<'a> VelloGpuRenderContext<'a> {
@@ -62,6 +64,7 @@ impl<'a> VelloGpuRenderContext<'a> {
             viewport,
             price_scale,
             coord_override: None,
+            bars: Vec::new(),
         }
     }
 }
@@ -289,5 +292,14 @@ impl<'a> ChartRenderContext for VelloGpuRenderContext<'a> {
             price_min,
             price_max,
         });
+    }
+
+    fn bars(&self) -> &[Bar] {
+        &self.bars
+    }
+
+    fn set_bars(&mut self, bars: &[Bar]) {
+        self.bars.clear();
+        self.bars.extend_from_slice(bars);
     }
 }
