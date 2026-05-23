@@ -4136,7 +4136,10 @@ fn render_slot_panel(
                         sep_hit_w,
                         sep_h,
                     );
-                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
+                    // Sense::CLICK (matches agent:sep:N) — drag-start handler reads
+                    // hovered_widget which CLICK populates; DRAG sense gets claimed
+                    // by process_drag_start and discarded since no header match.
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
                     result.item_rects.push((sep_wid, hit_rect));
                 }
                 SeparatorOrientation::Horizontal => {
@@ -4151,7 +4154,7 @@ fn render_slot_panel(
                         sep_w,
                         sep_hit_w,
                     );
-                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
                     result.item_rects.push((sep_wid, hit_rect));
                 }
             }
