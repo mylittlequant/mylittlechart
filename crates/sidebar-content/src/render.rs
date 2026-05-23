@@ -271,8 +271,15 @@ pub fn render_right_sidebar(
     let header_height = if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
         // Available width = full width - left pad (8) - close X reservation (20).
         // Mirrors `inner_w` inside render_slot_toolbar_in_header / render_agents_toolbar_in_header.
+        // Threshold = sum of all single-row buttons at minimum 28 px each
+        // (so the "wrap to 2 rows" trigger fires exactly when buttons would
+        // shrink below 28 px square — not earlier). Must match the
+        // `single_row` decision inside the respective toolbar fn.
+        // Agents: PTY(28)+2+Chat(28) +4+ 4×CLI(28+3×4) +4+ HVR(28×3+2×2)
+        //         +2×4+ exp+rst(28×2+4) = 358
+        // Slot:   +(28)+4+ APL(28×3+2×2) +4+ HVR(28×3+2×2) +2×4+ exp+rst(28×2+4) = 284
+        let threshold = if panel == RightSidebarPanel::Agents { 358.0 } else { 284.0 };
         let inner_w_for_panel = rect.width - 8.0 - 20.0;
-        let threshold = if panel == RightSidebarPanel::Agents { 400.0 } else { 284.0 };
         if inner_w_for_panel >= threshold { 40.0 } else { 68.0 }
     } else {
         40.0
@@ -4577,7 +4584,9 @@ fn render_agents_toolbar_in_header(
     // Available width for toolbar: full width - left pad (8) - close X reservation (20).
     // Threshold mirrors the header_height computation in render_right_sidebar.
     let inner_w = rect.width - 8.0 - 20.0;
-    let single_row = inner_w >= 400.0;
+    // Threshold: total width when every button is at its minimum 28 px square.
+    // Mirrors `header_height` decision in `render_right_sidebar`.
+    let single_row = inner_w >= 358.0;
 
     // Starting x: left edge + 8 px pad (mirroring slot pattern).
     let start_x = rect.x + 8.0;
@@ -4637,7 +4646,10 @@ fn render_agents_toolbar_in_header(
         let full_total: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w + btn_pad).sum::<f64>() + gap * 3.0;
         let use_short = full_total > area_w;
         let n   = cli_btns.len() as f64;
-        let per = ((area_w - gap * (n - 1.0)) / n).max(24.0);
+        // Short labels (CL/CX/GM/OC) are 2 chars — cap per-button at 28 so they
+        // render as square buttons matching A/P/L. Full labels stretch to fill.
+        let per_raw = ((area_w - gap * (n - 1.0)) / n).max(24.0);
+        let per = if use_short { per_raw.min(28.0) } else { per_raw };
         let mut bx = area_x;
         for btn in cli_btns.iter() {
             let label    = if use_short { btn.short } else { btn.label };
