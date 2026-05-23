@@ -6,7 +6,7 @@
 //! - does not depend on `FrameTheme` (uses `ToolbarTheme` for all colours)
 //! - no `ThemeManager` argument (theme-settings panel is not present here)
 
-use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
+use zengeld_chart::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
 use zengeld_chart::LayoutRect;
 use zengeld_chart::ui::{Icon, scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar}};
 use zengeld_chart::ui::widgets::types::{WidgetState, WidgetTheme};
@@ -21,7 +21,6 @@ use uzor::types::Rect as WidgetRect;
 use crate::state::{SidebarState, RightSidebarPanel};
 use crate::types::ObjectItemState;
 
-const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../assets/mascot/mini_mascot_left.svg");
 
 // =============================================================================
 // Result type — mirrors zengeld_chart::layout::render_frame::RightSidebarResult
@@ -268,12 +267,13 @@ pub fn render_right_sidebar(
     let scrollbar_width: f64 = if is_agents_panel { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
 
-    // Dynamic header height: slot panels go 2-row (68 px) when too narrow.
-    let header_height = if matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    // Dynamic header height: slot panels and Agents go 2-row (68 px) when too narrow.
+    let header_height = if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
         // Available width = full width - left pad (8) - close X reservation (20).
-        // Mirrors `inner_w` inside render_slot_toolbar_in_header.
-        let inner_w_for_slot = rect.width - 8.0 - 20.0;
-        if inner_w_for_slot >= 284.0 { 40.0 } else { 68.0 }
+        // Mirrors `inner_w` inside render_slot_toolbar_in_header / render_agents_toolbar_in_header.
+        let inner_w_for_panel = rect.width - 8.0 - 20.0;
+        let threshold = if panel == RightSidebarPanel::Agents { 400.0 } else { 284.0 };
+        if inner_w_for_panel >= threshold { 40.0 } else { 68.0 }
     } else {
         40.0
     };
@@ -348,20 +348,16 @@ pub fn render_right_sidebar(
     ctx.set_fill_color(&toolbar_theme.background);
     ctx.fill_rect(rect.x, rect.y, rect.width, header_height);
 
-    // Header icon (left side, 18 × 18, centred vertically) — NOT drawn for slot panels.
-    if !matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    // Header icon (left side, 18 × 18, centred vertically) — NOT drawn for slot or Agents panels.
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
         let icon_size = 18.0;
         let icon_x = rect.x + 12.0;
         let icon_y = rect.y + (header_height - icon_size) / 2.0;
-        if panel == RightSidebarPanel::Agents {
-            draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, icon_x, icon_y, icon_size, icon_size);
-        } else {
-            draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
-        }
+        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
     }
 
-    // Header title — suppressed for Slot panels (toolbar buttons fill that row).
-    if !matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    // Header title — suppressed for Slot panels and Agents (toolbar buttons fill that row).
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text);
         ctx.set_text_align(TextAlign::Left);
@@ -526,6 +522,19 @@ pub fn render_right_sidebar(
         let _ = idx;
     }
 
+    // Agents toolbar — rendered in the header row BEFORE scrollable clip, mirroring slot pattern.
+    if panel == RightSidebarPanel::Agents {
+        render_agents_toolbar_in_header(
+            ctx,
+            rect,
+            header_height,
+            sidebar_state,
+            toolbar_theme,
+            &mut result,
+            input_coordinator,
+        );
+    }
+
     // Register main sidebar scroll viewport BEFORE panel-specific widgets so that
     // more-specific widgets (signal_group:*:viewport, slot focus_content, etc.)
     // registered later win the hit-test within the same layer (last-registered = top).
@@ -632,6 +641,7 @@ pub fn render_right_sidebar(
                 rect,
                 content_y,
                 content_width,
+                header_height,
                 sidebar_state,
                 toolbar_theme,
                 &mut result,
@@ -4529,6 +4539,247 @@ fn render_performance_panel(
 }
 
 // =============================================================================
+// Agents panel — header toolbar (drawn before scrollable clip)
+// =============================================================================
+
+/// Renders the Agents toolbar into the header row of the right sidebar.
+///
+/// Mirrors [`render_slot_toolbar_in_header`]: called from `render_right_sidebar`
+/// BEFORE `scrollable.begin(ctx)` so the controls draw in the unclipped header
+/// zone.  The toolbar contains:
+///   - `[PTY][Chat]` mode segment
+///   - `[Claude][Codex][Gemini][OpenCode]` CLI spawn buttons
+///   - `[H][V][R]` split-direction toggles
+///   - `[⊞][↺]` expand/reset controls
+///
+/// The per-leaf `[×]` close button lives inside each pane rendered by
+/// `render_agents_pane` — it is NOT duplicated here.
+/// The sidebar-level `[×]` (right_sidebar_close) is drawn by `render_right_sidebar`
+/// at the right edge of the header and is NOT the responsibility of this fn.
+fn render_agents_toolbar_in_header(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    header_height: f64,
+    state: &mut SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) {
+    use crate::state::AgentSpawnLayout;
+    let ctrl_h  = 28.0_f64;
+    let btn_h   = 28.0_f64;
+    let gap     = 4.0_f64;
+    let icon_pad = 4.0_f64;
+
+    let has_focused = state.focused_agent_leaf.is_some();
+    let multi_leaf  = state.agent_leaves.len() > 1;
+
+    // Available width for toolbar: full width - left pad (8) - close X reservation (20).
+    // Threshold mirrors the header_height computation in render_right_sidebar.
+    let inner_w = rect.width - 8.0 - 20.0;
+    let single_row = inner_w >= 400.0;
+
+    // Starting x: left edge + 8 px pad (mirroring slot pattern).
+    let start_x = rect.x + 8.0;
+
+    // ── Helper: draw [PTY][Chat] mode segment ─────────────────────────────────
+    let draw_mode_seg = |cur_x: f64, row_y: f64,
+                         ctx: &mut dyn RenderContext,
+                         state: &mut SidebarState,
+                         input_coordinator: &mut InputCoordinator,
+                         result: &mut RightSidebarResult| -> f64 {
+        let is_pty    = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+        let toggle_w  = 28.0_f64;
+
+        // [PTY]
+        let pty_rect = WidgetRect::new(cur_x, row_y, toggle_w, btn_h);
+        let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:pty"));
+        ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
+            pty_rect.x + icon_pad, pty_rect.y + icon_pad,
+            pty_rect.width - icon_pad * 2.0, pty_rect.height - icon_pad * 2.0,
+            if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
+        if !is_pty { input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
+
+        // [Chat]
+        let chat_rect = WidgetRect::new(cur_x + toggle_w + 2.0, row_y, toggle_w, btn_h);
+        let chat_hov  = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:chat"));
+        ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(chat_rect.x, chat_rect.y, chat_rect.width, chat_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
+            chat_rect.x + icon_pad, chat_rect.y + icon_pad,
+            chat_rect.width - icon_pad * 2.0, chat_rect.height - icon_pad * 2.0,
+            if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
+        if is_pty { input_coordinator.register("agent:mode:chat", chat_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:mode:chat".to_string(), chat_rect));
+
+        // Return x after the two-button group + a larger gap.
+        cur_x + toggle_w * 2.0 + 2.0 + gap * 2.0
+    };
+
+    // ── Helper: draw CLI spawn buttons ────────────────────────────────────────
+    // `area_x` = left edge of spawn area, `area_w` = available width.
+    let draw_cli_btns = |area_x: f64, area_w: f64, row_y: f64,
+                         ctx: &mut dyn RenderContext,
+                         input_coordinator: &mut InputCoordinator,
+                         result: &mut RightSidebarResult| {
+        struct CliBtn { id: &'static str, label: &'static str, short: &'static str }
+        let cli_btns = [
+            CliBtn { id: "agent:spawn:claude",   label: "CLAUDE",   short: "CL" },
+            CliBtn { id: "agent:spawn:codex",     label: "CODEX",    short: "CX" },
+            CliBtn { id: "agent:spawn:gemini",    label: "GEMINI",   short: "GM" },
+            CliBtn { id: "agent:spawn:opencode",  label: "OPENCODE", short: "OC" },
+        ];
+        let char_w  = 7.0_f64;
+        let btn_pad = 16.0_f64;
+        let full_total: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w + btn_pad).sum::<f64>() + gap * 3.0;
+        let use_short = full_total > area_w;
+        let n   = cli_btns.len() as f64;
+        let per = ((area_w - gap * (n - 1.0)) / n).max(24.0);
+        let mut bx = area_x;
+        for btn in cli_btns.iter() {
+            let label    = if use_short { btn.short } else { btn.label };
+            let btn_rect = WidgetRect::new(bx, row_y, per, btn_h);
+            let hov      = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn.id));
+            ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
+            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&theme.item_text);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, btn_rect.x + per / 2.0, btn_rect.y + btn_h / 2.0);
+            input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((btn.id.to_string(), btn_rect));
+            bx += per + gap;
+        }
+    };
+
+    // ── Helper: draw [H][V][R][⊞][↺] controls ────────────────────────────────
+    let draw_hvr_btns = |row_y: f64, start_x: f64,
+                         ctx: &mut dyn RenderContext,
+                         state: &mut SidebarState,
+                         input_coordinator: &mut InputCoordinator,
+                         result: &mut RightSidebarResult| {
+        let split_w = 28.0_f64;
+        let btn_w   = 28.0_f64;
+        let mut cur = start_x;
+
+        // [H]
+        let is_h   = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
+        let h_rect = WidgetRect::new(cur, row_y, split_w, btn_h);
+        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:h"));
+        ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
+            h_rect.x + icon_pad, h_rect.y + icon_pad,
+            h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
+            if is_h { &theme.item_text_active } else { &theme.item_text_muted });
+        if !is_h { input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:split:h".to_string(), h_rect));
+        cur += split_w + 2.0;
+
+        // [V]
+        let is_v   = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
+        let v_rect = WidgetRect::new(cur, row_y, split_w, btn_h);
+        let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:v"));
+        ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
+            v_rect.x + icon_pad, v_rect.y + icon_pad,
+            v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
+            if is_v { &theme.item_text_active } else { &theme.item_text_muted });
+        if !is_v { input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:split:v".to_string(), v_rect));
+        cur += split_w + 2.0;
+
+        // [R]
+        let is_r   = state.agent_spawn_layout == AgentSpawnLayout::Replace;
+        let r_rect = WidgetRect::new(cur, row_y, split_w, btn_h);
+        let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:replace"));
+        ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
+            r_rect.x + icon_pad, r_rect.y + icon_pad,
+            r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
+            if is_r { &theme.item_text_active } else { &theme.item_text_muted });
+        if !is_r { input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:split:replace".to_string(), r_rect));
+        cur += split_w + gap * 2.0;
+
+        // [⊞/⊟] expand/collapse
+        let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
+            state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
+        });
+        let expand_en = has_focused && multi_leaf;
+        let exp_rect  = WidgetRect::new(cur, row_y, btn_w, btn_h);
+        let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:expand_toggle"));
+        ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
+        {
+            let exp_icon = if any_hidden { uzor::render::icons::ui::ICON_COLLAPSE } else { uzor::render::icons::ui::ICON_EXPAND };
+            draw_svg_icon(ctx, exp_icon,
+                exp_rect.x + icon_pad, exp_rect.y + icon_pad,
+                exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
+                if expand_en { &theme.item_text } else { &theme.item_text_muted });
+        }
+        if expand_en { input_coordinator.register("agent:expand_toggle", exp_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:expand_toggle".to_string(), exp_rect));
+        cur += btn_w + gap;
+
+        // [↺] reset sizes
+        let reset_en   = has_focused && multi_leaf;
+        let reset_rect = WidgetRect::new(cur, row_y, btn_w, btn_h);
+        let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:reset_sizes"));
+        ctx.set_fill_color(if !reset_en { &theme.background } else if reset_hov { &theme.button_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
+            reset_rect.x + icon_pad, reset_rect.y + icon_pad,
+            reset_rect.width - icon_pad * 2.0, reset_rect.height - icon_pad * 2.0,
+            if reset_en { &theme.item_text } else { &theme.item_text_muted });
+        if reset_en { input_coordinator.register("agent:reset_sizes", reset_rect, uzor::input::Sense::CLICK); }
+        result.item_rects.push(("agent:reset_sizes".to_string(), reset_rect));
+    };
+
+    if single_row {
+        // ── Single row: [PTY][Chat] [Claude][Codex][Gemini][OpenCode] [H][V][R][⊞][↺] ──
+        let row_y = rect.y + (header_height - ctrl_h) / 2.0;
+
+        // After mode seg: area_x is where CLI buttons begin.
+        let after_mode = draw_mode_seg(start_x, row_y, ctx, state, input_coordinator, result);
+
+        // Right-side fixed width: H+2+V+2+R + gap*2 + expand+gap+reset
+        let right_fixed = 28.0 * 3.0 + 4.0 + gap * 2.0 + 28.0 * 2.0 + gap;
+        let cli_area_w  = inner_w + 8.0 + 20.0  // full rect.width
+                        - (after_mode - rect.x)  // used so far
+                        - right_fixed - gap * 2.0
+                        - 20.0; // close X reservation
+        let cli_area_w  = cli_area_w.max(0.0);
+
+        draw_cli_btns(after_mode, cli_area_w, row_y, ctx, input_coordinator, result);
+
+        // HVR starts after cli area.
+        let hvr_x = after_mode + cli_area_w + gap * 2.0;
+        draw_hvr_btns(row_y, hvr_x, ctx, state, input_coordinator, result);
+    } else {
+        // ── Two rows (narrow sidebar) ─────────────────────────────────────────
+        // header_height = 68 px: 4px top-pad + 28px row1 + 4px gap + 28px row2 + 4px bottom-pad
+        let top_pad = 4.0;
+        let row1_y  = rect.y + top_pad;
+        let row2_y  = row1_y + btn_h + gap;
+
+        // Row 1: [PTY][Chat] + CLI spawn buttons (fill remaining width of row 1).
+        let after_mode = draw_mode_seg(start_x, row1_y, ctx, state, input_coordinator, result);
+        let cli_area_w = (rect.x + rect.width - 20.0 - after_mode).max(0.0);
+        draw_cli_btns(after_mode, cli_area_w, row1_y, ctx, input_coordinator, result);
+
+        // Row 2: [H][V][R][⊞][↺] — left-aligned (mirror slot two-row fix from a73de89).
+        draw_hvr_btns(row2_y, start_x, ctx, state, input_coordinator, result);
+    }
+}
+
+// =============================================================================
 // Agents panel — split-grid layout
 // =============================================================================
 
@@ -4551,419 +4802,24 @@ fn render_agents_panel(
     rect: &LayoutRect,
     content_y: f64,
     content_width: f64,
+    header_height: f64,
     state: &mut SidebarState,
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
     let pad = 8.0;
-    let ctrl_h = 28.0;
-    let btn_h = 28.0;
-    let gap = 4.0;
     let x = rect.x + pad;
     let inner_w = content_width - pad * 2.0;
+    // Toolbar is now in the header row (render_agents_toolbar_in_header).
+    // Body starts directly at content_y + pad.
     let mut y = content_y + pad;
 
-    // ── Header rows: adaptive 1-row or 2-row layout ───────────────────────────
-    // Minimum width for single-row with all buttons 28px:
-    //   Left: PTY(28)+2+Chat(28)+8 = 66
-    //   Right: H(28)+2+V(28)+2+R(28)+8+exp(28)+4+rst(28)+4+close(28) = 188
-    //   CLI min (~32 each + 3*4 gaps): ~140
-    //   Total: 66+140+188 ≈ 394 → threshold 400px
-    let single_row = inner_w >= 400.0;
-
-    if single_row {
-        // ── Single-row: [PTY][Chat] [Claude][Codex][Gemini][OpenCode] [H][V][R] [⊞][↺][×] ──
-        use crate::state::AgentSpawnLayout;
-        let is_pty      = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
-        let has_focused = state.focused_agent_leaf.is_some();
-        let multi_leaf  = state.agent_leaves.len() > 1;
-        let toggle_w    = 28.0;   // PTY/Chat narrow buttons
-        let split_w     = 28.0;   // H/V/R buttons
-        let btn_w       = 28.0;   // expand/reset/close buttons
-        let icon_pad    = 4.0;
-        let mut cur_x   = x;
-
-        // [PTY] segment — terminal icon
-        let pty_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-        let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:pty"));
-        ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
-            pty_rect.x + icon_pad, pty_rect.y + icon_pad,
-            pty_rect.width - icon_pad * 2.0, pty_rect.height - icon_pad * 2.0,
-            if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_pty {
-            input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
-        cur_x += toggle_w + 2.0;
-
-        // [Chat] segment — chat bubble icon
-        let chat_seg_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-        let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:chat"));
-        ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
-            chat_seg_rect.x + icon_pad, chat_seg_rect.y + icon_pad,
-            chat_seg_rect.width - icon_pad * 2.0, chat_seg_rect.height - icon_pad * 2.0,
-            if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-        if is_pty {
-            input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
-        cur_x += toggle_w + gap * 2.0;
-
-        // CLI spawn buttons — allocate remaining space before the right-side controls
-        // Right-side fixed width: H+2+V+2+R + gap*2 + exp+gap+rst+gap+close
-        //   = 36+2+36+2+36 + gap*2 + 28+gap+28+gap+28
-        let right_fixed = split_w * 3.0 + 4.0 + gap * 2.0 + btn_w * 3.0 + gap * 2.0;
-        let cli_area_w  = inner_w - (cur_x - x) - right_fixed - gap * 2.0;
-        struct CliBtn { id: &'static str, label: &'static str, short: &'static str }
-        let cli_btns = [
-            CliBtn { id: "agent:spawn:claude",   label: "CLAUDE",   short: "CL" },
-            CliBtn { id: "agent:spawn:codex",     label: "CODEX",    short: "CX" },
-            CliBtn { id: "agent:spawn:gemini",    label: "GEMINI",   short: "GM" },
-            CliBtn { id: "agent:spawn:opencode",  label: "OPENCODE", short: "OC" },
-        ];
-        // CLI buttons stretch equally to fill the available space.
-        let char_w = 7.0;
-        let btn_pad = 16.0;
-        let full_total: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w + btn_pad).sum::<f64>() + gap * 3.0;
-        let use_short = full_total > cli_area_w;
-        let n_cli = cli_btns.len() as f64;
-        let total_gaps = gap * (n_cli - 1.0);
-        let per_btn_w = ((cli_area_w - total_gaps) / n_cli).max(24.0);
-        let mut btn_cur_x = cur_x;
-        for btn in cli_btns.iter() {
-            let label = if use_short { btn.short } else { btn.label };
-            let btn_rect = WidgetRect::new(btn_cur_x, y + (ctrl_h - btn_h) / 2.0, per_btn_w, btn_h);
-            let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn.id));
-            ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&theme.item_text);
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, btn_rect.x + per_btn_w / 2.0, btn_rect.y + btn_h / 2.0);
-            input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
-            result.item_rects.push((btn.id.to_string(), btn_rect));
-            btn_cur_x += per_btn_w + gap;
-        }
-        cur_x = btn_cur_x + gap;
-
-        // [H] split-direction toggle
-        let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
-        let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:h"));
-        ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
-            h_rect.x + icon_pad, h_rect.y + icon_pad,
-            h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
-            if is_h { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_h {
-            input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:split:h".to_string(), h_rect));
-        cur_x += split_w + 2.0;
-
-        // [V] split-direction toggle
-        let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
-        let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:v"));
-        ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
-            v_rect.x + icon_pad, v_rect.y + icon_pad,
-            v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
-            if is_v { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_v {
-            input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:split:v".to_string(), v_rect));
-        cur_x += split_w + 2.0;
-
-        // [R] replace toggle
-        let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
-        let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:replace"));
-        ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
-            r_rect.x + icon_pad, r_rect.y + icon_pad,
-            r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
-            if is_r { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_r {
-            input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:split:replace".to_string(), r_rect));
-        cur_x += split_w + gap * 2.0;
-
-        // [expand/collapse] toggle
-        let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
-            state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
-        });
-        let expand_en = has_focused && multi_leaf;
-        let exp_rect  = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:expand_toggle"));
-        ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
-        {
-            let exp_icon = if any_hidden { uzor::render::icons::ui::ICON_COLLAPSE } else { uzor::render::icons::ui::ICON_EXPAND };
-            draw_svg_icon(ctx, exp_icon,
-                exp_rect.x + icon_pad, exp_rect.y + icon_pad,
-                exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
-                if expand_en { &theme.item_text } else { &theme.item_text_muted });
-        }
-        if expand_en {
-            input_coordinator.register("agent:expand_toggle", exp_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:expand_toggle".to_string(), exp_rect));
-        cur_x += btn_w + gap;
-
-        // [reset] reset sizes
-        let reset_en   = has_focused && multi_leaf;
-        let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:reset_sizes"));
-        ctx.set_fill_color(if !reset_en { &theme.background } else if reset_hov { &theme.button_bg_hover } else { &theme.background });
-        ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
-            reset_rect.x + icon_pad, reset_rect.y + icon_pad,
-            reset_rect.width - icon_pad * 2.0, reset_rect.height - icon_pad * 2.0,
-            if reset_en { &theme.item_text } else { &theme.item_text_muted });
-        if reset_en {
-            input_coordinator.register("agent:reset_sizes", reset_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:reset_sizes".to_string(), reset_rect));
-        cur_x += btn_w + gap;
-
-        // [×] close pane
-        let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-        let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:close_pane"));
-        ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
-        ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(close_rect.x, close_rect.y);
-        ctx.line_to(close_rect.x + btn_w, close_rect.y);
-        ctx.line_to(close_rect.x + btn_w, close_rect.y + btn_h);
-        ctx.line_to(close_rect.x, close_rect.y + btn_h);
-        ctx.close_path();
-        ctx.stroke();
-        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
-            close_rect.x + icon_pad, close_rect.y + icon_pad,
-            close_rect.width - icon_pad * 2.0, close_rect.height - icon_pad * 2.0,
-            if has_focused { &theme.danger } else { &theme.item_text_muted });
-        if has_focused {
-            input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
-        }
-        result.item_rects.push(("agent:close_pane".to_string(), close_rect));
-
-        y += ctrl_h + gap;
-    } else {
-        // ── Two-row layout (narrow sidebar) ───────────────────────────────────
-
-        // ── Row 1: Mode toggle [PTY][Chat] + CLI spawn buttons ────────────────
-        {
-            let is_pty  = state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
-
-            // [PTY] segment — terminal icon
-            let toggle_w = 28.0;
-            let icon_pad_2r = 4.0;
-            let pty_rect = WidgetRect::new(x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let pty_hov  = !is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:pty"));
-            ctx.set_fill_color(if is_pty { &theme.accent } else if pty_hov { &theme.item_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(pty_rect.x, pty_rect.y, pty_rect.width, pty_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_TERMINAL,
-                pty_rect.x + icon_pad_2r, pty_rect.y + icon_pad_2r,
-                pty_rect.width - icon_pad_2r * 2.0, pty_rect.height - icon_pad_2r * 2.0,
-                if is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-            if !is_pty {
-                input_coordinator.register("agent:mode:pty", pty_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:mode:pty".to_string(), pty_rect));
-
-            // [Chat] segment — chat bubble icon
-            let chat_seg_x = x + toggle_w + 2.0;
-            let chat_seg_rect = WidgetRect::new(chat_seg_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let chat_hov = is_pty && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:mode:chat"));
-            ctx.set_fill_color(if !is_pty { &theme.accent } else if chat_hov { &theme.item_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(chat_seg_rect.x, chat_seg_rect.y, chat_seg_rect.width, chat_seg_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHAT_BUBBLE,
-                chat_seg_rect.x + icon_pad_2r, chat_seg_rect.y + icon_pad_2r,
-                chat_seg_rect.width - icon_pad_2r * 2.0, chat_seg_rect.height - icon_pad_2r * 2.0,
-                if !is_pty { &theme.item_text_active } else { &theme.item_text_muted });
-            if is_pty {
-                input_coordinator.register("agent:mode:chat", chat_seg_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:mode:chat".to_string(), chat_seg_rect));
-
-            // CLI spawn buttons: [CLAUDE] [CODEX] [GEMINI] [OPENCODE]
-            struct CliBtn { id: &'static str, label: &'static str, short: &'static str }
-            let cli_btns = [
-                CliBtn { id: "agent:spawn:claude",   label: "CLAUDE",   short: "CL" },
-                CliBtn { id: "agent:spawn:codex",     label: "CODEX",    short: "CX" },
-                CliBtn { id: "agent:spawn:gemini",    label: "GEMINI",   short: "GM" },
-                CliBtn { id: "agent:spawn:opencode",  label: "OPENCODE", short: "OC" },
-            ];
-            let spawn_area_x = chat_seg_x + toggle_w + gap * 2.0;
-            let spawn_area_w = inner_w - (spawn_area_x - x);
-            // CLI buttons stretch equally to fill available space.
-            let char_w_2r = 7.0;
-            let btn_pad_2r = 16.0;
-            let full_total_2r: f64 = cli_btns.iter().map(|b| b.label.len() as f64 * char_w_2r + btn_pad_2r).sum::<f64>() + gap * 3.0;
-            let use_short = full_total_2r > spawn_area_w;
-            let n_cli_2r = cli_btns.len() as f64;
-            let total_gaps_2r = gap * (n_cli_2r - 1.0);
-            let per_btn_w_2r = ((spawn_area_w - total_gaps_2r) / n_cli_2r).max(24.0);
-            let mut btn_cur_x_2r = spawn_area_x;
-
-            for btn in cli_btns.iter() {
-                let label = if use_short { btn.short } else { btn.label };
-                let btn_rect = WidgetRect::new(btn_cur_x_2r, y + (ctrl_h - btn_h) / 2.0, per_btn_w_2r, btn_h);
-                let hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn.id));
-                ctx.set_fill_color(if hov { &theme.button_bg_hover } else { &theme.background });
-                ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(&theme.item_text);
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, btn_rect.x + per_btn_w_2r / 2.0, btn_rect.y + btn_h / 2.0);
-                input_coordinator.register(btn.id, btn_rect, uzor::input::Sense::CLICK);
-                result.item_rects.push((btn.id.to_string(), btn_rect));
-                btn_cur_x_2r += per_btn_w_2r + gap;
-            }
-
-            y += ctrl_h + gap;
-        }
-
-        // ── Row 2: [H][V][R] spawn layout  [expand/collapse] [reset] [×] close ──
-        {
-            use crate::state::AgentSpawnLayout;
-            let has_focused = state.focused_agent_leaf.is_some();
-            let multi_leaf  = state.agent_leaves.len() > 1;
-            let toggle_w    = 28.0;
-            let btn_w       = 28.0;
-            let icon_pad    = 4.0;
-            let mut cur_x   = x;
-
-            // [H] split-direction toggle
-            let is_h = state.agent_spawn_layout == AgentSpawnLayout::SplitH;
-            let h_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:h"));
-            ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
-                h_rect.x + icon_pad, h_rect.y + icon_pad,
-                h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
-                if is_h { &theme.item_text_active } else { &theme.item_text_muted });
-            if !is_h {
-                input_coordinator.register("agent:split:h", h_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:split:h".to_string(), h_rect));
-            cur_x += toggle_w + 2.0;
-
-            // [V] split-direction toggle
-            let is_v = state.agent_spawn_layout == AgentSpawnLayout::SplitV;
-            let v_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:v"));
-            ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_V,
-                v_rect.x + icon_pad, v_rect.y + icon_pad,
-                v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
-                if is_v { &theme.item_text_active } else { &theme.item_text_muted });
-            if !is_v {
-                input_coordinator.register("agent:split:v", v_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:split:v".to_string(), v_rect));
-            cur_x += toggle_w + 2.0;
-
-            // [R] replace toggle
-            let is_r = state.agent_spawn_layout == AgentSpawnLayout::Replace;
-            let r_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, toggle_w, btn_h);
-            let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:split:replace"));
-            ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_REPLACE,
-                r_rect.x + icon_pad, r_rect.y + icon_pad,
-                r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
-                if is_r { &theme.item_text_active } else { &theme.item_text_muted });
-            if !is_r {
-                input_coordinator.register("agent:split:replace", r_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:split:replace".to_string(), r_rect));
-            cur_x += toggle_w + gap * 2.0;
-
-            // [expand/collapse] toggle
-            let any_hidden = has_focused && multi_leaf && state.agent_leaves.keys().any(|&lid| {
-                state.agent_docking.inner().tree().leaf(lid).map_or(false, |l| l.hidden)
-            });
-            let expand_en = has_focused && multi_leaf;
-            let exp_rect  = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:expand_toggle"));
-            ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
-            {
-                let exp_icon = if any_hidden { uzor::render::icons::ui::ICON_COLLAPSE } else { uzor::render::icons::ui::ICON_EXPAND };
-                draw_svg_icon(ctx, exp_icon,
-                    exp_rect.x + icon_pad, exp_rect.y + icon_pad,
-                    exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
-                    if expand_en { &theme.item_text } else { &theme.item_text_muted });
-            }
-            if expand_en {
-                input_coordinator.register("agent:expand_toggle", exp_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:expand_toggle".to_string(), exp_rect));
-            cur_x += btn_w + gap;
-
-            // [reset] reset sizes
-            let reset_en   = has_focused && multi_leaf;
-            let reset_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let reset_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:reset_sizes"));
-            ctx.set_fill_color(if !reset_en { &theme.background } else if reset_hov { &theme.button_bg_hover } else { &theme.background });
-            ctx.fill_rounded_rect(reset_rect.x, reset_rect.y, reset_rect.width, reset_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_REFRESH,
-                reset_rect.x + icon_pad, reset_rect.y + icon_pad,
-                reset_rect.width - icon_pad * 2.0, reset_rect.height - icon_pad * 2.0,
-                if reset_en { &theme.item_text } else { &theme.item_text_muted });
-            if reset_en {
-                input_coordinator.register("agent:reset_sizes", reset_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:reset_sizes".to_string(), reset_rect));
-            cur_x += btn_w + gap;
-
-            // [×] close pane
-            let close_rect = WidgetRect::new(cur_x, y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let cl_hov     = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from("agent:close_pane"));
-            ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
-            ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 3.0);
-            ctx.set_stroke_color(&theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(close_rect.x, close_rect.y);
-            ctx.line_to(close_rect.x + btn_w, close_rect.y);
-            ctx.line_to(close_rect.x + btn_w, close_rect.y + btn_h);
-            ctx.line_to(close_rect.x, close_rect.y + btn_h);
-            ctx.close_path();
-            ctx.stroke();
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
-                close_rect.x + icon_pad, close_rect.y + icon_pad,
-                close_rect.width - icon_pad * 2.0, close_rect.height - icon_pad * 2.0,
-                if has_focused { &theme.danger } else { &theme.item_text_muted });
-            if has_focused {
-                input_coordinator.register("agent:close_pane", close_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push(("agent:close_pane".to_string(), close_rect));
-
-            y += ctrl_h + gap;
-        }
-    }
 
     // ── Grid area ─────────────────────────────────────────────────────────────
-    let grid_h = (rect.height - 40.0 - (y - content_y)).max(60.0);
+    // header_height is dynamic (40 or 68 px depending on single/two-row mode).
+    // Body starts at content_y + pad; no toolbar rendered here.
+    let grid_h = (rect.height - header_height - pad).max(60.0);
     let grid_rect = uzor::panels::PanelRect::new(x as f32, y as f32, inner_w as f32, grid_h as f32);
 
     if state.agent_leaves.is_empty() {
