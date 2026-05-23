@@ -344,12 +344,14 @@ pub fn render_right_sidebar(
         draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
     }
 
-    // Header title.
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, rect.x + 36.0, rect.y + header_height / 2.0);
+    // Header title — suppressed for Slot panels (toolbar buttons fill that row).
+    if !matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(title, rect.x + 36.0, rect.y + header_height / 2.0);
+    }
 
     // Close button (X) on right side of header — with hover highlight.
     let close_size = 16.0;
@@ -3542,15 +3544,16 @@ fn render_slot_panel(
     let inner_x = rect.x + pad;
     let inner_w = (content_width - pad * 2.0).max(0.0);
 
-    // ── Slot control toolbar (28px) ──────────────────────────────────────────
+    // ── Slot control toolbar — lives in the shared 40 px header row ─────────
+    // Buttons start after the 18 px icon (icon_x = rect.x + 12, icon_w = 18 → 30 px used).
     {
         use crate::state::AgentSpawnLayout;
-        let ctrl_h = 28.0_f64;
-        let btn_h  = 28.0_f64;
-        let gap    = 4.0_f64;
+        let ctrl_h   = 40.0_f64;  // header row height
+        let btn_h    = 28.0_f64;
+        let gap      = 4.0_f64;
         let icon_pad = 4.0_f64;
-        let toolbar_y = content_y + pad;
-        let mut cur_x = inner_x;
+        let toolbar_y = rect.y;   // top of header row
+        let mut cur_x = rect.x + 30.0; // right of the slot icon
 
         let has_focused = state.focused_free_leaf.map_or(false, |(si, _)| si == slot_idx);
         let leaf_count = {
@@ -3630,17 +3633,21 @@ fn render_slot_panel(
             cur_x += apl_w + gap;
         }
 
-        // Right-side layout controls — align to right edge of inner area
-        // [H][V][R] + gap + [⊞][↺][×]
-        let split_w = 28.0_f64;
-        let btn_w   = 28.0_f64;
-        let right_w = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
-                    + gap * 2.0                       // separator gap
-                    + btn_w * 3.0 + gap * 2.0;        // expand+reset+close
+        // Right-side layout controls — align to just left of the header close (X) button.
+        // Header close sits at rect.x + rect.width - 16 - 12 = rect.x + rect.width - 28.
+        // [H][V][R] + gap + [⊞][↺]  (close_pane removed — tabs have their own ×)
+        let split_w  = 28.0_f64;
+        let btn_w    = 28.0_f64;
+        let right_w  = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
+                     + gap * 2.0                      // separator gap
+                     + btn_w * 2.0 + gap;             // expand+reset
+
+        // Right edge stops before the header close (X) button (28 px from right).
+        let right_edge = rect.x + rect.width - 28.0;
 
         // Only render right controls if there's room after the [+ New] button
-        if inner_x + inner_w - cur_x >= right_w - gap {
-            cur_x = inner_x + inner_w - right_w;
+        if right_edge - cur_x >= right_w - gap {
+            cur_x = right_edge - right_w;
 
             // [H] split horizontal
             let sh_id   = format!("slot:{slot_idx}:split:h");
@@ -3735,28 +3742,11 @@ fn render_slot_panel(
                 input_coordinator.register(rst_id.as_str(), rst_rect, uzor::input::Sense::CLICK);
             }
             result.item_rects.push((rst_id, rst_rect));
-            cur_x += btn_w + gap;
-
-            // [×] close pane
-            let cl_id   = format!("slot:{slot_idx}:close_pane");
-            let cl_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
-            let cl_hov  = has_focused && input_coordinator.is_hovered(&uzor::types::WidgetId::from(cl_id.as_str()));
-            ctx.set_fill_color(if !has_focused { &theme.background } else if cl_hov { &theme.danger_hover_bg } else { &theme.background });
-            ctx.fill_rounded_rect(cl_rect.x, cl_rect.y, cl_rect.width, cl_rect.height, 3.0);
-            draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CLOSE,
-                cl_rect.x + icon_pad, cl_rect.y + icon_pad,
-                cl_rect.width - icon_pad * 2.0, cl_rect.height - icon_pad * 2.0,
-                if has_focused { &theme.danger } else { &theme.item_text_muted });
-            if has_focused {
-                input_coordinator.register(cl_id.as_str(), cl_rect, uzor::input::Sense::CLICK);
-            }
-            result.item_rects.push((cl_id, cl_rect));
         }
     }
 
-    // Docking grid area — shifted below the toolbar.
-    let ctrl_h_total = 28.0 + 4.0; // toolbar height + gap
-    let inner_y = content_y + pad + ctrl_h_total;
+    // Docking grid area — toolbar is in the header row, so body starts at content_y.
+    let inner_y = content_y + pad;
     let inner_h = (rect.height - (inner_y - rect.y) - pad).max(0.0);
 
     // Record the slot body rect for cross-container drag hit testing.
@@ -6668,7 +6658,6 @@ pub fn find_free_slot_tooltip(widget_id: &str) -> Option<&'static str> {
         "split:replace"  => Some("Replace focused panel"),
         "expand_toggle"  => Some("Expand / collapse focused panel"),
         "reset_sizes"    => Some("Reset panel sizes"),
-        "close_pane"     => Some("Close focused panel"),
         _                => None,
     }
 }
