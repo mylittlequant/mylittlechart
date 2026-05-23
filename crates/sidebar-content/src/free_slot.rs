@@ -127,22 +127,12 @@ impl uzor::panels::DockPanel for FreeItem {
     }
 
     /// Minimum panel size in pixels (width, height).
-    /// Values are read from each panel wrapper's `min_size()` method in `zengeld-panels`.
+    /// Single uniform minimum: 100x80 — enough for a header strip + a couple
+    /// of data rows. Larger per-panel minima made narrow slot widths
+    /// undragable (drag_separator could not redistribute share when every
+    /// child was already at min).
     fn min_size(&self) -> (f32, f32) {
-        match self {
-            FreeItem::Dom(_)               => (200.0, 150.0),
-            FreeItem::Footprint(_)         => (300.0, 200.0),
-            FreeItem::VolumeProfile(_)     => (200.0, 300.0),
-            FreeItem::LiquidityHeatmap(_)  => (300.0, 200.0),
-            FreeItem::BigTrades(_)         => (250.0, 200.0),
-            FreeItem::L2Tape(_)            => (200.0, 150.0),
-            FreeItem::TradeTape(_)         => (200.0, 150.0),
-            FreeItem::OrderEntry(_)        => (250.0, 300.0),
-            FreeItem::PositionManager(_)   => (300.0, 150.0),
-            FreeItem::TradeLog(_)          => (200.0, 150.0),
-            FreeItem::RiskCalculator(_)    => (250.0, 200.0),
-            FreeItem::TradingContainer(_)  => (400.0, 300.0),
-        }
+        (100.0, 80.0)
     }
 
     fn closable(&self) -> bool {
