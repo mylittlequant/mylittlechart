@@ -4136,7 +4136,7 @@ fn render_slot_panel(
                         sep_hit_w,
                         sep_h,
                     );
-                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
                     result.item_rects.push((sep_wid, hit_rect));
                 }
                 SeparatorOrientation::Horizontal => {
@@ -4151,7 +4151,7 @@ fn render_slot_panel(
                         sep_w,
                         sep_hit_w,
                     );
-                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::CLICK);
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
                     result.item_rects.push((sep_wid, hit_rect));
                 }
             }
@@ -6628,6 +6628,46 @@ fn word_wrap_text(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String
         lines.push(String::new());
     }
     lines
+}
+
+/// Return tooltip text for free-slot toolbar and per-leaf widget IDs.
+///
+/// Widget IDs use the form `"slot:{idx}:{suffix}"` or `"slot:{idx}:leaf:{leaf_id}:{suffix}"`.
+/// This function matches only the suffix part so callers can strip the dynamic prefix.
+pub fn find_free_slot_tooltip(widget_id: &str) -> Option<&'static str> {
+    // Strip the leading "slot:{N}:" prefix before matching the stable suffix.
+    let rest = widget_id.strip_prefix("slot:")?;
+    // Skip the slot index digit(s) and the following colon.
+    let after_idx = rest.splitn(2, ':').nth(1)?;
+
+    // Per-leaf suffixes: strip "leaf:{M}:" then match the remaining token.
+    if let Some(leaf_rest) = after_idx.strip_prefix("leaf:") {
+        // leaf_rest = "{leaf_id}:{suffix}" — drop the leaf id.
+        let suffix = leaf_rest.splitn(2, ':').nth(1)?;
+        return match suffix {
+            "close"       => Some("Close panel"),
+            "col_config"  => Some("Column visibility"),
+            "am_toggle"   => Some("Toggle auto-center"),
+            "vol_filter"  => Some("Cycle volume filter"),
+            "tick_size"   => Some("Tick size"),
+            _             => None,
+        };
+    }
+
+    // Slot toolbar suffixes.
+    match after_idx {
+        "new"            => Some("Add panel"),
+        "source:auto"    => Some("Auto symbol (follow chart)"),
+        "source:pinned"  => Some("Pinned symbol (fixed)"),
+        "source:linked"  => Some("Linked symbol (bound to chart)"),
+        "split:h"        => Some("Split side by side"),
+        "split:v"        => Some("Split top and bottom"),
+        "split:replace"  => Some("Replace focused panel"),
+        "expand_toggle"  => Some("Expand / collapse focused panel"),
+        "reset_sizes"    => Some("Reset panel sizes"),
+        "close_pane"     => Some("Close focused panel"),
+        _                => None,
+    }
 }
 
 /// Return tooltip text for agent panel widget IDs.

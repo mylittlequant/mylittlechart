@@ -323,27 +323,42 @@ impl App<'_> {
                             pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
                         }
                     } else {
-                        // No toolbar button hovered — check sidebar agent buttons
+                        // No toolbar button hovered — check sidebar buttons (agents + free slots).
                         let mut sidebar_tip = false;
-                        if pw.chart.sidebar_state.is_right_open()
-                            && pw.chart.sidebar_state.right_panel == sidebar_content::state::RightSidebarPanel::Agents
-                        {
-                            if let Some(ref sr) = pw.chart.last_sidebar_result {
-                                for (wid_str, wrect) in &sr.item_rects {
-                                    // item_rects are in chart-space (rendered with
-                                    // translate(0, CHROME_HEIGHT)), so compare
-                                    // against chart_y, not window y.
-                                    if x >= wrect.x && x < wrect.x + wrect.width
-                                        && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
-                                    {
-                                        if let Some(tip_text) = sidebar_content::render::find_agent_tooltip(wid_str) {
-                                            let wid = uzor::WidgetId::from(wid_str.as_str());
-                                            pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
-                                            // Tooltip renders in window-space (no
-                                            // translate), so pass window y for position.
-                                            pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
-                                            sidebar_tip = true;
-                                            break;
+                        if pw.chart.sidebar_state.is_right_open() {
+                            use sidebar_content::state::RightSidebarPanel;
+                            let panel = pw.chart.sidebar_state.right_panel;
+                            let is_agents = panel == RightSidebarPanel::Agents;
+                            let is_slot = matches!(
+                                panel,
+                                RightSidebarPanel::Slot1
+                                    | RightSidebarPanel::Slot2
+                                    | RightSidebarPanel::Slot3
+                                    | RightSidebarPanel::Slot4
+                            );
+                            if is_agents || is_slot {
+                                if let Some(ref sr) = pw.chart.last_sidebar_result {
+                                    for (wid_str, wrect) in &sr.item_rects {
+                                        // item_rects are in chart-space (rendered with
+                                        // translate(0, CHROME_HEIGHT)), so compare
+                                        // against chart_y, not window y.
+                                        if x >= wrect.x && x < wrect.x + wrect.width
+                                            && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
+                                        {
+                                            let tip_text = if is_agents {
+                                                sidebar_content::render::find_agent_tooltip(wid_str)
+                                            } else {
+                                                sidebar_content::render::find_free_slot_tooltip(wid_str)
+                                            };
+                                            if let Some(tip_text) = tip_text {
+                                                let wid = uzor::WidgetId::from(wid_str.as_str());
+                                                pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                                                // Tooltip renders in window-space (no
+                                                // translate), so pass window y for position.
+                                                pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
+                                                sidebar_tip = true;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
