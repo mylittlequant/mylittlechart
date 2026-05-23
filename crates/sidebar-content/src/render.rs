@@ -255,12 +255,22 @@ pub fn render_right_sidebar(
     panel_overlay_info_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<(String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&crate::free_slot::FreeItem) -> Option<Vec<bool>>,
 ) -> RightSidebarResult {
-    let header_height = 40.0;
+    let panel = sidebar_state.right_panel;
+
     // Agents panel manages its own scroll inside chat/PTY content area —
     // no sidebar-level scrollbar needed and the panel takes the full width.
-    let is_agents_panel = sidebar_state.right_panel == RightSidebarPanel::Agents;
+    let is_agents_panel = panel == RightSidebarPanel::Agents;
     let scrollbar_width: f64 = if is_agents_panel { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
+
+    // Dynamic header height: slot panels go 2-row (68 px) when too narrow.
+    let header_height = if matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+        // Available width after left pad (8) + close-X reservation (28) + gap (8).
+        let inner_w_for_slot = rect.width - 8.0 - 28.0 - 8.0;
+        if inner_w_for_slot >= 300.0 { 40.0 } else { 68.0 }
+    } else {
+        40.0
+    };
 
     // Content area (below header, minus scrollbar column).
     let content_rect = WidgetRect::new(
@@ -275,8 +285,6 @@ pub fn render_right_sidebar(
         content_rect,
         ..Default::default()
     };
-
-    let panel = sidebar_state.right_panel;
 
     // Early return when no panel is open (should not happen — caller guards this).
     if panel == RightSidebarPanel::None {
@@ -334,14 +342,16 @@ pub fn render_right_sidebar(
     ctx.set_fill_color(&toolbar_theme.background);
     ctx.fill_rect(rect.x, rect.y, rect.width, header_height);
 
-    // Header icon (left side, 18 × 18, centred vertically).
-    let icon_size = 18.0;
-    let icon_x = rect.x + 12.0;
-    let icon_y = rect.y + (header_height - icon_size) / 2.0;
-    if panel == RightSidebarPanel::Agents {
-        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, icon_x, icon_y, icon_size, icon_size);
-    } else {
-        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
+    // Header icon (left side, 18 × 18, centred vertically) — NOT drawn for slot panels.
+    if !matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+        let icon_size = 18.0;
+        let icon_x = rect.x + 12.0;
+        let icon_y = rect.y + (header_height - icon_size) / 2.0;
+        if panel == RightSidebarPanel::Agents {
+            draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, icon_x, icon_y, icon_size, icon_size);
+        } else {
+            draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, icon_size, icon_size, &toolbar_theme.item_text_muted);
+        }
     }
 
     // Header title — suppressed for Slot panels (toolbar buttons fill that row).
@@ -3538,12 +3548,10 @@ fn render_slot_toolbar_in_header(
     input_coordinator: &mut InputCoordinator,
 ) {
     use crate::state::AgentSpawnLayout;
-    let ctrl_h   = header_height;
     let btn_h    = 28.0_f64;
     let gap      = 4.0_f64;
     let icon_pad = 4.0_f64;
     let toolbar_y = rect.y;   // top of header row
-    let mut cur_x = rect.x + 30.0; // right of the slot icon
 
     let has_focused = state.focused_free_leaf.map_or(false, |(si, _)| si == slot_idx);
     let leaf_count = {
@@ -3552,117 +3560,119 @@ fn render_slot_toolbar_in_header(
     };
     let multi_leaf = leaf_count > 1;
 
-    // [+] spawn dropdown button — icon only
-    let new_id    = format!("slot:{slot_idx}:new");
-    let new_w     = 28.0_f64;
-    let new_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, new_w, btn_h);
-    let new_hov   = input_coordinator.is_hovered(&uzor::types::WidgetId::from(new_id.as_str()));
-    ctx.set_fill_color(if new_hov { &theme.button_bg_hover } else { &theme.background });
-    ctx.fill_rounded_rect(new_rect.x, new_rect.y, new_rect.width, new_rect.height, 3.0);
-    draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
-        new_rect.x + icon_pad, new_rect.y + icon_pad,
-        btn_h - icon_pad * 2.0, btn_h - icon_pad * 2.0,
-        if new_hov { &theme.item_text } else { &theme.item_text_muted });
-    input_coordinator.register(new_id.as_str(), new_rect, uzor::input::Sense::CLICK);
-    state.slot_spawn_button_rect[slot_idx] = Some(new_rect);
-    result.item_rects.push((new_id, new_rect));
-    cur_x += new_w + gap;
+    // Adaptive layout: single-row when inner_w >= 300 px, two-row otherwise.
+    // inner_w matches the computation in render_right_sidebar's header_height calc.
+    let inner_w = rect.width - 8.0 - 28.0 - 8.0;
+    let single_row = inner_w >= 300.0;
 
-    // [A][P][L] source mode buttons — right after [+ New]
-    {
+    // Right edge stops before the header close (X) button (28 px from right).
+    let right_edge = rect.x + rect.width - 28.0;
+
+    // ── Helper: draw [+] spawn button ────────────────────────────────────────
+    let draw_new_btn = |cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
+                        state: &mut SidebarState,
+                        input_coordinator: &mut InputCoordinator,
+                        result: &mut RightSidebarResult| {
+        let new_id   = format!("slot:{slot_idx}:new");
+        let new_w    = 28.0_f64;
+        let new_rect = WidgetRect::new(cur_x, row_y + (btn_h - btn_h) / 2.0, new_w, btn_h);
+        let new_hov  = input_coordinator.is_hovered(&uzor::types::WidgetId::from(new_id.as_str()));
+        ctx.set_fill_color(if new_hov { &theme.button_bg_hover } else { &theme.background });
+        ctx.fill_rounded_rect(new_rect.x, new_rect.y, new_rect.width, new_rect.height, 3.0);
+        draw_svg_icon(ctx, uzor::render::icons::ui::ICON_PLUS,
+            new_rect.x + icon_pad, new_rect.y + icon_pad,
+            btn_h - icon_pad * 2.0, btn_h - icon_pad * 2.0,
+            if new_hov { &theme.item_text } else { &theme.item_text_muted });
+        input_coordinator.register(new_id.as_str(), new_rect, uzor::input::Sense::CLICK);
+        state.slot_spawn_button_rect[slot_idx] = Some(new_rect);
+        result.item_rects.push((new_id, new_rect));
+        cur_x + new_w + gap
+    };
+
+    // ── Helper: draw [A][P][L] buttons ───────────────────────────────────────
+    let draw_apl_btns = |mut cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
+                         state: &mut SidebarState,
+                         input_coordinator: &mut InputCoordinator,
+                         result: &mut RightSidebarResult| {
         use crate::state::SlotSourceMode;
         let apl_w = 28.0_f64;
-
         ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
 
         // [A] Auto
         let sa_id  = format!("slot:{slot_idx}:source:auto");
         let is_a   = state.slot_source_mode == SlotSourceMode::Auto;
-        let a_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+        let a_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
         let a_hov  = !is_a && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sa_id.as_str()));
         ctx.set_fill_color(if is_a { &theme.accent } else if a_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(a_rect.x, a_rect.y, a_rect.width, a_rect.height, 3.0);
         ctx.set_fill_color(if is_a { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.fill_text("A", a_rect.x + a_rect.width / 2.0, a_rect.y + a_rect.height / 2.0);
-        if !is_a {
-            input_coordinator.register(sa_id.as_str(), a_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_a { input_coordinator.register(sa_id.as_str(), a_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sa_id, a_rect));
         cur_x += apl_w + 2.0;
 
         // [P] Pinned
         let sp_id  = format!("slot:{slot_idx}:source:pinned");
         let is_p   = state.slot_source_mode == SlotSourceMode::Pinned;
-        let p_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+        let p_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
         let p_hov  = !is_p && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sp_id.as_str()));
         ctx.set_fill_color(if is_p { &theme.accent } else if p_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(p_rect.x, p_rect.y, p_rect.width, p_rect.height, 3.0);
         ctx.set_fill_color(if is_p { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.fill_text("P", p_rect.x + p_rect.width / 2.0, p_rect.y + p_rect.height / 2.0);
-        if !is_p {
-            input_coordinator.register(sp_id.as_str(), p_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_p { input_coordinator.register(sp_id.as_str(), p_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sp_id, p_rect));
         cur_x += apl_w + 2.0;
 
         // [L] Linked
         let sl_id  = format!("slot:{slot_idx}:source:linked");
         let is_l   = state.slot_source_mode == SlotSourceMode::Linked;
-        let l_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, apl_w, btn_h);
+        let l_rect = WidgetRect::new(cur_x, row_y, apl_w, btn_h);
         let l_hov  = !is_l && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sl_id.as_str()));
         ctx.set_fill_color(if is_l { &theme.accent } else if l_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(l_rect.x, l_rect.y, l_rect.width, l_rect.height, 3.0);
         ctx.set_fill_color(if is_l { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
         ctx.fill_text("L", l_rect.x + l_rect.width / 2.0, l_rect.y + l_rect.height / 2.0);
-        if !is_l {
-            input_coordinator.register(sl_id.as_str(), l_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_l { input_coordinator.register(sl_id.as_str(), l_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sl_id, l_rect));
-        cur_x += apl_w + gap;
-    }
+        cur_x + apl_w + gap
+    };
 
-    // Right-side layout controls — align to just left of the header close (X) button.
-    // Header close sits at rect.x + rect.width - 16 - 12 = rect.x + rect.width - 28.
-    // [H][V][R] + gap + [⊞][↺]  (close_pane removed — tabs have their own ×)
-    let split_w  = 28.0_f64;
-    let btn_w    = 28.0_f64;
-    let right_w  = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
-                 + gap * 2.0                      // separator gap
-                 + btn_w * 2.0 + gap;             // expand+reset
-
-    // Right edge stops before the header close (X) button (28 px from right).
-    let right_edge = rect.x + rect.width - 28.0;
-
-    // Only render right controls if there's room after the [+ New] button
-    if right_edge - cur_x >= right_w - gap {
-        cur_x = right_edge - right_w;
+    // ── Helper: draw [H][V][R][⊞][↺] right-side controls ────────────────────
+    let draw_hvr_btns = |row_y: f64, right_edge: f64, ctx: &mut dyn RenderContext,
+                         state: &mut SidebarState,
+                         input_coordinator: &mut InputCoordinator,
+                         result: &mut RightSidebarResult| {
+        let split_w = 28.0_f64;
+        let btn_w   = 28.0_f64;
+        let right_w = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
+                    + gap * 2.0                      // separator gap
+                    + btn_w * 2.0 + gap;             // expand+reset
+        let mut cur_x = right_edge - right_w;
 
         // [H] split horizontal
-        let sh_id   = format!("slot:{slot_idx}:split:h");
-        let is_h    = state.slot_spawn_layout == AgentSpawnLayout::SplitH;
-        let h_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
-        let h_hov   = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sh_id.as_str()));
+        let sh_id  = format!("slot:{slot_idx}:split:h");
+        let is_h   = state.slot_spawn_layout == AgentSpawnLayout::SplitH;
+        let h_rect = WidgetRect::new(cur_x, row_y, split_w, btn_h);
+        let h_hov  = !is_h && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sh_id.as_str()));
         ctx.set_fill_color(if is_h { &theme.accent } else if h_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(h_rect.x, h_rect.y, h_rect.width, h_rect.height, 3.0);
         draw_svg_icon(ctx, uzor::render::icons::ui::ICON_LAYOUT_SPLIT_H,
             h_rect.x + icon_pad, h_rect.y + icon_pad,
             h_rect.width - icon_pad * 2.0, h_rect.height - icon_pad * 2.0,
             if is_h { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_h {
-            input_coordinator.register(sh_id.as_str(), h_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_h { input_coordinator.register(sh_id.as_str(), h_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sh_id, h_rect));
         cur_x += split_w + 2.0;
 
         // [V] split vertical
         let sv_id  = format!("slot:{slot_idx}:split:v");
         let is_v   = state.slot_spawn_layout == AgentSpawnLayout::SplitV;
-        let v_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
+        let v_rect = WidgetRect::new(cur_x, row_y, split_w, btn_h);
         let v_hov  = !is_v && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sv_id.as_str()));
         ctx.set_fill_color(if is_v { &theme.accent } else if v_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(v_rect.x, v_rect.y, v_rect.width, v_rect.height, 3.0);
@@ -3670,16 +3680,14 @@ fn render_slot_toolbar_in_header(
             v_rect.x + icon_pad, v_rect.y + icon_pad,
             v_rect.width - icon_pad * 2.0, v_rect.height - icon_pad * 2.0,
             if is_v { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_v {
-            input_coordinator.register(sv_id.as_str(), v_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_v { input_coordinator.register(sv_id.as_str(), v_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sv_id, v_rect));
         cur_x += split_w + 2.0;
 
         // [R] replace
         let sr_id  = format!("slot:{slot_idx}:split:replace");
         let is_r   = state.slot_spawn_layout == AgentSpawnLayout::Replace;
-        let r_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, split_w, btn_h);
+        let r_rect = WidgetRect::new(cur_x, row_y, split_w, btn_h);
         let r_hov  = !is_r && input_coordinator.is_hovered(&uzor::types::WidgetId::from(sr_id.as_str()));
         ctx.set_fill_color(if is_r { &theme.accent } else if r_hov { &theme.item_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(r_rect.x, r_rect.y, r_rect.width, r_rect.height, 3.0);
@@ -3687,9 +3695,7 @@ fn render_slot_toolbar_in_header(
             r_rect.x + icon_pad, r_rect.y + icon_pad,
             r_rect.width - icon_pad * 2.0, r_rect.height - icon_pad * 2.0,
             if is_r { &theme.item_text_active } else { &theme.item_text_muted });
-        if !is_r {
-            input_coordinator.register(sr_id.as_str(), r_rect, uzor::input::Sense::CLICK);
-        }
+        if !is_r { input_coordinator.register(sr_id.as_str(), r_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sr_id, r_rect));
         cur_x += split_w + gap * 2.0;
 
@@ -3703,7 +3709,7 @@ fn render_slot_toolbar_in_header(
             })
         };
         let expand_en = has_focused && multi_leaf;
-        let exp_rect  = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+        let exp_rect  = WidgetRect::new(cur_x, row_y, btn_w, btn_h);
         let exp_hov   = expand_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from(exp_id.as_str()));
         ctx.set_fill_color(if !expand_en { &theme.background } else if exp_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(exp_rect.x, exp_rect.y, exp_rect.width, exp_rect.height, 3.0);
@@ -3714,16 +3720,14 @@ fn render_slot_toolbar_in_header(
                 exp_rect.width - icon_pad * 2.0, exp_rect.height - icon_pad * 2.0,
                 if expand_en { &theme.item_text } else { &theme.item_text_muted });
         }
-        if expand_en {
-            input_coordinator.register(exp_id.as_str(), exp_rect, uzor::input::Sense::CLICK);
-        }
+        if expand_en { input_coordinator.register(exp_id.as_str(), exp_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((exp_id, exp_rect));
         cur_x += btn_w + gap;
 
         // [↺] reset sizes
         let rst_id   = format!("slot:{slot_idx}:reset_sizes");
         let reset_en = has_focused && multi_leaf;
-        let rst_rect = WidgetRect::new(cur_x, toolbar_y + (ctrl_h - btn_h) / 2.0, btn_w, btn_h);
+        let rst_rect = WidgetRect::new(cur_x, row_y, btn_w, btn_h);
         let rst_hov  = reset_en && input_coordinator.is_hovered(&uzor::types::WidgetId::from(rst_id.as_str()));
         ctx.set_fill_color(if !reset_en { &theme.background } else if rst_hov { &theme.button_bg_hover } else { &theme.background });
         ctx.fill_rounded_rect(rst_rect.x, rst_rect.y, rst_rect.width, rst_rect.height, 3.0);
@@ -3731,10 +3735,30 @@ fn render_slot_toolbar_in_header(
             rst_rect.x + icon_pad, rst_rect.y + icon_pad,
             rst_rect.width - icon_pad * 2.0, rst_rect.height - icon_pad * 2.0,
             if reset_en { &theme.item_text } else { &theme.item_text_muted });
-        if reset_en {
-            input_coordinator.register(rst_id.as_str(), rst_rect, uzor::input::Sense::CLICK);
-        }
+        if reset_en { input_coordinator.register(rst_id.as_str(), rst_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((rst_id, rst_rect));
+    };
+
+    if single_row {
+        // ── Single row: [+][A][P][L]  …  [H][V][R][⊞][↺]  [×] ────────────
+        let row_y  = toolbar_y + (header_height - btn_h) / 2.0;
+        let start_x = rect.x + 8.0; // no icon — start at left pad only
+        let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
+        let _cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
+        draw_hvr_btns(row_y, right_edge, ctx, state, input_coordinator, result);
+    } else {
+        // ── Two rows: row1=[+][A][P][L][×]  row2=[H][V][R][⊞][↺] ──────────
+        // header_height is 68 px: 4px top-pad + 28px row1 + 4px gap + 28px row2 + 4px bottom-pad
+        let top_pad = 4.0;
+        let row1_y  = toolbar_y + top_pad;
+        let row2_y  = row1_y + btn_h + gap;
+
+        let start_x = rect.x + 8.0;
+        let cur_x = draw_new_btn(start_x, row1_y, ctx, state, input_coordinator, result);
+        let _cur_x = draw_apl_btns(cur_x, row1_y, ctx, state, input_coordinator, result);
+
+        // Row 2: right controls span full width (right_edge stays same — close X spans both rows).
+        draw_hvr_btns(row2_y, right_edge, ctx, state, input_coordinator, result);
     }
 }
 
