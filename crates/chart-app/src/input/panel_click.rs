@@ -1416,8 +1416,73 @@ impl ChartApp {
                         }
 
                         if let Some(item) = item_opt {
-                            eprintln!("[ChartApp] slot:{}:spawn:{} — spawned panel", idx, kind_str);
-                            self.sidebar_state.slot_dockings[idx].inner_mut().tree_mut().add_leaf(item);
+                            use sidebar_content::state::AgentSpawnLayout;
+                            use uzor::panels::SplitKind;
+
+                            let layout = self.sidebar_state.slot_spawn_layout;
+                            let focused_in_slot = self.sidebar_state.focused_free_leaf
+                                .filter(|(si, _)| *si == idx)
+                                .map(|(_, lid)| lid);
+                            let tree_empty = self.sidebar_state.slot_dockings[idx]
+                                .inner()
+                                .tree()
+                                .leaves()
+                                .is_empty();
+
+                            let new_leaf = match (layout, focused_in_slot, tree_empty) {
+                                // Empty slot — first panel goes in directly regardless of layout choice.
+                                (_, _, true) => {
+                                    self.sidebar_state.slot_dockings[idx].inner_mut()
+                                        .tree_mut().add_leaf(item)
+                                }
+                                // Replace mode: kill the focused leaf, put new in its place.
+                                (AgentSpawnLayout::Replace, Some(focus), false) => {
+                                    let tree = self.sidebar_state.slot_dockings[idx]
+                                        .inner_mut().tree_mut();
+                                    tree.remove_leaf(focus);
+                                    tree.add_leaf(item)
+                                }
+                                // SplitH (side-by-side) / SplitV (stacked) with a focused leaf —
+                                // split that leaf using the chosen direction (mirrors agent spawn).
+                                (AgentSpawnLayout::SplitH, Some(focus), false)
+                                | (AgentSpawnLayout::SplitV, Some(focus), false) => {
+                                    let split_kind = if layout == AgentSpawnLayout::SplitH {
+                                        SplitKind::SplitRight
+                                    } else {
+                                        SplitKind::SplitBottom
+                                    };
+                                    let rw = self.sidebar_state.right_sidebar_width as f32;
+                                    let rh = self.height as f32;
+                                    let new_ids = self.sidebar_state.slot_dockings[idx]
+                                        .inner_mut().tree_mut()
+                                        .split_leaf_with_children(focus, split_kind, rw, rh);
+                                    if new_ids.len() >= 2 {
+                                        // Insert the new panel into the sibling slot
+                                        // ([0] retains the existing item, [1] is the fresh empty leaf).
+                                        let sibling = new_ids[1];
+                                        let tree = self.sidebar_state.slot_dockings[idx]
+                                            .inner_mut().tree_mut();
+                                        if let Some(leaf) = tree.leaf_mut(sibling) {
+                                            leaf.panels.push(item);
+                                            leaf.active_tab = 0;
+                                        }
+                                        sibling
+                                    } else {
+                                        // Split fell back — append as a peer leaf at root.
+                                        self.sidebar_state.slot_dockings[idx].inner_mut()
+                                            .tree_mut().add_leaf(item)
+                                    }
+                                }
+                                // No focused leaf — just append (will sit next to existing peers).
+                                (_, None, false) => {
+                                    self.sidebar_state.slot_dockings[idx].inner_mut()
+                                        .tree_mut().add_leaf(item)
+                                }
+                            };
+
+                            // Move focus to the freshly spawned leaf.
+                            self.sidebar_state.focused_free_leaf = Some((idx, new_leaf));
+                            eprintln!("[ChartApp] slot:{}:spawn:{} — leaf {:?} layout={:?}", idx, kind_str, new_leaf, layout);
                             self.sidebar_state.slot_spawn_dropdown = None;
                             self.sidebar_data_dirty = true;
                             self.autosave_snapshot();
