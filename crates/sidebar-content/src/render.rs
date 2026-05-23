@@ -4027,8 +4027,18 @@ fn render_slot_panel(
         let body_h = (r.height - ctrl_strip_h).max(0.0);
 
         // Register body focus_content widget (for scroll routing and click-to-focus).
+        // Inset 6px on each side so the widget doesn't overlap inner separator
+        // hit zones (uzor separator hit zone is ~±5px around the line).  Without
+        // this inset, focus_content always wins hover at the separator's edges
+        // and the slot:N:body BlackboxPanel never becomes the hovered widget,
+        // blocking separator drag detection.
         let focus_content_id = format!("slot:{}:leaf:{}:focus_content", slot_idx, leaf_id.0);
-        let focus_content_rect = WidgetRect::new(r.x as f64, body_y as f64, r.width as f64, body_h as f64);
+        const SEP_INSET: f64 = 6.0;
+        let fc_x = r.x as f64 + SEP_INSET;
+        let fc_y = body_y as f64 + SEP_INSET;
+        let fc_w = (r.width as f64 - SEP_INSET * 2.0).max(0.0);
+        let fc_h = (body_h as f64 - SEP_INSET * 2.0).max(0.0);
+        let focus_content_rect = WidgetRect::new(fc_x, fc_y, fc_w, fc_h);
         input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK);
         result.item_rects.push((focus_content_id, focus_content_rect));
 
