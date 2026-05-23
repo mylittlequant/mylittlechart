@@ -176,6 +176,11 @@ pub struct RightSidebarResult {
     /// Set only when `active_slot_body_rect` is `Some`.
     pub active_slot_index: Option<usize>,
 
+    /// X coordinate right after the last slot-toolbar button (single-row mode).
+    /// Used by `render_right_sidebar` to pin the close `×` directly after the
+    /// toolbar rather than at the right edge — no dead space between `↻` and `×`.
+    pub slot_toolbar_end_x: Option<f64>,
+
     /// Chat line rects for selection hit-testing.
     ///
     /// Each entry is `(msg_idx, line_idx, y_top, y_bottom, leaf_id, line_text, text_x, font_tag)`.
@@ -364,33 +369,37 @@ pub fn render_right_sidebar(
     }
 
     // Close button (X) on right side of header — with hover highlight.
+    // For slot panels rendering of the icon + hit-rect is deferred to AFTER the
+    // slot toolbar so [×] can be pinned directly after the last button; here we
+    // still compute the right-edge default `close_x` so Watchlist/Alerts panels
+    // can place their own extra buttons relative to it.
     let close_size = 16.0;
     let close_pad = 4.0; // padding around icon for hover bg
     let close_x = rect.x + rect.width - close_size - 12.0;
     let close_y = rect.y + (header_height - close_size) / 2.0;
-    let close_hovered = input_coordinator
-        .is_hovered(&uzor::types::WidgetId::from("right_sidebar_close"));
-    if close_hovered {
-        // Draw a subtle rounded hover background behind the icon.
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-        let bg_x = close_x - close_pad;
-        let bg_y = close_y - close_pad;
-        let bg_s = close_size + close_pad * 2.0;
-        ctx.fill_rounded_rect(bg_x, bg_y, bg_s, bg_s, 4.0);
+    let is_slot_panel = matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4);
+    if !is_slot_panel {
+        let close_hovered = input_coordinator
+            .is_hovered(&uzor::types::WidgetId::from("right_sidebar_close"));
+        if close_hovered {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            let bg_x = close_x - close_pad;
+            let bg_y = close_y - close_pad;
+            let bg_s = close_size + close_pad * 2.0;
+            ctx.fill_rounded_rect(bg_x, bg_y, bg_s, bg_s, 4.0);
+        }
+        let close_color = if close_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+        draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, close_color);
+        input_coordinator.register(
+            "right_sidebar_close",
+            WidgetRect::new(close_x, close_y, close_size, close_size),
+            uzor::input::Sense::CLICK,
+        );
+        result.item_rects.push((
+            "right_sidebar_close".to_string(),
+            WidgetRect::new(close_x, close_y, close_size, close_size),
+        ));
     }
-    let close_color = if close_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, close_color);
-
-    // Register close button with InputCoordinator so clicks are detected.
-    input_coordinator.register(
-        "right_sidebar_close",
-        WidgetRect::new(close_x, close_y, close_size, close_size),
-        uzor::input::Sense::CLICK,
-    );
-    result.item_rects.push((
-        "right_sidebar_close".to_string(),
-        WidgetRect::new(close_x, close_y, close_size, close_size),
-    ));
 
     // Alerts panel: add (+) button to the left of the close button.
     if panel == RightSidebarPanel::Alerts {
@@ -518,6 +527,32 @@ pub fn render_right_sidebar(
             &mut result,
             input_coordinator,
         );
+        // Slot close button [×] — pin directly after the toolbar so there's
+        // no dead space between [↻] and [×]. Shadow the right-edge default.
+        let close_x = result.slot_toolbar_end_x
+            .map(|end| end + 8.0)
+            .unwrap_or(close_x);
+        let close_hovered = input_coordinator
+            .is_hovered(&uzor::types::WidgetId::from("right_sidebar_close"));
+        if close_hovered {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            let bg_x = close_x - close_pad;
+            let bg_y = close_y - close_pad;
+            let bg_s = close_size + close_pad * 2.0;
+            ctx.fill_rounded_rect(bg_x, bg_y, bg_s, bg_s, 4.0);
+        }
+        let close_color = if close_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+        draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, close_color);
+        input_coordinator.register(
+            "right_sidebar_close",
+            WidgetRect::new(close_x, close_y, close_size, close_size),
+            uzor::input::Sense::CLICK,
+        );
+        result.item_rects.push((
+            "right_sidebar_close".to_string(),
+            WidgetRect::new(close_x, close_y, close_size, close_size),
+        ));
+        let _ = idx;
     }
 
     // Register main sidebar scroll viewport BEFORE panel-specific widgets so that
@@ -3741,18 +3776,21 @@ fn render_slot_toolbar_in_header(
             if reset_en { &theme.item_text } else { &theme.item_text_muted });
         if reset_en { input_coordinator.register(rst_id.as_str(), rst_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((rst_id, rst_rect));
+        // Return x just after the last button so caller can pin the close X.
+        cur_x + btn_w
     };
 
     if single_row {
         // ── Single row: [+][A][P][L][H][V][R][⊞][↺]  [×] ────────────
         // All buttons render in a single tight strip — no dead space between
-        // [L] and [H], no right-edge pin. [×] (close) is rendered separately
-        // by render_right_sidebar at the far right.
+        // [L] and [H], no right-edge pin. [×] (close) is rendered by
+        // render_right_sidebar at `slot_toolbar_end_x + gap`.
         let row_y  = toolbar_y + (header_height - btn_h) / 2.0;
         let start_x = rect.x + 8.0; // no icon — start at left pad only
         let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
         let cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
-        draw_hvr_btns(row_y, cur_x, /* pin_right */ false, ctx, state, input_coordinator, result);
+        let end_x = draw_hvr_btns(row_y, cur_x, /* pin_right */ false, ctx, state, input_coordinator, result);
+        result.slot_toolbar_end_x = Some(end_x);
     } else {
         // ── Two rows: row1=[+][A][P][L][×]  row2=[H][V][R][⊞][↺] ──────────
         // header_height is 68 px: 4px top-pad + 28px row1 + 4px gap + 28px row2 + 4px bottom-pad
