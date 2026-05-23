@@ -217,7 +217,7 @@ pub struct ChartApp {
     ///
     /// Set in `StartPrimitiveDrag` so that `EndPrimitiveDrag` can compare old
     /// vs new points and push a `MovePrimitive` command to history.
-    drag_start_points: Option<(usize, Vec<(f64, f64)>)>,
+    drag_start_points: Option<(usize, Vec<(i64, f64)>)>,
 
     /// Viewport state captured at drag start.
     ///
@@ -2347,11 +2347,18 @@ impl ChartApp {
             > = self.panel_app.panel_grid.windows()
                 .iter()
                 .map(|(&chart_id, w)| {
+                    let bars = &w.bars;
                     let pts: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = w
                         .drawing_manager
                         .primitives()
                         .iter()
-                        .map(|p| (p.data().id, p.points(), alerts::DrawingExtendMode::from_u8(p.extend_mode_raw())))
+                        .map(|p| {
+                            let pts_bar: Vec<(f64, f64)> = p.points()
+                                .into_iter()
+                                .map(|(ts_ms, price)| (zengeld_chart::timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                                .collect();
+                            (p.data().id, pts_bar, alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                        })
                         .collect();
                     (chart_id, pts)
                 })
@@ -2532,6 +2539,7 @@ impl ChartApp {
                         &corrected_vp,
                         window.price_scale.price_min,
                         window.price_scale.price_max,
+                        &window.bars,
                         &window.drawing_manager,
                         &self.indicator_manager,
                         &self.alert_manager,
@@ -2850,11 +2858,18 @@ impl ChartApp {
 
             let (single_alert_current_bar, single_alert_drawing_points) = if let Some(window) = self.panel_app.panel_grid.active_window() {
                 let cb = window.bars.len().saturating_sub(1) as f64;
+                let bars = &window.bars;
                 let pts: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
                     .drawing_manager
                     .primitives()
                     .iter()
-                    .map(|p| (p.data().id, p.points(), alerts::DrawingExtendMode::from_u8(p.extend_mode_raw())))
+                    .map(|p| {
+                        let pts_bar: Vec<(f64, f64)> = p.points()
+                            .into_iter()
+                            .map(|(ts_ms, price)| (zengeld_chart::timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                            .collect();
+                        (p.data().id, pts_bar, alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                    })
                     .collect();
                 (cb, pts)
             } else {
@@ -3012,6 +3027,7 @@ impl ChartApp {
                         &corrected_vp,
                         window.price_scale.price_min,
                         window.price_scale.price_max,
+                        &window.bars,
                         &window.drawing_manager,
                         &self.indicator_manager,
                         &self.alert_manager,
@@ -5469,7 +5485,8 @@ impl ChartApp {
 
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
-                            window.drawing_manager.start_drag(idx, data_bar, data_price);
+                            let drag_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                            window.drawing_manager.start_drag(idx, drag_ts_ms, data_price);
                         }
                     }
                 }
@@ -5525,7 +5542,8 @@ impl ChartApp {
                     // instead of moving it.
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
                         if let Some(idx) = window.drawing_manager.find_index_by_id(primitive_id) {
-                            window.drawing_manager.start_control_point_drag(idx, control_point, data_bar, data_price);
+                            let cp_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                            window.drawing_manager.start_control_point_drag(idx, control_point, cp_ts_ms, data_price);
                         }
                     }
                 }
@@ -5572,7 +5590,8 @@ impl ChartApp {
                         .and_then(|w| w.drawing_manager.dragging_primitive_id());
 
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        window.drawing_manager.update_drag(data_bar, data_price);
+                        let drag_ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, data_bar);
+                        window.drawing_manager.update_drag(drag_ts_ms, data_price);
                     }
                     // Propagate live drag position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_id {
@@ -5617,10 +5636,6 @@ impl ChartApp {
                     if let Some(cmd) = move_cmd {
                         self.push_undo_command(cmd);
                     }
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        let bars = window.bars.clone();
-                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                    }
                     // Propagate final primitive position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_prim_id {
                         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -5664,10 +5679,6 @@ impl ChartApp {
                                 points,
                                 data,
                             });
-                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                let bars = window.bars.clone();
-                                window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                            }
                             self.autosave_snapshot();
                         }
                     }
@@ -5678,8 +5689,11 @@ impl ChartApp {
                         .map(|w| w.drawing_manager.count())
                         .unwrap_or(0);
 
+                    let click_ts_ms = self.panel_app.panel_grid.active_window()
+                        .map(|w| zengeld_chart::bar_f64_to_timestamp_ms(&w.bars, bar))
+                        .unwrap_or(0);
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        window.drawing_manager.on_click(bar, price);
+                        window.drawing_manager.on_click(click_ts_ms, price);
                     }
 
                     let new_count = self.panel_app.panel_grid.active_window()
@@ -5702,10 +5716,6 @@ impl ChartApp {
                                 points,
                                 data,
                             });
-                            if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                let bars = window.bars.clone();
-                                window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                            }
                             self.autosave_snapshot();
                         }
                     }
@@ -5844,7 +5854,7 @@ impl ChartApp {
             Some(id) => id,
             None => return,
         };
-        let new_points: Vec<(f64, f64)> = match self.panel_app.panel_grid
+        let new_points: Vec<(i64, f64)> = match self.panel_app.panel_grid
             .windows()
             .get(&source_chart_id)
             .and_then(|w| w.drawing_manager.get_points_by_id(primitive_id))

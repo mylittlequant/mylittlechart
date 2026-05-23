@@ -23,8 +23,10 @@ pub enum FlatType {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlatTopBottom {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64,
     pub price1: f64,
+    #[serde(default)]
     pub ts2: i64,
     pub price2: f64,
     pub flat_price: f64,

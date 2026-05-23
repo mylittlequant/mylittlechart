@@ -88,10 +88,12 @@ pub struct GannSquare {
     /// Common primitive data
     pub data: PrimitiveData,
     /// First corner timestamp (ms)
+    #[serde(default)]
     pub ts1: i64,
     /// First corner price
     pub price1: f64,
     /// Second corner timestamp (ms)
+    #[serde(default)]
     pub ts2: i64,
     /// Second corner price
     pub price2: f64,

@@ -103,10 +103,12 @@ pub struct GannFan {
     /// Common primitive data
     pub data: PrimitiveData,
     /// Origin timestamp (ms)
+    #[serde(default)]
     pub ts1: i64,
     /// Origin price
     pub price1: f64,
     /// Target timestamp (ms) — defines the time scale of the fan
+    #[serde(default)]
     pub ts2: i64,
     /// Target price — defines the price scale of the fan
     pub price2: f64,

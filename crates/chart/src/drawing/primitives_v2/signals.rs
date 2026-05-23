@@ -97,27 +97,29 @@ pub enum SignalPrimitive {
 
 impl SignalPrimitive {
     /// Create appropriate primitive for signal type
-    pub fn for_signal_type(signal_type: SignalType, bar: f64, price: f64) -> Self {
+    pub fn for_signal_type(signal_type: SignalType, ts_ms: i64, price: f64) -> Self {
         let color = signal_type.default_color();
+        // size point is 2 minutes ahead
+        let ts2 = ts_ms + 120_000;
         match signal_type {
             SignalType::Buy | SignalType::Entry => {
-                Self::ArrowUp(TriangleUp::new(bar, price, bar + 2.0, price, color))
+                Self::ArrowUp(TriangleUp::new(ts_ms, price, ts2, price, color))
             }
             SignalType::Sell | SignalType::Exit => {
-                Self::ArrowDown(TriangleDown::new(bar, price, bar + 2.0, price, color))
+                Self::ArrowDown(TriangleDown::new(ts_ms, price, ts2, price, color))
             }
-    SignalType::TakeProfit => {
-                let mut sign = Sign::new(bar, price, bar + 2.0, price, color);
+            SignalType::TakeProfit => {
+                let mut sign = Sign::new(ts_ms, price, ts2, price, color);
                 sign.sign_type = SignType::Check;
                 Self::Sign(sign)
             }
             SignalType::StopLoss => {
-                let mut sign = Sign::new(bar, price, bar + 2.0, price, color);
+                let mut sign = Sign::new(ts_ms, price, ts2, price, color);
                 sign.sign_type = SignType::X;
                 Self::Sign(sign)
             }
             SignalType::Custom => {
-                let mut sign = Sign::new(bar, price, bar + 2.0, price, color);
+                let mut sign = Sign::new(ts_ms, price, ts2, price, color);
                 sign.sign_type = SignType::Circle;
                 Self::Sign(sign)
             }
@@ -137,6 +139,15 @@ impl SignalPrimitive {
             Self::ArrowUp(p) => p,
             Self::ArrowDown(p) => p,
             Self::Sign(p) => p,
+        }
+    }
+
+    /// Get timestamp of first control point
+    pub fn ts_ms(&self) -> i64 {
+        match self {
+            Self::ArrowUp(p) => p.ts1,
+            Self::ArrowDown(p) => p.ts1,
+            Self::Sign(p) => p.ts1,
         }
     }
 }
@@ -172,7 +183,7 @@ impl SystemSignal {
         id: u64,
         strategy_tag: &str,
         signal_type: SignalType,
-        bar: f64,
+        ts_ms: i64,
         price: f64,
     ) -> Self {
         Self {
@@ -181,7 +192,7 @@ impl SystemSignal {
             signal_type,
             label: None,
             timestamp: 0,
-            primitive: SignalPrimitive::for_signal_type(signal_type, bar, price),
+            primitive: SignalPrimitive::for_signal_type(signal_type, ts_ms, price),
             visible: true,
         }
     }
@@ -208,36 +219,36 @@ impl SystemSignal {
         &self.primitive.inner().data().color.stroke
     }
 
-    /// Set size (adjusts second point for TwoPoint primitives)
-    pub fn set_size(&mut self, size: f64) {
+    /// Set size (adjusts second point, size is in milliseconds)
+    pub fn set_size(&mut self, size_ms: i64) {
         match &mut self.primitive {
             SignalPrimitive::ArrowUp(p) => {
-                p.bar2 = p.bar1 + size / 10.0;
+                p.ts2 = p.ts1 + size_ms;
             }
             SignalPrimitive::ArrowDown(p) => {
-                p.bar2 = p.bar1 + size / 10.0;
+                p.ts2 = p.ts1 + size_ms;
             }
             SignalPrimitive::Sign(p) => {
-                p.bar2 = p.bar1 + size / 10.0;
+                p.ts2 = p.ts1 + size_ms;
             }
         }
     }
 
-    /// Get size
-    pub fn size(&self) -> f64 {
+    /// Get size in milliseconds
+    pub fn size(&self) -> i64 {
         match &self.primitive {
-            SignalPrimitive::ArrowUp(p) => (p.bar2 - p.bar1).abs() * 10.0,
-            SignalPrimitive::ArrowDown(p) => (p.bar2 - p.bar1).abs() * 10.0,
-            SignalPrimitive::Sign(p) => (p.bar2 - p.bar1).abs() * 10.0,
+            SignalPrimitive::ArrowUp(p) => (p.ts2 - p.ts1).abs(),
+            SignalPrimitive::ArrowDown(p) => (p.ts2 - p.ts1).abs(),
+            SignalPrimitive::Sign(p) => (p.ts2 - p.ts1).abs(),
         }
     }
 
-    /// Get bar position
-    pub fn bar(&self) -> f64 {
+    /// Get timestamp position
+    pub fn ts_ms(&self) -> i64 {
         match &self.primitive {
-            SignalPrimitive::ArrowUp(p) => p.bar1,
-            SignalPrimitive::ArrowDown(p) => p.bar1,
-            SignalPrimitive::Sign(p) => p.bar1,
+            SignalPrimitive::ArrowUp(p) => p.ts1,
+            SignalPrimitive::ArrowDown(p) => p.ts1,
+            SignalPrimitive::Sign(p) => p.ts1,
         }
     }
 
@@ -288,7 +299,7 @@ pub struct StrategySignalConfig {
     /// Color overrides by signal type
     pub colors: std::collections::HashMap<String, String>,
     /// Size override
-    pub size: Option<f64>,
+    pub size: Option<i64>,
 }
 
 impl StrategySignalConfig {
@@ -322,10 +333,11 @@ mod tests {
 
     #[test]
     fn test_signal_creation() {
-        let signal = SystemSignal::new(1, "test_strategy", SignalType::Buy, 100.0, 50000.0);
+        let ts = 1_700_000_000_000i64;
+        let signal = SystemSignal::new(1, "test_strategy", SignalType::Buy, ts, 50000.0);
         assert_eq!(signal.signal_type, SignalType::Buy);
         assert_eq!(signal.strategy_tag, "test_strategy");
-        assert_eq!(signal.bar(), 100.0);
+        assert_eq!(signal.primitive.ts_ms(), ts);
         assert_eq!(signal.price(), 50000.0);
     }
 
@@ -337,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_signal_serialization() {
-        let signal = SystemSignal::new(1, "test", SignalType::TakeProfit, 100.0, 50000.0)
+        let signal = SystemSignal::new(1, "test", SignalType::TakeProfit, 1_700_000_000_000, 50000.0)
             .with_label("TP1");
         let json = signal.to_json();
         let restored = SystemSignal::from_json(&json).unwrap();

@@ -15,8 +15,11 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Triangle {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64,
+    #[serde(default)]
     pub ts2: i64, pub price2: f64,
+    #[serde(default)]
     pub ts3: i64, pub price3: f64,
     #[serde(default = "default_true")] pub fill: bool,
     #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,

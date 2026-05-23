@@ -72,10 +72,12 @@ pub struct FibRetracement {
     /// Common primitive data
     pub data: PrimitiveData,
     /// Start timestamp in ms (point 1)
+    #[serde(default)]
     pub ts1: i64,
     /// Start price (point 1 - usually swing high or low)
     pub price1: f64,
     /// End timestamp in ms (point 2)
+    #[serde(default)]
     pub ts2: i64,
     /// End price (point 2 - usually swing low or high)
     pub price2: f64,

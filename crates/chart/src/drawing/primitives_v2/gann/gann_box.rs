@@ -89,10 +89,12 @@ pub struct GannBox {
     /// Common primitive data
     pub data: PrimitiveData,
     /// Top-left corner timestamp (ms)
+    #[serde(default)]
     pub ts1: i64,
     /// Top-left corner price
     pub price1: f64,
     /// Bottom-right corner timestamp (ms)
+    #[serde(default)]
     pub ts2: i64,
     /// Bottom-right corner price
     pub price2: f64,

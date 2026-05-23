@@ -23,10 +23,12 @@ pub struct FibFan {
     /// Common primitive data
     pub data: PrimitiveData,
     /// Origin timestamp in ms
+    #[serde(default)]
     pub ts1: i64,
     /// Origin price
     pub price1: f64,
     /// Target timestamp in ms
+    #[serde(default)]
     pub ts2: i64,
     /// Target price
     pub price2: f64,
@@ -344,8 +346,8 @@ impl Primitive for FibFan {
                 continue;
             }
 
-            let (fan_bar, fan_price) = self.fan_endpoint(cfg.level);
-            let fx = ctx.bar_to_x(fan_bar);
+            let (fan_ts, fan_price) = self.fan_endpoint(cfg.level);
+            let fx = ctx.ts_to_x_ms(fan_ts);
             let fy = ctx.price_to_y(fan_price);
 
             // Use level-specific color or fall back to main color

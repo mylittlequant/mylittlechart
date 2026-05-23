@@ -24,10 +24,12 @@ pub struct FibArcs {
     /// Common primitive data
     pub data: PrimitiveData,
     /// First point timestamp in ms
+    #[serde(default)]
     pub ts1: i64,
     /// First point price
     pub price1: f64,
     /// Second point timestamp in ms (arc center)
+    #[serde(default)]
     pub ts2: i64,
     /// Second point price
     pub price2: f64,

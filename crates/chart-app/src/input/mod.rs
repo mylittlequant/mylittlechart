@@ -6664,10 +6664,6 @@ impl ChartApp {
                                             }
                                         }
                                     }
-                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                        let bars = window.bars.clone();
-                                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                                    }
                                 }
                             }
                         }
@@ -6679,18 +6675,15 @@ impl ChartApp {
                                     .and_then(|s| s.parse::<usize>().ok())
                                 {
                                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                                        let ts_ms = zengeld_chart::bar_f64_to_timestamp_ms(&window.bars, bar);
                                         let prims = window.drawing_manager.primitives_mut();
                                         if idx < prims.len() {
                                             let mut pts = prims[idx].points().to_vec();
                                             if pt_idx < pts.len() {
-                                                pts[pt_idx].0 = bar;
+                                                pts[pt_idx].0 = ts_ms;
                                                 prims[idx].set_points(&pts);
                                             }
                                         }
-                                    }
-                                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                                        let bars = window.bars.clone();
-                                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
                                     }
                                 }
                             }
@@ -7721,10 +7714,6 @@ impl ChartApp {
                 } else {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                         w.drawing_manager.set_points_at(*index, new_points);
-                    }
-                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
-                        let bars = w.bars.clone();
-                        w.drawing_manager.update_all_timestamps_from_bars(&bars);
                     }
                 }
             }

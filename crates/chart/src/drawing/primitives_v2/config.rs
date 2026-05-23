@@ -1336,14 +1336,14 @@ impl<T: Primitive> Configurable for T {
         // Add text properties if primitive has text
         props.extend(data.text_properties());
 
-        // Add coordinate properties from points()
+        // Add coordinate properties from points() — ts_ms stored as f64 in property
         let points = self.points();
-        for (i, (bar, price)) in points.iter().enumerate() {
+        for (i, (ts_ms, price)) in points.iter().enumerate() {
             props.push(
                 ConfigProperty::coordinate(
                     &format!("point{}", i + 1),
                     &format!("Point {}", i + 1),
-                    *bar,
+                    *ts_ms as f64,
                     *price,
                 ).with_order(100 + i as i32)
             );
@@ -1365,12 +1365,12 @@ impl<T: Primitive> Configurable for T {
 
         // Handle coordinate properties (point1, point2, etc.)
         if id.starts_with("point") {
-            if let Some((bar, price)) = value.as_coordinate() {
+            if let Some((bar_f, price)) = value.as_coordinate() {
                 if let Some(idx) = id.strip_prefix("point").and_then(|s| s.parse::<usize>().ok()) {
                     let idx = idx.saturating_sub(1); // point1 -> index 0
                     let mut points = self.points();
                     if idx < points.len() {
-                        points[idx] = (bar, price);
+                        points[idx] = (bar_f as i64, price);
                         self.set_points(&points);
                         return true;
                     }

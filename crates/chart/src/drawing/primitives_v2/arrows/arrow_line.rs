@@ -12,7 +12,9 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArrowLine {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64,
+    #[serde(default)]
     pub ts2: i64, pub price2: f64,
     #[serde(default)] pub arrow_start: bool,
     #[serde(default = "default_true")] pub arrow_end: bool,

@@ -167,7 +167,7 @@ impl App<'_> {
                     window_id, chart_id, type_id, points, style, agent_id: _,
                 } => {
                     if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
-                        let pts: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
+                        let pts: Vec<(i64, f64)> = points.iter().map(|p| (p[0] as i64, p[1])).collect();
                         let color_str = style.color.clone();
                         let registry = zengeld_chart::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
                         if let Some(mut prim) = registry.create(&type_id, &pts, Some(&color_str)) {
@@ -205,7 +205,7 @@ impl App<'_> {
                                 .iter_mut().find(|p| p.data().id == primitive_id);
                             if let Some(prim) = prim {
                                 if let Some(pts) = points {
-                                    let new_pts: Vec<(f64, f64)> = pts.iter().map(|p| (p[0], p[1])).collect();
+                                    let new_pts: Vec<(i64, f64)> = pts.iter().map(|p| (p[0] as i64, p[1])).collect();
                                     prim.set_points(&new_pts);
                                 }
                                 if let Some(s) = style {

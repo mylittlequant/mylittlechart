@@ -441,10 +441,10 @@ pub enum UndoAction {
     PrimitiveMoved {
         /// Primitive index.
         index: usize,
-        /// Previous points.
-        old_points: Vec<(f64, f64)>,
-        /// New points.
-        new_points: Vec<(f64, f64)>,
+        /// Previous points (ts_ms, price).
+        old_points: Vec<(i64, f64)>,
+        /// New points (ts_ms, price).
+        new_points: Vec<(i64, f64)>,
     },
 
     /// Primitive was created.

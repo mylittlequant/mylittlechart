@@ -1,7 +1,7 @@
 //! Short Position - sell trade visualization
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -12,7 +12,7 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShortPosition {
     pub data: PrimitiveData,
-    pub bar: f64,
+    #[serde(default)] pub ts_ms: i64,
     pub entry_price: f64,
     pub stop_loss: f64,
     pub take_profit: f64,
@@ -22,10 +22,10 @@ pub struct ShortPosition {
 fn default_true() -> bool { true }
 
 impl ShortPosition {
-    pub fn new(bar: f64, entry: f64, stop: f64, target: f64, color: &str) -> Self {
+    pub fn new(ts_ms: i64, entry: f64, stop: f64, target: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "short_position".to_string(), display_name: "Short Position".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
-            bar, entry_price: entry, stop_loss: stop, take_profit: target, quantity: 1.0, show_pnl: true,
+            ts_ms, entry_price: entry, stop_loss: stop, take_profit: target, quantity: 1.0, show_pnl: true,
         }
     }
     pub fn risk_reward(&self) -> f64 {
@@ -42,24 +42,25 @@ impl Primitive for ShortPosition {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::ThreePoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(f64, f64)> { vec![(self.bar, self.entry_price), (self.bar, self.stop_loss), (self.bar, self.take_profit)] }
-    fn set_points(&mut self, pts: &[(f64, f64)]) {
-        if let Some(&(b, p)) = pts.first() { self.bar = b; self.entry_price = p; }
+    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts_ms, self.entry_price), (self.ts_ms, self.stop_loss), (self.ts_ms, self.take_profit)] }
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        if let Some(&(t, p)) = pts.first() { self.ts_ms = t; self.entry_price = p; }
         if let Some(&(_, p)) = pts.get(1) { self.stop_loss = p; }
         if let Some(&(_, p)) = pts.get(2) { self.take_profit = p; }
     }
-    fn translate(&mut self, bd: f64, pd: f64) { self.bar += bd; self.entry_price += pd; self.stop_loss += pd; self.take_profit += pd; }
-    fn move_control_point(&mut self, pt: ControlPointType, bar: f64, price: f64) {
+    fn translate(&mut self, td: i64, pd: f64) { self.ts_ms += td; self.entry_price += pd; self.stop_loss += pd; self.take_profit += pd; }
+    fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Point1 => { self.bar = bar; self.entry_price = price; }
+            ControlPointType::Point1 => { self.ts_ms = ts_ms; self.entry_price = price; }
             ControlPointType::Point2 => self.stop_loss = price,
             ControlPointType::Point3 => self.take_profit = price,
-            ControlPointType::Move => { let bd = bar - self.bar; let pd = price - self.entry_price; self.translate(bd, pd); }
+            ControlPointType::Move => { let td = ts_ms - self.ts_ms; let pd = price - self.entry_price; self.translate(td, pd); }
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, sy: f64, vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let x = vp.bar_to_x_f64(self.bar);
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
+        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let x = vp.bar_to_x_f64(b);
         let ye = vp.price_to_y(self.entry_price, ps.price_min, ps.price_max);
         let ys = vp.price_to_y(self.stop_loss, ps.price_min, ps.price_max);
         let yt = vp.price_to_y(self.take_profit, ps.price_min, ps.price_max);
@@ -73,8 +74,9 @@ impl Primitive for ShortPosition {
         if (sy - yt).abs() < HIT_TOLERANCE && sx >= x && sx <= x + w { return HitTestResult::Body; }
         HitTestResult::Miss
     }
-    fn control_points(&self, vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let x = vp.bar_to_x_f64(self.bar);
+    fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
+        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
+        let x = vp.bar_to_x_f64(b);
         vec![
             ControlPoint::point1(x, vp.price_to_y(self.entry_price, ps.price_min, ps.price_max)),
             ControlPoint::point2(x, vp.price_to_y(self.stop_loss, ps.price_min, ps.price_max)),
@@ -84,7 +86,7 @@ impl Primitive for ShortPosition {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar);
+        let x1 = ctx.ts_to_x_ms(self.ts_ms);
         let entry_y = ctx.price_to_y(self.entry_price);
         let stop_y = ctx.price_to_y(self.stop_loss);
         let target_y = ctx.price_to_y(self.take_profit);
@@ -192,10 +194,10 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "short_position", display_name: "Short Position", kind: PrimitiveKind::Trading,
         click_behavior: ClickBehavior::ThreePoint, tooltip: "Sell trade with stop/target", icon: "short_position", default_color: "#F44336",
         factory: |points, color| {
-            let (b, entry) = points.first().copied().unwrap_or((0.0, 100.0));
-            let (_, stop) = points.get(1).copied().unwrap_or((b, entry + 5.0));
-            let (_, target) = points.get(2).copied().unwrap_or((b, entry - 10.0));
-            Box::new(ShortPosition::new(b, entry, stop, target, color))
+            let (t, entry) = points.first().copied().unwrap_or((0, 100.0));
+            let (_, stop) = points.get(1).copied().unwrap_or((t, entry + 5.0));
+            let (_, target) = points.get(2).copied().unwrap_or((t, entry - 10.0));
+            Box::new(ShortPosition::new(t, entry, stop, target, color))
         },
         supports_text: true,
         has_levels: false,

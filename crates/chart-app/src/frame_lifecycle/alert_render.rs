@@ -2,8 +2,10 @@
 
 use crate::ChartApp;
 use zengeld_chart::{
+    Bar,
     LayoutRect,
     render::RenderContext,
+    timestamp_ms_to_bar_f64,
 };
 use zengeld_chart::indicator_source::IndicatorSource;
 use zengeld_terminal_indicators::IndicatorManager;
@@ -76,6 +78,7 @@ impl ChartApp {
         viewport: &zengeld_chart::Viewport,
         price_min: f64,
         price_max: f64,
+        bars: &[Bar],
         drawing_manager: &zengeld_chart::DrawingManager,
         indicator_manager: &IndicatorManager,
         alert_manager: &AlertManager,
@@ -137,7 +140,7 @@ impl ChartApp {
                     let (bar2, price2) = if points.len() >= 2 { points[1] } else { points[0] };
 
                     // Convert point 2 to screen coordinates (relative to chart origin).
-                    let rel_x2 = viewport.bar_to_x_f64(bar2);
+                    let rel_x2 = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, bar2));
                     let rel_y2 = viewport.price_to_y(price2, price_min, price_max);
 
                     let type_id = prim.type_id();
@@ -147,7 +150,7 @@ impl ChartApp {
                     {
                         // For projecting primitives, extrapolate to the right edge of the chart.
                         let (bar1, price1) = points[0];
-                        let rel_x1 = viewport.bar_to_x_f64(bar1);
+                        let rel_x1 = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, bar1));
                         let rel_y1 = viewport.price_to_y(price1, price_min, price_max);
 
                         let dx = rel_x2 - rel_x1;

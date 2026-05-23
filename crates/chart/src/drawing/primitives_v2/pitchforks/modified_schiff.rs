@@ -4,7 +4,7 @@
 //! point 2/3 midpoint but keeps the original bar position.
 
 use serde::{Deserialize, Serialize};
-use crate::{PriceScale, Viewport};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -68,13 +68,16 @@ pub struct ModifiedSchiff {
     /// Common primitive data
     pub data: PrimitiveData,
     /// Point 1 - the handle
-    pub bar1: f64,
+    #[serde(default)]
+    pub ts1: i64,
     pub price1: f64,
     /// Point 2 - first swing
-    pub bar2: f64,
+    #[serde(default)]
+    pub ts2: i64,
     pub price2: f64,
     /// Point 3 - second swing
-    pub bar3: f64,
+    #[serde(default)]
+    pub ts3: i64,
     pub price3: f64,
     /// Pitchfork level configurations
     #[serde(default = "default_level_configs", deserialize_with = "deserialize_level_configs")]
@@ -98,7 +101,7 @@ pub struct ModifiedSchiff {
 
 impl ModifiedSchiff {
     /// Create a new Modified Schiff pitchfork
-    pub fn new(bar1: f64, price1: f64, bar2: f64, price2: f64, bar3: f64, price3: f64, color: &str) -> Self {
+    pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, ts3: i64, price3: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData {
                 type_id: "modified_schiff".to_string(),
@@ -107,11 +110,11 @@ impl ModifiedSchiff {
                 width: 1.0,
                 ..Default::default()
             },
-            bar1,
+            ts1,
             price1,
-            bar2,
+            ts2,
             price2,
-            bar3,
+            ts3,
             price3,
             level_configs: default_level_configs(),
             extend: true,
@@ -123,27 +126,27 @@ impl ModifiedSchiff {
     }
 
     /// Get the adjusted handle point (Modified Schiff adjustment)
-    /// Keeps original bar, moves price to midpoint of P2/P3
-    pub fn adjusted_handle(&self) -> (f64, f64) {
+    /// Keeps original ts, moves price to midpoint of P2/P3 (ts in ms, price)
+    pub fn adjusted_handle(&self) -> (i64, f64) {
         let mid_price = (self.price2 + self.price3) / 2.0;
         (
-            self.bar1,
+            self.ts1,
             (self.price1 + mid_price) / 2.0,
         )
     }
 
-    /// Get the midpoint between points 2 and 3
-    pub fn midpoint(&self) -> (f64, f64) {
+    /// Get the midpoint between points 2 and 3 (ts in ms, price)
+    pub fn midpoint(&self) -> (i64, f64) {
         (
-            (self.bar2 + self.bar3) / 2.0,
+            (self.ts2 + self.ts3) / 2,
             (self.price2 + self.price3) / 2.0,
         )
     }
 
-    /// Get the channel offset
-    pub fn channel_offset(&self) -> (f64, f64) {
+    /// Get the channel half-offset (ts_delta in ms, price_delta)
+    pub fn channel_offset(&self) -> (i64, f64) {
         (
-            (self.bar3 - self.bar2) / 2.0,
+            (self.ts3 - self.ts2) / 2,
             (self.price3 - self.price2) / 2.0,
         )
     }
@@ -191,56 +194,56 @@ impl Primitive for ModifiedSchiff {
         &mut self.data
     }
 
-    fn points(&self) -> Vec<(f64, f64)> {
+    fn points(&self) -> Vec<(i64, f64)> {
         vec![
-            (self.bar1, self.price1),
-            (self.bar2, self.price2),
-            (self.bar3, self.price3),
+            (self.ts1, self.price1),
+            (self.ts2, self.price2),
+            (self.ts3, self.price3),
         ]
     }
 
-    fn set_points(&mut self, points: &[(f64, f64)]) {
-        if let Some(&(bar, price)) = points.first() {
-            self.bar1 = bar;
+    fn set_points(&mut self, points: &[(i64, f64)]) {
+        if let Some(&(ts, price)) = points.first() {
+            self.ts1 = ts;
             self.price1 = price;
         }
-        if let Some(&(bar, price)) = points.get(1) {
-            self.bar2 = bar;
+        if let Some(&(ts, price)) = points.get(1) {
+            self.ts2 = ts;
             self.price2 = price;
         }
-        if let Some(&(bar, price)) = points.get(2) {
-            self.bar3 = bar;
+        if let Some(&(ts, price)) = points.get(2) {
+            self.ts3 = ts;
             self.price3 = price;
         }
     }
 
-    fn translate(&mut self, bar_delta: f64, price_delta: f64) {
-        self.bar1 += bar_delta;
-        self.bar2 += bar_delta;
-        self.bar3 += bar_delta;
+    fn translate(&mut self, ts_delta_ms: i64, price_delta: f64) {
+        self.ts1 += ts_delta_ms;
+        self.ts2 += ts_delta_ms;
+        self.ts3 += ts_delta_ms;
         self.price1 += price_delta;
         self.price2 += price_delta;
         self.price3 += price_delta;
     }
 
-    fn move_control_point(&mut self, point_type: ControlPointType, bar: f64, price: f64) {
+    fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
             ControlPointType::Point1 => {
-                self.bar1 = bar;
+                self.ts1 = ts_ms;
                 self.price1 = price;
             }
             ControlPointType::Point2 => {
-                self.bar2 = bar;
+                self.ts2 = ts_ms;
                 self.price2 = price;
             }
             ControlPointType::Point3 => {
-                self.bar3 = bar;
+                self.ts3 = ts_ms;
                 self.price3 = price;
             }
             ControlPointType::Move => {
-                let bar_delta = bar - self.bar1;
+                let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
-                self.translate(bar_delta, price_delta);
+                self.translate(ts_delta, price_delta);
             }
             _ => {}
         }
@@ -250,14 +253,18 @@ impl Primitive for ModifiedSchiff {
         &self,
         screen_x: f64,
         screen_y: f64,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> HitTestResult {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let b3 = timestamp_ms_to_bar_f64(bars, self.ts3);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
-        let x3 = viewport.bar_to_x_f64(self.bar3);
+        let x3 = viewport.bar_to_x_f64(b3);
         let y3 = viewport.price_to_y(self.price3, price_scale.price_min, price_scale.price_max);
 
         // Check control points
@@ -272,16 +279,19 @@ impl Primitive for ModifiedSchiff {
         }
 
         // Get adjusted handle
-        let (adj_bar, adj_price) = self.adjusted_handle();
-        let adj_x = viewport.bar_to_x_f64(adj_bar);
+        let (adj_ts, adj_price) = self.adjusted_handle();
+        let adj_b = timestamp_ms_to_bar_f64(bars, adj_ts);
+        let adj_x = viewport.bar_to_x_f64(adj_b);
         let adj_y = viewport.price_to_y(adj_price, price_scale.price_min, price_scale.price_max);
 
-        let (mid_bar, mid_price) = self.midpoint();
-        let mid_x = viewport.bar_to_x_f64(mid_bar);
+        let (mid_ts, mid_price) = self.midpoint();
+        let mid_b = timestamp_ms_to_bar_f64(bars, mid_ts);
+        let mid_x = viewport.bar_to_x_f64(mid_b);
         let mid_y = viewport.price_to_y(mid_price, price_scale.price_min, price_scale.price_max);
 
-        let (offset_bar, offset_price) = self.channel_offset();
-        let offset_x = viewport.bar_to_x_f64(mid_bar + offset_bar) - mid_x;
+        let (offset_ts, offset_price) = self.channel_offset();
+        let offset_b = timestamp_ms_to_bar_f64(bars, mid_ts + offset_ts);
+        let offset_x = viewport.bar_to_x_f64(offset_b) - mid_x;
         let offset_y = viewport.price_to_y(mid_price + offset_price, price_scale.price_min, price_scale.price_max) - mid_y;
 
         // Check median line (always present)
@@ -319,14 +329,18 @@ impl Primitive for ModifiedSchiff {
 
     fn control_points(
         &self,
+        bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint> {
-        let x1 = viewport.bar_to_x_f64(self.bar1);
+        let b1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let b2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let b3 = timestamp_ms_to_bar_f64(bars, self.ts3);
+        let x1 = viewport.bar_to_x_f64(b1);
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
-        let x2 = viewport.bar_to_x_f64(self.bar2);
+        let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
-        let x3 = viewport.bar_to_x_f64(self.bar3);
+        let x3 = viewport.bar_to_x_f64(b3);
         let y3 = viewport.price_to_y(self.price3, price_scale.price_min, price_scale.price_max);
 
         vec![
@@ -338,25 +352,25 @@ impl Primitive for ModifiedSchiff {
 
     fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.bar_to_x(self.bar1);
+        let x1 = ctx.ts_to_x_ms(self.ts1);
         let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.bar_to_x(self.bar2);
+        let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
-        let x3 = ctx.bar_to_x(self.bar3);
+        let x3 = ctx.ts_to_x_ms(self.ts3);
         let y3 = ctx.price_to_y(self.price3);
         let chart_width = ctx.chart_width();
 
         // Modified Schiff: use adjusted handle point
-        let (adj_bar, adj_price) = self.adjusted_handle();
-        let adj_x = ctx.bar_to_x(adj_bar);
+        let (adj_ts, adj_price) = self.adjusted_handle();
+        let adj_x = ctx.ts_to_x_ms(adj_ts);
         let adj_y = ctx.price_to_y(adj_price);
 
-        let (mid_bar, mid_price) = self.midpoint();
-        let mid_x = ctx.bar_to_x(mid_bar);
+        let (mid_ts, mid_price) = self.midpoint();
+        let mid_x = ctx.ts_to_x_ms(mid_ts);
         let mid_y = ctx.price_to_y(mid_price);
 
-        let (offset_bar, offset_price) = self.channel_offset();
-        let offset_x = ctx.bar_to_x(mid_bar + offset_bar) - mid_x;
+        let (offset_ts, offset_price) = self.channel_offset();
+        let offset_x = ctx.ts_to_x_ms(mid_ts + offset_ts) - mid_x;
         let offset_y = ctx.price_to_y(mid_price + offset_price) - mid_y;
 
         // Helper function to draw a pitchfork line with optional gap
@@ -773,11 +787,11 @@ fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -
 // Factory Registration
 // =============================================================================
 
-fn create_modified_schiff(points: &[(f64, f64)], color: &str) -> Box<dyn Primitive> {
-    let (bar1, price1) = points.first().copied().unwrap_or((0.0, 0.0));
-    let (bar2, price2) = points.get(1).copied().unwrap_or((bar1 + 10.0, price1 + 10.0));
-    let (bar3, price3) = points.get(2).copied().unwrap_or((bar1 + 10.0, price1 - 10.0));
-    Box::new(ModifiedSchiff::new(bar1, price1, bar2, price2, bar3, price3, color))
+fn create_modified_schiff(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let (ts1, price1) = points.first().copied().unwrap_or((0, 0.0));
+    let (ts2, price2) = points.get(1).copied().unwrap_or((ts1 + 3_600_000, price1 + 10.0));
+    let (ts3, price3) = points.get(2).copied().unwrap_or((ts1 + 3_600_000, price1 - 10.0));
+    Box::new(ModifiedSchiff::new(ts1, price1, ts2, price2, ts3, price3, color))
 }
 
 pub fn metadata() -> PrimitiveMetadata {

@@ -48,20 +48,20 @@ impl SignalManager {
         &mut self,
         strategy_tag: &str,
         signal_type: SignalType,
-        bar: f64,
+        ts_ms: i64,
         price: f64,
     ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut signal = SystemSignal::new(id, strategy_tag, signal_type, bar, price);
+        let mut signal = SystemSignal::new(id, strategy_tag, signal_type, ts_ms, price);
 
         // Apply strategy config if exists
         if let Some(config) = self.strategies.get(strategy_tag) {
             let color = config.color_for(signal_type);
             signal.set_color(color);
-            if let Some(size) = config.size {
-                signal.set_size(size);
+            if let Some(size_ms) = config.size {
+                signal.set_size(size_ms);
             }
             signal.visible = config.visible;
         }
@@ -75,11 +75,11 @@ impl SignalManager {
         &mut self,
         strategy_tag: &str,
         signal_type: SignalType,
-        bar: f64,
+        ts_ms: i64,
         price: f64,
         label: &str,
     ) -> u64 {
-        let id = self.add_signal(strategy_tag, signal_type, bar, price);
+        let id = self.add_signal(strategy_tag, signal_type, ts_ms, price);
         if let Some(signal) = self.signals.get_mut(&id) {
             signal.label = Some(label.to_string());
         }
@@ -182,14 +182,14 @@ impl SignalManager {
         }
     }
 
-    /// Set size for all signals in strategy
-    pub fn set_strategy_size(&mut self, tag: &str, size: f64) {
+    /// Set size for all signals in strategy (size in milliseconds)
+    pub fn set_strategy_size(&mut self, tag: &str, size_ms: i64) {
         if let Some(config) = self.strategies.get_mut(tag) {
-            config.size = Some(size);
+            config.size = Some(size_ms);
         }
         for signal in self.signals.values_mut() {
             if signal.strategy_tag == tag {
-                signal.set_size(size);
+                signal.set_size(size_ms);
             }
         }
     }
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_add_signal() {
         let mut manager = SignalManager::new();
-        let id = manager.add_signal("test_strategy", SignalType::Buy, 100.0, 50000.0);
+        let id = manager.add_signal("test_strategy", SignalType::Buy, 1_700_000_000_000, 50000.0);
         assert_eq!(id, 1);
         assert_eq!(manager.count(), 1);
     }
@@ -284,9 +284,9 @@ mod tests {
     #[test]
     fn test_remove_strategy_signals() {
         let mut manager = SignalManager::new();
-        manager.add_signal("strategy_a", SignalType::Buy, 100.0, 50000.0);
-        manager.add_signal("strategy_a", SignalType::Sell, 101.0, 50100.0);
-        manager.add_signal("strategy_b", SignalType::Buy, 102.0, 50200.0);
+        manager.add_signal("strategy_a", SignalType::Buy, 1_700_000_000_000, 50000.0);
+        manager.add_signal("strategy_a", SignalType::Sell, 1_700_000_060_000, 50100.0);
+        manager.add_signal("strategy_b", SignalType::Buy, 1_700_000_120_000, 50200.0);
 
         assert_eq!(manager.count(), 3);
         manager.remove_strategy_signals("strategy_a");
@@ -297,7 +297,7 @@ mod tests {
     fn test_strategy_visibility() {
         let mut manager = SignalManager::new();
         manager.register_strategy("test", "Test Strategy");
-        manager.add_signal("test", SignalType::Buy, 100.0, 50000.0);
+        manager.add_signal("test", SignalType::Buy, 1_700_000_000_000, 50000.0);
 
         manager.set_strategy_visible("test", false);
 

@@ -16,7 +16,9 @@ pub enum TriangleType { #[default] Symmetrical, Ascending, Descending, Expanding
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrianglePattern {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1_top: f64, pub price1_bottom: f64,
+    #[serde(default)]
     pub ts2: i64, pub price2_top: f64, pub price2_bottom: f64,
     pub triangle_type: TriangleType,
     #[serde(default = "default_true")] pub show_labels: bool,

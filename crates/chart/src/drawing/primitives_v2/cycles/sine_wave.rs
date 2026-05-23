@@ -12,7 +12,9 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SineWave {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64,
+    #[serde(default)]
     pub ts2: i64, pub price2: f64,
     #[serde(default = "default_amplitude")] pub amplitude: f64,
     #[serde(default = "default_cycles")] pub cycles: f64,

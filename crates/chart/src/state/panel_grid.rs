@@ -1368,6 +1368,7 @@ impl ChartPanelGrid {
                     window.drawing_manager.hit_test(
                         main_local_x,
                         main_local_y,
+                        &window.bars,
                         &corrected_vp,
                         &window.price_scale,
                     )
@@ -1414,6 +1415,7 @@ impl ChartPanelGrid {
                             plx,
                             ply,
                             instance_id,
+                            &window.bars,
                             &sub_viewport,
                             &sub_price_scale,
                         ) {
@@ -1588,15 +1590,19 @@ impl ChartPanelGrid {
                     .active_window()
                     .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
                     .unwrap_or((0.0, 1.0));
-                let bar = self
+                let bar_f = self
                     .active_window()
                     .map(|w| w.viewport.x_to_bar_f64(local_x))
                     .unwrap_or(0.0);
+                let ts_ms = self
+                    .active_window()
+                    .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
+                    .unwrap_or(0);
                 let price =
                     price_max - (local_y / chart_rect.height) * (price_max - price_min);
                 if let Some(window) = self.active_window_mut() {
                     window.drawing_manager.set_current_pane(None);
-                    window.drawing_manager.start_freehand(bar, price);
+                    window.drawing_manager.start_freehand(ts_ms, price);
                 }
                 return ChartDragStartHit::FreehandStarted;
             }
@@ -1619,15 +1625,19 @@ impl ChartPanelGrid {
                             .map(|sp| (sp.price_min, sp.price_max))
                     })
                     .unwrap_or((0.0, 100.0));
-                let bar = self
+                let bar_f = self
                     .active_window()
                     .map(|w| w.viewport.x_to_bar_f64(plx))
                     .unwrap_or(0.0);
+                let ts_ms = self
+                    .active_window()
+                    .map(|w| crate::bar_f64_to_timestamp_ms(&w.bars, bar_f))
+                    .unwrap_or(0);
                 let price =
                     price_max - (ply / content.height) * (price_max - price_min);
                 if let Some(window) = self.active_window_mut() {
                     window.drawing_manager.set_current_pane(Some(instance_id));
-                    window.drawing_manager.start_freehand(bar, price);
+                    window.drawing_manager.start_freehand(ts_ms, price);
                 }
                 return ChartDragStartHit::FreehandStarted;
             }
@@ -1654,6 +1664,7 @@ impl ChartPanelGrid {
                 if let Some(cp_type) = window.drawing_manager.hit_test_control_point(
                     local_x,
                     local_y,
+                    &window.bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
@@ -1675,6 +1686,7 @@ impl ChartPanelGrid {
                 if let Some(prim_idx) = window.drawing_manager.hit_test(
                     local_x,
                     local_y,
+                    &window.bars,
                     &corrected_vp,
                     &window.price_scale,
                 ) {
@@ -1725,6 +1737,7 @@ impl ChartPanelGrid {
                         plx,
                         ply,
                         instance_id,
+                        &window.bars,
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
@@ -1746,6 +1759,7 @@ impl ChartPanelGrid {
                         plx,
                         ply,
                         instance_id,
+                        &window.bars,
                         &sub_viewport,
                         &sub_price_scale,
                     ) {
@@ -2026,8 +2040,8 @@ pub struct FreehandCompleteResult {
     pub index: usize,
     /// Primitive type identifier.
     pub type_id: String,
-    /// Coordinate points of the primitive.
-    pub points: Vec<(f64, f64)>,
+    /// Coordinate points of the primitive (ts_ms, price).
+    pub points: Vec<(i64, f64)>,
     /// Full primitive data (id, color, style, etc.).
     pub data: crate::drawing::PrimitiveData,
 }
@@ -2077,7 +2091,7 @@ impl ChartPanelGrid {
                 .unwrap_or((0.0, 100.0));
             let local_x = screen_x - content.x;
             let local_y = screen_y - content.y;
-            let bar = self
+            let bar_f = self
                 .active_window()
                 .map(|w| w.viewport.x_to_bar_f64(local_x))
                 .unwrap_or(0.0);
@@ -2087,7 +2101,9 @@ impl ChartPanelGrid {
                 price_min
             };
             if let Some(window) = self.active_window_mut() {
-                window.drawing_manager.add_freehand_point(bar, price);
+                let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
+                let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
+                window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
             }
             return true;
         }
@@ -2102,7 +2118,7 @@ impl ChartPanelGrid {
             .map(|w| (w.price_scale.price_min, w.price_scale.price_max))
             .unwrap_or((0.0, 1.0));
 
-        let bar = self
+        let bar_f = self
             .active_window()
             .map(|w| w.viewport.x_to_bar_f64(local_x))
             .unwrap_or(0.0);
@@ -2110,7 +2126,9 @@ impl ChartPanelGrid {
         let price = price_max - (local_y / chart_rect.height) * (price_max - price_min);
 
         if let Some(window) = self.active_window_mut() {
-            window.drawing_manager.add_freehand_point(bar, price);
+            let ts_ms = crate::bar_f64_to_timestamp_ms(&window.bars, bar_f);
+            let bar_interval_ms = crate::bar_interval_seconds(&window.bars) * 1000;
+            window.drawing_manager.add_freehand_point(ts_ms, price, bar_interval_ms);
         }
 
         true
@@ -2135,8 +2153,6 @@ impl ChartPanelGrid {
 
         if let Some(window) = self.active_window_mut() {
             window.drawing_manager.complete_freehand();
-            let bars = window.bars.clone();
-            window.drawing_manager.update_all_timestamps_from_bars(&bars);
         }
 
         let result = self.active_window().and_then(|window| {

@@ -890,9 +890,6 @@ impl ChartWindow {
         self.update_title();
         self.set_bars(new_bars);
 
-        // Recalculate primitive bar caches for new timeframe
-        self.drawing_manager.recalculate_all_bar_caches(&self.bars);
-
         eprintln!(
             "[ChartWindow] Changed timeframe to {} ({} bars)",
             self.timeframe.name,

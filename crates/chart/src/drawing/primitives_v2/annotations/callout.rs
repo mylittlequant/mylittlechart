@@ -14,7 +14,9 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Callout {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64, // Anchor point
+    #[serde(default)]
     pub ts2: i64, pub price2: f64, // Bubble position
     // Legacy field for backwards compatibility
     #[serde(default)]

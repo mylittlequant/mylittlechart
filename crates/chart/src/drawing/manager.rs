@@ -1216,8 +1216,8 @@ impl DrawingManager {
     }
 
     /// Try to select a primitive at screen coordinates
-    pub fn try_select_at(&mut self, x: f64, y: f64, viewport: &Viewport, price_scale: &PriceScale) -> bool {
-        if let Some(idx) = self.hit_test(x, y, viewport, price_scale) {
+    pub fn try_select_at(&mut self, x: f64, y: f64, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> bool {
+        if let Some(idx) = self.hit_test(x, y, bars, viewport, price_scale) {
             self.selected = Some(idx);
             true
         } else {
@@ -1269,10 +1269,10 @@ impl DrawingManager {
         Some(new_idx)
     }
 
-    /// Translate (move) a primitive by index in bar/price coordinates
-    pub fn translate_at(&mut self, index: usize, bar_delta: f64, price_delta: f64) {
+    /// Translate (move) a primitive by index in timestamp/price coordinates
+    pub fn translate_at(&mut self, index: usize, ts_delta_ms: i64, price_delta: f64) {
         if let Some(prim) = self.primitives.get_mut(index) {
-            prim.translate(bar_delta, price_delta);
+            prim.translate(ts_delta_ms, price_delta);
         }
     }
 
@@ -1972,8 +1972,8 @@ impl DrawingManager {
             let mut cloned = prim.clone_box();
             // Assign new ID
             cloned.data_mut().id = crate::drawing::alloc_primitive_id();
-            // Offset position slightly
-            cloned.translate(5.0, 0.0);
+            // Offset position by 5 minutes
+            cloned.translate(300_000i64, 0.0);
             let idx = self.primitives.len();
             self.primitives.push(cloned);
             self.selected = Some(idx);
@@ -2462,6 +2462,41 @@ impl DrawingManager {
         self.primitives.iter()
             .find(|p| p.data().id == id && p.data().origin_id.is_none())
             .map(|p| p.points())
+    }
+
+    /// Migrate legacy timestamps for a single primitive.
+    ///
+    /// Old presets stored timestamps in `point_timestamps` as Unix seconds.
+    /// New primitives store timestamps directly as `ts_ms: i64` fields.
+    /// When all ts_ms values in `points()` are zero but `point_timestamps` is
+    /// non-empty, apply migration: `ts_ms = point_timestamps[i] * 1000`.
+    pub fn migrate_legacy_timestamps_for_primitive(prim: &mut Box<dyn Primitive>) {
+        let pts = prim.points();
+        if pts.is_empty() {
+            return;
+        }
+        // Only migrate if all ts values are zero (old format — no ts stored)
+        let all_zero = pts.iter().all(|(ts, _)| *ts == 0);
+        if !all_zero {
+            return;
+        }
+        let legacy_ts = prim.data().point_timestamps.clone();
+        if legacy_ts.is_empty() {
+            return;
+        }
+        // Build migrated points: keep existing prices, replace ts with legacy_ts_sec * 1000
+        let migrated: Vec<(i64, f64)> = pts.iter().enumerate().map(|(i, (_, price))| {
+            let ts_sec = legacy_ts.get(i).copied().unwrap_or(0);
+            (ts_sec * 1000, *price)
+        }).collect();
+        prim.set_points(&migrated);
+    }
+
+    /// Migrate legacy timestamps for all primitives in this manager.
+    pub fn migrate_all_legacy_timestamps(&mut self) {
+        for prim in &mut self.primitives {
+            Self::migrate_legacy_timestamps_for_primitive(prim);
+        }
     }
 }
 

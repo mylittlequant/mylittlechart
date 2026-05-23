@@ -1878,6 +1878,7 @@ pub fn render_sub_pane_primitives(
             // Draw control points for selected primitive
             if is_selected {
                 let control_points = prim.control_points(
+                    state.bars,
                     &pane_viewport,
                     &pane_price_scale,
                 );
@@ -1917,8 +1918,9 @@ pub fn render_sub_pane_primitives(
                     ctx.set_line_join("round");
 
                     let screen_pts: Vec<(f64, f64)> = points.iter()
-                        .map(|&(bar, price)| {
-                            let x = pane_viewport.bar_to_x_f64(bar);
+                        .map(|&(ts_ms, price)| {
+                            let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
+                            let x = pane_viewport.bar_to_x_f64(bar_f);
                             let y = pane_price_scale.price_to_y(price, content.height);
                             (x, y)
                         })
@@ -1948,7 +1950,8 @@ pub fn render_sub_pane_primitives(
             }
         } else {
             // For non-freehand tools, use standard preview
-            if let Some(preview_prim) = dm.create_preview(cursor_bar, cursor_price) {
+            let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+            if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
                 preview_prim.render(ctx, false);
 
 
@@ -1958,8 +1961,9 @@ pub fn render_sub_pane_primitives(
                     ctx.set_stroke_color("#000000");
                     ctx.set_stroke_width(1.0);
 
-                    for (bar, price) in points {
-                        let x = pane_viewport.bar_to_x_f64(*bar);
+                    for (ts_ms, price) in points {
+                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                        let x = pane_viewport.bar_to_x_f64(bar_f);
                         let y = pane_price_scale.price_to_y(*price, content.height);
 
                         ctx.begin_path();
@@ -2407,9 +2411,17 @@ pub fn render_main_chart_primitives(
                 let view_end   = view_start + state.viewport.visible_bars() as f64;
                 let price_min  = state.price_scale.price_min;
                 let price_max  = state.price_scale.price_max;
+                // Margin of 100 bars expressed in bar-index space for ts-based culling.
+                let bar_margin = 100.0;
 
-                let all_left  = points.iter().all(|(bar, _)| *bar < view_start - 100.0);
-                let all_right = points.iter().all(|(bar, _)| *bar > view_end   + 100.0);
+                let all_left  = points.iter().all(|(ts_ms, _)| {
+                    let b = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                    b < view_start - bar_margin
+                });
+                let all_right = points.iter().all(|(ts_ms, _)| {
+                    let b = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                    b > view_end + bar_margin
+                });
                 let all_above = points.iter().all(|(_, price)| *price > price_max * 10.0);
                 let all_below = points.iter().all(|(_, price)| *price < price_min * 0.1);
 
@@ -2423,7 +2435,7 @@ pub fn render_main_chart_primitives(
 
             // Draw control points for selected primitive
             if is_selected {
-                let control_points = prim.control_points(&layout_vp, state.price_scale);
+                let control_points = prim.control_points(state.bars, &layout_vp, state.price_scale);
                 let screen_points: Vec<(f64, f64)> = control_points
                     .iter()
                     .map(|cp| (cp.x, cp.y))
@@ -2471,8 +2483,9 @@ pub fn render_main_chart_primitives(
 
                     let screen_pts: Vec<(f64, f64)> = points
                         .iter()
-                        .map(|&(bar, price)| {
-                            let x = state.viewport.bar_to_x_f64(bar);
+                        .map(|&(ts_ms, price)| {
+                            let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
+                            let x = state.viewport.bar_to_x_f64(bar_f);
                             let y = state.price_scale.price_to_y(price, chart.height);
                             (x, y)
                         })
@@ -2507,7 +2520,8 @@ pub fn render_main_chart_primitives(
             }
         } else {
             // For non-freehand tools, use standard preview
-            if let Some(preview_prim) = dm.create_preview(cursor_bar, cursor_price) {
+            let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+            if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
                 preview_prim.render(ctx, false);
 
                 // Draw anchor points for multi-click tools (not freehand)
@@ -2516,8 +2530,9 @@ pub fn render_main_chart_primitives(
                     ctx.set_stroke_color("#000000");
                     ctx.set_stroke_width(1.0);
 
-                    for (bar, price) in points {
-                        let x = state.viewport.bar_to_x_f64(*bar);
+                    for (ts_ms, price) in points {
+                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                        let x = state.viewport.bar_to_x_f64(bar_f);
                         let y = state.price_scale.price_to_y(*price, chart.height);
 
                         ctx.begin_path();

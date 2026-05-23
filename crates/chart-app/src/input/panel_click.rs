@@ -2689,7 +2689,9 @@ impl ChartApp {
                                     if pts.is_empty() {
                                         None
                                     } else {
-                                        Some(pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64)
+                                        // Average ts_ms then convert to bar index
+                                        let avg_ts = pts.iter().map(|p| p.0).sum::<i64>() / pts.len() as i64;
+                                        Some(zengeld_chart::timestamp_ms_to_bar_f64(&window.bars, avg_ts))
                                     }
                                 });
                             if let Some(mid_bar) = center_bar {

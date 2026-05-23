@@ -1334,17 +1334,14 @@ impl ChartApp {
 
                 // Dispatch click and record undo if a primitive was just completed.
                 eprintln!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
+                let ts_ms = self.panel_app.panel_grid.active_window()
+                    .map(|w| zengeld_chart::bar_f64_to_timestamp_ms(&w.bars, bar))
+                    .unwrap_or(0);
                 let primitive_created = self.panel_app.panel_grid.active_window_mut()
-                    .map(|w| w.drawing_manager.on_click(bar, price))
+                    .map(|w| w.drawing_manager.on_click(ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
-                    // Populate point_timestamps immediately so TF switching keeps
-                    // the primitive anchored to the correct time position.
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        let bars = window.bars.clone();
-                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                    }
                     let prim_count = self.panel_app.panel_grid.active_window()
                         .map(|w| w.drawing_manager.primitives().len()).unwrap_or(0);
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
@@ -1467,17 +1464,14 @@ impl ChartApp {
                 }
 
                 // Dispatch click and record undo if a primitive was just completed.
+                let sub_ts_ms = self.panel_app.panel_grid.active_window()
+                    .map(|w| zengeld_chart::bar_f64_to_timestamp_ms(&w.bars, bar))
+                    .unwrap_or(0);
                 let primitive_created = self.panel_app.panel_grid.active_window_mut()
-                    .map(|w| w.drawing_manager.on_click(bar, price))
+                    .map(|w| w.drawing_manager.on_click(sub_ts_ms, price))
                     .unwrap_or(false);
 
                 if primitive_created {
-                    // Populate point_timestamps immediately so TF switching keeps
-                    // the primitive anchored to the correct time position.
-                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
-                        let bars = window.bars.clone();
-                        window.drawing_manager.update_all_timestamps_from_bars(&bars);
-                    }
                     eprintln!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     // For grouped windows: move the completed primitive to TagManager.
                     // For standalone windows: keep in drawing_manager and propagate to peers.
@@ -1582,7 +1576,7 @@ impl ChartApp {
                     corrected_vp.chart_width = chart_rect.width;
                     corrected_vp.chart_height = chart_rect.height;
                     if let Some(prim_idx) = window.drawing_manager.hit_test(
-                        local_x, local_y, &corrected_vp, &window.price_scale,
+                        local_x, local_y, &window.bars, &corrected_vp, &window.price_scale,
                     ) {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
@@ -1630,7 +1624,7 @@ impl ChartApp {
                     });
                 if let (Some(sub_viewport), Some(window)) = (sub_viewport, self.panel_app.panel_grid.active_window()) {
                     if let Some(prim_idx) = window.drawing_manager.hit_test_in_pane(
-                        plx, ply, instance_id, &sub_viewport, &sub_price_scale,
+                        plx, ply, instance_id, &window.bars, &sub_viewport, &sub_price_scale,
                     ) {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
@@ -1941,17 +1935,17 @@ impl ChartApp {
                                 let bar_spacing = w.viewport.bar_spacing;
                                 let chart_height = w.viewport.chart_height;
                                 let price_range = w.price_scale.price_max - w.price_scale.price_min;
-                                // 20px right = 20 / bar_spacing bars
-                                let bar_delta = 20.0 / bar_spacing.max(0.001);
+                                // 20px right = 20 / bar_spacing bars → convert to ms
+                                let bars_delta = 20.0 / bar_spacing.max(0.001);
+                                let bar_interval_ms = zengeld_chart::bar_interval_seconds(&w.bars) * 1000;
+                                let ts_delta_ms = (bars_delta * bar_interval_ms as f64).round() as i64;
                                 // 20px up = 20 / chart_height * price_range (up = positive price)
                                 let price_delta = if chart_height > 0.0 && price_range > 0.0 {
                                     20.0 / chart_height * price_range
                                 } else {
                                     0.0
                                 };
-                                w.drawing_manager.translate_at(new_idx, bar_delta, price_delta);
-                                let bars = w.bars.clone();
-                                w.drawing_manager.update_all_timestamps_from_bars(&bars);
+                                w.drawing_manager.translate_at(new_idx, ts_delta_ms, price_delta);
                                 w.drawing_manager.select_by_index(new_idx);
                             }
                             // Capture the NEW primitive's data for undo.

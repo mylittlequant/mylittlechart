@@ -12,6 +12,7 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CycleLines {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub ts2: i64, // Define the cycle period
     #[serde(default = "default_count")] pub count: u8,
     #[serde(default = "default_true")] pub extend_left: bool,

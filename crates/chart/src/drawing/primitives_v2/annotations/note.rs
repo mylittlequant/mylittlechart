@@ -14,7 +14,9 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Note {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64, // Top-left corner
+    #[serde(default)]
     pub ts2: i64, pub price2: f64, // Bottom-right corner
     // Legacy fields for backwards compatibility
     #[serde(default)]

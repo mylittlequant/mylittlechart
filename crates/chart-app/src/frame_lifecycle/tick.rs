@@ -4,7 +4,7 @@
 use crate::ChartApp;
 use crate::{account_type_from_label, parse_timeframe_name};
 use live_data::LiveUpdate;
-use zengeld_chart::{ChartId, ScaleMode};
+use zengeld_chart::{ChartId, ScaleMode, timestamp_ms_to_bar_f64};
 use zengeld_terminal_indicators::RecalcMode;
 
 impl ChartApp {
@@ -168,19 +168,6 @@ impl ChartApp {
                                     ));
                                 }
                             }
-                            // Force-fill empty timestamps BEFORE recalculate.
-                            // Old presets may have primitives with empty point_timestamps
-                            // (timestamps were not saved in earlier versions).  Without this
-                            // call, recalculate_all_bar_caches skips those primitives and
-                            // they render at wrong positions after a symbol/TF switch.
-                            window.drawing_manager.ensure_timestamps_populated(&window.bars);
-                            // Recalculate bar-index caches for all drawings so primitives
-                            // render at correct positions now that real bars are available.
-                            window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                            // Belt-and-suspenders: ensure every primitive has timestamps
-                            // populated (catches any created without sync, e.g. via undo
-                            // restore or deserialization without timestamp migration).
-                            window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                             eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
                         }
@@ -250,8 +237,6 @@ impl ChartApp {
                         }
                         // Backfill always uses update_bars — viewport is never reset.
                         window.update_bars(bars.clone());
-                        window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                        window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
@@ -313,8 +298,6 @@ impl ChartApp {
                             window.viewport.bar_count = window.bars.len();
                         }
 
-                        window.drawing_manager.recalculate_all_bar_caches(&window.bars);
-                        window.drawing_manager.update_all_timestamps_from_bars(&window.bars);
                         if window.price_scale.scale_mode.is_auto_y() {
                             window.calc_auto_scale();
                         }
@@ -747,11 +730,18 @@ impl ChartApp {
                     seen_pairs.insert(triple);
                     let current_price = window.bars.last().map(|b| b.close).unwrap_or(0.0);
                     let current_bar = window.bars.len().saturating_sub(1) as f64;
+                    let bars = &window.bars;
                     let drawing_points: Vec<(u64, Vec<(f64, f64)>, alerts::DrawingExtendMode)> = window
                         .drawing_manager
                         .primitives()
                         .iter()
-                        .map(|p| (p.data().id, p.points(), alerts::DrawingExtendMode::from_u8(p.extend_mode_raw())))
+                        .map(|p| {
+                            let pts_bar: Vec<(f64, f64)> = p.points()
+                                .into_iter()
+                                .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(bars, ts_ms), price))
+                                .collect();
+                            (p.data().id, pts_bar, alerts::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                        })
                         .collect();
                     Some(WindowAlertData {
                         symbol: window.symbol.clone(),

@@ -12,7 +12,9 @@ use super::super::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DateRange {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64,
+    #[serde(default)]
     pub ts2: i64,
     pub price: f64,
     #[serde(default = "default_true")] pub show_bars: bool,

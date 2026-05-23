@@ -37,10 +37,13 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FibTrendExtension {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64,
     pub price1: f64,
+    #[serde(default)]
     pub ts2: i64,
     pub price2: f64,
+    #[serde(default)]
     pub ts3: i64,
     pub price3: f64,
     #[serde(default = "default_level_configs", deserialize_with = "deserialize_level_configs")]

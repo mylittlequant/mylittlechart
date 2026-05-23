@@ -4,7 +4,7 @@
 //! modifying the DrawingManager.
 
 use serde::{Deserialize, Serialize};
-use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::{Bar, PriceScale, Viewport};
 use super::types::{ControlPoint, ControlPointType, LineStyle, PrimitiveColor, PrimitiveText, TextAlign, CONTROL_POINT_RADIUS};
 use crate::render::{RenderContext, crisp};
 use super::config::{TimeframeVisibilityConfig, ConfigProperty, PropertyValue, PropertyCategory};

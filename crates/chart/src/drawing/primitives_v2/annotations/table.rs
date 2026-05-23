@@ -12,7 +12,9 @@ use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Table {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64, // Top-left corner
+    #[serde(default)]
     pub ts2: i64, pub price2: f64, // Bottom-right corner
     pub rows: Vec<Vec<String>>,
     #[serde(default = "default_cols")] pub columns: u8,

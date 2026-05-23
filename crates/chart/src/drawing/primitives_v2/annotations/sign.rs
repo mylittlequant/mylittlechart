@@ -17,7 +17,9 @@ pub enum SignType { #[default] Circle, Square, Diamond, Triangle, Star, Cross, C
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sign {
     pub data: PrimitiveData,
+    #[serde(default)]
     pub ts1: i64, pub price1: f64, // Center point
+    #[serde(default)]
     pub ts2: i64, pub price2: f64, // Size point
     pub sign_type: SignType,
 }

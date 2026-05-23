@@ -608,6 +608,9 @@ impl ChartApp {
                                             }
                                         }
                                     }
+                                    // Migrate old presets that stored timestamps as Unix seconds
+                                    // in point_timestamps instead of directly in ts_ms fields.
+                                    window.drawing_manager.migrate_all_legacy_timestamps();
 
                                     // Restore command history
                                     if let Some(history) = &snap.command_history {
@@ -754,6 +757,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
+                                window.drawing_manager.migrate_all_legacy_timestamps();
 
                                 // Restore command history
                                 if let Some(history) = &snap.command_history {

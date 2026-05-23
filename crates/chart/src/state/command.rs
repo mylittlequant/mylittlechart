@@ -238,7 +238,7 @@ pub enum Command {
         /// Type ID for recreation via registry
         type_id: String,
         /// Coordinate points
-        points: Vec<(f64, f64)>,
+        points: Vec<(i64, f64)>,
         /// Full primitive data (id, color, style, etc.)
         data: PrimitiveData,
     },
@@ -246,13 +246,13 @@ pub enum Command {
     /// Delete all primitives
     DeleteAllPrimitives {
         /// All primitives before deletion (for undo) - stores full data for recreation
-        primitives: Vec<(String, Vec<(f64, f64)>, PrimitiveData)>, // (type_id, points, data)
+        primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
     },
 
     /// Restore all primitives (inverse of DeleteAllPrimitives - used for undo)
     RestoreAllPrimitives {
         /// All primitives to restore - stores full data for recreation
-        primitives: Vec<(String, Vec<(f64, f64)>, PrimitiveData)>, // (type_id, points, data)
+        primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
     },
 
     /// Set strategy visibility (delegates to SignalManager.set_strategy_visible)
@@ -269,7 +269,7 @@ pub enum Command {
         /// Type ID for recreation via registry
         type_id: String,
         /// Coordinate points
-        points: Vec<(f64, f64)>,
+        points: Vec<(i64, f64)>,
         /// Full primitive data (id, color, style, etc.)
         data: PrimitiveData,
     },
@@ -278,9 +278,9 @@ pub enum Command {
     MovePrimitive {
         index: usize,
         /// Points before the move
-        previous_points: Vec<(f64, f64)>,
+        previous_points: Vec<(i64, f64)>,
         /// Points after the move
-        new_points: Vec<(f64, f64)>,
+        new_points: Vec<(i64, f64)>,
     },
 
     /// Reorder primitive (bring to front / send to back)
