@@ -270,8 +270,8 @@ pub fn render_right_sidebar(
 
     // Dynamic header height: slot panels go 2-row (68 px) when too narrow.
     let header_height = if matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
-        // Available width after left pad (8) + close-X reservation (28) + gap (8).
-        let inner_w_for_slot = rect.width - 8.0 - 28.0 - 8.0;
+        // Available width: full width - left pad (8) - close-X (16+2 margin) - 2 gap.
+        let inner_w_for_slot = rect.width - 8.0 - 18.0 - 2.0;
         if inner_w_for_slot >= 300.0 { 40.0 } else { 68.0 }
     } else {
         40.0
@@ -369,9 +369,11 @@ pub fn render_right_sidebar(
     }
 
     // Close button (X) on right side of header — always fixed at the right edge.
+    // 2 px outer margin on right; HVR group below pins to (close_x - 2) so the
+    // left side also has a 2 px gap from [↻].
     let close_size = 16.0;
     let close_pad = 4.0; // padding around icon for hover bg
-    let close_x = rect.x + rect.width - close_size - 12.0;
+    let close_x = rect.x + rect.width - close_size - 2.0;
     let close_y = rect.y + (header_height - close_size) / 2.0;
     let close_hovered = input_coordinator
         .is_hovered(&uzor::types::WidgetId::from("right_sidebar_close"));
@@ -3757,8 +3759,9 @@ fn render_slot_toolbar_in_header(
         let start_x = rect.x + 8.0; // no icon — start at left pad only
         let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
         let _cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
-        // pin_right pivot equals close_x so [↻] sits flush against [×].
-        let pivot = rect.x + rect.width - 16.0 - 12.0; // == close_x
+        // pin_right pivot: 2 px left of close_x so [↻] has a small gap from [×].
+        let close_x = rect.x + rect.width - 16.0 - 2.0;
+        let pivot = close_x - 2.0;
         let _end_x = draw_hvr_btns(row_y, pivot, /* pin_right */ true, ctx, state, input_coordinator, result);
     } else {
         // ── Two rows: row1=[+][A][P][L][×]  row2=[H][V][R][⊞][↺] ──────────
