@@ -4765,14 +4765,15 @@ fn render_agents_toolbar_in_header(
         let right_fixed = 28.0 * 3.0 + 4.0 + gap * 2.0 + 28.0 * 2.0 + gap;
         let cli_area_w  = inner_w + 8.0 + 20.0  // full rect.width
                         - (after_mode - rect.x)  // used so far
-                        - right_fixed - gap * 2.0
+                        - right_fixed - gap
                         - 20.0; // close X reservation
         let cli_area_w  = cli_area_w.max(0.0);
 
         draw_cli_btns(after_mode, cli_area_w, row_y, ctx, input_coordinator, result);
 
-        // HVR starts after cli area.
-        let hvr_x = after_mode + cli_area_w + gap * 2.0;
+        // HVR starts one gap after cli area (uniform gap = 4 px, same as
+        // gap between any two adjacent buttons — no extra separator).
+        let hvr_x = after_mode + cli_area_w + gap;
         draw_hvr_btns(row_y, hvr_x, ctx, state, input_coordinator, result);
     } else {
         // ── Two rows (narrow sidebar) ─────────────────────────────────────────
