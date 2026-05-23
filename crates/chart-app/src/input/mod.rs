@@ -1223,38 +1223,36 @@ impl ChartApp {
         }
 
         // ── Free-slot separator drag initiation ──────────────────────────────
-        // Detect `"slot:{slot_idx}:sep:{sep_idx}"` widget hover → begin separator resize drag.
+        // Detect `"slot:{slot_idx}:body"` BlackboxPanel hover → hit-test inner
+        // separators via slot_resolve_input (mirrors chart-pane pattern).
         if self.slot_sep_drag.is_none() {
             let hovered_wid = self.input_coordinator.borrow_mut().hovered_widget().map(|h| h.as_str().to_string());
             if let Some(ref wid) = hovered_wid {
-                if let Some(rest) = wid.strip_prefix("slot:") {
-                    if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
-                        if let (Ok(slot_idx), Ok(sep_idx)) =
-                            (slot_str.parse::<usize>(), sep_str.parse::<usize>())
-                        {
-                            if slot_idx < 4 {
-                                let sep_info: Option<(uzor::panels::SeparatorOrientation, f32)> = {
+                if let Some(slot_str) = wid.strip_prefix("slot:").and_then(|r| r.strip_suffix(":body")) {
+                    if let Ok(slot_idx) = slot_str.parse::<usize>() {
+                        if slot_idx < 4 {
+                            use sidebar_content::slot_hit::{slot_resolve_input, SlotInputTarget};
+                            let hit = {
+                                let docking = self.sidebar_state.slot_dockings[slot_idx].inner();
+                                slot_resolve_input(docking, x, y)
+                            };
+                            if let SlotInputTarget::Separator { sep_idx, orientation } = hit {
+                                use uzor::panels::SeparatorOrientation;
+                                let total_size = {
                                     let docking = self.sidebar_state.slot_dockings[slot_idx].inner();
-                                    docking.separators().get(sep_idx).map(|sep| {
-                                        use uzor::panels::SeparatorOrientation;
-                                        let area = docking.layout_area();
-                                        let total = match sep.orientation {
-                                            SeparatorOrientation::Vertical => area.width,
-                                            SeparatorOrientation::Horizontal => area.height,
-                                        };
-                                        (sep.orientation, total)
-                                    })
+                                    let area = docking.layout_area();
+                                    match orientation {
+                                        SeparatorOrientation::Vertical => area.width,
+                                        SeparatorOrientation::Horizontal => area.height,
+                                    }
                                 };
-                                if let Some((orient, total_size)) = sep_info {
-                                    use uzor::panels::SeparatorOrientation;
-                                    let start_pos = match orient {
-                                        SeparatorOrientation::Vertical => x,
-                                        SeparatorOrientation::Horizontal => y,
-                                    };
-                                    self.slot_sep_drag = Some((slot_idx, sep_idx, start_pos, total_size));
-                                    self.ui_drag_active = true;
-                                    return false;
-                                }
+                                let start_pos = match orientation {
+                                    SeparatorOrientation::Vertical => x,
+                                    SeparatorOrientation::Horizontal => y,
+                                };
+                                self.slot_sep_drag = Some((slot_idx, sep_idx, start_pos, total_size));
+                                self.ui_drag_active = true;
+                                return false;
                             }
                         }
                     }
@@ -4989,20 +4987,20 @@ impl ChartApp {
                     }
                 }
 
-                // slot:{slot_idx}:sep:{sep_idx}
-                if let Some(rest) = wid.strip_prefix("slot:") {
-                    if let Some((slot_str, sep_str)) = rest.split_once(":sep:") {
-                        if let (Ok(slot_idx), Ok(sep_idx)) =
-                            (slot_str.parse::<usize>(), sep_str.parse::<usize>())
-                        {
-                            let orientation = self.sidebar_state.slot_dockings
-                                .get(slot_idx)
-                                .and_then(|d| d.inner().separators().get(sep_idx))
-                                .map(|s| s.orientation);
-                            return match orientation {
-                                Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
-                                _ => CursorStyle::NsResize,
-                            };
+                // slot:{slot_idx}:body — hit-test inner separators
+                if let Some(slot_str) = wid.strip_prefix("slot:").and_then(|r| r.strip_suffix(":body")) {
+                    if let Ok(slot_idx) = slot_str.parse::<usize>() {
+                        if slot_idx < 4 {
+                            use sidebar_content::slot_hit::{slot_resolve_input, SlotInputTarget};
+                            let docking = self.sidebar_state.slot_dockings[slot_idx].inner();
+                            if let SlotInputTarget::Separator { orientation, .. } =
+                                slot_resolve_input(docking, x, y)
+                            {
+                                return match orientation {
+                                    SeparatorOrientation::Vertical => CursorStyle::EwResize,
+                                    _ => CursorStyle::NsResize,
+                                };
+                            }
                         }
                     }
                 }
