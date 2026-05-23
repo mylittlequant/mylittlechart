@@ -270,9 +270,10 @@ pub fn render_right_sidebar(
 
     // Dynamic header height: slot panels go 2-row (68 px) when too narrow.
     let header_height = if matches!(panel, RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
-        // Available width: full width - left pad (8) - close-X (16+2 margin) - 2 gap.
-        let inner_w_for_slot = rect.width - 8.0 - 18.0 - 2.0;
-        if inner_w_for_slot >= 300.0 { 40.0 } else { 68.0 }
+        // Available width = full width - left pad (8) - close X reservation (20).
+        // Mirrors `inner_w` inside render_slot_toolbar_in_header.
+        let inner_w_for_slot = rect.width - 8.0 - 20.0;
+        if inner_w_for_slot >= 284.0 { 40.0 } else { 68.0 }
     } else {
         40.0
     };
@@ -3567,11 +3568,14 @@ fn render_slot_toolbar_in_header(
 
     // Adaptive layout: single-row when inner_w >= 300 px, two-row otherwise.
     // inner_w matches the computation in render_right_sidebar's header_height calc.
-    let inner_w = rect.width - 8.0 - 28.0 - 8.0;
-    let single_row = inner_w >= 300.0;
+    // Available width for the toolbar: full width minus left pad (8) and the
+    // close [×] reservation (16 + 2 margin + 2 gap from last button = 20 px).
+    let inner_w = rect.width - 8.0 - 20.0;
+    // Single-row needs ~284 px to fit `[+][A P L][H V R][⊞][↻]` snug.
+    let single_row = inner_w >= 284.0;
 
-    // Right edge stops before the header close (X) button (28 px from right).
-    let right_edge = rect.x + rect.width - 28.0;
+    // Right edge stops 2 px before the close X (so [↻] has a 2 px gap to [×]).
+    let right_edge = rect.x + rect.width - 16.0 - 2.0 - 2.0;
 
     // ── Helper: draw [+] spawn button ────────────────────────────────────────
     let draw_new_btn = |cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
@@ -3751,18 +3755,15 @@ fn render_slot_toolbar_in_header(
     };
 
     if single_row {
-        // ── Single row: [+][A][P][L] ……… [H][V][R][⊞][↺][×] ────────────
-        // Left group (+ A P L) flows from left edge. Right group (HVR ⊞ ↻)
-        // pinned flush against [×] (which sits at the right edge of the
-        // sidebar), with zero padding between [↻] and [×].
+        // ── Single row: [+][A][P][L][H][V][R][⊞][↺]  [×] ────────────
+        // The control plane is ONE contiguous block from the left edge —
+        // no gap between [L] and [H], no right-pin. [×] sits separately at
+        // the right edge of the sidebar.
         let row_y  = toolbar_y + (header_height - btn_h) / 2.0;
-        let start_x = rect.x + 8.0; // no icon — start at left pad only
+        let start_x = rect.x + 8.0;
         let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
-        let _cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
-        // pin_right pivot: 2 px left of close_x so [↻] has a small gap from [×].
-        let close_x = rect.x + rect.width - 16.0 - 2.0;
-        let pivot = close_x - 2.0;
-        let _end_x = draw_hvr_btns(row_y, pivot, /* pin_right */ true, ctx, state, input_coordinator, result);
+        let cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
+        let _end_x = draw_hvr_btns(row_y, cur_x, /* pin_right */ false, ctx, state, input_coordinator, result);
     } else {
         // ── Two rows: row1=[+][A][P][L][×]  row2=[H][V][R][⊞][↺] ──────────
         // header_height is 68 px: 4px top-pad + 28px row1 + 4px gap + 28px row2 + 4px bottom-pad
@@ -3774,8 +3775,8 @@ fn render_slot_toolbar_in_header(
         let cur_x = draw_new_btn(start_x, row1_y, ctx, state, input_coordinator, result);
         let _cur_x = draw_apl_btns(cur_x, row1_y, ctx, state, input_coordinator, result);
 
-        // Row 2: right controls pinned to right_edge (left side of bottom row stays empty).
-        draw_hvr_btns(row2_y, right_edge, /* pin_right */ true, ctx, state, input_coordinator, result);
+        // Row 2: HVR group also left-aligned, mirroring row 1.
+        let _end_x = draw_hvr_btns(row2_y, start_x, /* pin_right */ false, ctx, state, input_coordinator, result);
     }
 }
 
