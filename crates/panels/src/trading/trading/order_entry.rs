@@ -679,5 +679,5 @@ impl OrderEntryPanel {
 
     pub fn type_id(&self) -> &'static str { "order_entry" }
     pub fn kind_label(&self) -> &'static str { "Order Entry" }
-    pub fn min_size(&self) -> (f32, f32) { (250.0, 300.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }

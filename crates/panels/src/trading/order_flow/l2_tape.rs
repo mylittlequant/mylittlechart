@@ -172,7 +172,7 @@ impl L2TapePanel {
 
     pub fn type_id(&self) -> &'static str { "l2_tape" }
     pub fn kind_label(&self) -> &'static str { "L2 Tape" }
-    pub fn min_size(&self) -> (f32, f32) { (200.0, 150.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }
 
 const L2_ROW_HEIGHT: f32 = 16.0;

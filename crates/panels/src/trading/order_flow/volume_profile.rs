@@ -594,5 +594,5 @@ impl VolumeProfilePanel {
 
     pub fn type_id(&self) -> &'static str { "volume_profile" }
     pub fn kind_label(&self) -> &'static str { "Volume Profile" }
-    pub fn min_size(&self) -> (f32, f32) { (200.0, 300.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }

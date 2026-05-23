@@ -538,5 +538,5 @@ impl TradeTapePanel {
 
     pub fn type_id(&self) -> &'static str { "trade_tape" }
     pub fn kind_label(&self) -> &'static str { "Trade Tape" }
-    pub fn min_size(&self) -> (f32, f32) { (180.0, 120.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }

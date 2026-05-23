@@ -333,5 +333,5 @@ impl RiskCalculatorPanel {
 
     pub fn type_id(&self) -> &'static str { "risk_calculator" }
     pub fn kind_label(&self) -> &'static str { "Risk Calculator" }
-    pub fn min_size(&self) -> (f32, f32) { (250.0, 200.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }

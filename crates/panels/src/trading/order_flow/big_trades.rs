@@ -516,5 +516,5 @@ impl BigTradesPanel {
 
     pub fn type_id(&self) -> &'static str { "big_trades" }
     pub fn kind_label(&self) -> &'static str { "Big Trades" }
-    pub fn min_size(&self) -> (f32, f32) { (250.0, 200.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }

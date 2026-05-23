@@ -695,5 +695,5 @@ impl FootprintPanel {
 
     pub fn type_id(&self) -> &'static str { "footprint" }
     pub fn kind_label(&self) -> &'static str { "Footprint" }
-    pub fn min_size(&self) -> (f32, f32) { (300.0, 200.0) }
+    pub fn min_size(&self) -> (f32, f32) { (100.0, 80.0) }
 }
