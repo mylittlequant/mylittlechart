@@ -261,10 +261,20 @@ pub fn render_right_sidebar(
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
-    // Agents panel manages its own scroll inside chat/PTY content area —
-    // no sidebar-level scrollbar needed and the panel takes the full width.
-    let is_agents_panel = panel == RightSidebarPanel::Agents;
-    let scrollbar_width: f64 = if is_agents_panel { 0.0 } else { 8.0 };
+    // Agents + Slot panels run their own docking layout that has no
+    // sidebar-level scrollbar — they take the full width. Other panels
+    // (Watchlist, Alerts, ObjectTree, Signals, Connectors, Performance,
+    // Slot dropdowns when fed list content) reserve 8 px on the right for
+    // the scrollbar gutter.
+    let owns_full_width = matches!(
+        panel,
+        RightSidebarPanel::Agents
+            | RightSidebarPanel::Slot1
+            | RightSidebarPanel::Slot2
+            | RightSidebarPanel::Slot3
+            | RightSidebarPanel::Slot4
+    );
+    let scrollbar_width: f64 = if owns_full_width { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
 
     // Dynamic header height: slot panels and Agents go 2-row (68 px) when too narrow.
@@ -466,13 +476,10 @@ pub fn render_right_sidebar(
 
 
 
-    // Header bottom border.
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(rect.x, rect.y + header_height);
-    ctx.line_to(rect.x + rect.width, rect.y + header_height);
-    ctx.stroke();
+    // Header bottom border — 2 px solid bar, matching the visual weight of
+    // inter-leaf docking separators inside slot / agent bodies below.
+    ctx.set_fill_color(&toolbar_theme.separator);
+    ctx.fill_rect(rect.x, rect.y + header_height - 1.0, rect.width, 2.0);
 
     // -------------------------------------------------------------------------
     // Scrollable content area
@@ -687,10 +694,10 @@ pub fn render_right_sidebar(
     // -------------------------------------------------------------------------
     // End scroll container — draws scrollbar if needed.
     // -------------------------------------------------------------------------
-    // Agents panel: clamp content_height to viewport so the sidebar-level
-    // scrollbar never appears. Internal chat/PTY scrolling is handled inside
-    // the panel itself.
-    if is_agents_panel {
+    // Agents + Slot panels: clamp content_height to viewport so the
+    // sidebar-level scrollbar never appears. Internal scrolling is handled
+    // inside the panels themselves (docking layout / chat / PTY).
+    if owns_full_width {
         content_height = viewport_rect.height;
     }
     let widget_theme = zengeld_chart::ui::widgets::types::WidgetTheme::default();
