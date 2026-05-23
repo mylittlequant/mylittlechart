@@ -3828,14 +3828,12 @@ fn render_slot_panel(
     // Two-level header: Level 2 control strip (28px) only; overlay tab floats on top of content.
     const LEAF_HEADER_H: f32 = 28.0;
 
-    let pad = 8.0;
-    let inner_x = rect.x + pad;
-    let inner_w = (content_width - pad * 2.0).max(0.0);
-
-    // Docking grid area — toolbar is in the header row (rendered before scrollable.begin),
-    // so body starts at content_y.
-    let inner_y = content_y + pad;
-    let inner_h = (rect.height - (inner_y - rect.y) - pad).max(0.0);
+    // Slot body: no padding on any side. Docking layout fills the full sidebar
+    // content area so separators between leaves span the full width / height.
+    let inner_x = rect.x;
+    let inner_w = content_width.max(0.0);
+    let inner_y = content_y;
+    let inner_h = (rect.height - (inner_y - rect.y)).max(0.0);
 
     // Record the slot body rect for cross-container drag hit testing.
     result.active_slot_body_rect = Some(WidgetRect::new(inner_x, inner_y, inner_w, inner_h));
@@ -4821,18 +4819,16 @@ fn render_agents_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
-    let pad = 8.0;
-    let x = rect.x + pad;
-    let inner_w = content_width - pad * 2.0;
-    // Toolbar is now in the header row (render_agents_toolbar_in_header).
-    // Body starts directly at content_y + pad.
-    let mut y = content_y + pad;
+    // Agent body: no padding on any side — full sidebar area for docking so
+    // inter-leaf separators span the entire width/height.
+    let x = rect.x;
+    let inner_w = content_width;
+    let mut y = content_y;
 
 
     // ── Grid area ─────────────────────────────────────────────────────────────
     // header_height is dynamic (40 or 68 px depending on single/two-row mode).
-    // Body starts at content_y + pad; no toolbar rendered here.
-    let grid_h = (rect.height - header_height - pad).max(60.0);
+    let grid_h = (rect.height - header_height).max(60.0);
     let grid_rect = uzor::panels::PanelRect::new(x as f32, y as f32, inner_w as f32, grid_h as f32);
 
     if state.agent_leaves.is_empty() {
@@ -4918,7 +4914,7 @@ fn render_agents_panel(
         }
     }
 
-    y += grid_h + pad;
+    y += grid_h;
     y - content_y
 }
 
