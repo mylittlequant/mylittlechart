@@ -3771,36 +3771,6 @@ fn render_slot_panel(
         height: inner_h as f32,
     });
 
-    // Register the slot body as a BlackboxPanel on the ChartCanvas layer (z=0).
-    //
-    // This mirrors the chart-pane pattern: one composite widget covers the whole
-    // slot content area.  Leaf-level widgets (focus_content, dom:body, buttons)
-    // are registered on the main layer (also z=0) but AFTER this registration,
-    // so they win the hit-test (last-registered wins within the same layer).
-    // BlackboxPanel makes is_over_ui() return false for the slot body, allowing
-    // the slot's own hit-tester (slot_resolve_input) to handle inner separators
-    // and leaf dispatch without coordinator involvement.
-    {
-        use uzor::input::{Sense, WidgetKind};
-        use zengeld_chart::ui::z_order::ZLayer;
-        let slot_layer = ZLayer::ChartCanvas.push_named(
-            input_coordinator,
-            &format!("slot_{}_body", slot_idx),
-        );
-        input_coordinator.register_composite(
-            format!("slot:{}:body", slot_idx),
-            WidgetKind::BlackboxPanel,
-            uzor::types::Rect::new(inner_x, inner_y, inner_w, inner_h),
-            Sense::CLICK
-                | Sense::DRAG
-                | Sense::SCROLL
-                | Sense::RIGHT_CLICK
-                | Sense::DOUBLE_CLICK
-                | Sense::HOVER,
-            &slot_layer,
-        );
-    }
-
     // Collect (leaf_id, active_item, rect) so we can render after the mgr borrow.
     // `DockingTree::leaves()` gives each `Leaf<FreeItem>`; the active panel
     // for this leaf is `leaf.panels[leaf.active_tab]`.
@@ -4145,13 +4115,14 @@ fn render_slot_panel(
         }
     }
 
-    // Draw slot separators (visual only — hit-testing is handled by the
-    // slot:N:body BlackboxPanel + slot_resolve_input, not by individual widgets).
+    // Draw slot separators and register their hit zones.
     {
         use uzor::panels::SeparatorOrientation;
         let mgr = state.slot_dockings[slot_idx].inner();
-        for sep in mgr.separators().iter() {
+        let sep_hit_w = 8.0_f64;
+        for (sep_idx, sep) in mgr.separators().iter().enumerate() {
             let visual_thickness = sep.thickness_for_state() as f64;
+            let sep_wid = format!("slot:{}:sep:{}", slot_idx, sep_idx);
             match sep.orientation {
                 SeparatorOrientation::Vertical => {
                     let sep_x = sep.position as f64 - visual_thickness / 2.0;
@@ -4159,6 +4130,14 @@ fn render_slot_panel(
                     let sep_h = sep.length as f64;
                     ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, visual_thickness, sep_h);
+                    let hit_rect = WidgetRect::new(
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_y,
+                        sep_hit_w,
+                        sep_h,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
+                    result.item_rects.push((sep_wid, hit_rect));
                 }
                 SeparatorOrientation::Horizontal => {
                     let sep_y = sep.position as f64 - visual_thickness / 2.0;
@@ -4166,6 +4145,14 @@ fn render_slot_panel(
                     let sep_w = sep.length as f64;
                     ctx.set_fill_color(&theme.separator);
                     ctx.fill_rect(sep_x, sep_y, sep_w, visual_thickness);
+                    let hit_rect = WidgetRect::new(
+                        sep_x,
+                        sep.position as f64 - sep_hit_w / 2.0,
+                        sep_w,
+                        sep_hit_w,
+                    );
+                    input_coordinator.register(sep_wid.as_str(), hit_rect, uzor::input::Sense::DRAG);
+                    result.item_rects.push((sep_wid, hit_rect));
                 }
             }
         }

@@ -6,7 +6,6 @@
 pub mod agent_types;
 pub mod agents_dock;
 pub mod free_slot;
-pub mod slot_hit;
 pub mod types;
 pub mod state;
 pub mod render;
