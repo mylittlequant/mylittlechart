@@ -3642,8 +3642,12 @@ fn render_slot_toolbar_in_header(
         cur_x + apl_w + gap
     };
 
-    // ── Helper: draw [H][V][R][⊞][↺] right-side controls ────────────────────
-    let draw_hvr_btns = |row_y: f64, right_edge: f64, ctx: &mut dyn RenderContext,
+    // ── Helper: draw [H][V][R][⊞][↺] controls ────────────────────────────────
+    // `start_x` is where the first button begins; `pin_right` (when true) anchors
+    // the whole group to `start_x` interpreted as a right-edge instead and right-
+    // aligns the buttons (used by the two-row layout's bottom row).
+    let draw_hvr_btns = |row_y: f64, start_x: f64, pin_right: bool,
+                         ctx: &mut dyn RenderContext,
                          state: &mut SidebarState,
                          input_coordinator: &mut InputCoordinator,
                          result: &mut RightSidebarResult| {
@@ -3652,7 +3656,7 @@ fn render_slot_toolbar_in_header(
         let right_w = split_w * 3.0 + 4.0 + 4.0   // H+2+V+2+R
                     + gap * 2.0                      // separator gap
                     + btn_w * 2.0 + gap;             // expand+reset
-        let mut cur_x = right_edge - right_w;
+        let mut cur_x = if pin_right { start_x - right_w } else { start_x };
 
         // [H] split horizontal
         let sh_id  = format!("slot:{slot_idx}:split:h");
@@ -3740,12 +3744,15 @@ fn render_slot_toolbar_in_header(
     };
 
     if single_row {
-        // ── Single row: [+][A][P][L]  …  [H][V][R][⊞][↺]  [×] ────────────
+        // ── Single row: [+][A][P][L][H][V][R][⊞][↺]  [×] ────────────
+        // All buttons render in a single tight strip — no dead space between
+        // [L] and [H], no right-edge pin. [×] (close) is rendered separately
+        // by render_right_sidebar at the far right.
         let row_y  = toolbar_y + (header_height - btn_h) / 2.0;
         let start_x = rect.x + 8.0; // no icon — start at left pad only
         let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
-        let _cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
-        draw_hvr_btns(row_y, right_edge, ctx, state, input_coordinator, result);
+        let cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
+        draw_hvr_btns(row_y, cur_x, /* pin_right */ false, ctx, state, input_coordinator, result);
     } else {
         // ── Two rows: row1=[+][A][P][L][×]  row2=[H][V][R][⊞][↺] ──────────
         // header_height is 68 px: 4px top-pad + 28px row1 + 4px gap + 28px row2 + 4px bottom-pad
@@ -3757,8 +3764,8 @@ fn render_slot_toolbar_in_header(
         let cur_x = draw_new_btn(start_x, row1_y, ctx, state, input_coordinator, result);
         let _cur_x = draw_apl_btns(cur_x, row1_y, ctx, state, input_coordinator, result);
 
-        // Row 2: right controls span full width (right_edge stays same — close X spans both rows).
-        draw_hvr_btns(row2_y, right_edge, ctx, state, input_coordinator, result);
+        // Row 2: right controls pinned to right_edge (left side of bottom row stays empty).
+        draw_hvr_btns(row2_y, right_edge, /* pin_right */ true, ctx, state, input_coordinator, result);
     }
 }
 
