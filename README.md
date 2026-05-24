@@ -1,107 +1,99 @@
 # mylittlechart
 
-Multi-exchange trading terminal with GPU-accelerated rendering. Version 0.2.8.
+Desktop trading client with GPU-accelerated charting, 480+ indicators, and order flow panels for 18 crypto exchanges.
 
-## Workspace Crates
+[chart.example](https://chart.example)
 
-| Crate | Purpose |
-|-------|---------|
-| `chart` | Chart rendering, panel system, user profile, indicators layout |
-| `chart-app` | ChartApp logic, action enums, input handling, tick() |
-| `chart-app-vello` | App entry point, AppState, event loop, window management |
-| `indicators` | 480+ technical indicators (SMA, EMA, RSI, MACD, etc.) |
-| `sidebar-content` | Sidebar panel content definitions |
-| `alerts` | Alert system (price, indicator, drawing crossing) |
-| `alert-delivery` | Alert delivery via Telegram bot |
-| `live-data` | DataBridge, WebSocket live feed, broadcast channels |
-| `zengeld-server` | Internal agent API server (localhost:17420) |
-| `instanced-context` | wgpu instanced renderer backend |
-| `vello-context` | Vello GPU renderer backend (default) |
-| `vello-cpu-context` | Vello CPU fallback renderer |
-| `vello-hybrid-context` | Vello hybrid GPU/CPU renderer |
-| `tiny-skia-context` | TinySkia software renderer |
-| `updater` | OTA updates, heartbeat, OAuth, cloud sync, E2E encryption |
+<!-- Screenshots placeholder block:
+![Main chart](docs/screenshots/main-chart.png)
+![DOM panel](docs/screenshots/dom-panel.png)
+-->
 
-## Build & Run
+> **Status**: Alpha. APIs and features change between releases.
+
+## Features
+
+- **Charts** — Vello-based GPU rendering, multi-window, multi-chart per window, pipelined render with double-buffered scenes
+- **Indicators** — 480+ across 23 categories: trend, momentum, volatility, volume, order flow, statistics, signal processing, adaptive, Kalman filters, chaos theory, entropy, regression, and more
+- **Order flow panels** — DOM (depth of market), Footprint, Volume Profile, Liquidity Heatmap, L2 Tape, Trade Tape, Big Trades
+- **Trading panels** — Order Entry, Position Manager, Risk Calculator, Trading Container
+- **18 exchanges** — Binance, Bybit, OKX, Kraken, Coinbase, KuCoin, Bitget, GateIO, HTX, Bitfinex, Bitstamp, BingX, MEXC, CryptoCom, HyperLiquid, Dydx, Lighter, Deribit
+- **Agent API** — local HTTP server (`127.0.0.1:17420`) for automation: read bars/indicators, control viewport, switch symbols, take chart screenshots, manage drawing primitives
+- **Alerts** — in-app toast, Telegram (multi-subscriber, optional chart screenshots), HTTP webhook
+- **Render backends** — Vello GPU (default), Vello CPU, Vello hybrid, TinySkia (CPU), wgpu instanced (experimental)
+
+## Quick start
 
 ```bash
-cargo build --release
-cargo run --release
-
-# Standalone build (no server communication)
-cargo build --release --features standalone
+git clone https://github.com/ZENG3LD/mylittlechart
+cd mylittlechart
+cargo run --release -p chart-app-vello
 ```
+
+Requires Rust stable (2021 edition).
+
+Primary development target is Windows 11. macOS and Linux are supported by the underlying stack and our build environment can produce binaries for them, but builds for those targets are not yet part of the regular release pipeline.
 
 ## Architecture
 
-- **Pipelined render**: Dedicated GPU thread with double-buffered scenes
-- **Per-window parallel scene build** via `thread::scope`
-- **Action queue pattern**: Window pushes typed enum → App drains in about_to_wait()
-- **AppState** is canonical owner of all user-level data
-- **Indicator computation** parallelized with rayon
+Three components ship together:
 
-## Rendering Backends
+| Component | What |
+|---|---|
+| **`mylittlechart`** (this repo) | Desktop client. Rust + Vello GPU. |
+| **`zengeld-server`** (hosted) | Cloud API: user accounts (separate repo, not yet public). |
+| **`mylittlechart-landing`** | Marketing site at chart.example (separate repo, not yet public). |
 
-| Backend | Status | Description |
-|---------|--------|-------------|
-| Vello GPU | Default | Vector graphics via compute shaders |
-| Instanced wgpu | Experimental | 3 draw calls (quads/lines/text) |
-| Vello CPU | Fallback | Software rendering via Vello |
-| Vello Hybrid | Experimental | GPU compute + CPU fallback |
-| TinySkia | Fallback | Pure software rasterizer |
+Inside the client:
 
-## Client Modes
+| Crate | Role |
+|---|---|
+| `chart-app-vello` | Entry binary, multi-window event loop |
+| `chart-app` | App logic, action queue, input handling, tick() |
+| `chart` | Chart rendering, panel system, user profile |
+| `indicators` | 480+ technical indicators |
+| `panels` | Order flow + trading panels |
+| `live-data` | WebSocket connector pool, bar cache, DataBridge |
+| `alerts` + `alert-delivery` | Alert engine + Toast/Telegram/Webhook delivery |
+| `zengeld-server` (in-process) | Local Agent API on `127.0.0.1:17420` |
+| `trading-manager` | OrderManager, PositionTracker, paper trading engine |
+| `bar-store` / `bar-service` | OHLCV series storage and access |
+| `trade-store` / `trade-service` | Trade history storage and access |
+| `orderbook-store` / `orderbook-service` | Order book storage and access |
+| `vello-context` | Vello GPU renderer |
+| `vello-cpu-context` | Vello CPU renderer |
+| `vello-hybrid-context` | Vello hybrid renderer |
+| `tiny-skia-context` | TinySkia software renderer |
+| `instanced-context` | wgpu instanced renderer (experimental) |
+| `diagnostics` | Runtime diagnostics |
 
-| Mode | Description |
-|------|-------------|
-| Standalone | Zero network calls. All data local. Default for new installs. |
-| Connected | Syncs with chart.example — cloud sync, OTA updates, telemetry |
+## Documentation
 
-## Cloud Features (Connected mode)
+- [Agent API reference](docs/agent-api.md) — full endpoint list with curl examples
+- [Supported exchanges](docs/exchanges.md) — what data is available, planned credential vault
+- [Alerts setup](docs/alerts.md) — Telegram bot + Webhook configuration
+- [Trading panels](docs/panels.md) — what each panel does
+- [Architecture](docs/architecture.md) — deeper dive into the client internals
 
-- **OTA auto-updates** with Ed25519 signature verification
-- **Cloud sync** of presets, watchlists, templates (AES-256-GCM encrypted)
-- **E2E encryption** option (PBKDF2 → HKDF → AES-256-GCM)
-- **API key management** via dashboard + agent-initiated device code flow
-- **Build attestation** — server rejects unofficial/modified builds
-- **Telemetry** — opt-in usage analytics (toggleable in Settings)
-- **Sync status watch channel** (`sync_status_rx`) — `about_to_wait()` polls `has_changed()` each frame and pushes `SyncStatus` enum (Idle / Syncing / Completed / Error / NeedsSetup / ConflictsDetected) into every window's `UserSettingsState`; surfaces progress indicators, error toasts, and conflict modals without blocking the render thread
-- **Conflict resolution** — when local and server versions diverge, `SyncStatus::ConflictsDetected` carries a `Vec<SyncConflict>`; each conflict is resolved via `UpdaterCommand::ResolveConflict { sync_id, resolution: KeepLocal | KeepCloud }`; bulk resolve is available from the UI
-- **Launch banner** — transient 30 px overlay shown on first sync completion for connected users; auto-dismisses after 10 s; displays current version and sync summary
-- **Welcome wizard** — first-run 3-page overlay (`chart/src/layout/modals/welcome_wizard.rs`): mode selection (Standalone / Connected / E2E) → account linking → E2E passphrase setup; triggered when `profile.json` does not exist
-- **Mode gates** — Standalone and unofficial build configurations call `ToolbarConfig::standalone()` across all windows; sync controls and connected-only toolbar actions are greyed out with explanatory banners/tooltips
+## Tech stack
 
-## Agent API
-
-Local axum server on `localhost:17420`. Requires API key (from chart.example or local generation).
-
-Permissions: `read_bars`, `read_indicators`, `read_viewport`, `read_config`, `execute_trades`, `manage_alerts`.
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `chart-app-vello/src/main.rs` | App, AppState, event loop, save_all() |
-| `chart-app/src/lib.rs` | ChartApp, action enums, tick() |
-| `chart-app/src/input.rs` | All user interaction handlers |
-| `chart/src/panel_app.rs` | ChartPanelApp, chart rendering |
-| `chart/src/user_profile/profile.rs` | UserProfile, ClientMode, SyncState |
-| `chart/src/layout/modals/welcome_wizard.rs` | First-run onboarding wizard (3-page overlay) |
-| `updater/src/lib.rs` | Updater loop, OTA check, cloud sync |
-| `updater/src/verify.rs` | Ed25519 OTA signature verification |
-| `updater/src/cloud_sync.rs` | Push/pull sync pipeline |
-| `updater/src/e2e_crypto.rs` | E2E encryption primitives |
-| `updater/src/attest.rs` | Build attestation headers |
-| `updater/src/state.rs` | SyncStatus, UpdaterCommand, UpdaterHandle, SyncConflict, ConflictResolution enums |
-| `updater/src/key_sync.rs` | Agent API key synchronization (SyncedKeyEntry, server polling) |
-| `live-data/src/bridge.rs` | DataBridge, broadcast channel |
-
-## Dependencies
-
-Uses local patches for development (stripped in CI):
-- `uzor` — 2D rendering engine
-- `digdigdig3` — Exchange connectors
+Rust 2021 · Vello · winit · wgpu · Tokio · axum · rayon · digdigdig3 (exchange connectors) · uzor (UI framework)
 
 ## License
 
-MIT OR Apache-2.0
+[Business Source License 1.1](LICENSE).
+
+**Free for:**
+- Personal trading on your own account
+- Non-commercial use
+- Internal business use within a single organization
+
+**Requires a commercial license for:** providing a "Commercial Trading Service" — any product or service made available to third parties (whether free or paid) that gives users the ability to trade financial instruments.
+
+**Change Date: 2030-05-24** — at that point this code converts to Apache 2.0.
+
+For commercial licensing inquiries, open an issue tagged `commercial-license`.
+
+## Contributing
+
+This project does not accept external pull requests at this time. For bug reports and feature requests, please open an issue.
