@@ -37,7 +37,7 @@ rand = "0.8"
 [workspace.package]
 version = "0.5.569"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "BUSL-1.1"
 
 [profile.release]
 opt-level = "s"
