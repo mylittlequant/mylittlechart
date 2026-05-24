@@ -2,14 +2,11 @@
 
 Desktop trading client with GPU-accelerated charting, 480+ indicators, and order flow panels for 18 crypto exchanges.
 
-[chart.example](https://chart.example)
+**Site:** [chart.example](https://chart.example) — live demo animations, panel previews, downloads.
 
-<!-- Screenshots placeholder block:
-![Main chart](docs/screenshots/main-chart.png)
-![DOM panel](docs/screenshots/dom-panel.png)
--->
+**Follow:** [Telegram @mylittlechart](https://t.me/mylittlechart) · X [@mylittlechart](https://x.com/mylittlechart)
 
-> **Status**: Alpha. APIs and features change between releases.
+> **Status:** Alpha. APIs and features change between releases. Trading is not yet wired to live exchange APIs (market data only).
 
 ## Features
 
@@ -92,8 +89,12 @@ Rust 2021 · Vello · winit · wgpu · Tokio · axum · rayon · digdigdig3 (exc
 
 **Change Date: 2030-05-24** — at that point this code converts to Apache 2.0.
 
-For commercial licensing inquiries, open an issue tagged `commercial-license`.
+For commercial licensing inquiries, open an issue tagged `commercial-license` or reach out via [Telegram @zeng3ld](https://t.me/zeng3ld).
 
 ## Contributing
 
 This project does not accept external pull requests at this time. For bug reports and feature requests, please open an issue.
+
+## Author
+
+Bergman Konstantin Igorevich — [zeng3ld.com](https://zeng3ld.com) · [github.com/ZENG3LD](https://github.com/ZENG3LD) · [Telegram @zeng3ld](https://t.me/zeng3ld)
