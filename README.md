@@ -1,93 +1,68 @@
 # mylittlechart
 
-GPU-accelerated desktop charting and order-flow terminal for 18 crypto exchanges. 480+ indicators, multi-window, scriptable through a local HTTP agent API.
+GPU-accelerated desktop charting and order-flow terminal for crypto traders. 18 exchanges, 480+ indicators, multi-window, scriptable through a local HTTP agent API.
 
-**Site:** [chart.example](https://chart.example) — live demo animations, panel previews, downloads.
+**Site:** [chart.example](https://chart.example)
+**Telegram channel:** [@mylittlechart](https://t.me/mylittlechart) · **X:** [@mylittlechart](https://x.com/mylittlechart)
 
-**Follow:** [Telegram @mylittlechart](https://t.me/mylittlechart) · X [@mylittlechart](https://x.com/mylittlechart)
+> **Status:** Alpha. Trading is not yet wired to live exchange APIs — market data only. Paper trading engine works locally.
 
-> **Status:** Alpha. APIs and features change between releases. Trading is not yet wired to live exchange APIs (market data only).
+## What it is
+
+mylittlechart is a desktop application that connects to 18 crypto exchanges and renders live OHLCV charts, order book data, and trade flow panels using GPU-accelerated vector graphics. It runs fully locally — no cloud account required. An embedded HTTP server exposes bar data, indicator values, and chart controls to local automation scripts and trading agents.
 
 ## Features
 
-- **Charts** — Vello-based GPU rendering, multi-window, multi-chart per window, pipelined render with double-buffered scenes
-- **Indicators** — 480+ across 23 categories: trend, momentum, volatility, volume, order flow, statistics, signal processing, adaptive, Kalman filters, chaos theory, entropy, regression, and more
-- **Order flow panels** — DOM (depth of market), Footprint, Volume Profile, Liquidity Heatmap, L2 Tape, Trade Tape, Big Trades
-- **Trading panels** — Order Entry, Position Manager, Risk Calculator, Trading Container
-- **18 exchanges** — Binance, Bybit, OKX, Kraken, Coinbase, KuCoin, Bitget, GateIO, HTX, Bitfinex, Bitstamp, BingX, MEXC, CryptoCom, HyperLiquid, Dydx, Lighter, Deribit
-- **Agent API** — local HTTP server (`127.0.0.1:17420`) for automation: read bars/indicators, control viewport, switch symbols, take chart screenshots, manage drawing primitives
-- **Alerts** — in-app toast, Telegram (multi-subscriber, optional chart screenshots), HTTP webhook
-- **Render backends** — Vello GPU (default), Vello CPU, Vello hybrid, TinySkia (CPU), wgpu instanced (experimental)
+- **Charting** — Vello GPU rendering (default), multi-window, multi-chart per window, pipelined double-buffered scenes. Fallback backends: Vello CPU, Vello hybrid, TinySkia, wgpu instanced.
+- **Indicators** — 480+ across 23 categories: trend, trend_stop, momentum, volatility, volume, channels, accumulation, regression, statistics, signal_processing, adaptive, kalman, entropy, chaos, clusters, divergence, book, ratio, candles, zigzag, average, levels, position. Computation runs in parallel on a rayon thread pool.
+- **Order flow panels** — DOM (depth of market), Footprint, Volume Profile, Liquidity Heatmap, L2 Tape, Trade Tape, Big Trades.
+- **Trading panels** — Order Entry, Position Manager, Risk Calculator, Trading Container. Currently backed by the in-process paper engine; not yet connected to live exchange APIs.
+- **Exchanges** — 18 exchanges for live market data: Binance, Bybit, OKX, Kraken, Coinbase, KuCoin, Bitget, GateIO, HTX, Bitfinex, Bitstamp, BingX, MEXC, CryptoCom, HyperLiquid, Dydx, Lighter, Deribit.
+- **Agent API** — local HTTP server on `127.0.0.1:17420`, 22 endpoints. Read bars and indicator snapshots, control viewport and symbol, take chart screenshots, manage drawing primitives. No auth — binds loopback only.
+- **Alerts** — in-app toast, Telegram (multi-subscriber, optional PNG screenshot attachment), HTTP webhook. All channels run concurrently; a failed channel does not block the others.
+- **Profile encryption** — user profile encrypted at rest with AES-256-GCM, passphrase → PBKDF2-HMAC-SHA256 (600K iterations) + HKDF-SHA256.
 
-## Quick start
+## Install
 
-```bash
+```sh
 git clone https://github.com/ZENG3LD/mylittlechart
 cd mylittlechart
-cargo run --release -p chart-app-vello
+cargo build --release
 ```
 
-Requires Rust stable (2021 edition).
+After the build finishes the binary is at `target/release/mylittlechart.exe` (Windows) or `target/release/mylittlechart` (macOS/Linux). Copy it anywhere and run it directly.
 
-Primary development target is Windows 11. macOS and Linux are supported by the underlying stack and our build environment can produce binaries for them, but builds for those targets are not yet part of the regular release pipeline.
+Or install it on your PATH:
 
-## Architecture
+```sh
+cargo install --path crates/chart-app-vello
+# then just:
+mylittlechart
+```
 
-This repo ships the standalone desktop client. The marketing site at [chart.example](https://chart.example) is maintained separately.
-
-Crates in the workspace:
-
-| Crate | Role |
-|---|---|
-| `chart-app-vello` | Entry binary, multi-window event loop |
-| `chart-app` | App logic, action queue, input handling, tick() |
-| `chart` | Chart rendering, panel system, user profile |
-| `indicators` | 480+ technical indicators |
-| `panels` | Order flow + trading panels |
-| `live-data` | WebSocket connector pool, bar cache, DataBridge |
-| `alerts` + `alert-delivery` | Alert engine + Toast/Telegram/Webhook delivery |
-| `zengeld-server` (in-process) | Local Agent API on `127.0.0.1:17420` |
-| `trading-manager` | OrderManager, PositionTracker, paper trading engine |
-| `bar-store` / `bar-service` | OHLCV series storage and access |
-| `trade-store` / `trade-service` | Trade history storage and access |
-| `orderbook-store` / `orderbook-service` | Order book storage and access |
-| `vello-context` | Vello GPU renderer |
-| `vello-cpu-context` | Vello CPU renderer |
-| `vello-hybrid-context` | Vello hybrid renderer |
-| `tiny-skia-context` | TinySkia software renderer |
-| `instanced-context` | wgpu instanced renderer (experimental) |
-| `diagnostics` | Runtime diagnostics |
+Requires Rust stable. Primary development target is Windows 11; macOS and Linux are supported by the underlying stack but not currently part of the release pipeline.
 
 ## Documentation
 
 - [Agent API reference](docs/agent-api.md) — full endpoint list with curl examples
 - [Supported exchanges](docs/exchanges.md) — what data is available, planned credential vault
-- [Alerts setup](docs/alerts.md) — Telegram bot + Webhook configuration
+- [Alerts setup](docs/alerts.md) — Telegram bot and webhook configuration
 - [Trading panels](docs/panels.md) — what each panel does
-- [Architecture](docs/architecture.md) — deeper dive into the client internals
-
-## Tech stack
-
-Rust 2021 · Vello · winit · wgpu · Tokio · axum · rayon · digdigdig3 (exchange connectors) · uzor (UI framework)
+- [Architecture](docs/architecture.md) — render pipeline, data flow, state ownership
 
 ## License
 
 [Business Source License 1.1](LICENSE).
 
-**Free for:**
-- Personal trading on your own account
-- Non-commercial use
-- Internal business use within a single organization
+- Free for personal trading, non-commercial use, and internal business use within a single organization.
+- A commercial license is required to provide a "Commercial Trading Service" — any product or service made available to third parties (free or paid) that gives users the ability to trade financial instruments.
+- Change Date **2030-05-24** — at that point the code converts to Apache 2.0.
 
-**Requires a commercial license for:** providing a "Commercial Trading Service" — any product or service made available to third parties (whether free or paid) that gives users the ability to trade financial instruments.
-
-**Change Date: 2030-05-24** — at that point this code converts to Apache 2.0.
-
-For commercial licensing inquiries, open an issue tagged `commercial-license` or reach out via [Telegram @zeng3ld](https://t.me/zeng3ld).
+For commercial licensing inquiries: open an issue tagged `commercial-license` or reach out via [Telegram @zeng3ld](https://t.me/zeng3ld).
 
 ## Contributing
 
-This project does not accept external pull requests at this time. For bug reports and feature requests, please open an issue.
+This project does not accept external pull requests at this time. For bug reports and feature requests, open an issue.
 
 ## Author
 
