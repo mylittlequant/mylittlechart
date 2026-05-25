@@ -1,6 +1,6 @@
 # mylittlechart
 
-Desktop trading client with GPU-accelerated charting, 480+ indicators, and order flow panels for 18 crypto exchanges.
+GPU-accelerated desktop charting and order-flow terminal for 18 crypto exchanges. 480+ indicators, multi-window, scriptable through a local HTTP agent API.
 
 **Site:** [chart.example](https://chart.example) — live demo animations, panel previews, downloads.
 
@@ -33,15 +33,9 @@ Primary development target is Windows 11. macOS and Linux are supported by the u
 
 ## Architecture
 
-Three components ship together:
+This repo ships the standalone desktop client. The marketing site at [chart.example](https://chart.example) is maintained separately.
 
-| Component | What |
-|---|---|
-| **`mylittlechart`** (this repo) | Desktop client. Rust + Vello GPU. |
-| **`zengeld-server`** (hosted) | Cloud API: user accounts (separate repo, not yet public). |
-| **`mylittlechart-landing`** | Marketing site at chart.example (separate repo, not yet public). |
-
-Inside the client:
+Crates in the workspace:
 
 | Crate | Role |
 |---|---|
