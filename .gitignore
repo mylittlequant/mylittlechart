@@ -1,7 +1,53 @@
+# Build artifacts
 /target
 Cargo.lock
 *.exe
 *.pdb
 *.stackdump
+
+# Internal agent / dev notes — never publish
+/.claude/
+/.codex/
+/.agents/
+/.cursor/
+/.windsurf/
+CLAUDE.md
+AGENTS.md
+SCRATCH.md
+TODO.md
 DEPS_AUDIT.md
-docs/research/
+
+# Internal planning / research docs
+/docs/plans/
+/docs/research/
+/docs/clone/
+/docs/connector-research/
+/docs/connectors_technical/
+/docs/crypto-research/
+/docs/architecture/
+/docs/implementation/
+/docs/launcher/
+/docs/CLEANUP_SUMMARY.md
+/docs/COMMIT_INDEX.md
+/docs/DUAL_MODE_SUMMARY.md
+/docs/INDICATOR_USAGE_GUIDE.md
+/docs/PRIMITIVE_PROPERTIES_ANALYSIS.md
+/docs/V3_PORTFOLIO_CATALOG_GUIDE.md
+
+# IDE / OS
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local config
+*.local.toml
+*.local.json
+
+# Env / secrets (defense in depth — secrets should NEVER hit a tracked file)
+*.env
+/env/
+secrets.toml
+credentials.json
