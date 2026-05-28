@@ -526,9 +526,6 @@ impl ToolbarSection {
         // Delete button
         items.push(ToolbarItem::icon_button("inline:delete", IconId::new("Delete")));
 
-        // More menu button
-        items.push(ToolbarItem::icon_button("inline:more", IconId::new("MoreHorizontal")));
-
         Self::new(items)
     }
 
@@ -1099,6 +1096,14 @@ fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, 
     }
 }
 
+/// Width of a clock item, sized to its text so a long string like
+/// "[UTC+0] 9:26:03 PM" cannot overflow into the neighbouring button.
+/// 13px monospace glyphs advance ~7.8px; 8px padding on each side.
+fn clock_width(time: &str) -> f64 {
+    let glyphs = time.chars().count() as f64;
+    (glyphs * 7.8 + 16.0).max(80.0)
+}
+
 /// Calculate width of a section's items
 pub fn calculate_section_width(section: &ToolbarSection, config: &ToolbarConfig) -> f64 {
     let mut width = 0.0;
@@ -1138,8 +1143,8 @@ pub fn calculate_section_width(section: &ToolbarSection, config: &ToolbarConfig)
                 };
                 width += item_width + config.spacing;
             }
-            ToolbarItem::Clock { .. } => {
-                width += 140.0 + config.spacing; // Fixed clock width for [UTC+XX] HH:MM:SS
+            ToolbarItem::Clock { time, .. } => {
+                width += clock_width(time) + config.spacing;
             }
             ToolbarItem::ColorButton { .. } => {
                 width += config.item_size + config.spacing;
@@ -1544,7 +1549,7 @@ pub fn draw_toolbar_with_icons(
                 advance
             }
             ToolbarItem::Clock { id, time } => {
-                let clock_width = 140.0;
+                let clock_width = clock_width(time);
                 let advance = clock_width + config.spacing;
                 let item_end = pos + clock_width;
 

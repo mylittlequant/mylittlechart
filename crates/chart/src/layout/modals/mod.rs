@@ -19,6 +19,8 @@ pub mod preset_name_input;
 pub mod chart_browser;
 pub mod tags_tabs_modal;
 pub mod watchlist_modal;
+pub mod clock_popup;
+pub use clock_popup::{render_clock_popup, ClockPopupResult};
 pub mod alert_settings;
 pub use alert_settings::*;
 pub mod compare_settings;

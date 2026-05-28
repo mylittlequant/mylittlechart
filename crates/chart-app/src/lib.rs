@@ -63,6 +63,7 @@ use zengeld_chart::indicator_source::{IndicatorSource, AlertRenderData, AlertRen
 use zengeld_chart::ui::modal_state::{ModalState, IndicatorCatalogItem};
 use zengeld_chart::ui::modal_settings::{ChartScreenArea, WatchlistModalState, WatchlistGroupNameInputState};
 use zengeld_chart::layout::modals::watchlist_modal::{render_watchlist_modal, WatchlistEntry, WatchlistGroupInfo, render_wl_group_name_input, WlGroupNameInputResult};
+use zengeld_chart::layout::modals::clock_popup::render_clock_popup;
 use zengeld_terminal_indicators::IndicatorManager;
 use live_data::{DataBridge, LiveUpdate, LiveDataProvider};
 
@@ -3956,6 +3957,30 @@ impl ChartApp {
         } else {
             None
         };
+
+        // 8d. Render clock popup (timezone selector + 24h toggle)
+        if self.panel_app.clock_popup_state.is_open {
+            let bottom_toolbar_y = h - panel_layout.bottom_toolbar_rect.height;
+            let (active_offset, use_24h) = self.panel_app.panel_grid.active_window()
+                .map(|w| (
+                    w.scale_settings.time_format.timezone_offset_hours,
+                    w.scale_settings.time_format.use_24h,
+                ))
+                .unwrap_or((0, false));
+            let hovered = self.panel_app.clock_popup_state.hovered_item.as_deref();
+            render_clock_popup(
+                ctx,
+                w,
+                h,
+                bottom_toolbar_y,
+                active_offset,
+                use_24h,
+                hovered,
+                &frame_theme,
+                &toolbar_theme,
+                &mut self.input_coordinator.borrow_mut(),
+            );
+        }
 
         // 9. End frame — collect widget responses (ignored for now)
         let _rt4 = std::time::Instant::now(); // checkpoint: after sidebar + modals

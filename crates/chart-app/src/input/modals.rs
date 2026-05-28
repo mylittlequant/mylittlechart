@@ -190,11 +190,6 @@ impl ChartApp {
                 }
             }
 
-            // ── More — not yet implemented ───────────────────────────────────
-            "inline:more" => {
-                eprintln!("[ChartApp] inline: 'inline:more' not yet implemented");
-            }
-
             // ── Style chevron — toggle style dropdown ────────────────────────
             "inline:style_menu" => {
                 let was_open = self.panel_app.toolbar_state.open_inline_style_dropdown;

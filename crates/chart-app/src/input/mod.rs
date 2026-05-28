@@ -4276,6 +4276,7 @@ impl ChartApp {
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.watchlist_modal.hovered_widget = None;
+        self.panel_app.clock_popup_state.hovered_item = None;
         // Reset agent/slot hover highlights each frame; re-set below if still hovering.
         self.sidebar_state.hovered_agent_leaf = None;
         self.sidebar_state.hovered_free_leaf = None;
@@ -4329,6 +4330,11 @@ impl ChartApp {
                             _ => zengeld_chart::LeafTabHoverZone::Body,
                         };
                     }
+                }
+            } else if id_str.starts_with("clock_popup:") {
+                // Strip the "clock_popup:" prefix to match hovered_item keys used in renderer.
+                if let Some(item) = id_str.strip_prefix("clock_popup:") {
+                    self.panel_app.clock_popup_state.hovered_item = Some(item.to_string());
                 }
             } else if id_str.starts_with("wl_modal:") || id_str.starts_with("wl_group_name:") {
                 self.watchlist_modal.hovered_widget = Some(id_str.to_string());

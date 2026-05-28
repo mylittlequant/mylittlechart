@@ -70,10 +70,11 @@ impl TimeFormatSettings {
         };
     }
 
-    /// Get timezone display label with city name
-    pub fn timezone_label(&self) -> String {
-        let offset = self.timezone_offset_hours;
-        let city = match offset {
+    /// Map a UTC offset (hours) to the representative city name.
+    ///
+    /// Returns an empty string for offsets outside -12..=+12.
+    pub fn city_for_offset(offset: i32) -> &'static str {
+        match offset {
             -12 => "Бейкер",
             -11 => "Паго-Паго",
             -10 => "Гонолулу",
@@ -100,7 +101,13 @@ impl TimeFormatSettings {
             11 => "Магадан",
             12 => "Окленд",
             _ => "",
-        };
+        }
+    }
+
+    /// Get timezone display label with city name
+    pub fn timezone_label(&self) -> String {
+        let offset = self.timezone_offset_hours;
+        let city = Self::city_for_offset(offset);
         if offset >= 0 {
             format!("(UTC+{}) {}", offset, city)
         } else {

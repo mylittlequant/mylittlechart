@@ -2842,8 +2842,7 @@ impl ChartApp {
 
             // Clock button — toggle clock popup
             if item_id == "clock" {
-                // TODO: Clock popup not yet implemented in chart-app
-                eprintln!("[ChartApp] Clock button clicked");
+                self.panel_app.clock_popup_state.toggle(0.0, 0.0);
                 return;
             }
 
@@ -3347,6 +3346,29 @@ impl ChartApp {
             self.watchlist_modal.drag_reorder = None;
             self.watchlist_modal.drag_reorder_pending = None;
             self.handle_watchlist_modal_click(rest, x, y);
+            return;
+        }
+
+        // === Clock popup clicks ===
+        if widget_id == "clock_popup:bg" {
+            self.panel_app.clock_popup_state.close();
+            return;
+        }
+        if let Some(item) = widget_id.strip_prefix("clock_popup:") {
+            if item == "clock:use_24h" {
+                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    window.scale_settings.time_format.use_24h =
+                        !window.scale_settings.time_format.use_24h;
+                }
+                // keep popup open when toggling 24h
+            } else if let Some(off) = item.strip_prefix("tz:") {
+                if let Ok(offset) = off.parse::<i32>() {
+                    if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                        window.scale_settings.time_format.timezone_offset_hours = offset;
+                    }
+                }
+                self.panel_app.clock_popup_state.close();
+            }
             return;
         }
 

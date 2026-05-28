@@ -2396,6 +2396,8 @@ pub struct ChartPanelApp {
     pub compare_settings_state: CompareSettingsState,
     /// User settings modal state.
     pub user_settings_state: crate::ui::modal_settings::UserSettingsState,
+    /// Clock popup state (timezone selector + 24h toggle).
+    pub clock_popup_state: crate::ui::ClockPopupState,
 
     // Panel color tag picker — opened when the user clicks the colored square
     // on an overlay tab header.
@@ -2463,6 +2465,7 @@ impl ChartPanelApp {
             alert_settings_state: AlertSettingsState::new(),
             compare_settings_state: CompareSettingsState::new(),
             user_settings_state: crate::ui::modal_settings::UserSettingsState::default(),
+            clock_popup_state: crate::ui::ClockPopupState::default(),
             panel_color_picker: crate::ui::color_picker_state::ColorPickerState::new(),
             panel_color_picker_leaf: None,
             leaf_color_tags: std::collections::HashMap::new(),
