@@ -4,6 +4,7 @@
 //! Positioned flush with the right edge and above the bottom toolbar.
 
 use crate::engine::render::RenderContext;
+use crate::i18n::{current_language, ClockKey};
 use crate::layout::render_chart::FrameTheme;
 use crate::scale_settings::TimeFormatSettings;
 use crate::ui::toolbar_render::ToolbarTheme;
@@ -28,14 +29,14 @@ pub struct ClockPopupResult {
 
 const POPUP_WIDTH: f64 = 200.0;
 const HEADER_H: f64 = 36.0;
-const ITEM_H: f64 = 16.0;
+const ITEM_H: f64 = 24.0;
 const SEPARATOR_H: f64 = 13.0; // 4px gap + 1px line + 8px gap
 const CHECKBOX_AREA_H: f64 = 24.0;
 const CHECKBOX_SIZE: f64 = 14.0;
 const TZ_COUNT: f64 = 25.0; // offsets -12..=+12
 
-/// Total popup height.
-const POPUP_HEIGHT: f64 = HEADER_H + TZ_COUNT * ITEM_H + SEPARATOR_H + CHECKBOX_AREA_H;
+/// Total popup height: header + TZ list + separator + two checkboxes.
+const POPUP_HEIGHT: f64 = HEADER_H + TZ_COUNT * ITEM_H + SEPARATOR_H + CHECKBOX_AREA_H * 2.0;
 
 // =============================================================================
 // Renderer
@@ -51,6 +52,7 @@ pub fn render_clock_popup(
     bottom_toolbar_y: f64,
     active_offset: i32,
     use_24h: bool,
+    show_utc: bool,
     hovered_item: Option<&str>,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
@@ -89,14 +91,14 @@ pub fn render_clock_popup(
     );
 
     // -------------------------------------------------------------------------
-    // Header "Часовой пояс"
+    // Header
     // -------------------------------------------------------------------------
-    ctx.set_font("bold 12px sans-serif");
+    ctx.set_font("bold 13px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(
-        "Часовой пояс",
+        ClockKey::Timezone.get(current_language()),
         popup_x + 12.0,
         popup_y + HEADER_H / 2.0,
     );
@@ -120,21 +122,17 @@ pub fn render_clock_popup(
 
         // Item background
         if is_active {
-            ctx.set_fill_color("#2962FF33");
+            ctx.set_fill_color(toolbar_theme.item_bg_active.as_str());
             ctx.fill_rect(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, ITEM_H);
         } else if is_hovered {
-            ctx.set_fill_color("#ffffff11");
+            ctx.set_fill_color(toolbar_theme.item_bg_hover.as_str());
             ctx.fill_rect(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, ITEM_H);
         }
 
-        // Item text
-        let text_color = if is_active {
-            "#2962FF"
-        } else {
-            toolbar_theme.item_text.as_str()
-        };
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(text_color);
+        // Item text — keep primary color on the active row; only the
+        // background changes, so the label stays readable on the accent fill.
+        ctx.set_font("13px sans-serif");
+        ctx.set_fill_color(toolbar_theme.item_text.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(&label, popup_x + 12.0, cy + ITEM_H / 2.0);
@@ -170,7 +168,7 @@ pub fn render_clock_popup(
 
     // Checkbox square
     if use_24h {
-        ctx.set_fill_color("#2962FF");
+        ctx.set_fill_color(toolbar_theme.accent.as_str());
     } else {
         ctx.set_fill_color(&frame_theme.toolbar_bg);
     }
@@ -197,11 +195,61 @@ pub fn render_clock_popup(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("24-часовой формат", cb_text_x, cb_cy);
+    ctx.fill_text(ClockKey::Use24h.get(current_language()), cb_text_x, cb_cy);
 
     // Hit zone for checkbox row
     input_coordinator.register_on_layer(
         "clock_popup:clock:use_24h",
+        uzor::types::Rect::new(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, CHECKBOX_AREA_H),
+        uzor::input::Sense::CLICK,
+        &layer_id,
+    );
+
+    cy += CHECKBOX_AREA_H;
+
+    // -------------------------------------------------------------------------
+    // Checkbox "Показывать UTC"
+    // -------------------------------------------------------------------------
+    let cb2_cy = cy + CHECKBOX_AREA_H / 2.0;
+    let cb2_top = cb2_cy - CHECKBOX_SIZE / 2.0;
+
+    // Checkbox square
+    if show_utc {
+        ctx.set_fill_color(toolbar_theme.accent.as_str());
+    } else {
+        ctx.set_fill_color(&frame_theme.toolbar_bg);
+    }
+    ctx.fill_rounded_rect(cb_x, cb2_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(cb_x, cb2_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
+
+    // Checkmark (white, 2px stroke) when checked
+    if show_utc {
+        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_width(2.0);
+        ctx.begin_path();
+        ctx.move_to(cb_x + 2.0, cb2_top + CHECKBOX_SIZE / 2.0);
+        ctx.line_to(cb_x + CHECKBOX_SIZE / 2.0 - 1.0, cb2_top + CHECKBOX_SIZE - 3.0);
+        ctx.line_to(cb_x + CHECKBOX_SIZE - 2.0, cb2_top + 3.0);
+        ctx.stroke();
+        ctx.set_stroke_width(1.0);
+    }
+
+    // Checkbox label
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(
+        ClockKey::ShowUtcPrefix.get(current_language()),
+        cb_text_x,
+        cb2_cy,
+    );
+
+    // Hit zone for show_utc checkbox row
+    input_coordinator.register_on_layer(
+        "clock_popup:show_utc",
         uzor::types::Rect::new(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, CHECKBOX_AREA_H),
         uzor::input::Sense::CLICK,
         &layer_id,
