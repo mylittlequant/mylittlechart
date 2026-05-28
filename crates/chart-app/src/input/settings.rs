@@ -268,6 +268,12 @@ impl ChartApp {
                         eprintln!("[ChartApp] instrument:use_24h = {}", w.scale_settings.time_format.use_24h);
                     }
                 }
+                "show_utc_prefix" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
+                        w.scale_settings.time_format.show_utc_prefix = !w.scale_settings.time_format.show_utc_prefix;
+                        eprintln!("[ChartApp] instrument:show_utc_prefix = {}", w.scale_settings.time_format.show_utc_prefix);
+                    }
+                }
                 "date_format_cycle" => {
                     if let Some(w) = self.panel_app.panel_grid.active_window_mut() {
                         w.scale_settings.time_format.date_format = w.scale_settings.time_format.date_format.next();

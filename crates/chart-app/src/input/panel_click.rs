@@ -3361,6 +3361,12 @@ impl ChartApp {
                         !window.scale_settings.time_format.use_24h;
                 }
                 // keep popup open when toggling 24h
+            } else if item == "show_utc" {
+                if let Some(window) = self.panel_app.panel_grid.active_window_mut() {
+                    window.scale_settings.time_format.show_utc_prefix =
+                        !window.scale_settings.time_format.show_utc_prefix;
+                }
+                // keep popup open
             } else if let Some(off) = item.strip_prefix("tz:") {
                 if let Ok(offset) = off.parse::<i32>() {
                     if let Some(window) = self.panel_app.panel_grid.active_window_mut() {

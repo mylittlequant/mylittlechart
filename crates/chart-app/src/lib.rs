@@ -3198,11 +3198,12 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.active_window() {
                 let time_fmt = &window.scale_settings.time_format;
                 let time = time_fmt.format_clock_time(utc_secs);
-                let offset = time_fmt.timezone_offset_hours;
-                if offset >= 0 {
-                    format!("[UTC+{}] {}", offset, time)
+                if !time_fmt.show_utc_prefix {
+                    time
+                } else if time_fmt.timezone_offset_hours >= 0 {
+                    format!("[UTC+{}] {}", time_fmt.timezone_offset_hours, time)
                 } else {
-                    format!("[UTC{}] {}", offset, time)
+                    format!("[UTC{}] {}", time_fmt.timezone_offset_hours, time)
                 }
             } else {
                 let hours = (utc_secs / 3600) % 24;
@@ -3961,12 +3962,13 @@ impl ChartApp {
         // 8d. Render clock popup (timezone selector + 24h toggle)
         if self.panel_app.clock_popup_state.is_open {
             let bottom_toolbar_y = h - panel_layout.bottom_toolbar_rect.height;
-            let (active_offset, use_24h) = self.panel_app.panel_grid.active_window()
+            let (active_offset, use_24h, show_utc) = self.panel_app.panel_grid.active_window()
                 .map(|w| (
                     w.scale_settings.time_format.timezone_offset_hours,
                     w.scale_settings.time_format.use_24h,
+                    w.scale_settings.time_format.show_utc_prefix,
                 ))
-                .unwrap_or((0, false));
+                .unwrap_or((0, false, true));
             let hovered = self.panel_app.clock_popup_state.hovered_item.as_deref();
             render_clock_popup(
                 ctx,
@@ -3975,6 +3977,7 @@ impl ChartApp {
                 bottom_toolbar_y,
                 active_offset,
                 use_24h,
+                show_utc,
                 hovered,
                 &frame_theme,
                 &toolbar_theme,
@@ -4222,11 +4225,12 @@ impl ChartApp {
             if let Some(window) = self.panel_app.panel_grid.active_window() {
                 let time_fmt = &window.scale_settings.time_format;
                 let time = time_fmt.format_clock_time(utc_secs);
-                let offset = time_fmt.timezone_offset_hours;
-                if offset >= 0 {
-                    format!("[UTC+{}] {}", offset, time)
+                if !time_fmt.show_utc_prefix {
+                    time
+                } else if time_fmt.timezone_offset_hours >= 0 {
+                    format!("[UTC+{}] {}", time_fmt.timezone_offset_hours, time)
                 } else {
-                    format!("[UTC{}] {}", offset, time)
+                    format!("[UTC{}] {}", time_fmt.timezone_offset_hours, time)
                 }
             } else {
                 let hours = (utc_secs / 3600) % 24;
@@ -6071,7 +6075,7 @@ impl ChartApp {
 
         let (auto_scale, vert_lines, horz_lines,
              price_scale_width, time_scale_height,
-             time_fmt_use_24h, time_fmt_show_dow, tz_label, date_fmt_label, precision_lbl,
+             time_fmt_use_24h, time_fmt_show_dow, time_fmt_show_utc, tz_label, date_fmt_label, precision_lbl,
              legend_show_ohlc, legend_show_change, legend_show_percent,
              tooltip_visible, tooltip_follow_cursor) =
             self.panel_app
@@ -6087,6 +6091,7 @@ impl ChartApp {
                     w.scale_settings.time_scale_height,
                     tf.use_24h,
                     tf.show_day_of_week,
+                    tf.show_utc_prefix,
                     tf.timezone_label(),
                     tf.date_format.label().to_string(),
                     zengeld_chart::scale_settings::precision_label(
@@ -6101,7 +6106,7 @@ impl ChartApp {
             })
             .unwrap_or_else(|| (
                 true, true, true, 70.0, 30.0,
-                true, false,
+                true, false, true,
                 "(UTC+0) Лондон".to_string(),
                 "21.01.2026".to_string(),
                 "Авто".to_string(),
@@ -6126,6 +6131,7 @@ impl ChartApp {
                 precision_label: precision_lbl.clone(),
                 timezone_label: tz_label.clone(),
                 use_24h: time_fmt_use_24h,
+                show_utc_prefix: time_fmt_show_utc,
                 date_format_label: date_fmt_label.clone(),
                 show_day_of_week: time_fmt_show_dow,
                 show_bar_countdown: self.panel_app.panel_grid

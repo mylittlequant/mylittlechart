@@ -4,6 +4,7 @@
 //! This module re-exports them and adds chart-specific translation keys.
 
 mod keys;
+mod tables;
 mod translations;
 
 // Re-export core i18n from uzor
@@ -22,6 +23,7 @@ pub use keys::{
     LabelPositionKey,
     ToolbarTooltipKey,
     WizardKey,
+    ClockKey,
 };
 
 // Chart-specific convenience functions (use uzor's Language)

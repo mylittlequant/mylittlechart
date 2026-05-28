@@ -4,72 +4,51 @@
 //! This module defines chart-specific keys only.
 
 use uzor::i18n::Language;
+use super::tables::{
+    MENU_KEY_TABLE,
+    CONFIG_KEY_TABLE,
+    WAVE_DEGREE_KEY_TABLE,
+    STYLE_KEY_TABLE,
+    LABEL_POSITION_KEY_TABLE,
+    TOOLBAR_TOOLTIP_KEY_TABLE,
+    WIZARD_KEY_TABLE,
+    CLOCK_KEY_TABLE,
+};
 
 // =============================================================================
 // Context Menu Keys
 // =============================================================================
 
 /// Context menu action keys
+///
+/// Variant order is **frozen** — discriminant == row index in `MENU_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum MenuKey {
-    OpenSettings,
-    Delete,
-    Clone,
-    Copy,
-    LockUnlock,
-    ShowHide,
-    BringToFront,
-    SendToBack,
-    BringForward,
-    SendBackward,
-    SyncToAllCharts,
-    SyncEverywhere,
-    NoSync,
+    OpenSettings    = 0,
+    Delete          = 1,
+    Clone           = 2,
+    Copy            = 3,
+    LockUnlock      = 4,
+    ShowHide        = 5,
+    BringToFront    = 6,
+    SendToBack      = 7,
+    BringForward    = 8,
+    SendBackward    = 9,
+    SyncToAllCharts = 10,
+    SyncEverywhere  = 11,
+    NoSync          = 12,
 }
 
 impl MenuKey {
+    pub const COUNT: usize = 13;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::OpenSettings => "Settings",
-            Self::Delete => "Delete",
-            Self::Clone => "Clone",
-            Self::Copy => "Copy",
-            Self::LockUnlock => "Lock/Unlock",
-            Self::ShowHide => "Show/Hide",
-            Self::BringToFront => "Bring to Front",
-            Self::SendToBack => "Send to Back",
-            Self::BringForward => "Bring Forward",
-            Self::SendBackward => "Send Backward",
-            Self::SyncToAllCharts => "Sync to All Charts",
-            Self::SyncEverywhere => "Sync Everywhere",
-            Self::NoSync => "Don't Sync",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::OpenSettings => "Настройки",
-            Self::Delete => "Удалить",
-            Self::Clone => "Клонировать",
-            Self::Copy => "Копировать",
-            Self::LockUnlock => "Заблокировать",
-            Self::ShowHide => "Скрыть",
-            Self::BringToFront => "На передний план",
-            Self::SendToBack => "На задний план",
-            Self::BringForward => "Переместить вперёд",
-            Self::SendBackward => "Переместить назад",
-            Self::SyncToAllCharts => "Синхронизировать на всех графиках",
-            Self::SyncEverywhere => "Синхр. везде",
-            Self::NoSync => "Не синхронизировать",
-        }
+        let row = &MENU_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -78,280 +57,123 @@ impl MenuKey {
 // =============================================================================
 
 /// Configuration section/group keys
+///
+/// Variant order is **frozen** — discriminant == row index in `CONFIG_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum ConfigKey {
     // Common sections
-    Labels,
-    Levels,
-    Percentages,
-    LabelPosition,
-    ExtendLines,
-    Prices,
-    Coordinates,
-    Style,
-    Appearance,
-    Visibility,
+    Labels          = 0,
+    Levels          = 1,
+    Percentages     = 2,
+    LabelPosition   = 3,
+    ExtendLines     = 4,
+    Prices          = 5,
+    Coordinates     = 6,
+    Style           = 7,
+    Appearance      = 8,
+    Visibility      = 9,
 
     // Specific properties
-    ShowLabels,
-    ShowLevels,
-    ShowPercentages,
-    ShowPrices,
-    ShowCoordinates,
-    ShowNeckline,
-    ShowBackground,
-    ShowLines,
-    ShowRatios,
-    ShowTrendlines,
-    ShowPrice,
-    ShowLine,
-    ShowHeader,
-    ExtendLeft,
-    ExtendRight,
-    Reverse,
-    LogScale,
+    ShowLabels      = 10,
+    ShowLevels      = 11,
+    ShowPercentages = 12,
+    ShowPrices      = 13,
+    ShowCoordinates = 14,
+    ShowNeckline    = 15,
+    ShowBackground  = 16,
+    ShowLines       = 17,
+    ShowRatios      = 18,
+    ShowTrendlines  = 19,
+    ShowPrice       = 20,
+    ShowLine        = 21,
+    ShowHeader      = 22,
+    ExtendLeft      = 23,
+    ExtendRight     = 24,
+    Reverse         = 25,
+    LogScale        = 26,
 
     // Fibonacci specific
-    FibLevels,
-    CustomLevels,
-    TrendBased,
+    FibLevels       = 27,
+    CustomLevels    = 28,
+    TrendBased      = 29,
 
     // Wave specific
-    WaveDegree,
-    WaveStyle,
+    WaveDegree      = 30,
+    WaveStyle       = 31,
 
     // Line/drawing specific
-    TrendLine,
-    Extend,
-    FullCircle,
-    Fill,
+    TrendLine       = 32,
+    Extend          = 33,
+    FullCircle      = 34,
+    Fill            = 35,
 
     // Pitchfork level modes
-    LevelMode,
-    AllLevels,
-    BaseLevels,
-    FibonacciLevels,
+    LevelMode       = 36,
+    AllLevels       = 37,
+    BaseLevels      = 38,
+    FibonacciLevels = 39,
 
     // Elliott wave and label settings
-    LabelFontSize,
-    LabelColor,
-    Inverted,
+    LabelFontSize   = 40,
+    LabelColor      = 41,
+    Inverted        = 42,
 
     // Triangle pattern types
-    TriangleType,
-    Symmetrical,
-    Ascending,
-    Descending,
-    Expanding,
+    TriangleType    = 43,
+    Symmetrical     = 44,
+    Ascending       = 45,
+    Descending      = 46,
+    Expanding       = 47,
 
     // Annotation text settings
-    FontSize,
-    TextColor,
-    HeaderColor,
-    GridColor,
-    HeaderTextColor,
+    FontSize        = 48,
+    TextColor       = 49,
+    HeaderColor     = 50,
+    GridColor       = 51,
+    HeaderTextColor = 52,
 
     // Text formatting
-    Content,
-    Comment,
-    Bold,
-    Italic,
-    BubbleWidth,
-    BubbleHeight,
-    Expanded,
+    Content         = 53,
+    Comment         = 54,
+    Bold            = 55,
+    Italic          = 56,
+    BubbleWidth     = 57,
+    BubbleHeight    = 58,
+    Expanded        = 59,
 
     // Directions for signpost
-    Direction,
-    DirectionRight,
-    DirectionLeft,
-    DirectionUp,
-    DirectionDown,
+    Direction       = 60,
+    DirectionRight  = 61,
+    DirectionLeft   = 62,
+    DirectionUp     = 63,
+    DirectionDown   = 64,
 
     // Table settings
-    Rows,
-    Columns,
-    Header,
-    Cell,
+    Rows            = 65,
+    Columns         = 66,
+    Header          = 67,
+    Cell            = 68,
 
     // Text alignment
-    HorizontalAlign,
-    VerticalAlign,
-    AlignLeft,
-    AlignCenter,
-    AlignRight,
-    AlignTop,
-    AlignBottom,
+    HorizontalAlign = 69,
+    VerticalAlign   = 70,
+    AlignLeft       = 71,
+    AlignCenter     = 72,
+    AlignRight      = 73,
+    AlignTop        = 74,
+    AlignBottom     = 75,
 }
 
 impl ConfigKey {
+    pub const COUNT: usize = 76;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::Labels => "Labels",
-            Self::Levels => "Levels",
-            Self::Percentages => "Percentages",
-            Self::LabelPosition => "Label Position",
-            Self::ExtendLines => "Extend Lines",
-            Self::Prices => "Prices",
-            Self::Coordinates => "Coordinates",
-            Self::Style => "Style",
-            Self::Appearance => "Appearance",
-            Self::Visibility => "Visibility",
-            Self::ShowLabels => "Show Labels",
-            Self::ShowLevels => "Show Levels",
-            Self::ShowPercentages => "Show Percentages",
-            Self::ShowPrices => "Show Prices",
-            Self::ShowCoordinates => "Show Coordinates",
-            Self::ShowNeckline => "Show Neckline",
-            Self::ShowBackground => "Show Background",
-            Self::ShowLines => "Show Lines",
-            Self::ShowRatios => "Show Ratios",
-            Self::ShowTrendlines => "Show Trendlines",
-            Self::ShowPrice => "Show Price",
-            Self::ShowLine => "Show Line",
-            Self::ShowHeader => "Show Header",
-            Self::ExtendLeft => "Extend Left",
-            Self::ExtendRight => "Extend Right",
-            Self::Reverse => "Reverse",
-            Self::LogScale => "Log Scale",
-            Self::FibLevels => "Fib Levels",
-            Self::CustomLevels => "Custom Levels",
-            Self::TrendBased => "Trend Based",
-            Self::WaveDegree => "Wave Degree",
-            Self::WaveStyle => "Wave Style",
-            Self::TrendLine => "Trend Line",
-            Self::Extend => "Extend",
-            Self::FullCircle => "Full Circle",
-            Self::Fill => "Fill",
-            Self::LevelMode => "Level Mode",
-            Self::AllLevels => "All",
-            Self::BaseLevels => "Base (0.25, 0.5, ...)",
-            Self::FibonacciLevels => "Fibonacci (0.236, 0.382, ...)",
-            Self::LabelFontSize => "Label Font Size",
-            Self::LabelColor => "Label Color",
-            Self::Inverted => "Inverted",
-            Self::TriangleType => "Triangle Type",
-            Self::Symmetrical => "Symmetrical",
-            Self::Ascending => "Ascending",
-            Self::Descending => "Descending",
-            Self::Expanding => "Expanding",
-            Self::FontSize => "Font Size",
-            Self::TextColor => "Text Color",
-            Self::HeaderColor => "Header Color",
-            Self::GridColor => "Grid Color",
-            Self::HeaderTextColor => "Header Text Color",
-            Self::Content => "Text",
-            Self::Comment => "Comment",
-            Self::Bold => "Bold",
-            Self::Italic => "Italic",
-            Self::BubbleWidth => "Width",
-            Self::BubbleHeight => "Height",
-            Self::Expanded => "Expanded",
-            Self::Direction => "Direction",
-            Self::DirectionRight => "Right →",
-            Self::DirectionLeft => "Left ←",
-            Self::DirectionUp => "Up ↑",
-            Self::DirectionDown => "Down ↓",
-            Self::Rows => "Rows",
-            Self::Columns => "Columns",
-            Self::Header => "Header",
-            Self::Cell => "Cell",
-            Self::HorizontalAlign => "Horizontal Align",
-            Self::VerticalAlign => "Vertical Align",
-            Self::AlignLeft => "Left",
-            Self::AlignCenter => "Center",
-            Self::AlignRight => "Right",
-            Self::AlignTop => "Top",
-            Self::AlignBottom => "Bottom",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::Labels => "Метки",
-            Self::Levels => "Уровни",
-            Self::Percentages => "В процентах",
-            Self::LabelPosition => "Позиция меток",
-            Self::ExtendLines => "Продлить линии",
-            Self::Prices => "Цены",
-            Self::Coordinates => "Координаты",
-            Self::Style => "Стиль",
-            Self::Appearance => "Внешний вид",
-            Self::Visibility => "Видимость",
-            Self::ShowLabels => "Показать метки",
-            Self::ShowLevels => "Показать уровни",
-            Self::ShowPercentages => "Показать проценты",
-            Self::ShowPrices => "Показать цены",
-            Self::ShowCoordinates => "Показать координаты",
-            Self::ShowNeckline => "Показывать линию шеи",
-            Self::ShowBackground => "Показать фон",
-            Self::ShowLines => "Показывать линии",
-            Self::ShowRatios => "Показывать соотношения",
-            Self::ShowTrendlines => "Показывать трендлинии",
-            Self::ShowPrice => "Показать цену",
-            Self::ShowLine => "Показать линию",
-            Self::ShowHeader => "Показать заголовок",
-            Self::ExtendLeft => "Продлить влево",
-            Self::ExtendRight => "Продлить вправо",
-            Self::Reverse => "Инвертировать",
-            Self::LogScale => "Логарифмическая шкала",
-            Self::FibLevels => "Уровни Фибоначчи",
-            Self::CustomLevels => "Пользовательские уровни",
-            Self::TrendBased => "На основе тренда",
-            Self::WaveDegree => "Степень волны",
-            Self::WaveStyle => "Стиль волны",
-            Self::TrendLine => "Трендовая линия",
-            Self::Extend => "Продлить",
-            Self::FullCircle => "Полный круг",
-            Self::Fill => "Заливка",
-            Self::LevelMode => "Режим уровней",
-            Self::AllLevels => "Все",
-            Self::BaseLevels => "Базовые (0.25, 0.5, ...)",
-            Self::FibonacciLevels => "Фибоначчи (0.236, 0.382, ...)",
-            Self::LabelFontSize => "Размер шрифта меток",
-            Self::LabelColor => "Цвет меток",
-            Self::Inverted => "Инвертировать",
-            Self::TriangleType => "Тип треугольника",
-            Self::Symmetrical => "Симметричный",
-            Self::Ascending => "Восходящий",
-            Self::Descending => "Нисходящий",
-            Self::Expanding => "Расширяющийся",
-            Self::FontSize => "Размер шрифта",
-            Self::TextColor => "Цвет текста",
-            Self::HeaderColor => "Цвет заголовка",
-            Self::GridColor => "Цвет сетки",
-            Self::HeaderTextColor => "Цвет текста заголовка",
-            Self::Content => "Текст",
-            Self::Comment => "Комментарий",
-            Self::Bold => "Жирный",
-            Self::Italic => "Курсив",
-            Self::BubbleWidth => "Ширина",
-            Self::BubbleHeight => "Высота",
-            Self::Expanded => "Развёрнута",
-            Self::Direction => "Направление",
-            Self::DirectionRight => "Вправо →",
-            Self::DirectionLeft => "Влево ←",
-            Self::DirectionUp => "Вверх ↑",
-            Self::DirectionDown => "Вниз ↓",
-            Self::Rows => "Строки",
-            Self::Columns => "Столбцы",
-            Self::Header => "Заголовок",
-            Self::Cell => "Ячейка",
-            Self::HorizontalAlign => "Горизонтальное выравнивание",
-            Self::VerticalAlign => "Вертикальное выравнивание",
-            Self::AlignLeft => "Слева",
-            Self::AlignCenter => "По центру",
-            Self::AlignRight => "Справа",
-            Self::AlignTop => "Сверху",
-            Self::AlignBottom => "Снизу",
-        }
+        let row = &CONFIG_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -360,72 +182,37 @@ impl ConfigKey {
 // =============================================================================
 
 /// Elliott Wave degree names
+///
+/// Variant order is **frozen** — discriminant == row index in `WAVE_DEGREE_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum WaveDegreeKey {
-    Supermillennium,
-    Millennium,
-    Submillennium,
-    GrandSupercycle,
-    Supercycle,
-    Cycle,
-    Primary,
-    Intermediate,
-    Minor,
-    Minute,
-    Minuette,
-    Subminuette,
-    Micro,
-    Submicro,
-    Miniscule,
+    Supermillennium = 0,
+    Millennium      = 1,
+    Submillennium   = 2,
+    GrandSupercycle = 3,
+    Supercycle      = 4,
+    Cycle           = 5,
+    Primary         = 6,
+    Intermediate    = 7,
+    Minor           = 8,
+    Minute          = 9,
+    Minuette        = 10,
+    Subminuette     = 11,
+    Micro           = 12,
+    Submicro        = 13,
+    Miniscule       = 14,
 }
 
 impl WaveDegreeKey {
+    pub const COUNT: usize = 15;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::Supermillennium => "Supermillennium",
-            Self::Millennium => "Millennium",
-            Self::Submillennium => "Submillennium",
-            Self::GrandSupercycle => "Grand Supercycle",
-            Self::Supercycle => "Supercycle",
-            Self::Cycle => "Cycle",
-            Self::Primary => "Primary",
-            Self::Intermediate => "Intermediate",
-            Self::Minor => "Minor",
-            Self::Minute => "Minute",
-            Self::Minuette => "Minuette",
-            Self::Subminuette => "Subminuette",
-            Self::Micro => "Micro",
-            Self::Submicro => "Submicro",
-            Self::Miniscule => "Miniscule",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::Supermillennium => "Супермиллениум",
-            Self::Millennium => "Миллениум",
-            Self::Submillennium => "Субмиллениум",
-            Self::GrandSupercycle => "Гранд Суперцикл",
-            Self::Supercycle => "Суперцикл",
-            Self::Cycle => "Цикл",
-            Self::Primary => "Первичная",
-            Self::Intermediate => "Промежуточная",
-            Self::Minor => "Второстепенная",
-            Self::Minute => "Минута",
-            Self::Minuette => "Минуэт",
-            Self::Subminuette => "Субминуэт",
-            Self::Micro => "Микро",
-            Self::Submicro => "Субмикро",
-            Self::Miniscule => "Минускул",
-        }
+        let row = &WAVE_DEGREE_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -434,51 +221,30 @@ impl WaveDegreeKey {
 // =============================================================================
 
 /// Style name keys (for line styles, presets, etc.)
+///
+/// Variant order is **frozen** — discriminant == row index in `STYLE_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum StyleKey {
-    Standard,
-    Extended,
-    Filled,
-    Thick,
-    Dashed,
-    Dotted,
-    Thin,
-    Bold,
+    Standard = 0,
+    Extended = 1,
+    Filled   = 2,
+    Thick    = 3,
+    Dashed   = 4,
+    Dotted   = 5,
+    Thin     = 6,
+    Bold     = 7,
 }
 
 impl StyleKey {
+    pub const COUNT: usize = 8;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::Standard => "Standard",
-            Self::Extended => "Extended",
-            Self::Filled => "Filled",
-            Self::Thick => "Thick",
-            Self::Dashed => "Dashed",
-            Self::Dotted => "Dotted",
-            Self::Thin => "Thin",
-            Self::Bold => "Bold",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::Standard => "Стандарт",
-            Self::Extended => "Расширенный",
-            Self::Filled => "С заливкой",
-            Self::Thick => "Толстая",
-            Self::Dashed => "Пунктирная",
-            Self::Dotted => "Точечная",
-            Self::Thin => "Тонкая",
-            Self::Bold => "Жирная",
-        }
+        let row = &STYLE_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -487,54 +253,31 @@ impl StyleKey {
 // =============================================================================
 
 /// Label position keys
+///
+/// Variant order is **frozen** — discriminant == row index in `LABEL_POSITION_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum LabelPositionKey {
-    Left,
-    Right,
-    Center,
-    Top,
-    Bottom,
-    Inside,
-    Outside,
-    Above,
-    Below,
+    Left    = 0,
+    Right   = 1,
+    Center  = 2,
+    Top     = 3,
+    Bottom  = 4,
+    Inside  = 5,
+    Outside = 6,
+    Above   = 7,
+    Below   = 8,
 }
 
 impl LabelPositionKey {
+    pub const COUNT: usize = 9;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::Left => "Left",
-            Self::Right => "Right",
-            Self::Center => "Center",
-            Self::Top => "Top",
-            Self::Bottom => "Bottom",
-            Self::Inside => "Inside",
-            Self::Outside => "Outside",
-            Self::Above => "Above",
-            Self::Below => "Below",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::Left => "Слева",
-            Self::Right => "Справа",
-            Self::Center => "По центру",
-            Self::Top => "Сверху",
-            Self::Bottom => "Снизу",
-            Self::Inside => "Внутри",
-            Self::Outside => "Снаружи",
-            Self::Above => "Над",
-            Self::Below => "Под",
-        }
+        let row = &LABEL_POSITION_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -545,174 +288,74 @@ impl LabelPositionKey {
 /// Toolbar button tooltip keys — chart application specific.
 ///
 /// Window chrome tooltips (CloseWindow, Minimize, etc.) live in `uzor::i18n::TooltipKey`.
+/// Variant order is **frozen** — discriminant == row index in `TOOLBAR_TOOLTIP_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum ToolbarTooltipKey {
     // Drawing tools (left toolbar)
-    Crosshair,
-    TrendLine,
-    HorizontalLine,
-    VerticalLine,
-    FibRetracement,
-    Rectangle,
-    DrawingTools,
-    LineTool,
-    FibTool,
-    PatternTool,
-    BrushTool,
-    AnnotationTool,
-    IconTool,
-    ProjectionTool,
-    Lock,
-    Eye,
-    DeleteTool,
+    Crosshair         = 0,
+    TrendLine         = 1,
+    HorizontalLine    = 2,
+    VerticalLine      = 3,
+    FibRetracement    = 4,
+    Rectangle         = 5,
+    DrawingTools      = 6,
+    LineTool          = 7,
+    FibTool           = 8,
+    PatternTool       = 9,
+    BrushTool         = 10,
+    AnnotationTool    = 11,
+    IconTool          = 12,
+    ProjectionTool    = 13,
+    Lock              = 14,
+    Eye               = 15,
+    DeleteTool        = 16,
 
     // Actions (top toolbar)
-    Undo,
-    Redo,
-    MagnetMode,
-    StayInDrawingMode,
-    Snapshot,
-    Bookmark,
-    MeasureTool,
-    Indicators,
-    Settings,
-    Compare,
-    SymbolSelector,
-    TimeframeSelector,
-    ChartType,
-    Layout,
-    Presets,
-    Screenshot,
-    Expand,
-    MainMenu,
+    Undo              = 17,
+    Redo              = 18,
+    MagnetMode        = 19,
+    StayInDrawingMode = 20,
+    Snapshot          = 21,
+    Bookmark          = 22,
+    MeasureTool       = 23,
+    Indicators        = 24,
+    Settings          = 25,
+    Compare           = 26,
+    SymbolSelector    = 27,
+    TimeframeSelector = 28,
+    ChartType         = 29,
+    Layout            = 30,
+    Presets           = 31,
+    Screenshot        = 32,
+    Expand            = 33,
+    MainMenu          = 34,
 
     // Right toolbar (sidebar panels)
-    Watchlist,
-    Alerts,
-    ObjectTree,
-    Templates,
-    Signals,
-    Connectors,
-    Performance,
-    Agents,
+    Watchlist         = 35,
+    Alerts            = 36,
+    ObjectTree        = 37,
+    Templates         = 38,
+    Signals           = 39,
+    Connectors        = 40,
+    Performance       = 41,
+    Agents            = 42,
 
     // General
-    Search,
-    FullScreen,
-    SplitView,
-    ServerTime,
+    Search            = 43,
+    FullScreen        = 44,
+    SplitView         = 45,
+    ServerTime        = 46,
 }
 
 impl ToolbarTooltipKey {
+    pub const COUNT: usize = 47;
+
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
-    }
-
-    fn en(self) -> &'static str {
-        match self {
-            Self::Crosshair => "Crosshair",
-            Self::TrendLine => "Trend Line",
-            Self::HorizontalLine => "Horizontal Line",
-            Self::VerticalLine => "Vertical Line",
-            Self::FibRetracement => "Fibonacci Retracement",
-            Self::Rectangle => "Rectangle",
-            Self::DrawingTools => "Drawing Tools",
-            Self::LineTool => "Line Tools",
-            Self::FibTool => "Fibonacci Tools",
-            Self::PatternTool => "Pattern Tools",
-            Self::BrushTool => "Brush & Shapes",
-            Self::AnnotationTool => "Annotations",
-            Self::IconTool => "Icons & Images",
-            Self::ProjectionTool => "Positions & Projections",
-            Self::Lock => "Lock Drawings",
-            Self::Eye => "Show/Hide Drawings",
-            Self::DeleteTool => "Delete Tools",
-            Self::Undo => "Undo",
-            Self::Redo => "Redo",
-            Self::MagnetMode => "Magnet Mode",
-            Self::StayInDrawingMode => "Stay in Drawing Mode",
-            Self::Snapshot => "Take Snapshot",
-            Self::Bookmark => "Bookmark",
-            Self::MeasureTool => "Measure",
-            Self::Indicators => "Indicators",
-            Self::Settings => "Settings",
-            Self::Compare => "Compare Symbol",
-            Self::SymbolSelector => "Symbol Selector",
-            Self::TimeframeSelector => "Timeframe",
-            Self::ChartType => "Chart Type",
-            Self::Layout => "Layout",
-            Self::Presets => "Presets",
-            Self::Screenshot => "Screenshot",
-            Self::Expand => "Expand Chart",
-            Self::MainMenu => "Main Menu",
-            Self::Watchlist => "Watchlist",
-            Self::Alerts => "Alerts",
-            Self::ObjectTree => "Object Tree",
-            Self::Templates => "Templates",
-            Self::Signals => "Signals",
-            Self::Connectors => "Connectors",
-            Self::Performance => "Performance",
-            Self::Agents => "Agents",
-            Self::Search => "Search",
-            Self::FullScreen => "Full Screen",
-            Self::SplitView => "Split View",
-            Self::ServerTime => "Server Time",
-        }
-    }
-
-    fn ru(self) -> &'static str {
-        match self {
-            Self::Crosshair => "Перекрестие",
-            Self::TrendLine => "Трендовая линия",
-            Self::HorizontalLine => "Горизонтальная линия",
-            Self::VerticalLine => "Вертикальная линия",
-            Self::FibRetracement => "Уровни Фибоначчи",
-            Self::Rectangle => "Прямоугольник",
-            Self::DrawingTools => "Инструменты рисования",
-            Self::LineTool => "Инструменты линий",
-            Self::FibTool => "Инструменты Фибоначчи",
-            Self::PatternTool => "Инструменты паттернов",
-            Self::BrushTool => "Кисть и фигуры",
-            Self::AnnotationTool => "Аннотации",
-            Self::IconTool => "Иконки и изображения",
-            Self::ProjectionTool => "Позиции и проекции",
-            Self::Lock => "Заблокировать рисунки",
-            Self::Eye => "Показать/скрыть рисунки",
-            Self::DeleteTool => "Инструменты удаления",
-            Self::Undo => "Отменить",
-            Self::Redo => "Повторить",
-            Self::MagnetMode => "Режим магнита",
-            Self::StayInDrawingMode => "Оставаться в режиме рисования",
-            Self::Snapshot => "Сделать снимок",
-            Self::Bookmark => "Закладка",
-            Self::MeasureTool => "Измерить",
-            Self::Indicators => "Индикаторы",
-            Self::Settings => "Настройки",
-            Self::Compare => "Сравнить символ",
-            Self::SymbolSelector => "Выбор символа",
-            Self::TimeframeSelector => "Таймфрейм",
-            Self::ChartType => "Тип графика",
-            Self::Layout => "Макет",
-            Self::Presets => "Пресеты",
-            Self::Screenshot => "Снимок экрана",
-            Self::Expand => "Развернуть график",
-            Self::MainMenu => "Главное меню",
-            Self::Watchlist => "Список наблюдения",
-            Self::Alerts => "Оповещения",
-            Self::ObjectTree => "Дерево объектов",
-            Self::Templates => "Шаблоны",
-            Self::Signals => "Сигналы",
-            Self::Connectors => "Коннекторы",
-            Self::Performance => "Производительность",
-            Self::Agents => "Агенты",
-            Self::Search => "Поиск",
-            Self::FullScreen => "Полный экран",
-            Self::SplitView => "Разделить вид",
-            Self::ServerTime => "Серверное время",
-        }
+        let row = &TOOLBAR_TOOLTIP_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 
@@ -721,111 +364,85 @@ impl ToolbarTooltipKey {
 // =============================================================================
 
 /// Welcome Wizard UI string keys
+///
+/// Variant order is **frozen** — discriminant == row index in `WIZARD_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
 pub enum WizardKey {
     // Page 0 — Welcome + Language
-    WelcomeTo,
-    GetStarted,
+    WelcomeTo             = 0,
+    GetStarted            = 1,
 
     // Page 1 — Theme
-    Theme,
-    ChooseTheme,
+    Theme                 = 2,
+    ChooseTheme           = 3,
 
     // Page 2 — Profile + Passphrase
-    ProfileAndSecurity,
-    ProfileName,
-    Passphrase,
-    PassphrasePlaceholder,
-    MinPassphraseHint,
-    ConfirmPassphrase,
-    PassphraseMismatch,
-    ZtInfo1,
-    ZtInfo2,
-    ZtInfo3,
-    GenerateRecoveryPhrase,
+    ProfileAndSecurity    = 4,
+    ProfileName           = 5,
+    Passphrase            = 6,
+    PassphrasePlaceholder = 7,
+    MinPassphraseHint     = 8,
+    ConfirmPassphrase     = 9,
+    PassphraseMismatch    = 10,
+    ZtInfo1               = 11,
+    ZtInfo2               = 12,
+    ZtInfo3               = 13,
+    GenerateRecoveryPhrase = 14,
 
     // Page 3 — Recovery Key
-    RecoveryKey,
-    RecoveryWarning1,
-    RecoveryWarning2,
-    CopyKey,
-    SavedAndContinue,
+    RecoveryKey           = 15,
+    RecoveryWarning1      = 16,
+    RecoveryWarning2      = 17,
+    CopyKey               = 18,
+    SavedAndContinue      = 19,
 
     // Shared
-    Back,
-    Next,
-    Step2of4,
-    Step3of4,
-    Step4of4,
+    Back                  = 20,
+    Next                  = 21,
+    Step2of4              = 22,
+    Step3of4              = 23,
+    Step4of4              = 24,
 }
 
 impl WizardKey {
+    pub const COUNT: usize = 25;
+
     /// Get translation for this key
+    #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        match lang {
-            Language::En => self.en(),
-            Language::Ru => self.ru(),
-        }
+        let row = &WIZARD_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
+}
 
-    fn en(self) -> &'static str {
-        match self {
-            Self::WelcomeTo => "Welcome to",
-            Self::GetStarted => "Get Started",
-            Self::Theme => "Theme",
-            Self::ChooseTheme => "Choose your visual theme",
-            Self::ProfileAndSecurity => "Profile & Security",
-            Self::ProfileName => "Profile Name",
-            Self::Passphrase => "Passphrase",
-            Self::PassphrasePlaceholder => "Click to type passphrase\u{2026}",
-            Self::MinPassphraseHint => "Minimum 8 characters",
-            Self::ConfirmPassphrase => "Confirm Passphrase",
-            Self::PassphraseMismatch => "Passphrases don't match",
-            Self::ZtInfo1 => "Your passphrase locks a local container.",
-            Self::ZtInfo2 => "Store API keys in it if you want \u{2014} or just use it",
-            Self::ZtInfo3 => "as a regular entry password.",
-            Self::GenerateRecoveryPhrase => "Generate Recovery Phrase",
-            Self::RecoveryKey => "Recovery Key",
-            Self::RecoveryWarning1 => "Save this key in a safe place",
-            Self::RecoveryWarning2 => "If you lose your passphrase, this key is the only way to recover your data",
-            Self::CopyKey => "Copy Key",
-            Self::SavedAndContinue => "I've saved it \u{2014} continue",
-            Self::Back => "Back",
-            Self::Next => "Next",
-            Self::Step2of4 => "Step 2 of 4",
-            Self::Step3of4 => "Step 3 of 4",
-            Self::Step4of4 => "Step 4 of 4",
-        }
-    }
+// =============================================================================
+// Clock Popup Keys
+// =============================================================================
 
-    fn ru(self) -> &'static str {
-        match self {
-            Self::WelcomeTo => "Добро пожаловать в",
-            Self::GetStarted => "Начать",
-            Self::Theme => "Тема",
-            Self::ChooseTheme => "Выберите визуальную тему",
-            Self::ProfileAndSecurity => "Профиль и безопасность",
-            Self::ProfileName => "Имя профиля",
-            Self::Passphrase => "Пароль",
-            Self::PassphrasePlaceholder => "Нажмите, чтобы ввести пароль\u{2026}",
-            Self::MinPassphraseHint => "Минимум 8 символов",
-            Self::ConfirmPassphrase => "Подтвердите пароль",
-            Self::PassphraseMismatch => "Пароли не совпадают",
-            Self::ZtInfo1 => "Ваш пароль закрывает локальный контейнер.",
-            Self::ZtInfo2 => "Храните в нём API-ключи если хотите \u{2014}",
-            Self::ZtInfo3 => "или просто как обычный пароль входа.",
-            Self::GenerateRecoveryPhrase => "Сгенерировать фразу восстановления",
-            Self::RecoveryKey => "Ключ восстановления",
-            Self::RecoveryWarning1 => "Сохраните этот ключ в безопасном месте",
-            Self::RecoveryWarning2 => "Если вы забудете пароль, этот ключ — единственный способ восстановить данные",
-            Self::CopyKey => "Скопировать ключ",
-            Self::SavedAndContinue => "Я записал — продолжить",
-            Self::Back => "Назад",
-            Self::Next => "Далее",
-            Self::Step2of4 => "Шаг 2 из 4",
-            Self::Step3of4 => "Шаг 3 из 4",
-            Self::Step4of4 => "Шаг 4 из 4",
-        }
+/// Clock popup and time format setting keys
+///
+/// Variant order is **frozen** — discriminant == row index in `CLOCK_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ClockKey {
+    Timezone      = 0,
+    Use24h        = 1,
+    ShowUtcPrefix = 2,
+    DateFormat    = 3,
+    DayOfWeek     = 4,
+}
+
+impl ClockKey {
+    pub const COUNT: usize = 5;
+
+    /// Get translation for this key
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        let row = &CLOCK_KEY_TABLE[self as usize];
+        let s = row[lang as usize];
+        if !s.is_empty() { s } else { row[0] }
     }
 }
 

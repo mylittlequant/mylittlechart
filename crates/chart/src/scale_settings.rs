@@ -39,7 +39,7 @@ impl DateFormat {
 }
 
 /// Time format settings
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeFormatSettings {
     /// Date format preset
     pub date_format: DateFormat,
@@ -49,6 +49,21 @@ pub struct TimeFormatSettings {
     pub show_day_of_week: bool,
     /// Timezone UTC offset in hours (e.g., 3 for Moscow UTC+3, -5 for EST)
     pub timezone_offset_hours: i32,
+    /// Show UTC prefix in clock display (e.g. "[UTC+3]")
+    #[serde(default = "default_true")]
+    pub show_utc_prefix: bool,
+}
+
+impl Default for TimeFormatSettings {
+    fn default() -> Self {
+        Self {
+            date_format: DateFormat::default(),
+            use_24h: false,
+            show_day_of_week: false,
+            timezone_offset_hours: 0,
+            show_utc_prefix: true,
+        }
+    }
 }
 
 impl TimeFormatSettings {
@@ -58,6 +73,7 @@ impl TimeFormatSettings {
             use_24h: true,
             show_day_of_week: false,
             timezone_offset_hours: 3, // Moscow default
+            show_utc_prefix: true,
         }
     }
 

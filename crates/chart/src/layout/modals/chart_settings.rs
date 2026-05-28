@@ -5,6 +5,7 @@
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
+use crate::i18n::{current_language, ClockKey};
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{ChartSettingsModalResult, SliderTrackInfo};
 use crate::layout::render_ui::toolbar_to_widget_theme;
@@ -58,6 +59,8 @@ pub struct InstrumentSettings {
     pub timezone_label: String,
     /// 24-hour format enabled
     pub use_24h: bool,
+    /// Show UTC prefix in clock display
+    pub show_utc_prefix: bool,
     /// Date format label
     pub date_format_label: String,
     /// Show day of week
@@ -1053,7 +1056,7 @@ fn render_instrument_settings(
     // Timezone dropdown
     ctx.set_text_align(TextAlign::Left);
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Часовой пояс", x, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::Timezone.get(current_language()), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, &settings.timezone_label, row_y + row_height / 2.0, theme);
@@ -1069,12 +1072,23 @@ fn render_instrument_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("24-часовой формат", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::Use24h.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // show_utc_prefix checkbox
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.show_utc_prefix, theme);
+    result.content_items.push(("instrument:show_utc_prefix".to_string(), check_rect));
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(ClockKey::ShowUtcPrefix.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Date format dropdown
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Формат даты", x, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::DateFormat.get(current_language()), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, &settings.date_format_label, row_y + row_height / 2.0, theme);
@@ -1089,7 +1103,7 @@ fn render_instrument_settings(
     result.content_items.push(("instrument:show_day_of_week".to_string(), check_rect));
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("День недели на метках", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::DayOfWeek.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
 
     let widget_theme = WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, total_content_height, &widget_theme);
@@ -1778,7 +1792,7 @@ fn render_scales_settings(
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Формат даты", x, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::DateFormat.get(current_language()), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let format_label = match settings.date_format.as_str() {
@@ -1801,7 +1815,7 @@ fn render_scales_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("24-часовой формат", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::Use24h.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
     // show_day_of_week
@@ -1811,7 +1825,7 @@ fn render_scales_settings(
     result.content_items.push(("scales:show_day_of_week".to_string(), check_rect));
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("День недели на метках", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(ClockKey::DayOfWeek.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
 
     let widget_theme = WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, total_content_height, &widget_theme);

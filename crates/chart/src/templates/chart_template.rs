@@ -77,6 +77,7 @@ impl ChartTemplate {
                 precision_label: "Авто".to_string(),
                 timezone_label: "(UTC+0) Лондон".to_string(),
                 use_24h: true,
+                show_utc_prefix: true,
                 date_format_label: "21.01.2026".to_string(),
                 show_day_of_week: false,
                 show_bar_countdown: true,
