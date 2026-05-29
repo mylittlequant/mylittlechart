@@ -133,6 +133,12 @@ struct PerWindowState {
     chart: chart_app::ChartApp,
     // Input state
     last_mouse_pos: (f64, f64),
+    /// Latest cursor position from a CursorMoved event not yet processed by the
+    /// frame. Hover/hit-test work is expensive (build_extended_layout etc.) and
+    /// winit delivers CursorMoved at 125-500 Hz, so we coalesce: the handler only
+    /// stashes the position here and the frame loop processes the latest one once,
+    /// capped to the frame rate. `None` = nothing pending.
+    pending_mouse_move: Option<(f64, f64)>,
     mouse_pressed: bool,
     drag_start_pos: Option<(f64, f64)>,
     last_drag_pos: Option<(f64, f64)>,
@@ -1287,6 +1293,7 @@ impl App<'_> {
             chart_dirty: true,
             chart,
             last_mouse_pos: (0.0, 0.0),
+            pending_mouse_move: None,
             mouse_pressed: false,
             drag_start_pos: None,
             last_drag_pos: None,
@@ -4049,6 +4056,14 @@ impl ApplicationHandler for App<'_> {
                 }
             }
         }
+
+        // ── Coalesced hover processing ───────────────────────────────────────
+        // CursorMoved only stashed the latest position; run the expensive hover
+        // hit-test / tooltip / cursor work once per frame here. This MUST be
+        // after Step 1 (GPU done with the previous frame): it mutates chart
+        // state and calls set_cursor, which must not race the GPU thread holding
+        // surface/scene resources.
+        self.process_pending_mouse_moves();
 
         // Step 2: drain alert delivery events (screenshots attached by GPU thread).
         if let Some(ref delivery) = self.alert_delivery {

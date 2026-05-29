@@ -369,6 +369,12 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
         Err(e) => {
             eprintln!("[GPU] Surface error: {:?}, reconfiguring", e);
             pw.surface.surface.configure(device, &pw.surface.config);
+            // Reconfiguring the surface rebuilds the swapchain, which bumps the
+            // resource generation. The cached `target_texture`/`target_view` were
+            // created against the old generation; vello's next frame would bind a
+            // now-dead TextureView ("no longer alive", gen 7 vs 8) and panic the
+            // GPU thread. Recreate the target so the next frame binds a live view.
+            crate::screenshot::add_copy_src_to_target_texture(&mut pw.surface, device);
             return render_tex_us;
         }
     };
