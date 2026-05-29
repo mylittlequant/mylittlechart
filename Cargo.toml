@@ -35,7 +35,7 @@ hex = "0.4"
 rand = "0.8"
 
 [workspace.package]
-version = "0.5.569"
+version = "0.5.570"
 edition = "2021"
 license = "BUSL-1.1"
 
