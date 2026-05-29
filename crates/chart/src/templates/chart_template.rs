@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::modals::chart_settings::ChartSettingsData;
 use crate::preset::preset::unix_timestamp_parts;
+use crate::scale_settings::TimeFormatSettings;
 
 // =============================================================================
 // ChartTemplate
@@ -75,7 +76,7 @@ impl ChartTemplate {
                 wick_up_color: "#26a69a".to_string(),
                 wick_down_color: "#ef5350".to_string(),
                 precision_label: "Авто".to_string(),
-                timezone_label: "(UTC+0) Лондон".to_string(),
+                timezone_label: TimeFormatSettings { timezone_offset_hours: 0, ..TimeFormatSettings::default() }.timezone_label(),
                 use_24h: true,
                 show_utc_prefix: true,
                 date_format_label: "21.01.2026".to_string(),
@@ -119,7 +120,7 @@ impl ChartTemplate {
                 show_day_of_week: false,
                 show_bar_countdown: false,
                 show_prev_close: false,
-                timezone_label: "(UTC+0) Лондон".to_string(),
+                timezone_label: TimeFormatSettings { timezone_offset_hours: 0, ..TimeFormatSettings::default() }.timezone_label(),
             },
         };
         Self::new("__developer_default__", &data)

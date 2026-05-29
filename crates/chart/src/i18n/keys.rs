@@ -23,6 +23,7 @@ use super::tables::{
     PRIMITIVE_TOOLTIP_TABLE,
     TRADING_KEY_TABLE,
     TOOLBAR_MENU_KEY_TABLE,
+    CITY_KEY_TABLE,
 };
 
 // =============================================================================
@@ -654,10 +655,14 @@ pub enum SettingsKey {
     LegendBottomLeft            = 105,
     LegendBottomRight           = 106,
     LegendCenter                = 107,
+    TabInstrument               = 108,
+    TabStatusLine               = 109,
+    TabScalesLines              = 110,
+    TabAppearance               = 111,
 }
 
 impl SettingsKey {
-    pub const COUNT: usize = 108;
+    pub const COUNT: usize = 112;
 
     /// Get translation for this key
     #[inline]
@@ -1863,6 +1868,95 @@ impl uzor::i18n::Translate for ToolbarMenuKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&TOOLBAR_MENU_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// City Name Keys  (timezone city labels for clock popup + timezone dropdown)
+// =============================================================================
+
+/// Localized city names for the 25 UTC offsets -12..=+12.
+///
+/// Variant order is **frozen** — discriminant == row index in `CITY_KEY_TABLE`.
+/// Use [`CityKey::from_offset`] to map an integer offset to the corresponding key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum CityKey {
+    BakerIsland  =  0,  // UTC-12
+    PagoPago     =  1,  // UTC-11
+    Honolulu     =  2,  // UTC-10
+    Alaska       =  3,  // UTC-9
+    LosAngeles   =  4,  // UTC-8
+    Denver       =  5,  // UTC-7
+    Chicago      =  6,  // UTC-6
+    NewYork      =  7,  // UTC-5
+    Halifax      =  8,  // UTC-4
+    BuenosAires  =  9,  // UTC-3
+    MidAtlantic  = 10,  // UTC-2
+    Azores       = 11,  // UTC-1
+    London       = 12,  // UTC+0
+    Berlin       = 13,  // UTC+1
+    Kyiv         = 14,  // UTC+2
+    Moscow       = 15,  // UTC+3
+    Dubai        = 16,  // UTC+4
+    Tashkent     = 17,  // UTC+5
+    Almaty       = 18,  // UTC+6
+    Bangkok      = 19,  // UTC+7
+    Singapore    = 20,  // UTC+8
+    Tokyo        = 21,  // UTC+9
+    Sydney       = 22,  // UTC+10
+    Magadan      = 23,  // UTC+11
+    Auckland     = 24,  // UTC+12
+}
+
+impl CityKey {
+    pub const COUNT: usize = 25;
+
+    /// Map a UTC offset (hours) in -12..=+12 to the corresponding key.
+    /// Returns `None` for offsets outside that range.
+    #[inline]
+    pub fn from_offset(offset: i32) -> Option<Self> {
+        match offset {
+            -12 => Some(Self::BakerIsland),
+            -11 => Some(Self::PagoPago),
+            -10 => Some(Self::Honolulu),
+            -9  => Some(Self::Alaska),
+            -8  => Some(Self::LosAngeles),
+            -7  => Some(Self::Denver),
+            -6  => Some(Self::Chicago),
+            -5  => Some(Self::NewYork),
+            -4  => Some(Self::Halifax),
+            -3  => Some(Self::BuenosAires),
+            -2  => Some(Self::MidAtlantic),
+            -1  => Some(Self::Azores),
+            0   => Some(Self::London),
+            1   => Some(Self::Berlin),
+            2   => Some(Self::Kyiv),
+            3   => Some(Self::Moscow),
+            4   => Some(Self::Dubai),
+            5   => Some(Self::Tashkent),
+            6   => Some(Self::Almaty),
+            7   => Some(Self::Bangkok),
+            8   => Some(Self::Singapore),
+            9   => Some(Self::Tokyo),
+            10  => Some(Self::Sydney),
+            11  => Some(Self::Magadan),
+            12  => Some(Self::Auckland),
+            _   => None,
+        }
+    }
+
+    /// Get the localized city name for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CITY_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for CityKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CITY_KEY_TABLE[self as usize], lang_index)
     }
 }
 

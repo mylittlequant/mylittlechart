@@ -43,6 +43,7 @@ pub use keys::{
     PrimitiveTooltipKey,
     TradingKey,
     ToolbarMenuKey,
+    CityKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.

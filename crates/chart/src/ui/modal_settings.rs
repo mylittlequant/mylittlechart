@@ -712,14 +712,16 @@ impl ChartSettingsTab {
         }
     }
 
-    /// Get tab display label
+    /// Get tab display label (localized via current language)
     pub fn label(&self) -> &'static str {
-        match self {
-            Self::Instrument => "Инструмент",
-            Self::StatusLine => "Строка статуса",
-            Self::ScalesLines => "Шкалы и линии",
-            Self::Appearance => "Оформление",
-        }
+        use crate::i18n::{SettingsKey, current_language};
+        let key = match self {
+            Self::Instrument => SettingsKey::TabInstrument,
+            Self::StatusLine => SettingsKey::TabStatusLine,
+            Self::ScalesLines => SettingsKey::TabScalesLines,
+            Self::Appearance => SettingsKey::TabAppearance,
+        };
+        key.get(current_language())
     }
 
     /// Get tab icon ID

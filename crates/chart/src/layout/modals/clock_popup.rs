@@ -116,9 +116,11 @@ pub fn render_clock_popup(
         };
 
         let item_id_owned = format!("clock_popup:tz:{}", offset);
+        // hovered_item is stored with the "clock_popup:" prefix already stripped.
+        let hover_key = format!("tz:{}", offset);
 
         let is_active = offset == active_offset;
-        let is_hovered = hovered_item == Some(item_id_owned.as_str());
+        let is_hovered = hovered_item == Some(hover_key.as_str());
 
         // Item background
         if is_active {

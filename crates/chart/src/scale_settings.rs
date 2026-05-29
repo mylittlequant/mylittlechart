@@ -88,35 +88,13 @@ impl TimeFormatSettings {
 
     /// Map a UTC offset (hours) to the representative city name.
     ///
+    /// Returns a localized city name based on the current UI language.
     /// Returns an empty string for offsets outside -12..=+12.
     pub fn city_for_offset(offset: i32) -> &'static str {
-        match offset {
-            -12 => "Бейкер",
-            -11 => "Паго-Паго",
-            -10 => "Гонолулу",
-            -9 => "Аляска",
-            -8 => "Лос-Анджелес",
-            -7 => "Денвер",
-            -6 => "Чикаго",
-            -5 => "Нью-Йорк",
-            -4 => "Галифакс",
-            -3 => "Буэнос-Айрес",
-            -2 => "Среднеатлант.",
-            -1 => "Азорские о-ва",
-            0 => "Лондон",
-            1 => "Берлин",
-            2 => "Киев",
-            3 => "Москва",
-            4 => "Дубай",
-            5 => "Ташкент",
-            6 => "Алматы",
-            7 => "Бангкок",
-            8 => "Сингапур",
-            9 => "Токио",
-            10 => "Сидней",
-            11 => "Магадан",
-            12 => "Окленд",
-            _ => "",
+        use crate::i18n::{CityKey, current_language};
+        match CityKey::from_offset(offset) {
+            Some(k) => k.get(current_language()),
+            None => "",
         }
     }
 
