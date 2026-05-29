@@ -497,6 +497,26 @@ impl ChartApp {
         self.panel_app.context_menu_state.close();
         self.panel_app.toolbar_state.open_dropdown_id = None;
 
+        // Make the window UNDER THE CURSOR active before hit-testing, so the
+        // context menu opens in the hovered window (not whichever was focused).
+        // Mirrors the left-click path (resolve_input → set_active_leaf).
+        if self.panel_app.panel_grid.is_split() {
+            use zengeld_chart::state::ChartInputTarget;
+            let target = self.panel_app.panel_grid.resolve_input(
+                x, y, self.content_rect.x, self.content_rect.y,
+            );
+            let cursor_leaf = match target {
+                ChartInputTarget::Chart { leaf_id }
+                | ChartInputTarget::PriceScale { leaf_id }
+                | ChartInputTarget::TimeScale { leaf_id }
+                | ChartInputTarget::ScaleCorner { leaf_id, .. } => Some(leaf_id),
+                ChartInputTarget::Separator { .. } | ChartInputTarget::None => None,
+            };
+            if let Some(leaf_id) = cursor_leaf {
+                self.panel_app.panel_grid.set_active_leaf(leaf_id);
+            }
+        }
+
         let w = self.width as f64;
         let h = self.height as f64;
 
