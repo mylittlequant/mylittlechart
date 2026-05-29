@@ -3,6 +3,7 @@ use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// PositionManager panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -237,21 +238,22 @@ impl TradingPanel for PositionManagerState {
         ctx.set_fill_color(&theme.text_header);
 
         let header_mid_y = (y + PM_HEADER_HEIGHT / 2.0) as f64;
-        ctx.fill_text("SYMBOL", col_sym_x   as f64, header_mid_y);
-        ctx.fill_text("SIDE",   col_side_x  as f64, header_mid_y);
-        ctx.fill_text("QTY",    col_qty_x   as f64, header_mid_y);
-        ctx.fill_text("ENTRY",  col_entry_x as f64, header_mid_y);
-        ctx.fill_text("MARK",   col_mark_x  as f64, header_mid_y);
-        ctx.fill_text("PNL",    col_pnl_x   as f64, header_mid_y);
-        ctx.fill_text("LIQ",    col_liq_x   as f64, header_mid_y);
-        ctx.fill_text("LEV",    col_lev_x   as f64, header_mid_y);
+        let lang = current_language();
+        ctx.fill_text(TradingKey::Symbol.get(lang), col_sym_x   as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Side.get(lang),   col_side_x  as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Qty.get(lang),    col_qty_x   as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Entry.get(lang),  col_entry_x as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Mark.get(lang),   col_mark_x  as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Pnl.get(lang),    col_pnl_x   as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Liq.get(lang),    col_liq_x   as f64, header_mid_y);
+        ctx.fill_text(TradingKey::Lev.get(lang),    col_lev_x   as f64, header_mid_y);
 
         if self.positions.is_empty() {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(&theme.text_header);
-            ctx.fill_text("No open positions", (x + w / 2.0) as f64, (y + h / 2.0) as f64);
+            ctx.fill_text(TradingKey::NoOpenPositions.get(current_language()), (x + w / 2.0) as f64, (y + h / 2.0) as f64);
             return;
         }
 
@@ -325,7 +327,7 @@ impl TradingPanel for PositionManagerState {
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.set_fill_color(&theme.text_header);
-        ctx.fill_text("Total PnL:", (x + PM_LEFT_PAD) as f64, summary_mid_y);
+        ctx.fill_text(TradingKey::TotalPnl.get(current_language()), (x + PM_LEFT_PAD) as f64, summary_mid_y);
 
         let total_pnl = self.total_unrealized_pnl;
         let total_color = if total_pnl > 0.0 { &theme.pm_pnl_positive }

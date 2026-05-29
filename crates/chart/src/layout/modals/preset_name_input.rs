@@ -2,6 +2,7 @@
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
+use crate::i18n::{TextKey, current_language};
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{PresetNameInputState, PresetNameInputMode};
@@ -203,7 +204,7 @@ pub fn render_preset_name_input(
     ctx.set_fill_color("#ffffff");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Save", save_rect.center_x(), save_rect.center_y());
+    ctx.fill_text(TextKey::Save.get(current_language()), save_rect.center_x(), save_rect.center_y());
 
     input_coordinator.register_on_layer(
         "preset_name_input:save",
@@ -222,7 +223,7 @@ pub fn render_preset_name_input(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Cancel", cancel_rect.center_x(), cancel_rect.center_y());
+    ctx.fill_text(TextKey::Cancel.get(current_language()), cancel_rect.center_x(), cancel_rect.center_y());
 
     input_coordinator.register_on_layer(
         "preset_name_input:cancel",

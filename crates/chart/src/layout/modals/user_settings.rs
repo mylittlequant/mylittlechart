@@ -1500,15 +1500,16 @@ fn render_disconnect_dialog(
     ctx.set_fill_color("rgba(239,83,80,0.9)");
     ctx.set_text_align(uzor::render::TextAlign::Left);
     ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-    ctx.fill_text("SWITCH TO OFFLINE MODE?", x, cy);
+    let lang = current_language();
+    ctx.fill_text(UserSettingsKey::OfflineModeTitle.get(lang), x, cy);
     cy += 22.0;
 
     // Body text
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color("rgba(254,255,238,0.55)");
-    ctx.fill_text("Your data stays on this machine.", x, cy);
+    ctx.fill_text(UserSettingsKey::OfflineModeBody1.get(lang), x, cy);
     cy += 15.0;
-    ctx.fill_text("Cloud sync will stop. You can reconnect anytime.", x, cy);
+    ctx.fill_text(UserSettingsKey::OfflineModeBody2.get(lang), x, cy);
     cy += 22.0;
 
     let btn_h = 28.0;
@@ -1524,7 +1525,7 @@ fn render_disconnect_dialog(
     ctx.set_fill_color("#ef5350");
     ctx.set_text_align(uzor::render::TextAlign::Center);
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Disconnect", x + half_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(TextKey::Disconnect.get(lang), x + half_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(uzor::render::TextAlign::Left);
     result.content_items.push(("disconnect_confirm".to_string(), WidgetRect::new(x, cy, half_w, btn_h)));
     input_coordinator.register_on_layer(
@@ -1545,7 +1546,7 @@ fn render_disconnect_dialog(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(uzor::render::TextAlign::Center);
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-    ctx.fill_text("Cancel", cancel_x + half_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(TextKey::Cancel.get(lang), cancel_x + half_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(uzor::render::TextAlign::Left);
     result.content_items.push(("disconnect_cancel".to_string(), WidgetRect::new(cancel_x, cy, half_w, btn_h)));
     input_coordinator.register_on_layer(

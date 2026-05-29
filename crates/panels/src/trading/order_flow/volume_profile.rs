@@ -7,6 +7,7 @@ use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// VolumeProfile panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -461,7 +462,7 @@ impl TradingPanel for VolumeProfileState {
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.set_fill_color(&theme.vp_poc_line);
-                    ctx.fill_text("POC", (x + w * 0.72) as f64, (bar_y + bar_height / 2.0) as f64);
+                    ctx.fill_text(TradingKey::Poc.get(current_language()), (x + w * 0.72) as f64, (bar_y + bar_height / 2.0) as f64);
                 }
             }
         }
@@ -476,7 +477,7 @@ impl TradingPanel for VolumeProfileState {
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.set_fill_color(&theme.current_price);
-                ctx.fill_text("MKT", (x + w * 0.82) as f64, center_y as f64);
+                ctx.fill_text(TradingKey::Mkt.get(current_language()), (x + w * 0.82) as f64, center_y as f64);
             }
         }
 
@@ -489,7 +490,7 @@ impl TradingPanel for VolumeProfileState {
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.set_fill_color(&theme.vp_vah_line);
-                ctx.fill_text("VAH", (x + w * 0.62) as f64, vah as f64);
+                ctx.fill_text(TradingKey::Vah.get(current_language()), (x + w * 0.62) as f64, vah as f64);
             }
         }
 
@@ -502,7 +503,7 @@ impl TradingPanel for VolumeProfileState {
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.set_fill_color(&theme.vp_val_line);
-                ctx.fill_text("VAL", (x + w * 0.62) as f64, val as f64);
+                ctx.fill_text(TradingKey::Val.get(current_language()), (x + w * 0.62) as f64, val as f64);
             }
         }
     }

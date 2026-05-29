@@ -3108,7 +3108,7 @@ pub fn render_full_chart_panel(
         ctx.set_font("14px sans-serif");
         ctx.set_text_align(crate::render::TextAlign::Center);
         ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-        ctx.fill_text("Loading...", cx, cy);
+        ctx.fill_text(crate::i18n::TextKey::Loading.get(crate::i18n::current_language()), cx, cy);
         return ChartPanelRenderResult::empty();
     }
 

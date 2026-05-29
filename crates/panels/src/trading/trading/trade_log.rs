@@ -3,6 +3,7 @@ use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// TradeLog panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -213,12 +214,13 @@ impl TradingPanel for TradeLogState {
         ctx.set_fill_color(&theme.text_header);
 
         let header_text_y = (y + TL_HEADER_HEIGHT / 2.0) as f64;
-        ctx.fill_text("TIME",   col_time_x   as f64, header_text_y);
-        ctx.fill_text("SYMBOL", col_symbol_x as f64, header_text_y);
-        ctx.fill_text("SIDE",   col_side_x   as f64, header_text_y);
-        ctx.fill_text("PRICE",  col_price_x  as f64, header_text_y);
-        ctx.fill_text("QTY",    col_qty_x    as f64, header_text_y);
-        ctx.fill_text("FEE",    col_fee_x    as f64, header_text_y);
+        let lang = current_language();
+        ctx.fill_text(TradingKey::Time.get(lang),   col_time_x   as f64, header_text_y);
+        ctx.fill_text(TradingKey::Symbol.get(lang), col_symbol_x as f64, header_text_y);
+        ctx.fill_text(TradingKey::Side.get(lang),   col_side_x   as f64, header_text_y);
+        ctx.fill_text(TradingKey::Price.get(lang),  col_price_x  as f64, header_text_y);
+        ctx.fill_text(TradingKey::Qty.get(lang),    col_qty_x    as f64, header_text_y);
+        ctx.fill_text(TradingKey::Fee.get(lang),    col_fee_x    as f64, header_text_y);
 
         let content_h = h - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
         let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
@@ -229,7 +231,7 @@ impl TradingPanel for TradeLogState {
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(&theme.text_header);
-            ctx.fill_text("No trades", (x + w / 2.0) as f64, (y + TL_HEADER_HEIGHT + content_h / 2.0) as f64);
+            ctx.fill_text(TradingKey::NoTradesLog.get(current_language()), (x + w / 2.0) as f64, (y + TL_HEADER_HEIGHT + content_h / 2.0) as f64);
         } else {
             for (i, trade) in trades.iter().enumerate() {
                 let row_y = y + TL_HEADER_HEIGHT + (i as f32 * TL_ROW_HEIGHT);
@@ -292,7 +294,7 @@ impl TradingPanel for TradeLogState {
 
         let summary_text_y = (summary_y + TL_SUMMARY_HEIGHT / 2.0) as f64;
         ctx.set_fill_color(&theme.text_header);
-        ctx.fill_text("Total PnL:", (x + TL_LEFT_PAD) as f64, summary_text_y);
+        ctx.fill_text(TradingKey::TotalPnlLog.get(current_language()), (x + TL_LEFT_PAD) as f64, summary_text_y);
 
         let pnl_color = if self.total_pnl >= 0.0 { &theme.tl_profit } else { &theme.tl_loss };
         ctx.set_fill_color(pnl_color);

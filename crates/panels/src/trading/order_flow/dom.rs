@@ -9,6 +9,7 @@ use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// Which columns to show in the DOM panel + optional custom separator offsets.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -845,23 +846,24 @@ impl TradingPanel for DomState {
         let label_y = (col_header_y + DOM_COL_HEADER_HEIGHT / 2.0) as f64;
         ctx.set_fill_color(&theme.text_muted);
 
+        let lang = current_language();
         if self.column_config.show_bid_orders {
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("BID", (bid_ord_col_x + bid_ord_col_w / 2.0) as f64, label_y);
+            ctx.fill_text(TradingKey::Bid.get(lang), (bid_ord_col_x + bid_ord_col_w / 2.0) as f64, label_y);
         }
         if self.column_config.show_sell_trades {
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("SELL", (sell_trade_col_x + sell_trade_col_w / 2.0) as f64, label_y);
+            ctx.fill_text(TradingKey::Sell.get(lang), (sell_trade_col_x + sell_trade_col_w / 2.0) as f64, label_y);
         }
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("PRICE", (price_col_x + price_col_w / 2.0) as f64, label_y);
+        ctx.fill_text(TradingKey::Price.get(lang), (price_col_x + price_col_w / 2.0) as f64, label_y);
         if self.column_config.show_buy_trades {
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("BUY", (buy_trade_col_x + buy_trade_col_w / 2.0) as f64, label_y);
+            ctx.fill_text(TradingKey::Buy.get(lang), (buy_trade_col_x + buy_trade_col_w / 2.0) as f64, label_y);
         }
         if self.column_config.show_ask_orders {
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("ASK", (ask_ord_col_x + ask_ord_col_w / 2.0) as f64, label_y);
+            ctx.fill_text(TradingKey::Ask.get(lang), (ask_ord_col_x + ask_ord_col_w / 2.0) as f64, label_y);
         }
 
         // Separator line below header

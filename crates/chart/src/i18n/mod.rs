@@ -41,6 +41,8 @@ pub use keys::{
     SidebarKey,
     PrimitiveNameKey,
     PrimitiveTooltipKey,
+    TradingKey,
+    ToolbarMenuKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -160,6 +162,18 @@ pub fn t_primitive_name(key: PrimitiveNameKey) -> &'static str {
 /// Translate a primitive tooltip key using current global language
 #[inline]
 pub fn t_primitive_tooltip(key: PrimitiveTooltipKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a trading panel key using current global language
+#[inline]
+pub fn t_trading(key: TradingKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a toolbar menu key using current global language
+#[inline]
+pub fn t_toolbar_menu(key: ToolbarMenuKey) -> &'static str {
     key.get(current_language())
 }
 

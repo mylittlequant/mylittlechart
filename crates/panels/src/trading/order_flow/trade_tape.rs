@@ -13,6 +13,7 @@ use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -492,7 +493,7 @@ impl TradingPanel for TradeTapeState {
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(&theme.text_header);
-            ctx.fill_text("No trades", (x + w / 2.0) as f64, (y + h / 2.0) as f64);
+            ctx.fill_text(TradingKey::NoTrades.get(current_language()), (x + w / 2.0) as f64, (y + h / 2.0) as f64);
         }
 
         // ── PAUSED badge ─────────────────────────────────────────────────
@@ -507,7 +508,7 @@ impl TradingPanel for TradeTapeState {
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color("#000000ff");
-            ctx.fill_text("PAUSED", (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
+            ctx.fill_text(TradingKey::Paused.get(current_language()), (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
         }
     }
 

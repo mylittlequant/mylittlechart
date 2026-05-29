@@ -58,11 +58,17 @@ pub enum TextKey {
     Top        = 31,
     Bottom     = 32,
     Center     = 33,
+
+    // Navigation / actions
+    Back       = 34,
+    Add        = 35,
+    Loading    = 36,
+    Disconnect = 37,
 }
 
 impl TextKey {
     /// Number of variants. Must equal the number of rows in `TEXT_KEY_TABLE`.
-    pub const COUNT: usize = 34;
+    pub const COUNT: usize = 38;
 
     /// Get translation for this key, with En fallback for empty cells.
     #[inline]

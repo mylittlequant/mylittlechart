@@ -7,6 +7,7 @@
 //! `crate::ui::color_picker_state`.
 
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use crate::i18n::{TextKey, current_language};
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::ui::widgets::input::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::slider::{render_single_slider, SliderConfig};
@@ -593,7 +594,7 @@ pub fn draw_color_picker_l2(
     ctx.set_fill_color("#d1d4dc");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Back", back_rect.center_x(), back_rect.center_y());
+    ctx.fill_text(TextKey::Back.get(current_language()), back_rect.center_x(), back_rect.center_y());
 
     // Add button
     let add_rect = WidgetRect::new(content.x + button_width + 8.0, y, button_width, button_height);
@@ -604,7 +605,7 @@ pub fn draw_color_picker_l2(
     ctx.fill_rounded_rect(add_rect.x, add_rect.y, add_rect.width, add_rect.height, 4.0);
 
     ctx.set_fill_color("#ffffff");
-    ctx.fill_text("Add", add_rect.center_x(), add_rect.center_y());
+    ctx.fill_text(TextKey::Add.get(current_language()), add_rect.center_x(), add_rect.center_y());
 
     result
 }

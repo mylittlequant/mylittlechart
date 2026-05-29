@@ -12,6 +12,7 @@ use orderbook_service::OrderbookSeries;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// Types of L2 order book events
 #[derive(Clone, Debug, PartialEq)]
@@ -267,12 +268,13 @@ impl TradingPanel for L2TapeState {
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.set_fill_color(&theme.text_header);
 
+        let lang = current_language();
         let header_text_y = (y + L2_HEADER_HEIGHT / 2.0) as f64;
-        if let Some(cx) = col_time_x  { ctx.fill_text("TIME",  cx as f64, header_text_y); }
-        if let Some(cx) = col_type_x  { ctx.fill_text("TYPE",  cx as f64, header_text_y); }
-        if let Some(cx) = col_side_x  { ctx.fill_text("SIDE",  cx as f64, header_text_y); }
-        if let Some(cx) = col_price_x { ctx.fill_text("PRICE", cx as f64, header_text_y); }
-        if let Some(cx) = col_qty_x   { ctx.fill_text("QTY",   cx as f64, header_text_y); }
+        if let Some(cx) = col_time_x  { ctx.fill_text(TradingKey::Time.get(lang),  cx as f64, header_text_y); }
+        if let Some(cx) = col_type_x  { ctx.fill_text(TradingKey::Type.get(lang),  cx as f64, header_text_y); }
+        if let Some(cx) = col_side_x  { ctx.fill_text(TradingKey::Side.get(lang),  cx as f64, header_text_y); }
+        if let Some(cx) = col_price_x { ctx.fill_text(TradingKey::Price.get(lang), cx as f64, header_text_y); }
+        if let Some(cx) = col_qty_x   { ctx.fill_text(TradingKey::Qty.get(lang),   cx as f64, header_text_y); }
 
         if !self.symbol.is_empty() {
             ctx.set_font("9px sans-serif");
@@ -409,7 +411,7 @@ impl TradingPanel for L2TapeState {
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color("#000000ff");
-            ctx.fill_text("PAUSED", (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
+            ctx.fill_text(TradingKey::Paused.get(current_language()), (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
         }
     }
 

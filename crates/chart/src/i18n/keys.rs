@@ -21,6 +21,8 @@ use super::tables::{
     SIDEBAR_KEY_TABLE,
     PRIMITIVE_NAME_TABLE,
     PRIMITIVE_TOOLTIP_TABLE,
+    TRADING_KEY_TABLE,
+    TOOLBAR_MENU_KEY_TABLE,
 };
 
 // =============================================================================
@@ -441,10 +443,15 @@ pub enum WizardKey {
     Step2of4              = 22,
     Step3of4              = 23,
     Step4of4              = 24,
+
+    // Vault unlock screen (shown when profile is passphrase-protected)
+    UnlockYourData        = 25,
+    UnlockSubtitle        = 26,
+    ForgotPassphrase      = 27,
 }
 
 impl WizardKey {
-    pub const COUNT: usize = 25;
+    pub const COUNT: usize = 28;
 
     /// Get translation for this key
     #[inline]
@@ -714,10 +721,15 @@ pub enum UserSettingsKey {
     DescMaxBars              = 22,
     DescCacheSize            = 23,
     DescAutoCleanup          = 24,
+
+    // Offline mode confirmation panel
+    OfflineModeTitle         = 25,
+    OfflineModeBody1         = 26,
+    OfflineModeBody2         = 27,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 25;
+    pub const COUNT: usize = 28;
 
     /// Get translation for this key.
     #[inline]
@@ -1660,6 +1672,197 @@ impl uzor::i18n::Translate for PrimitiveTooltipKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&PRIMITIVE_TOOLTIP_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Trading Panel Keys  (DOM, tape, order entry, position manager, etc.)
+// =============================================================================
+
+/// Column header, section title, and button label keys for trading panels.
+///
+/// Variant order is **frozen** — discriminant == row index in `TRADING_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum TradingKey {
+    // DOM column headers
+    Bid              = 0,
+    Ask              = 1,
+    Price            = 2,
+    Buy              = 3,
+    Sell             = 4,
+
+    // L2 tape column headers
+    Time             = 5,
+    Type             = 6,
+    Side             = 7,
+    Qty              = 8,
+    Paused           = 9,
+
+    // Volume profile labels
+    Poc              = 10,
+    Mkt              = 11,
+    Vah              = 12,
+    Val              = 13,
+
+    // Order entry
+    OrderEntry       = 14,
+
+    // Trade tape
+    NoTrades         = 15,
+
+    // Position manager column headers
+    Symbol           = 16,
+    Entry            = 17,
+    Mark             = 18,
+    Pnl              = 19,
+    Liq              = 20,
+    Lev              = 21,
+    NoOpenPositions  = 22,
+    TotalPnl         = 23,
+
+    // Risk calculator
+    RiskCalculator   = 24,
+
+    // Trade log column headers
+    Fee              = 25,
+    NoTradesLog      = 26,
+    TotalPnlLog      = 27,
+}
+
+impl TradingKey {
+    pub const COUNT: usize = 28;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&TRADING_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for TradingKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&TRADING_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Toolbar Menu Keys  (dropdown item labels in chart toolbars)
+// =============================================================================
+
+/// Localized labels for dropdown items in chart toolbar menus.
+///
+/// Variant order is **frozen** — discriminant == row index in `TOOLBAR_MENU_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ToolbarMenuKey {
+    // Chart type names
+    Candles            = 0,
+    HollowCandles      = 1,
+    HeikinAshi         = 2,
+    Bars               = 3,
+    Line               = 4,
+    StepLine           = 5,
+    LineWithMarkers    = 6,
+    Area               = 7,
+    HlcArea            = 8,
+    Baseline           = 9,
+    Histogram          = 10,
+    Columns            = 11,
+
+    // Panel management
+    ClosePanel         = 12,
+    ResetSizes         = 13,
+    SplitWithoutGroup  = 14,
+
+    // Sync options
+    SyncSymbol         = 15,
+    SyncTimeframe      = 16,
+    SyncCrosshair      = 17,
+    SyncViewport       = 18,
+    SyncDrawings       = 19,
+    SyncIndicators     = 20,
+
+    // Drawing tool section headers
+    HeaderLines        = 21,
+    HeaderChannels     = 22,
+    HeaderPitchforks   = 23,
+    HeaderFibonacci    = 24,
+    HeaderGann         = 25,
+    HeaderPatterns     = 26,
+    HeaderElliottWaves = 27,
+    HeaderCycles       = 28,
+    HeaderBrushes      = 29,
+    HeaderShapes       = 30,
+    HeaderPositions    = 31,
+    HeaderForecast     = 32,
+    HeaderVolume       = 33,
+    HeaderMeasurement  = 34,
+    HeaderArrows       = 35,
+    HeaderSignals      = 36,
+    HeaderMarkers      = 37,
+    HeaderEmotions     = 38,
+    HeaderEmoji        = 39,
+
+    // Cursor tools
+    Pan                = 40,
+
+    // Delete tools
+    DeleteSelected     = 41,
+    DeleteAll          = 42,
+
+    // Settings menu items
+    ChartSettings      = 43,
+    ToggleGrid         = 44,
+    VerticalLines      = 45,
+    HorizontalLines    = 46,
+    ToggleCrosshair    = 47,
+    NormalMode         = 48,
+    MagnetClose        = 49,
+    MagnetOhlc         = 50,
+    ToggleTooltip      = 51,
+    FollowCursor       = 52,
+    ToggleWatermark    = 53,
+    WatermarkSeeyou    = 54,
+    WatermarkDemo      = 55,
+    WatermarkPaper     = 56,
+    WatermarkLive      = 57,
+    WatermarkCenter    = 58,
+    WatermarkBl        = 59,
+    WatermarkBr        = 60,
+    ThemeDark          = 61,
+    ThemeLight         = 62,
+    ThemeHighContrast  = 63,
+    ThemeHcMono        = 64,
+    ThemeWizardHat     = 65,
+    StyleSolid         = 66,
+    StyleGlass         = 67,
+    StyleFrostedGlass  = 68,
+
+    // Settings submenus
+    SubGrid            = 69,
+    SubCrosshair       = 70,
+    SubTooltip         = 71,
+    SubWatermark       = 72,
+    SubTheme           = 73,
+    SubUiStyle         = 74,
+}
+
+impl ToolbarMenuKey {
+    pub const COUNT: usize = 75;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&TOOLBAR_MENU_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ToolbarMenuKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&TOOLBAR_MENU_KEY_TABLE[self as usize], lang_index)
     }
 }
 

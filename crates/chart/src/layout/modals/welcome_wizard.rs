@@ -10,6 +10,7 @@
 //!   2 — Profile + Passphrase (name input, passphrase, ZT info, Generate Recovery Phrase)
 
 use crate::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
+use crate::i18n::{Language, WizardKey, TextKey, current_language, t_wizard};
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
@@ -21,7 +22,6 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
-use crate::i18n::{Language, current_language, WizardKey, t_wizard};
 use crate::ui::icons::Icon;
 
 const MINI_MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mini_mascot.svg");
@@ -865,7 +865,8 @@ pub fn render_vault_unlock(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Unlock Your Data", inner_x + inner_w / 2.0, cy);
+    let lang = current_language();
+    ctx.fill_text(WizardKey::UnlockYourData.get(lang), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 28.0;
 
@@ -874,7 +875,7 @@ pub fn render_vault_unlock(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Enter your passphrase to decrypt your profile", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(WizardKey::UnlockSubtitle.get(lang), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 24.0;
 
@@ -907,7 +908,7 @@ pub fn render_vault_unlock(
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Unlock", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(TextKey::Unlock.get(lang), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !unlock_disabled {
@@ -940,7 +941,7 @@ pub fn render_vault_unlock(
         ctx.set_fill_color(link_color);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Forgot passphrase? Switch or create profile", inner_x + inner_w / 2.0, cy);
+        ctx.fill_text(WizardKey::ForgotPassphrase.get(lang), inner_x + inner_w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
 
         let link_w = 260.0;

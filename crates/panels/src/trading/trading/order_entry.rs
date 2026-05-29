@@ -3,6 +3,7 @@ use trading_manager::SharedTradingSnapshot;
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// OrderEntry panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -351,7 +352,7 @@ impl TradingPanel for OrderEntryState {
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Order Entry", (x + OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::OrderEntry.get(current_language()), (x + OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
 
         if !self.symbol.is_empty() {
             ctx.set_fill_color(&theme.text_muted);
@@ -378,7 +379,7 @@ impl TradingPanel for OrderEntryState {
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("BUY", (x + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::Buy.get(current_language()), (x + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
 
         // SELL toggle button.
         let sell_bg = if self.side == OrderSide::Sell { &theme.oe_sell_button } else { &theme.oe_tab_inactive };
@@ -391,7 +392,7 @@ impl TradingPanel for OrderEntryState {
         );
 
         ctx.set_fill_color(&theme.oe_sell_button_text);
-        ctx.fill_text("SELL", (x + half_w + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::Sell.get(current_language()), (x + half_w + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
 
         cursor_y += OE_TOGGLE_HEIGHT;
 

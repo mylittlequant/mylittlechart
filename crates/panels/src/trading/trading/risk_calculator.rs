@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use zengeld_chart::i18n::{TradingKey, current_language};
 
 /// RiskCalculator panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -188,7 +189,7 @@ impl TradingPanel for RiskCalculatorState {
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Risk Calculator", (x + w / 2.0) as f64, (y + RC_TITLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::RiskCalculator.get(current_language()), (x + w / 2.0) as f64, (y + RC_TITLE_HEIGHT / 2.0) as f64);
 
         let mut cursor_y = y + RC_TITLE_HEIGHT;
 
