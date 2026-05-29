@@ -38,6 +38,7 @@ pub use keys::{
     ProfileKey,
     ModalKey,
     IndicatorKey,
+    SidebarKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -139,6 +140,12 @@ pub fn t_modal(key: ModalKey) -> &'static str {
 /// Translate an indicator settings modal key using current global language
 #[inline]
 pub fn t_indicator(key: IndicatorKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a sidebar panel key using current global language
+#[inline]
+pub fn t_sidebar(key: SidebarKey) -> &'static str {
     key.get(current_language())
 }
 

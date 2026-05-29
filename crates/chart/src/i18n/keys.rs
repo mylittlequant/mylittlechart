@@ -18,6 +18,7 @@ use super::tables::{
     PROFILE_KEY_TABLE,
     MODAL_KEY_TABLE,
     INDICATOR_MODAL_KEY_TABLE,
+    SIDEBAR_KEY_TABLE,
 };
 
 // =============================================================================
@@ -1072,6 +1073,148 @@ impl uzor::i18n::Translate for IndicatorKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&INDICATOR_MODAL_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Sidebar Panel Keys  (connector details, agent panel, slot toolbar)
+// =============================================================================
+
+/// Sidebar UI string keys — connector detail rows, agent/slot panel UI.
+///
+/// Variant order is **frozen** — discriminant == row index in `SIDEBAR_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum SidebarKey {
+    // ---- Connector detail row labels ----
+    /// "REST:"
+    RestLabel            = 0,
+    /// "WS:"
+    WsLabel              = 1,
+    /// "Trading:"
+    TradingLabel         = 2,
+    /// "Acct:"
+    AcctLabel            = 3,
+    /// "Pos:"
+    PosLabel             = 4,
+    /// "Batch:"
+    BatchLabel           = 5,
+    /// "Aggregated:"
+    AggregatedLabel      = 6,
+    /// "Timeframes:"
+    TimeframesLabel      = 7,
+    /// "Metrics"
+    MetricsLabel         = 8,
+    /// "HTTP req/s"
+    HttpReqsLabel        = 9,
+    /// "REST lat."
+    RestLatLabel         = 10,
+    /// "WS ping"
+    WsPingLabel          = 11,
+
+    // ---- Slot source-mode toggle buttons ----
+    /// "A" — Auto mode button
+    SourceAutoBtn        = 12,
+    /// "P" — Pinned mode button
+    SourcePinnedBtn      = 13,
+    /// "L" — Linked mode button
+    SourceLinkedBtn      = 14,
+
+    // ---- Agent panel empty/action state labels ----
+    /// "Pick a CLI above to open a pane"
+    PickCliPrompt        = 15,
+    /// "Sessions"
+    SessionsBtn          = 16,
+    /// "No sessions yet"
+    NoSessionsYet        = 17,
+    /// "Start"
+    StartBtn             = 18,
+    /// "No messages yet"
+    NoMessagesYet        = 19,
+
+    // ---- Agent panel button tooltips ----
+    /// "Terminal mode (PTY)"
+    AgentModePty         = 20,
+    /// "Chat mode"
+    AgentModeChat        = 21,
+    /// "Open Claude session"
+    AgentSpawnClaude     = 22,
+    /// "Open Codex session"
+    AgentSpawnCodex      = 23,
+    /// "Open Gemini session"
+    AgentSpawnGemini     = 24,
+    /// "Open OpenCode session"
+    AgentSpawnOpencode   = 25,
+    /// "Split horizontal"
+    AgentSplitH          = 26,
+    /// "Split vertical"
+    AgentSplitV          = 27,
+    /// "Replace focused pane"
+    AgentSplitReplace    = 28,
+    /// "Expand / Collapse"
+    AgentExpandToggle    = 29,
+    /// "Reset pane sizes"
+    AgentResetSizes      = 30,
+    /// "Close focused pane"
+    AgentClosePane       = 31,
+
+    // ---- Free slot toolbar tooltips ----
+    /// "Close panel"
+    SlotClosePanel       = 32,
+    /// "Column visibility"
+    SlotColConfig        = 33,
+    /// "Toggle auto-center"
+    SlotAutoCenter       = 34,
+    /// "Cycle volume filter"
+    SlotVolumeFilter     = 35,
+    /// "Tick size"
+    SlotTickSize         = 36,
+    /// "Add panel"
+    SlotAddPanel         = 37,
+    /// "Auto symbol (follow chart)"
+    SlotSourceAuto       = 38,
+    /// "Pinned symbol (fixed)"
+    SlotSourcePinned     = 39,
+    /// "Linked symbol (bound to chart)"
+    SlotSourceLinked     = 40,
+    /// "Split side by side"
+    SlotSplitH           = 41,
+    /// "Split top and bottom"
+    SlotSplitV           = 42,
+    /// "Replace focused panel"
+    SlotSplitReplace     = 43,
+    /// "Expand / collapse focused panel"
+    SlotExpandToggle     = 44,
+    /// "Reset panel sizes"
+    SlotResetSizes       = 45,
+
+    // ---- Connector detail: draw_detail / draw_section labels ----
+    /// "Auth:"
+    AuthLabel            = 46,
+    /// "Free tier:"
+    FreeTierLabel        = 47,
+    /// "Rate limits:"
+    RateLimitsLabel      = 48,
+    /// "Data Capabilities"
+    DataCapabilities     = 49,
+    /// "Kline Config"
+    KlineConfig          = 50,
+}
+
+impl SidebarKey {
+    pub const COUNT: usize = 51;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&SIDEBAR_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for SidebarKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&SIDEBAR_KEY_TABLE[self as usize], lang_index)
     }
 }
 

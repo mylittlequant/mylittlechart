@@ -14,6 +14,7 @@ use zengeld_chart::ui::widgets::input::{InputConfig, draw_input, draw_input_curs
 use zengeld_chart::ToolbarTheme;
 use zengeld_chart::state::command::ObjectCategory;
 use zengeld_chart::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
+use zengeld_chart::i18n::{SidebarKey, current_language};
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
 use uzor::types::Rect as WidgetRect;
@@ -3032,13 +3033,13 @@ fn render_connectors_panel(
             ctx.set_fill_color("#6b7280");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("REST:", indent, current_y + detail_row_h / 2.0);
+            ctx.fill_text(SidebarKey::RestLabel.get(current_language()), indent, current_y + detail_row_h / 2.0);
             ctx.set_fill_color(rest_color);
             let rest_val_x = indent + 40.0;
             ctx.fill_text(rest_str, rest_val_x, current_y + detail_row_h / 2.0);
             ctx.set_fill_color("#6b7280");
             let ws_label_x = rest_val_x + ctx.measure_text(rest_str) + 12.0;
-            ctx.fill_text("WS:", ws_label_x, current_y + detail_row_h / 2.0);
+            ctx.fill_text(SidebarKey::WsLabel.get(current_language()), ws_label_x, current_y + detail_row_h / 2.0);
             ctx.set_fill_color(ws_color);
             ctx.fill_text(ws_str, ws_label_x + 28.0, current_y + detail_row_h / 2.0);
             current_y += detail_row_h;
@@ -3050,11 +3051,11 @@ fn render_connectors_panel(
                 &connector.auth_type
             };
             let auth_color = if connector.requires_api_key { "#e2e8f0" } else { "#6b7280" };
-            draw_detail(ctx, &mut current_y, "Auth:", auth_val, auth_color);
+            draw_detail(ctx, &mut current_y, SidebarKey::AuthLabel.get(current_language()), auth_val, auth_color);
 
             let free_val = if connector.free_tier { "yes" } else { "no" };
             let free_color = if connector.free_tier { "#22c55e" } else { "#6b7280" };
-            draw_detail(ctx, &mut current_y, "Free tier:", free_val, free_color);
+            draw_detail(ctx, &mut current_y, SidebarKey::FreeTierLabel.get(current_language()), free_val, free_color);
 
             // ---- Rate limits ----
             let rate_str = if connector.rate_max > 0 {
@@ -3079,11 +3080,11 @@ fn render_connectors_panel(
             } else {
                 "#6b7280"
             };
-            draw_detail(ctx, &mut current_y, "Rate limits:", &rate_str, rate_color);
+            draw_detail(ctx, &mut current_y, SidebarKey::RateLimitsLabel.get(current_language()), &rate_str, rate_color);
 
             // ---- Data Capabilities section ----
             // Native line divider — no unicode box-drawing characters.
-            draw_section(ctx, &mut current_y, "Data Capabilities");
+            draw_section(ctx, &mut current_y, SidebarKey::DataCapabilities.get(current_language()));
 
             // Helper: draw capability item (label + SVG check/x icon).
             let draw_cap = |ctx: &mut dyn RenderContext, x: &mut f64, y: f64, label: &str, has: bool| {
@@ -3106,7 +3107,7 @@ fn render_connectors_panel(
             ctx.set_fill_color("#6b7280");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("REST:", indent, row_mid_y);
+            ctx.fill_text(SidebarKey::RestLabel.get(current_language()), indent, row_mid_y);
             let mut cap_x = indent + 44.0;
             draw_cap(ctx, &mut cap_x, row_mid_y, "klines",    connector.has_klines);
             draw_cap(ctx, &mut cap_x, row_mid_y, "trades",    connector.has_trades);
@@ -3119,7 +3120,7 @@ fn render_connectors_panel(
             ctx.set_fill_color("#6b7280");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("WS:", indent, row_mid_y);
+            ctx.fill_text(SidebarKey::WsLabel.get(current_language()), indent, row_mid_y);
             let mut cap_x = indent + 44.0;
             draw_cap(ctx, &mut cap_x, row_mid_y, "klines",    connector.has_ws_klines);
             draw_cap(ctx, &mut cap_x, row_mid_y, "trades",    connector.has_ws_trades);
@@ -3132,7 +3133,7 @@ fn render_connectors_panel(
             ctx.set_fill_color("#6b7280");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Trading:", indent, row_mid_y);
+            ctx.fill_text(SidebarKey::TradingLabel.get(current_language()), indent, row_mid_y);
 
             // Trading icon.
             {
@@ -3141,14 +3142,14 @@ fn render_connectors_panel(
                 draw_svg_icon(ctx, icon_svg, indent + 58.0, row_mid_y - icon_size / 2.0, icon_size, icon_size, icon_color);
             }
             ctx.set_fill_color("#6b7280");
-            ctx.fill_text("Acct:", indent + 78.0, row_mid_y);
+            ctx.fill_text(SidebarKey::AcctLabel.get(current_language()), indent + 78.0, row_mid_y);
             {
                 let icon_svg = if connector.has_account { ICON_CHECK_SVG } else { ICON_X_SVG };
                 let icon_color = if connector.has_account { "#22c55e" } else { "#ef4444" };
                 draw_svg_icon(ctx, icon_svg, indent + 110.0, row_mid_y - icon_size / 2.0, icon_size, icon_size, icon_color);
             }
             ctx.set_fill_color("#6b7280");
-            ctx.fill_text("Pos:", indent + 130.0, row_mid_y);
+            ctx.fill_text(SidebarKey::PosLabel.get(current_language()), indent + 130.0, row_mid_y);
             {
                 let icon_svg = if connector.has_positions { ICON_CHECK_SVG } else { ICON_X_SVG };
                 let icon_color = if connector.has_positions { "#22c55e" } else { "#ef4444" };
@@ -3158,7 +3159,7 @@ fn render_connectors_panel(
 
             // ---- Kline Config section ----
             // Native line divider — no unicode.
-            draw_section(ctx, &mut current_y, "Kline Config");
+            draw_section(ctx, &mut current_y, SidebarKey::KlineConfig.get(current_language()));
 
             let batch_str = format!("{}", connector.kline_batch_size);
             let agg_str = if connector.has_aggregated_bars { "yes" } else { "no" };
@@ -3169,11 +3170,11 @@ fn render_connectors_panel(
             ctx.set_fill_color("#6b7280");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Batch:", indent, current_y + detail_row_h / 2.0);
+            ctx.fill_text(SidebarKey::BatchLabel.get(current_language()), indent, current_y + detail_row_h / 2.0);
             ctx.set_fill_color("#e2e8f0");
             ctx.fill_text(&batch_str, indent + 48.0, current_y + detail_row_h / 2.0);
             ctx.set_fill_color("#6b7280");
-            ctx.fill_text("Aggregated:", indent + 90.0, current_y + detail_row_h / 2.0);
+            ctx.fill_text(SidebarKey::AggregatedLabel.get(current_language()), indent + 90.0, current_y + detail_row_h / 2.0);
             ctx.set_fill_color(agg_color);
             ctx.fill_text(agg_str, indent + 172.0, current_y + detail_row_h / 2.0);
             current_y += detail_row_h;
@@ -3185,7 +3186,7 @@ fn render_connectors_panel(
                 ctx.set_fill_color("#6b7280");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Timeframes:", indent, current_y + detail_row_h / 2.0);
+                ctx.fill_text(SidebarKey::TimeframesLabel.get(current_language()), indent, current_y + detail_row_h / 2.0);
                 ctx.set_fill_color("#e2e8f0");
                 ctx.fill_text(&tf_str, indent, current_y + detail_row_h / 2.0 + detail_row_h);
                 current_y += detail_row_h * 2.0;
@@ -3224,7 +3225,7 @@ fn render_connectors_panel(
                 ctx.set_fill_color("#6b7280");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Metrics", chev_x + 14.0, chev_cy);
+                ctx.fill_text(SidebarKey::MetricsLabel.get(current_language()), chev_x + 14.0, chev_cy);
                 current_y += detail_row_h;
             }
 
@@ -3268,7 +3269,7 @@ fn render_connectors_panel(
                 current_y += spark_h;
                 ctx.set_fill_color("#3b82f6");
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("HTTP req/s", indent, current_y + label_h / 2.0);
+                ctx.fill_text(SidebarKey::HttpReqsLabel.get(current_language()), indent, current_y + label_h / 2.0);
                 ctx.set_text_align(TextAlign::Right);
                 ctx.fill_text(
                     &format!("{:.0}", current_rps),
@@ -3289,7 +3290,7 @@ fn render_connectors_panel(
                 current_y += spark_h;
                 ctx.set_fill_color("#06b6d4");
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("REST lat.", indent, current_y + label_h / 2.0);
+                ctx.fill_text(SidebarKey::RestLatLabel.get(current_language()), indent, current_y + label_h / 2.0);
                 ctx.set_text_align(TextAlign::Right);
                 ctx.fill_text(
                     &format!("{}ms", current_lat),
@@ -3317,7 +3318,7 @@ fn render_connectors_panel(
                     current_y += spark_h;
                     ctx.set_fill_color("#a855f7");
                     ctx.set_text_align(TextAlign::Left);
-                    ctx.fill_text("WS ping", indent, current_y + label_h / 2.0);
+                    ctx.fill_text(SidebarKey::WsPingLabel.get(current_language()), indent, current_y + label_h / 2.0);
                     ctx.set_text_align(TextAlign::Right);
                     ctx.fill_text(
                         &format!("{}ms", current_ws_rtt),
@@ -3599,7 +3600,7 @@ fn render_slot_toolbar_in_header(
     let single_row = inner_w >= 284.0;
 
     // Right edge stops 2 px before the close X (so [↻] has a 2 px gap to [×]).
-    let right_edge = rect.x + rect.width - 16.0 - 2.0 - 2.0;
+    let _right_edge = rect.x + rect.width - 16.0 - 2.0 - 2.0;
 
     // ── Helper: draw [+] spawn button ────────────────────────────────────────
     let draw_new_btn = |cur_x: f64, row_y: f64, ctx: &mut dyn RenderContext,
@@ -3641,7 +3642,7 @@ fn render_slot_toolbar_in_header(
         ctx.fill_rounded_rect(a_rect.x, a_rect.y, a_rect.width, a_rect.height, 3.0);
         ctx.set_fill_color(if is_a { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("A", a_rect.x + a_rect.width / 2.0, a_rect.y + a_rect.height / 2.0);
+        ctx.fill_text(SidebarKey::SourceAutoBtn.get(current_language()), a_rect.x + a_rect.width / 2.0, a_rect.y + a_rect.height / 2.0);
         if !is_a { input_coordinator.register(sa_id.as_str(), a_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sa_id, a_rect));
         cur_x += apl_w + 2.0;
@@ -3655,7 +3656,7 @@ fn render_slot_toolbar_in_header(
         ctx.fill_rounded_rect(p_rect.x, p_rect.y, p_rect.width, p_rect.height, 3.0);
         ctx.set_fill_color(if is_p { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("P", p_rect.x + p_rect.width / 2.0, p_rect.y + p_rect.height / 2.0);
+        ctx.fill_text(SidebarKey::SourcePinnedBtn.get(current_language()), p_rect.x + p_rect.width / 2.0, p_rect.y + p_rect.height / 2.0);
         if !is_p { input_coordinator.register(sp_id.as_str(), p_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sp_id, p_rect));
         cur_x += apl_w + 2.0;
@@ -3669,7 +3670,7 @@ fn render_slot_toolbar_in_header(
         ctx.fill_rounded_rect(l_rect.x, l_rect.y, l_rect.width, l_rect.height, 3.0);
         ctx.set_fill_color(if is_l { &theme.item_text_active } else { &theme.item_text_muted });
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("L", l_rect.x + l_rect.width / 2.0, l_rect.y + l_rect.height / 2.0);
+        ctx.fill_text(SidebarKey::SourceLinkedBtn.get(current_language()), l_rect.x + l_rect.width / 2.0, l_rect.y + l_rect.height / 2.0);
         if !is_l { input_coordinator.register(sl_id.as_str(), l_rect, uzor::input::Sense::CLICK); }
         result.item_rects.push((sl_id, l_rect));
         cur_x + apl_w + gap
@@ -4846,7 +4847,7 @@ fn render_agents_panel(
         ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Pick a CLI above to open a pane", x + inner_w / 2.0, y + grid_h / 2.0);
+        ctx.fill_text(SidebarKey::PickCliPrompt.get(current_language()), x + inner_w / 2.0, y + grid_h / 2.0);
     } else {
         // Run layout every frame so panel_rects() always reflects the current grid_rect.
         state.agent_docking.inner_mut().layout(grid_rect);
@@ -5028,7 +5029,7 @@ fn render_agents_pane(
             ctx.set_fill_color(&theme.item_text);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Sessions", btn_x + 4.0, mid_y);
+            ctx.fill_text(SidebarKey::SessionsBtn.get(current_language()), btn_x + 4.0, mid_y);
             let chev_x = btn_x + 4.0 + sess_text_w + 1.0;
             let chev_y = mid_y - icon_sz / 2.0; // 16px icon centered on mid_y
             draw_svg_icon(ctx, uzor::render::icons::ui::ICON_CHEVRON_DOWN,
@@ -5139,7 +5140,7 @@ fn render_agents_pane(
             ctx.set_fill_color(&theme.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("No sessions yet", drop_x + drop_w / 2.0, drop_y + drop_h / 2.0);
+            ctx.fill_text(SidebarKey::NoSessionsYet.get(current_language()), drop_x + drop_w / 2.0, drop_y + drop_h / 2.0);
         } else {
             ctx.save();
             ctx.clip_rect(drop_x, drop_y + 1.0, drop_w, drop_h - 2.0);
@@ -5351,7 +5352,7 @@ fn render_pty_idle(
     ctx.set_fill_color(&theme.item_text_active);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Start", btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+    ctx.fill_text(SidebarKey::StartBtn.get(current_language()), btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
     input_coordinator.register(start_wid.as_str(), start_rect, uzor::input::Sense::CLICK);
     result.item_rects.push((start_wid, start_rect));
 }
@@ -6092,7 +6093,7 @@ fn render_agents_chat_bubbles(
         ctx.set_fill_color(&theme.item_text_muted);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No messages yet", x + w / 2.0, y + h / 2.0);
+        ctx.fill_text(SidebarKey::NoMessagesYet.get(current_language()), x + w / 2.0, y + h / 2.0);
         return None;
     }
 
@@ -6576,50 +6577,53 @@ pub fn find_free_slot_tooltip(widget_id: &str) -> Option<&'static str> {
     // Skip the slot index digit(s) and the following colon.
     let after_idx = rest.splitn(2, ':').nth(1)?;
 
+    let lang = current_language();
+
     // Per-leaf suffixes: strip "leaf:{M}:" then match the remaining token.
     if let Some(leaf_rest) = after_idx.strip_prefix("leaf:") {
         // leaf_rest = "{leaf_id}:{suffix}" — drop the leaf id.
         let suffix = leaf_rest.splitn(2, ':').nth(1)?;
         return match suffix {
-            "close"       => Some("Close panel"),
-            "col_config"  => Some("Column visibility"),
-            "am_toggle"   => Some("Toggle auto-center"),
-            "vol_filter"  => Some("Cycle volume filter"),
-            "tick_size"   => Some("Tick size"),
+            "close"       => Some(SidebarKey::SlotClosePanel.get(lang)),
+            "col_config"  => Some(SidebarKey::SlotColConfig.get(lang)),
+            "am_toggle"   => Some(SidebarKey::SlotAutoCenter.get(lang)),
+            "vol_filter"  => Some(SidebarKey::SlotVolumeFilter.get(lang)),
+            "tick_size"   => Some(SidebarKey::SlotTickSize.get(lang)),
             _             => None,
         };
     }
 
     // Slot toolbar suffixes.
     match after_idx {
-        "new"            => Some("Add panel"),
-        "source:auto"    => Some("Auto symbol (follow chart)"),
-        "source:pinned"  => Some("Pinned symbol (fixed)"),
-        "source:linked"  => Some("Linked symbol (bound to chart)"),
-        "split:h"        => Some("Split side by side"),
-        "split:v"        => Some("Split top and bottom"),
-        "split:replace"  => Some("Replace focused panel"),
-        "expand_toggle"  => Some("Expand / collapse focused panel"),
-        "reset_sizes"    => Some("Reset panel sizes"),
+        "new"            => Some(SidebarKey::SlotAddPanel.get(lang)),
+        "source:auto"    => Some(SidebarKey::SlotSourceAuto.get(lang)),
+        "source:pinned"  => Some(SidebarKey::SlotSourcePinned.get(lang)),
+        "source:linked"  => Some(SidebarKey::SlotSourceLinked.get(lang)),
+        "split:h"        => Some(SidebarKey::SlotSplitH.get(lang)),
+        "split:v"        => Some(SidebarKey::SlotSplitV.get(lang)),
+        "split:replace"  => Some(SidebarKey::SlotSplitReplace.get(lang)),
+        "expand_toggle"  => Some(SidebarKey::SlotExpandToggle.get(lang)),
+        "reset_sizes"    => Some(SidebarKey::SlotResetSizes.get(lang)),
         _                => None,
     }
 }
 
 /// Return tooltip text for agent panel widget IDs.
 pub fn find_agent_tooltip(widget_id: &str) -> Option<&'static str> {
+    let lang = current_language();
     match widget_id {
-        "agent:mode:pty" => Some("Terminal mode (PTY)"),
-        "agent:mode:chat" => Some("Chat mode"),
-        "agent:spawn:claude" => Some("Open Claude session"),
-        "agent:spawn:codex" => Some("Open Codex session"),
-        "agent:spawn:gemini" => Some("Open Gemini session"),
-        "agent:spawn:opencode" => Some("Open OpenCode session"),
-        "agent:split:h" => Some("Split horizontal"),
-        "agent:split:v" => Some("Split vertical"),
-        "agent:split:replace" => Some("Replace focused pane"),
-        "agent:expand_toggle" => Some("Expand / Collapse"),
-        "agent:reset_sizes" => Some("Reset pane sizes"),
-        "agent:close_pane" => Some("Close focused pane"),
+        "agent:mode:pty"        => Some(SidebarKey::AgentModePty.get(lang)),
+        "agent:mode:chat"       => Some(SidebarKey::AgentModeChat.get(lang)),
+        "agent:spawn:claude"    => Some(SidebarKey::AgentSpawnClaude.get(lang)),
+        "agent:spawn:codex"     => Some(SidebarKey::AgentSpawnCodex.get(lang)),
+        "agent:spawn:gemini"    => Some(SidebarKey::AgentSpawnGemini.get(lang)),
+        "agent:spawn:opencode"  => Some(SidebarKey::AgentSpawnOpencode.get(lang)),
+        "agent:split:h"         => Some(SidebarKey::AgentSplitH.get(lang)),
+        "agent:split:v"         => Some(SidebarKey::AgentSplitV.get(lang)),
+        "agent:split:replace"   => Some(SidebarKey::AgentSplitReplace.get(lang)),
+        "agent:expand_toggle"   => Some(SidebarKey::AgentExpandToggle.get(lang)),
+        "agent:reset_sizes"     => Some(SidebarKey::AgentResetSizes.get(lang)),
+        "agent:close_pane"      => Some(SidebarKey::AgentClosePane.get(lang)),
         _ => None,
     }
 }
