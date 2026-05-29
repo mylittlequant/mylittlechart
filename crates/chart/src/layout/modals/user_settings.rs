@@ -9,6 +9,7 @@ use crate::engine::render::draw_svg_icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
+use crate::i18n::{current_language, TextKey, UserSettingsKey};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_render::ToolbarTheme;
@@ -91,7 +92,7 @@ pub fn render_user_settings_modal(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("User Settings", modal_x + padding, modal_y + header_h / 2.0);
+    ctx.fill_text(UserSettingsKey::Title.get(current_language()), modal_x + padding, modal_y + header_h / 2.0);
 
     // Close button (X) — right side of header
     let close_size = 18.0;
@@ -307,7 +308,7 @@ fn render_general_tab(
     ctx.set_fill_color("rgba(244,205,99,0.7)");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("PROFILE", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionProfile.get(current_language()), x, cy);
     cy += 20.0;
 
     cy = render_profile_section(
@@ -321,7 +322,7 @@ fn render_general_tab(
     ctx.set_fill_color("rgba(244,205,99,0.7)");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("LANGUAGE", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionLanguage.get(current_language()), x, cy);
     cy += 20.0;
 
     {
@@ -375,7 +376,7 @@ fn render_general_tab(
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("VERSION", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionVersion.get(current_language()), x, cy);
     cy += 18.0;
 
     ctx.set_font("700 18px sans-serif");
@@ -397,7 +398,7 @@ fn render_general_tab(
     ctx.set_fill_color(if is_wizard_hovered { "rgba(254,255,238,0.80)" } else { "rgba(254,255,238,0.55)" });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Show Welcome Wizard", x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(UserSettingsKey::ShowWelcomeWizard.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     result.content_items.push(("show_wizard".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
@@ -630,7 +631,7 @@ fn render_profile_section(
             ctx.set_fill_color("#81c784");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Save", confirm_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.fill_text(TextKey::Save.get(current_language()), confirm_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
             result.content_items.push(("profile_rename_confirm".to_string(), WidgetRect::new(confirm_btn_x, btn_y, small_btn_w, btn_h)));
@@ -651,7 +652,7 @@ fn render_profile_section(
             ctx.set_fill_color("rgba(254,255,238,0.7)");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Cancel", cancel_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.fill_text(TextKey::Cancel.get(current_language()), cancel_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
             result.content_items.push(("profile_rename_cancel".to_string(), WidgetRect::new(cancel_btn_x, btn_y, small_btn_w, btn_h)));
@@ -685,7 +686,7 @@ fn render_profile_section(
                 ctx.set_fill_color(if is_rename_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Rename", rename_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(UserSettingsKey::BtnRename.get(current_language()), rename_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let rename_hit_id = format!("user_settings:profile_rename:{}", id);
@@ -712,7 +713,7 @@ fn render_profile_section(
                 ctx.set_fill_color(if is_avatar_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Avatar", avatar_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(UserSettingsKey::BtnAvatar.get(current_language()), avatar_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let avatar_hit_id = format!("user_settings:profile_avatar_toggle:{}", id);
@@ -739,7 +740,7 @@ fn render_profile_section(
                 ctx.set_fill_color(if is_delete_hovered { "rgba(239,154,154,0.95)" } else { "rgba(254,255,238,0.5)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Delete", delete_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(TextKey::Delete.get(current_language()), delete_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let delete_hit_id = format!("user_settings:profile_delete:{}", id);
@@ -899,7 +900,7 @@ fn render_profile_section(
         ctx.set_fill_color("#81c784");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Create", x + available_w / 2.0, cy + input_h / 2.0);
+        ctx.fill_text(UserSettingsKey::BtnCreate.get(current_language()), x + available_w / 2.0, cy + input_h / 2.0);
         ctx.set_text_align(TextAlign::Left);
 
         result.content_items.push(("profile_new_confirm".to_string(), WidgetRect::new(x, cy, available_w, input_h)));
@@ -926,7 +927,7 @@ fn render_profile_section(
         ctx.set_fill_color(if is_new_profile_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("+ New Profile", x + new_btn_w / 2.0, cy + new_btn_h / 2.0);
+        ctx.fill_text(UserSettingsKey::BtnNewProfile.get(current_language()), x + new_btn_w / 2.0, cy + new_btn_h / 2.0);
         ctx.set_text_align(TextAlign::Left);
 
         result.content_items.push(("profile_new".to_string(), WidgetRect::new(x, cy, new_btn_w, new_btn_h)));
@@ -995,7 +996,7 @@ fn render_performance_tab(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("INDICATOR RECALCULATION", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionIndicatorRecalc.get(current_language()), x, cy);
     cy += 22.0;
 
     let options = [
@@ -1057,7 +1058,7 @@ fn render_performance_tab(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("DIAGNOSTICS", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionDiagnostics.get(current_language()), x, cy);
 
     let row_h = 24.0;
     let cb_y_offset = cy + 18.0;
@@ -1082,7 +1083,7 @@ fn render_performance_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(
-        "Enable diagnostic logging",
+        UserSettingsKey::EnableDiagnosticLogging.get(current_language()),
         cb_x + cb_size + 10.0,
         cb_y_offset + row_h / 2.0,
     );
@@ -1115,7 +1116,7 @@ fn render_performance_tab(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("DATA & CACHE", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionDataCache.get(current_language()), x, cy);
     cy += 22.0;
 
     let content_w = available_w;
@@ -1134,7 +1135,7 @@ fn render_performance_tab(
         &bg_bars_config,
         bg_bars_val,
         bg_bars_rect,
-        "Background bars",
+        UserSettingsKey::SliderBgBars.get(current_language()),
         &widget_theme,
         false,
         None,
@@ -1159,7 +1160,7 @@ fn render_performance_tab(
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Bars loaded after initial 300", x + 4.0, cy);
+    ctx.fill_text(UserSettingsKey::DescBgBars.get(current_language()), x + 4.0, cy);
     cy += desc_gap;
 
     // ── Slider 2: Max bars in memory (0–50000) ────────────────────────────
@@ -1172,7 +1173,7 @@ fn render_performance_tab(
         &max_bars_config,
         max_bars_val,
         max_bars_rect,
-        "Max bars in memory",
+        UserSettingsKey::SliderMaxBars.get(current_language()),
         &widget_theme,
         false,
         None,
@@ -1197,7 +1198,7 @@ fn render_performance_tab(
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Per window limit. 0 = unlimited", x + 4.0, cy);
+    ctx.fill_text(UserSettingsKey::DescMaxBars.get(current_language()), x + 4.0, cy);
     cy += desc_gap;
 
     // ── Slider 3: Cache size limit MB (50–5000) ───────────────────────────
@@ -1210,7 +1211,7 @@ fn render_performance_tab(
         &store_mb_config,
         store_mb_val,
         store_mb_rect,
-        "Cache size limit (MB)",
+        UserSettingsKey::SliderCacheSizeMb.get(current_language()),
         &widget_theme,
         false,
         None,
@@ -1235,7 +1236,7 @@ fn render_performance_tab(
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Max disk space for bar cache", x + 4.0, cy);
+    ctx.fill_text(UserSettingsKey::DescCacheSize.get(current_language()), x + 4.0, cy);
     cy += desc_gap;
 
     // ── Slider 4: Auto-cleanup days (1–365) ───────────────────────────────
@@ -1248,7 +1249,7 @@ fn render_performance_tab(
         &cleanup_days_config,
         cleanup_days_val,
         cleanup_days_rect,
-        "Auto-cleanup (days)",
+        UserSettingsKey::SliderAutoCleanupDays.get(current_language()),
         &widget_theme,
         false,
         None,
@@ -1273,7 +1274,7 @@ fn render_performance_tab(
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Delete unused cache files after N days", x + 4.0, cy);
+    ctx.fill_text(UserSettingsKey::DescAutoCleanup.get(current_language()), x + 4.0, cy);
     cy += desc_gap;
 
     cy += 8.0;
@@ -1345,7 +1346,7 @@ fn render_server_tab(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("SERVER", x, cy);
+    ctx.fill_text(UserSettingsKey::SectionServer.get(current_language()), x, cy);
 
     // Enable toggle checkbox row
     cy += section_gap;
@@ -1367,7 +1368,7 @@ fn render_server_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(
-        "Enable Agent API Server",
+        UserSettingsKey::EnableAgentApiServer.get(current_language()),
         cb_x + cb_size + 10.0,
         cy + row_h / 2.0,
     );
@@ -1397,7 +1398,7 @@ fn render_server_tab(
     let status_text = if is_running {
         format!("Running on :{}", state.server_port)
     } else {
-        "Stopped".to_string()
+        UserSettingsKey::ServerStopped.get(current_language()).to_string()
     };
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_font("12px sans-serif");
@@ -1414,7 +1415,7 @@ fn render_server_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
-        "Open access on 127.0.0.1 — no authentication required.",
+        UserSettingsKey::ServerOpenAccess.get(current_language()),
         x,
         cy,
     );

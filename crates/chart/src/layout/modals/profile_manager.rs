@@ -10,6 +10,7 @@
 //!   CreateNew         — Enter name for a brand-new profile (sync toggled in settings).
 
 use crate::engine::render::{RenderContext, draw_svg_icon, draw_svg_multicolor};
+use crate::i18n::{current_language, TextKey, ProfileKey};
 
 const MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mascot.svg");
 use crate::ui::Icon;
@@ -173,7 +174,7 @@ fn render_page_profile_list(
         ctx.set_fill_color(toolbar_theme.item_text.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Zero-trust", left_inner_x + icon_size + 4.0, mid_y);
+        ctx.fill_text(ProfileKey::ZeroTrust.get(current_language()), left_inner_x + icon_size + 4.0, mid_y);
         // Version on the right edge of the left column.
         ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
         ctx.set_text_align(TextAlign::Right);
@@ -239,7 +240,7 @@ fn render_page_profile_list(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Profiles", inner_x, header_mid_y);
+    ctx.fill_text(ProfileKey::Profiles.get(current_language()), inner_x, header_mid_y);
 
     // ── Right half: "+ Create New Profile" button ──
     let btn_x = inner_x + half_w + 8.0;
@@ -258,7 +259,7 @@ fn render_page_profile_list(
     ctx.set_fill_color(if is_create_hovered { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("+ Create New Profile", btn_x + btn_w / 2.0, header_mid_y);
+    ctx.fill_text(ProfileKey::CreateNewProfile.get(current_language()), btn_x + btn_w / 2.0, header_mid_y);
     ctx.set_text_align(TextAlign::Left);
 
     let create_rect = WidgetRect::new(btn_x, cy, btn_w, header_h);
@@ -356,7 +357,7 @@ fn render_page_profile_list(
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(toolbar_theme.danger.as_str());
-            ctx.fill_text("Unprotected", inner_x + inner_w - 70.0, row_mid_y);
+            ctx.fill_text(ProfileKey::Unprotected.get(current_language()), inner_x + inner_w - 70.0, row_mid_y);
 
             // Delete button
             let del_w = 54.0;
@@ -371,7 +372,7 @@ fn render_page_profile_list(
             ctx.set_font("bold 10px sans-serif");
             ctx.set_fill_color(toolbar_theme.item_text.as_str());
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("Delete", del_x + del_w / 2.0, row_mid_y);
+            ctx.fill_text(TextKey::Delete.get(current_language()), del_x + del_w / 2.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
 
             // Register row hit area FIRST (lower priority)
@@ -502,7 +503,7 @@ fn render_page_unlock(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Enter your passphrase to decrypt", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::EnterPassphraseToDecrypt.get(current_language()), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
@@ -529,7 +530,7 @@ fn render_page_unlock(
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Unlock", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnUnlock.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !unlock_disabled {
@@ -551,7 +552,7 @@ fn render_page_unlock(
     }
 
     // "Use recovery key" link
-    let link_text = "Use recovery key";
+    let link_text = ProfileKey::LinkUseRecoveryKey.get(current_language());
     let is_link_hovered = hovered == Some("profile_mgr:use_recovery_key");
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(if is_link_hovered {
@@ -637,7 +638,7 @@ fn render_page_create_passphrase(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Create a passphrase to protect your API keys", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::CreatePassphraseForKeys.get(current_language()), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
@@ -670,7 +671,7 @@ fn render_page_create_passphrase(
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Confirm Passphrase", inner_x, cy);
+    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), inner_x, cy);
     cy += 18.0;
 
     let confirm_h = 32.0;
@@ -719,7 +720,7 @@ fn render_page_create_passphrase(
         ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text("Passphrases don't match", inner_x, cy);
+        ctx.fill_text(ProfileKey::PassphrasesMismatch.get(current_language()), inner_x, cy);
         cy += 18.0;
     } else {
         cy += 18.0;
@@ -744,7 +745,7 @@ fn render_page_create_passphrase(
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Encrypt", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnEncrypt.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !encrypt_disabled {
@@ -813,7 +814,7 @@ fn render_page_show_recovery_key(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Recovery Key", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::RecoveryKeyTitle.get(current_language()), inner_x + inner_w / 2.0, cy);
     cy += 28.0;
 
     // Warning subtitle
@@ -1005,7 +1006,7 @@ fn render_page_create_new(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("New Profile", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::NewProfile.get(current_language()), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 28.0;
 
@@ -1013,7 +1014,7 @@ fn render_page_create_new(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Profile Name", inner_x, cy);
+    ctx.fill_text(ProfileKey::ProfileName.get(current_language()), inner_x, cy);
     cy += 18.0;
 
     // Profile name input
@@ -1072,7 +1073,7 @@ fn render_page_create_new(
     ctx.set_fill_color(create_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Create", inner_x + create_btn_w / 2.0, cy + create_btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnCreate.get(current_language()), inner_x + create_btn_w / 2.0, cy + create_btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !create_disabled {
@@ -1141,7 +1142,7 @@ fn render_page_set_new_passphrase(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Set New Passphrase", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::SetNewPassphrase.get(current_language()), inner_x + inner_w / 2.0, cy);
     cy += 28.0;
 
     // Subtitle
@@ -1150,13 +1151,13 @@ fn render_page_set_new_passphrase(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
-        "Your vault was unlocked with recovery key.",
+        ProfileKey::VaultUnlockedWithKey.get(current_language()),
         inner_x + inner_w / 2.0,
         cy,
     );
     cy += 16.0;
     ctx.fill_text(
-        "Set a new passphrase to continue.",
+        ProfileKey::SetPassphraseToContinue.get(current_language()),
         inner_x + inner_w / 2.0,
         cy,
     );
@@ -1170,7 +1171,7 @@ fn render_page_set_new_passphrase(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("New Passphrase", inner_x, cy);
+    ctx.fill_text(ProfileKey::NewPassphrase.get(current_language()), inner_x, cy);
     cy += 18.0;
 
     let new_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
@@ -1212,7 +1213,7 @@ fn render_page_set_new_passphrase(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Confirm Passphrase", inner_x, cy);
+    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), inner_x, cy);
     cy += 18.0;
 
     let confirm_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
@@ -1283,7 +1284,7 @@ fn render_page_set_new_passphrase(
     ctx.set_fill_color(save_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Save", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(TextKey::Save.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !save_disabled {
@@ -1349,7 +1350,7 @@ fn render_page_use_recovery_key(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Recover with Recovery Key", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::RecoverWithKey.get(current_language()), inner_x + inner_w / 2.0, cy);
     cy += 26.0;
 
     // Subtitle
@@ -1357,7 +1358,7 @@ fn render_page_use_recovery_key(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Enter the recovery key shown during vault setup", inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::EnterRecoveryKeyShown.get(current_language()), inner_x + inner_w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
@@ -1417,7 +1418,7 @@ fn render_page_use_recovery_key(
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Recover", inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnRecover.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !recover_disabled {
@@ -1471,7 +1472,7 @@ fn render_back_button(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Back to profiles", x + 22.0, *cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BackToProfiles.get(current_language()), x + 22.0, *cy + btn_h / 2.0);
 
     let back_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
     result.content_items.push(("profile_mgr:back".to_string(), back_rect));
@@ -1504,7 +1505,7 @@ fn render_passphrase_input(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Passphrase", x, *cy);
+    ctx.fill_text(ProfileKey::Passphrase.get(current_language()), x, *cy);
     *cy += 18.0;
 
     // Input box

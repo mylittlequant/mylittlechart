@@ -14,6 +14,8 @@ use super::tables::{
     WIZARD_KEY_TABLE,
     CLOCK_KEY_TABLE,
     SETTINGS_KEY_TABLE,
+    USER_SETTINGS_KEY_TABLE,
+    PROFILE_KEY_TABLE,
 };
 
 // =============================================================================
@@ -656,6 +658,141 @@ impl uzor::i18n::Translate for SettingsKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&SETTINGS_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// User Settings Modal Keys
+// =============================================================================
+
+/// User settings modal string keys.
+///
+/// Variant order is **frozen** — discriminant == row index in `USER_SETTINGS_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum UserSettingsKey {
+    // Header
+    Title                    = 0,
+
+    // General tab — section headers
+    SectionProfile           = 1,
+    SectionLanguage          = 2,
+    SectionVersion           = 3,
+
+    // General tab — buttons
+    ShowWelcomeWizard        = 4,
+    BtnRename                = 5,
+    BtnAvatar                = 6,
+    BtnNewProfile            = 7,
+    BtnCreate                = 8,
+
+    // Performance tab — section headers
+    SectionIndicatorRecalc   = 9,
+    SectionDiagnostics       = 10,
+    SectionDataCache         = 11,
+
+    // Performance tab — labels
+    EnableDiagnosticLogging  = 12,
+    SliderBgBars             = 13,
+    SliderMaxBars            = 14,
+    SliderCacheSizeMb        = 15,
+    SliderAutoCleanupDays    = 16,
+
+    // Server tab — section header + labels
+    SectionServer            = 17,
+    EnableAgentApiServer     = 18,
+    ServerStopped            = 19,
+    ServerOpenAccess         = 20,
+
+    // Performance tab — slider description captions
+    DescBgBars               = 21,
+    DescMaxBars              = 22,
+    DescCacheSize            = 23,
+    DescAutoCleanup          = 24,
+}
+
+impl UserSettingsKey {
+    pub const COUNT: usize = 25;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&USER_SETTINGS_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for UserSettingsKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&USER_SETTINGS_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Profile Manager Modal Keys
+// =============================================================================
+
+/// Profile manager modal string keys.
+///
+/// Variant order is **frozen** — discriminant == row index in `PROFILE_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ProfileKey {
+    // ProfileList page
+    ZeroTrust                = 0,
+    Profiles                 = 1,
+    CreateNewProfile         = 2,
+    Unprotected              = 3,
+
+    // UnlockPassphrase page
+    EnterPassphraseToDecrypt = 4,
+    BtnUnlock                = 5,
+    LinkUseRecoveryKey       = 6,
+
+    // CreatePassphrase page
+    CreatePassphraseForKeys  = 7,
+    ConfirmPassphrase        = 8,
+    PassphrasesMismatch      = 9,
+    BtnEncrypt               = 10,
+
+    // CreateNew page
+    NewProfile               = 11,
+    ProfileName              = 12,
+    BtnCreate                = 13,
+
+    // SetNewPassphrase page
+    SetNewPassphrase         = 14,
+    VaultUnlockedWithKey     = 15,
+    SetPassphraseToContinue  = 16,
+    NewPassphrase            = 17,
+
+    // UseRecoveryKey page
+    RecoverWithKey           = 18,
+    EnterRecoveryKeyShown    = 19,
+    BtnRecover               = 20,
+
+    // Shared helpers
+    BackToProfiles           = 21,
+    Passphrase               = 22,
+
+    // ShowRecoveryKey page title
+    RecoveryKeyTitle         = 23,
+}
+
+impl ProfileKey {
+    pub const COUNT: usize = 24;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&PROFILE_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ProfileKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&PROFILE_KEY_TABLE[self as usize], lang_index)
     }
 }
 
