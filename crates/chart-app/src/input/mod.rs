@@ -8735,16 +8735,18 @@ fn tags_tabs_active_scroll(
 /// This is a standalone version of `MenuCatalog::chart_context_menu()` from the
 /// core crate, avoiding a dependency on core from chart-app.
 fn build_chart_background_menu() -> Vec<ContextMenuItemState> {
+    use zengeld_chart::i18n::{MenuKey, current_language};
+    let lang = current_language();
     vec![
-        ContextMenuItemState::action_with_icon("settings", "chart_settings", "Настройки"),
+        ContextMenuItemState::action_with_icon("settings", "chart_settings", MenuKey::OpenSettings.get(lang)),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::action_with_icon("zoom_reset", "reset_zoom", "Сбросить масштаб"),
+        ContextMenuItemState::action_with_icon("zoom_reset", "reset_zoom", MenuKey::ResetZoom.get(lang)),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::action_with_icon("camera", "screenshot", "Скриншот"),
+        ContextMenuItemState::action_with_icon("camera", "screenshot", MenuKey::Screenshot.get(lang)),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::action_with_icon("search", "symbol_search", "Найти символ"),
+        ContextMenuItemState::action_with_icon("search", "symbol_search", MenuKey::SymbolSearch.get(lang)),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::action_with_icon("delete", "reset_cache", "Сбросить кэш"),
-        ContextMenuItemState::action_with_icon("delete", "reset_storage", "Сбросить хранилище"),
+        ContextMenuItemState::action_with_icon("delete", "reset_cache", MenuKey::ResetCache.get(lang)),
+        ContextMenuItemState::action_with_icon("delete", "reset_storage", MenuKey::ResetStorage.get(lang)),
     ]
 }

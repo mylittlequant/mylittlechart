@@ -248,18 +248,20 @@ pub fn build_primitive_context_menu(
     is_locked: bool,
     is_visible: bool,
 ) -> Vec<ContextMenuItemState> {
-    let lock_label = if is_locked { "Разблокировать" } else { "Заблокировать" };
+    use crate::i18n::{MenuKey, current_language};
+    let lang = current_language();
+    let lock_label = if is_locked { MenuKey::Unlock.get(lang) } else { MenuKey::Lock.get(lang) };
     let lock_icon = if is_locked { "unlock" } else { "lock" };
-    let visibility_label = if is_visible { "Скрыть" } else { "Показать" };
+    let visibility_label = if is_visible { MenuKey::HideItem.get(lang) } else { MenuKey::Show.get(lang) };
     let visibility_icon = if is_visible { "eye_off" } else { "eye" };
 
     vec![
-        ContextMenuItemState::action_with_icon("settings", "settings", "Настройки"),
+        ContextMenuItemState::action_with_icon("settings", "settings", MenuKey::OpenSettings.get(lang)),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::action_with_icon("copy", "clone", "Клонировать"),
+        ContextMenuItemState::action_with_icon("copy", "clone", MenuKey::Clone.get(lang)),
         ContextMenuItemState::action_with_icon(lock_icon, "toggle_lock", lock_label),
         ContextMenuItemState::action_with_icon(visibility_icon, "toggle_visibility", visibility_label),
         ContextMenuItemState::separator(),
-        ContextMenuItemState::danger_with_icon("delete", "delete", "Удалить"),
+        ContextMenuItemState::danger_with_icon("delete", "delete", MenuKey::Delete.get(lang)),
     ]
 }

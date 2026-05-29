@@ -49,10 +49,19 @@ pub enum MenuKey {
     SyncToAllCharts = 10,
     SyncEverywhere  = 11,
     NoSync          = 12,
+    Lock            = 13,
+    Unlock          = 14,
+    Show            = 15,
+    HideItem        = 16,
+    ResetZoom       = 17,
+    Screenshot      = 18,
+    SymbolSearch    = 19,
+    ResetCache      = 20,
+    ResetStorage    = 21,
 }
 
 impl MenuKey {
-    pub const COUNT: usize = 13;
+    pub const COUNT: usize = 22;
 
     /// Get translation for this key
     #[inline]
