@@ -15,7 +15,7 @@
 use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::WidgetId;
 use crate::tooltip::{TooltipState, calculate_tooltip_position};
-use uzor::i18n::{TooltipKey, current_language};
+use zengeld_chart::i18n::{TooltipKey, current_language};
 use zengeld_chart::ui::icons::icon_svg;
 
 // ── Public constants ──────────────────────────────────────────────────────────

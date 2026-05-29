@@ -1,9 +1,9 @@
 //! Chart-specific translation keys
 //!
-//! General keys (TextKey, MonthKey, TooltipKey) are provided by uzor::i18n.
+//! General keys (TextKey, MonthKey, TooltipKey) are in keys_common.
 //! This module defines chart-specific keys only.
 
-use uzor::i18n::Language;
+use super::lang::Language;
 use super::tables::{
     MENU_KEY_TABLE,
     CONFIG_KEY_TABLE,
@@ -46,9 +46,14 @@ impl MenuKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &MENU_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&MENU_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for MenuKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&MENU_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -171,9 +176,14 @@ impl ConfigKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &CONFIG_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&CONFIG_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ConfigKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CONFIG_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -210,9 +220,14 @@ impl WaveDegreeKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &WAVE_DEGREE_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&WAVE_DEGREE_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for WaveDegreeKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&WAVE_DEGREE_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -242,9 +257,14 @@ impl StyleKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &STYLE_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&STYLE_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for StyleKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&STYLE_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -275,9 +295,14 @@ impl LabelPositionKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &LABEL_POSITION_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&LABEL_POSITION_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for LabelPositionKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&LABEL_POSITION_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -287,7 +312,7 @@ impl LabelPositionKey {
 
 /// Toolbar button tooltip keys — chart application specific.
 ///
-/// Window chrome tooltips (CloseWindow, Minimize, etc.) live in `uzor::i18n::TooltipKey`.
+/// Window chrome tooltips (CloseWindow, Minimize, etc.) live in `crate::i18n::TooltipKey`.
 /// Variant order is **frozen** — discriminant == row index in `TOOLBAR_TOOLTIP_KEY_TABLE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(usize)]
@@ -353,9 +378,14 @@ impl ToolbarTooltipKey {
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &TOOLBAR_TOOLTIP_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&TOOLBAR_TOOLTIP_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ToolbarTooltipKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&TOOLBAR_TOOLTIP_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -411,9 +441,14 @@ impl WizardKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &WIZARD_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&WIZARD_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for WizardKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&WIZARD_KEY_TABLE[self as usize], lang_index)
     }
 }
 
@@ -440,9 +475,14 @@ impl ClockKey {
     /// Get translation for this key
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-        let row = &CLOCK_KEY_TABLE[self as usize];
-        let s = row[lang as usize];
-        if !s.is_empty() { s } else { row[0] }
+        uzor::table_lookup!(&CLOCK_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ClockKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CLOCK_KEY_TABLE[self as usize], lang_index)
     }
 }
 

@@ -4,10 +4,10 @@
 //! - Column 0 = En (never empty — mandatory).
 //! - Column 1 = Ru.
 //! - Columns 2-14 = `""` stub → fallback to En at runtime.
-//! - Adding a language: increment `N_LANG` in uzor, add a column to every row here.
+//! - Adding a language: increment `N_LANG` in lang.rs, add a column to every row here.
 //! - Adding a key: append a row + update `COUNT` constant on the enum in `keys.rs`.
 
-use uzor::i18n::N_LANG;
+use super::lang::N_LANG;
 
 // =============================================================================
 // MenuKey table  (13 variants × N_LANG)

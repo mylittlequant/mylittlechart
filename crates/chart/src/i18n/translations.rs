@@ -1,6 +1,7 @@
 //! Translation utilities — chart-specific Translatable implementations
 
-use uzor::i18n::{Language, Translatable};
+use super::lang::Language;
+use super::keys_common::Translatable;
 use super::keys::{MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey, WizardKey};
 
 impl Translatable for MenuKey {

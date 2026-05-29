@@ -1,20 +1,29 @@
 //! Internationalization (i18n) module
 //!
-//! Core i18n types (Language, TextKey, MonthKey, Translatable) are provided by uzor.
-//! This module re-exports them and adds chart-specific translation keys.
+//! Language, TextKey, MonthKey, TooltipKey, Translatable are defined locally in mlc.
+//! uzor provides only the generic Translate trait + global lang-index storage.
+//! This module re-exports everything and provides chart-specific convenience functions.
 
+mod lang;
+mod keys_common;
+mod tables_common;
 mod keys;
 mod tables;
 mod translations;
 
-// Re-export core i18n from uzor
-pub use uzor::i18n::{
-    Language, current_language, set_language,
-    TextKey, MonthKey, TooltipKey,
-    Translatable, month_names_short,
+// Local Language + N_LANG
+pub use lang::{Language, N_LANG};
+
+// Common keys (formerly in uzor)
+pub use keys_common::{
+    TextKey,
+    TooltipKey,
+    MonthKey,
+    Translatable,
+    month_names_short,
 };
 
-// Re-export chart-specific keys
+// Chart-specific keys
 pub use keys::{
     MenuKey,
     ConfigKey,
@@ -26,11 +35,27 @@ pub use keys::{
     ClockKey,
 };
 
-// Chart-specific convenience functions (use uzor's Language)
-
-/// Translate a text key using current global language (delegates to uzor)
+/// Set the active language. Updates uzor global lang-index.
 #[inline]
-pub fn t(key: TextKey) -> &'static str {
+pub fn set_language(lang: Language) {
+    uzor::i18n::set_lang_index(lang as u8);
+}
+
+/// Get the active language from uzor global lang-index.
+#[inline]
+pub fn current_language() -> Language {
+    Language::from_u8(uzor::i18n::current_lang_index() as u8)
+}
+
+/// Translate a key using current global language.
+#[inline]
+pub fn t<K: uzor::i18n::Translate>(key: K) -> &'static str {
+    uzor::i18n::t(key)
+}
+
+/// Translate a text key using current global language
+#[inline]
+pub fn t_text(key: TextKey) -> &'static str {
     key.get(current_language())
 }
 
