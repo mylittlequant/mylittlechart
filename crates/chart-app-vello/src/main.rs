@@ -2700,6 +2700,12 @@ impl ApplicationHandler for App<'_> {
                 // Propagate to all windows
                 for pw in self.windows.values_mut() {
                     pw.chart.panel_app.user_settings_state.language = lang_code.clone();
+                    // Toolbar defs (incl. drawing-tool dropdown labels + tooltips) are
+                    // built once with the language active at construction time. The
+                    // global language has already been switched by now, so rebuild the
+                    // toolbar config to pick up the new translations.
+                    pw.chart.panel_app.toolbar_config =
+                        zengeld_chart::ToolbarConfig::standalone();
                 }
                 // Save to active profile
                 self.profile.language = lang_code.clone();
