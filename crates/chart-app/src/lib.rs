@@ -552,8 +552,6 @@ pub struct ChartApp {
     pub last_event_process_us: u64,
     /// Accumulated time in calc_auto_scale() calls during the last tick.
     pub last_auto_scale_us: u64,
-    /// Accumulated time in calc_moving_averages() calls during the last tick.
-    pub last_moving_avg_us: u64,
 
     /// Heavy state for all trading panels docked into the free-slot sidebars.
     ///
@@ -931,7 +929,6 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
-            last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
@@ -1246,7 +1243,6 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
-            last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
@@ -1442,7 +1438,6 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
-            last_moving_avg_us: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
@@ -2232,6 +2227,122 @@ impl ChartApp {
         self.prepare_frame(self.width as f64, self.height as f64);
         let output = self.render_to_scene(ctx, current_time_ms, skip_toolbar_draw);
         self.apply_render_output(output);
+    }
+
+    /// Render only the cursor-dependent overlay for every visible chart leaf.
+    ///
+    /// This emits crosshair lines, scale cursor labels, drawing previews,
+    /// tooltips, and OHLC legends on top of the already-rendered static chart.
+    ///
+    /// Call AFTER [`render`] (or [`render_to_scene`] + [`apply_render_output`])
+    /// so that overlay elements appear on top of all chart content.
+    ///
+    /// The cached [`ExtendedFrameLayout`] built during [`prepare_frame`] is used
+    /// directly — no geometry is recomputed here.
+    pub fn render_overlay(&self, ctx: &mut dyn RenderContext) {
+        use zengeld_chart::render_chart_overlay;
+        use zengeld_chart::chart::render::ChartRect;
+
+        let chart_theme = self.panel_app.chart_theme_for_render();
+        let is_split = self.panel_app.panel_grid.is_split();
+
+        if is_split {
+            // Iterate all split leaves using the cached per-leaf layouts.
+            let leaf_ids: Vec<_> = self.frame_layouts.keys().copied().collect();
+            for leaf_id in leaf_ids {
+                let layout = match self.frame_layouts.get(&leaf_id) {
+                    Some(l) => l,
+                    None => continue,
+                };
+                let window = match self.panel_app.panel_grid.window_for_leaf(leaf_id) {
+                    Some(w) => w,
+                    None => continue,
+                };
+
+                // Build a chart rect from the main chart area in the layout.
+                let chart_rect = ChartRect::new(
+                    layout.main_chart.chart.x,
+                    layout.main_chart.chart.y,
+                    layout.main_chart.chart.width,
+                    layout.main_chart.chart.height,
+                );
+                let render_state = window.to_render_state(
+                    chart_rect,
+                    &chart_theme,
+                    Some(window.timeframe.name.as_str()),
+                    Some(&window.scale_settings.time_format),
+                );
+                let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
+                let render_config = ChartRenderConfig {
+                    scale_theme: self.panel_app.scale_theme_for_render(),
+                    chart_type: window.chart_type,
+                    crosshair_config,
+                    ..ChartRenderConfig::default()
+                };
+
+                render_chart_overlay(
+                    ctx,
+                    &render_state,
+                    layout,
+                    &render_config,
+                    None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
+                    Some(&window.drawing_manager),
+                    Some(&window.tooltip),
+                    Some(window.symbol.as_str()),
+                    &window.timeframe.name,
+                );
+            }
+        } else {
+            // Single-window path: use active_frame_layout.
+            let layout = match &self.active_frame_layout {
+                Some(l) => l,
+                None => return,
+            };
+            // Get the active leaf window.
+            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+            let window = active_leaf
+                .and_then(|lid| self.panel_app.panel_grid.window_for_leaf(lid))
+                .or_else(|| {
+                    // Fallback: first window in the grid
+                    self.panel_app.panel_grid.windows().values().next()
+                });
+            let window = match window {
+                Some(w) => w,
+                None => return,
+            };
+
+            let chart_rect = ChartRect::new(
+                layout.main_chart.chart.x,
+                layout.main_chart.chart.y,
+                layout.main_chart.chart.width,
+                layout.main_chart.chart.height,
+            );
+            let render_state = window.to_render_state(
+                chart_rect,
+                &chart_theme,
+                Some(window.timeframe.name.as_str()),
+                Some(&window.scale_settings.time_format),
+            );
+            let crosshair_config = zengeld_chart::chart::CrosshairConfig::default();
+            let render_config = ChartRenderConfig {
+                scale_theme: self.panel_app.scale_theme_for_render(),
+                chart_type: window.chart_type,
+                crosshair_config,
+                ..ChartRenderConfig::default()
+            };
+
+            render_chart_overlay(
+                ctx,
+                &render_state,
+                layout,
+                &render_config,
+                None,
+                Some(&window.drawing_manager),
+                Some(&window.tooltip),
+                Some(window.symbol.as_str()),
+                &window.timeframe.name,
+            );
+        }
     }
 
     /// Pure-rendering pass.

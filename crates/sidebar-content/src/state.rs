@@ -678,8 +678,6 @@ pub struct PerformanceData {
     pub event_process_us: u64,
     /// Accumulated time spent in calc_auto_scale() calls this frame.
     pub auto_scale_us: u64,
-    /// Accumulated time spent in calc_moving_averages() calls this frame.
-    pub moving_avg_us: u64,
 }
 
 impl Default for PerformanceData {
@@ -716,7 +714,6 @@ impl Default for PerformanceData {
             indicator_full_count: 0,
             event_process_us: 0,
             auto_scale_us: 0,
-            moving_avg_us: 0,
         }
     }
 }

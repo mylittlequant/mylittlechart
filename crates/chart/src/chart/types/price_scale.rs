@@ -320,15 +320,13 @@ impl PriceScale {
         }
     }
 
-    /// Calculate auto-scale based on visible bars and optional MA values
+    /// Calculate auto-scale based on visible bars.
     ///
     /// Updates price_min and price_max to fit the visible data with padding.
     pub fn calc_auto_scale(
         &mut self,
         bars: &[Bar],
         visible_range: (usize, usize),
-        ma_fast: &[f64],
-        ma_slow: &[f64],
     ) {
         if !self.scale_mode.is_auto_y() {
             return;
@@ -346,15 +344,6 @@ impl PriceScale {
             let bar = &bars[i];
             min = min.min(bar.low);
             max = max.max(bar.high);
-
-            if i < ma_fast.len() && !ma_fast[i].is_nan() {
-                min = min.min(ma_fast[i]);
-                max = max.max(ma_fast[i]);
-            }
-            if i < ma_slow.len() && !ma_slow[i].is_nan() {
-                min = min.min(ma_slow[i]);
-                max = max.max(ma_slow[i]);
-            }
         }
 
         // In Focus mode, also include the very last bar (live price tracking)

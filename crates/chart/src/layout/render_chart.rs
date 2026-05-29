@@ -32,6 +32,7 @@ use crate::chart::render::{
     draw_line_series, draw_area_series, draw_baseline_series,
     draw_step_line, draw_line_with_markers, draw_hlc_area, draw_histogram, draw_columns,
     draw_price_scale, draw_time_scale,
+    draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
     draw_legend, draw_tooltip, LegendData, TooltipLines,
     draw_watermark, draw_last_price_line, draw_compare_overlay,
@@ -1222,14 +1223,14 @@ pub fn draw_sub_pane_histogram(
 pub fn render_sub_pane(
     ctx: &mut dyn RenderContext,
     pane_layout: &SubPaneLayout,
-    pane_index: usize,
+    _pane_index: usize,
     state: &ChartRenderState,
     indicator_source: &dyn crate::indicator_source::IndicatorSource,
     scale_theme: &ScaleTheme,
     scale_config: &ScaleConfig,
-    crosshair_config: &CrosshairConfig,
+    _crosshair_config: &CrosshairConfig,
     frame_theme: &FrameTheme,
-    is_dragging: bool,
+    _is_dragging: bool,
     drawing_manager: Option<&DrawingManager>,
     sub_pane_auto_scale: bool,
     sub_pane_price_min: f64,
@@ -1437,40 +1438,7 @@ pub fn render_sub_pane(
         scale_config,
     );
 
-    // 7. Draw horizontal crosshair line and price label on Y-axis
-    let crosshair = state.crosshair;
-    if crosshair.enabled && crosshair.visible && crosshair.pane_index == Some(pane_index) {
-        let pane_rect = ChartRect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: content.height,
-        };
-
-        draw_pane_crosshair(
-            ctx,
-            &pane_rect,
-            crosshair.y,
-            crosshair_config,
-            &state.theme.crosshair,
-            is_dragging,
-        );
-
-        // Draw price label on the sub-pane Y-axis at the crosshair position.
-        draw_sub_pane_crosshair_price_label(
-            ctx,
-            crosshair.y,
-            content.height,
-            price_scale_rect.x,
-            price_scale_rect.y,
-            price_scale_rect.width,
-            price_scale_rect.height,
-            pane_min,
-            pane_max,
-            scale_theme,
-            scale_config,
-        );
-    }
+    // 7. Sub-pane crosshair — moved to render_chart_overlay (cursor-dependent).
 
     // 8. Render drawing primitives
     if let Some(dm) = drawing_manager {
@@ -1691,16 +1659,16 @@ pub fn draw_sub_pane_grid(
 pub fn render_sub_pane_base(
     ctx: &mut dyn RenderContext,
     pane_layout: &SubPaneLayout,
-    pane_index: usize,
+    _pane_index: usize,
     state: &ChartRenderState,
     pane_min: f64,
     pane_max: f64,
     _title: &str,
     scale_theme: &ScaleTheme,
     scale_config: &ScaleConfig,
-    crosshair_config: &CrosshairConfig,
+    _crosshair_config: &CrosshairConfig,
     frame_theme: &FrameTheme,
-    is_dragging: bool,
+    _is_dragging: bool,
 ) {
     let content = &pane_layout.content;
     let price_scale_rect = &pane_layout.price_scale;
@@ -1747,42 +1715,7 @@ pub fn render_sub_pane_base(
         scale_config,
     );
 
-    // 6. Draw horizontal crosshair line if cursor is in this pane
-    let crosshair = state.crosshair;
-    if crosshair.enabled && crosshair.visible && crosshair.pane_index == Some(pane_index) {
-        let pane_rect = ChartRect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: content.height,
-        };
-
-        let y_position = crosshair.y;
-
-        draw_pane_crosshair(
-            ctx,
-            &pane_rect,
-            y_position,
-            crosshair_config,
-            &state.theme.crosshair,
-            is_dragging,
-        );
-
-        // Draw price label on the sub-pane Y-axis at the crosshair position.
-        draw_sub_pane_crosshair_price_label(
-            ctx,
-            y_position,
-            content.height,
-            price_scale_rect.x,
-            price_scale_rect.y,
-            price_scale_rect.width,
-            price_scale_rect.height,
-            pane_min,
-            pane_max,
-            scale_theme,
-            scale_config,
-        );
-    }
+    // 6. Sub-pane crosshair — moved to render_chart_overlay (cursor-dependent).
 }
 
 /// Helper function to render drawing primitives for a sub-pane
@@ -1892,92 +1825,8 @@ pub fn render_sub_pane_primitives(
         }
     }
 
-    // Render drawing preview for this sub-pane
-    if dm.is_drawing() && dm.current_pane() == Some(instance_id) {
-        let cursor_bar = state.crosshair.bar_f64;
-        let cursor_price = state.crosshair.price;
-
-        // For freehand tools (brush/highlighter), draw the accumulated points as a live stroke.
-        // Use `is_drawing_freehand()` (reads `DrawingState::Creating.tool_id` so peer windows
-        // that received a synced stroke via `set_synced_drawing_state` also render here even
-        // though their `current_tool` is None).
-        if dm.is_drawing_freehand() {
-            if let Some(points) = dm.drawing_points() {
-                if points.len() >= 2 {
-                    let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
-                    let effective_color = dm.effective_color();
-                    let stroke_color = if is_highlighter {
-                        apply_opacity(&effective_color, 0.4)
-                    } else {
-                        effective_color
-                    };
-                    let stroke_width = if is_highlighter { 20.0 } else { 3.0 };
-
-                    ctx.set_stroke_color(&stroke_color);
-                    ctx.set_stroke_width(stroke_width);
-                    ctx.set_line_cap("round");
-                    ctx.set_line_join("round");
-
-                    let screen_pts: Vec<(f64, f64)> = points.iter()
-                        .map(|&(ts_ms, price)| {
-                            let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
-                            let x = pane_viewport.bar_to_x_f64(bar_f);
-                            let y = pane_price_scale.price_to_y(price, content.height);
-                            (x, y)
-                        })
-                        .collect();
-
-                    ctx.begin_path();
-                    ctx.move_to(screen_pts[0].0, screen_pts[0].1);
-
-                    if screen_pts.len() == 2 {
-                        ctx.line_to(screen_pts[1].0, screen_pts[1].1);
-                    } else {
-                        let mid_x = (screen_pts[0].0 + screen_pts[1].0) / 2.0;
-                        let mid_y = (screen_pts[0].1 + screen_pts[1].1) / 2.0;
-                        ctx.line_to(mid_x, mid_y);
-
-                        for i in 1..screen_pts.len() - 1 {
-                            let next_mid_x = (screen_pts[i].0 + screen_pts[i + 1].0) / 2.0;
-                            let next_mid_y = (screen_pts[i].1 + screen_pts[i + 1].1) / 2.0;
-                            ctx.quadratic_curve_to(screen_pts[i].0, screen_pts[i].1, next_mid_x, next_mid_y);
-                        }
-
-                        let last = screen_pts.last().unwrap();
-                        ctx.line_to(last.0, last.1);
-                    }
-                    ctx.stroke();
-                }
-            }
-        } else {
-            // For non-freehand tools, use standard preview
-            let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
-            if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
-                preview_prim.render(ctx, false);
-
-
-                // Draw anchor points for multi-click tools
-                if let Some(points) = dm.drawing_points() {
-                    ctx.set_fill_color("#ffff00");
-                    ctx.set_stroke_color("#000000");
-                    ctx.set_stroke_width(1.0);
-
-                    for (ts_ms, price) in points {
-                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                        let x = pane_viewport.bar_to_x_f64(bar_f);
-                        let y = pane_price_scale.price_to_y(*price, content.height);
-
-                        ctx.begin_path();
-                        ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                        ctx.fill();
-                        ctx.begin_path();
-                        ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                        ctx.stroke();
-                    }
-                }
-            }
-        }
-    }
+    // Render drawing preview for this sub-pane — cursor-dependent, delegates to standalone fn.
+    draw_sub_pane_drawing_preview(ctx, state, dm, instance_id, &pane_viewport, &pane_price_scale, content.height);
 
     // Restore context state
     ctx.restore();
@@ -2300,6 +2149,231 @@ pub fn render_sub_pane_left_overlay(
     (eye_rect, alert_rect, settings_rect, delete_rect)
 }
 
+/// Draw the in-progress drawing preview for the MAIN chart.
+///
+/// Must be called inside the same `ctx.save()`/`ctx.restore()` block where
+/// `set_coordinate_space` + `translate(chart.x, chart.y)` have already been
+/// applied (i.e., from within `render_main_chart_primitives`).
+///
+/// Draws nothing when `dm.is_drawing()` is false or when the current stroke
+/// belongs to a sub-pane (`dm.current_pane().is_some()`).
+///
+/// # Arguments
+/// * `ctx`        – Render context (coordinate space already set by caller)
+/// * `state`      – Chart render state (crosshair, bars, price_scale)
+/// * `dm`         – Drawing manager
+/// * `chart_height` – Height of the chart area (for price_to_y)
+pub(crate) fn draw_main_chart_drawing_preview(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    dm: &DrawingManager,
+    chart_height: f64,
+) {
+    // Only draw when actively drawing on the main chart (not a sub-pane)
+    if !dm.is_drawing() || dm.current_pane().is_some() {
+        return;
+    }
+
+    // Snap to bar centre (matching crosshair coordinate system)
+    let cursor_bar = if let Some(idx) = state.crosshair.bar_idx {
+        idx as f64
+    } else {
+        state.crosshair.bar_f64
+    };
+    // Use snapped price in magnet mode so preview matches where primitive will be placed
+    let cursor_price = state.crosshair.effective_price(false);
+
+    if dm.is_drawing_freehand() {
+        if let Some(points) = dm.drawing_points() {
+            if points.len() >= 2 {
+                let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
+                let effective_color = dm.effective_color();
+                let stroke_color = if is_highlighter {
+                    apply_opacity(&effective_color, 0.4)
+                } else {
+                    effective_color
+                };
+                let stroke_width = if is_highlighter { 20.0 } else { 3.0 };
+
+                ctx.set_stroke_color(&stroke_color);
+                ctx.set_stroke_width(stroke_width);
+                ctx.set_line_cap("round");
+                ctx.set_line_join("round");
+
+                let screen_pts: Vec<(f64, f64)> = points
+                    .iter()
+                    .map(|&(ts_ms, price)| {
+                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
+                        let x = state.viewport.bar_to_x_f64(bar_f);
+                        let y = state.price_scale.price_to_y(price, chart_height);
+                        (x, y)
+                    })
+                    .collect();
+
+                ctx.begin_path();
+                ctx.move_to(screen_pts[0].0, screen_pts[0].1);
+
+                if screen_pts.len() == 2 {
+                    ctx.line_to(screen_pts[1].0, screen_pts[1].1);
+                } else {
+                    let mid_x = (screen_pts[0].0 + screen_pts[1].0) / 2.0;
+                    let mid_y = (screen_pts[0].1 + screen_pts[1].1) / 2.0;
+                    ctx.line_to(mid_x, mid_y);
+
+                    for i in 1..screen_pts.len() - 1 {
+                        let next_mid_x = (screen_pts[i].0 + screen_pts[i + 1].0) / 2.0;
+                        let next_mid_y = (screen_pts[i].1 + screen_pts[i + 1].1) / 2.0;
+                        ctx.quadratic_curve_to(
+                            screen_pts[i].0,
+                            screen_pts[i].1,
+                            next_mid_x,
+                            next_mid_y,
+                        );
+                    }
+
+                    let last = screen_pts.last().unwrap();
+                    ctx.line_to(last.0, last.1);
+                }
+                ctx.stroke();
+            }
+        }
+    } else {
+        // For non-freehand tools, use standard preview
+        let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+        if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
+            preview_prim.render(ctx, false);
+
+            // Draw anchor points for multi-click tools (not freehand)
+            if let Some(points) = dm.drawing_points() {
+                ctx.set_fill_color("#ffff00");
+                ctx.set_stroke_color("#000000");
+                ctx.set_stroke_width(1.0);
+
+                for (ts_ms, price) in points {
+                    let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                    let x = state.viewport.bar_to_x_f64(bar_f);
+                    let y = state.price_scale.price_to_y(*price, chart_height);
+
+                    ctx.begin_path();
+                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
+                    ctx.fill();
+                    ctx.begin_path();
+                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
+                    ctx.stroke();
+                }
+            }
+        }
+    }
+}
+
+/// Draw the in-progress drawing preview for a SUB-PANE.
+///
+/// Must be called inside the same `ctx.save()`/`ctx.restore()` block where
+/// the sub-pane coordinate space and `translate(content.x, content.y)` have
+/// already been applied (i.e., from within `render_sub_pane_primitives`).
+///
+/// Draws nothing when `dm.is_drawing()` is false or when the current stroke
+/// does not belong to `instance_id` (`dm.current_pane() != Some(instance_id)`).
+///
+/// # Arguments
+/// * `ctx`              – Render context (coordinate space already set by caller)
+/// * `state`            – Chart render state (crosshair, bars)
+/// * `dm`               – Drawing manager
+/// * `instance_id`      – Sub-pane instance ID (must match `dm.current_pane()`)
+/// * `pane_viewport`    – Sub-pane viewport (for bar_to_x_f64)
+/// * `pane_price_scale` – Sub-pane price scale (for price_to_y)
+/// * `content_height`   – Height of the sub-pane content rect (for price_to_y)
+pub(crate) fn draw_sub_pane_drawing_preview(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    dm: &DrawingManager,
+    instance_id: u64,
+    pane_viewport: &crate::Viewport,
+    pane_price_scale: &crate::PriceScale,
+    content_height: f64,
+) {
+    if !dm.is_drawing() || dm.current_pane() != Some(instance_id) {
+        return;
+    }
+
+    let cursor_bar = state.crosshair.bar_f64;
+    let cursor_price = state.crosshair.price;
+
+    if dm.is_drawing_freehand() {
+        if let Some(points) = dm.drawing_points() {
+            if points.len() >= 2 {
+                let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
+                let effective_color = dm.effective_color();
+                let stroke_color = if is_highlighter {
+                    apply_opacity(&effective_color, 0.4)
+                } else {
+                    effective_color
+                };
+                let stroke_width = if is_highlighter { 20.0 } else { 3.0 };
+
+                ctx.set_stroke_color(&stroke_color);
+                ctx.set_stroke_width(stroke_width);
+                ctx.set_line_cap("round");
+                ctx.set_line_join("round");
+
+                let screen_pts: Vec<(f64, f64)> = points.iter()
+                    .map(|&(ts_ms, price)| {
+                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
+                        let x = pane_viewport.bar_to_x_f64(bar_f);
+                        let y = pane_price_scale.price_to_y(price, content_height);
+                        (x, y)
+                    })
+                    .collect();
+
+                ctx.begin_path();
+                ctx.move_to(screen_pts[0].0, screen_pts[0].1);
+
+                if screen_pts.len() == 2 {
+                    ctx.line_to(screen_pts[1].0, screen_pts[1].1);
+                } else {
+                    let mid_x = (screen_pts[0].0 + screen_pts[1].0) / 2.0;
+                    let mid_y = (screen_pts[0].1 + screen_pts[1].1) / 2.0;
+                    ctx.line_to(mid_x, mid_y);
+
+                    for i in 1..screen_pts.len() - 1 {
+                        let next_mid_x = (screen_pts[i].0 + screen_pts[i + 1].0) / 2.0;
+                        let next_mid_y = (screen_pts[i].1 + screen_pts[i + 1].1) / 2.0;
+                        ctx.quadratic_curve_to(screen_pts[i].0, screen_pts[i].1, next_mid_x, next_mid_y);
+                    }
+
+                    let last = screen_pts.last().unwrap();
+                    ctx.line_to(last.0, last.1);
+                }
+                ctx.stroke();
+            }
+        }
+    } else {
+        let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+        if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
+            preview_prim.render(ctx, false);
+
+            if let Some(points) = dm.drawing_points() {
+                ctx.set_fill_color("#ffff00");
+                ctx.set_stroke_color("#000000");
+                ctx.set_stroke_width(1.0);
+
+                for (ts_ms, price) in points {
+                    let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                    let x = pane_viewport.bar_to_x_f64(bar_f);
+                    let y = pane_price_scale.price_to_y(*price, content_height);
+
+                    ctx.begin_path();
+                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
+                    ctx.fill();
+                    ctx.begin_path();
+                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
+                    ctx.stroke();
+                }
+            }
+        }
+    }
+}
+
 /// Render drawing primitives for the main chart area (pane_id == None).
 ///
 /// This is the chart-crate equivalent of `render_window_primitives` in core.
@@ -2447,107 +2521,8 @@ pub fn render_main_chart_primitives(
         }
     }
 
-    // Render drawing preview — only when drawing on the MAIN chart.
-    // current_pane() == Some(id) means the in-progress stroke belongs to a
-    // sub-pane; that pane's render path draws the preview itself. Without this
-    // guard, the projection line between the first click and the cursor leaks
-    // into the main chart's coordinate system even when the user is drawing
-    // inside a sub-pane (visually extends through main chart and other panes).
-    if dm.is_drawing() && dm.current_pane().is_none() {
-        // Snap to bar centre (matching crosshair coordinate system)
-        let cursor_bar = if let Some(idx) = state.crosshair.bar_idx {
-            idx as f64
-        } else {
-            state.crosshair.bar_f64
-        };
-        // Use snapped price in magnet mode so preview matches where primitive will be placed
-        let cursor_price = state.crosshair.effective_price(false);
-
-        // For freehand tools (brush/highlighter), draw the accumulated stroke live.
-        // `is_drawing_freehand()` covers peer DMs that have a synced stroke but no
-        // `current_tool` set.
-        if dm.is_drawing_freehand() {
-            if let Some(points) = dm.drawing_points() {
-                if points.len() >= 2 {
-                    let is_highlighter = dm.drawing_tool_id() == Some("highlighter");
-                    let effective_color = dm.effective_color();
-                    let stroke_color = if is_highlighter {
-                        apply_opacity(&effective_color, 0.4)
-                    } else {
-                        effective_color
-                    };
-                    let stroke_width = if is_highlighter { 20.0 } else { 3.0 };
-
-                    ctx.set_stroke_color(&stroke_color);
-                    ctx.set_stroke_width(stroke_width);
-                    ctx.set_line_cap("round");
-                    ctx.set_line_join("round");
-
-                    let screen_pts: Vec<(f64, f64)> = points
-                        .iter()
-                        .map(|&(ts_ms, price)| {
-                            let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, ts_ms);
-                            let x = state.viewport.bar_to_x_f64(bar_f);
-                            let y = state.price_scale.price_to_y(price, chart.height);
-                            (x, y)
-                        })
-                        .collect();
-
-                    ctx.begin_path();
-                    ctx.move_to(screen_pts[0].0, screen_pts[0].1);
-
-                    if screen_pts.len() == 2 {
-                        ctx.line_to(screen_pts[1].0, screen_pts[1].1);
-                    } else {
-                        let mid_x = (screen_pts[0].0 + screen_pts[1].0) / 2.0;
-                        let mid_y = (screen_pts[0].1 + screen_pts[1].1) / 2.0;
-                        ctx.line_to(mid_x, mid_y);
-
-                        for i in 1..screen_pts.len() - 1 {
-                            let next_mid_x = (screen_pts[i].0 + screen_pts[i + 1].0) / 2.0;
-                            let next_mid_y = (screen_pts[i].1 + screen_pts[i + 1].1) / 2.0;
-                            ctx.quadratic_curve_to(
-                                screen_pts[i].0,
-                                screen_pts[i].1,
-                                next_mid_x,
-                                next_mid_y,
-                            );
-                        }
-
-                        let last = screen_pts.last().unwrap();
-                        ctx.line_to(last.0, last.1);
-                    }
-                    ctx.stroke();
-                }
-            }
-        } else {
-            // For non-freehand tools, use standard preview
-            let cursor_ts_ms = crate::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
-            if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
-                preview_prim.render(ctx, false);
-
-                // Draw anchor points for multi-click tools (not freehand)
-                if let Some(points) = dm.drawing_points() {
-                    ctx.set_fill_color("#ffff00");
-                    ctx.set_stroke_color("#000000");
-                    ctx.set_stroke_width(1.0);
-
-                    for (ts_ms, price) in points {
-                        let bar_f = crate::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                        let x = state.viewport.bar_to_x_f64(bar_f);
-                        let y = state.price_scale.price_to_y(*price, chart.height);
-
-                        ctx.begin_path();
-                        ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                        ctx.fill();
-                        ctx.begin_path();
-                        ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                        ctx.stroke();
-                    }
-                }
-            }
-        }
-    }
+    // Render drawing preview — cursor-dependent, delegates to standalone fn.
+    draw_main_chart_drawing_preview(ctx, state, dm, chart.height);
 
     // Restore context state
     ctx.restore();
@@ -2563,9 +2538,9 @@ pub fn render_main_chart_primitives(
 /// 1. Background
 /// 2. Grid
 /// 3. Series (candles, bars, line, area, etc.)
-/// 4. Crosshair
 ///
 /// Used internally by render_chart_window.
+/// Crosshair is cursor-dependent and is drawn by render_chart_overlay.
 pub fn render_chart(
     ctx: &mut dyn RenderContext,
     layout: &ChartAreaLayout,
@@ -2581,12 +2556,6 @@ pub fn render_chart(
 
     // 3. Series (candles, bars, line, area, etc.)
     draw_series(ctx, state, config.chart_type);
-
-    // 4. Crosshair (on chart area)
-    // For simple charts (no sub-panes), vertical line spans just the chart
-    let total_chart_top = layout.chart.y;
-    let total_chart_bottom = layout.chart.bottom();
-    draw_crosshair(ctx, state, &config.crosshair_config, config.is_dragging, total_chart_top, total_chart_bottom);
 }
 
 /// Render complete chart window (chart + scales + corner)
@@ -3131,13 +3100,11 @@ pub fn render_full_chart_panel(
         draw_compare_overlay(ctx, &corrected_state, compare_overlay);
     }
 
-    // 7. Tooltip (near cursor).
-    if let Some(tooltip) = data.tooltip {
-        draw_chart_tooltip(ctx, &corrected_state, tooltip);
-    }
+    // NOTE: Tooltip and crosshair are cursor-dependent — they are drawn by
+    // render_chart_overlay, not the static pass.
 
     // NOTE: Crosshair is drawn AFTER sub-panes so the vertical line is not
-    // covered by sub-pane backgrounds.
+    // covered by sub-pane backgrounds. (moved to render_chart_overlay)
 
     // 8. Price scale (skip when hidden).
     let mut leaf_scale_cfg = data.config.scale_config.clone();
@@ -3251,22 +3218,7 @@ pub fn render_full_chart_panel(
         }
     }
 
-    // 13. Crosshair — spans all chart content (main + sub-panes) but not time scale.
-    //     Use min/max across main chart and ALL sub-panes (including above-main).
-    let total_chart_top = extended_layout.sub_panes.iter()
-        .map(|p| p.content.y)
-        .fold(main_chart.chart.y, f64::min);
-    let total_chart_bottom = extended_layout.sub_panes.iter()
-        .map(|p| p.content.y + p.content.height)
-        .fold(main_chart.chart.y + main_chart.chart.height, f64::max);
-    draw_crosshair(
-        ctx,
-        &corrected_state,
-        &data.config.crosshair_config,
-        data.config.is_dragging,
-        total_chart_top,
-        total_chart_bottom,
-    );
+    // 13. Crosshair — moved to render_chart_overlay (cursor-dependent).
 
     // 14. Time scale (skip when hidden).
     if data.scale_settings.time_scale_position.is_visible() {
@@ -3302,6 +3254,14 @@ pub fn render_full_chart_panel(
         let chart = &main_chart.chart;
         let price_scale = &main_chart.price_scale;
         let time_scale = &main_chart.time_scale;
+
+        // Compute total chart bounds for border drawing (same as overlay uses for crosshair).
+        let total_chart_top = extended_layout.sub_panes.iter()
+            .map(|p| p.content.y)
+            .fold(main_chart.chart.y, f64::min);
+        let total_chart_bottom = extended_layout.sub_panes.iter()
+            .map(|p| p.content.y + p.content.height)
+            .fold(main_chart.chart.y + main_chart.chart.height, f64::max);
 
         ctx.set_fill_color(&data.frame_theme.toolbar_border);
 
@@ -3517,4 +3477,279 @@ pub fn render_chart_splits(
         ctx.set_fill_color(color);
         ctx.fill_rect(rx, ry, rw, rh);
     }
+}
+
+// =============================================================================
+// Overlay (Cursor-Dependent) Rendering
+// =============================================================================
+
+/// Render the cursor-dependent overlay for a single chart panel.
+///
+/// This emits ONLY the elements that change with the cursor position:
+/// - Vertical and horizontal crosshair lines (main chart)
+/// - Per-sub-pane horizontal crosshair line + price label
+/// - Price-scale cursor label
+/// - Time-scale cursor label
+/// - In-progress drawing preview (main chart + sub-panes), when `drawing_manager` is provided
+/// - Tooltip (near cursor), when `tooltip` is provided
+/// - OHLC-at-cursor legend, when `symbol` / `timeframe` are provided
+///
+/// Call this AFTER the static [`render_full_chart_panel`] pass so that overlay
+/// elements appear on top of the chart content.
+///
+/// # Parameters
+/// - `ctx`              – Render context
+/// - `state`            – Chart render state (same one used for the static pass)
+/// - `layout`           – Pre-computed `ExtendedFrameLayout` for this panel
+///                        (the geometry is passed in — do NOT recompute it here)
+/// - `config`           – Chart render configuration (crosshair config, scale config/theme)
+/// - `sub_pane_ranges`  – Optional sub-pane value ranges as `(pane_idx, min, max)`.
+///                        Passed from `ChartPanelRenderResult.sub_pane_ranges`.  Used for
+///                        accurate price labels on the sub-pane Y-axis at the crosshair
+///                        position.  When `None` or when a pane index is not found, the
+///                        label is omitted to avoid showing an incorrect value.
+/// - `drawing_manager`  – Optional drawing manager (for in-progress preview)
+/// - `tooltip`          – Optional tooltip to render near the cursor
+/// - `symbol`           – Optional symbol name (enables OHLC legend)
+/// - `timeframe`        – Timeframe label (e.g. `"1H"`) for the OHLC legend
+pub fn render_chart_overlay(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    layout: &crate::layout::ExtendedFrameLayout,
+    config: &ChartRenderConfig,
+    sub_pane_ranges: Option<&[(usize, f64, f64)]>,
+    drawing_manager: Option<&DrawingManager>,
+    tooltip: Option<&crate::chart::Tooltip>,
+    symbol: Option<&str>,
+    timeframe: &str,
+) {
+    // Skip if crosshair is not enabled at all
+    if !state.crosshair.enabled {
+        return;
+    }
+
+    let main_chart = &layout.main_chart;
+
+    // Build corrected viewport and chart_rect matching what render_full_chart_panel used.
+    let mut corrected_viewport = state.viewport.clone();
+    corrected_viewport.chart_width = main_chart.chart.width;
+    corrected_viewport.chart_height = main_chart.chart.height;
+
+    let corrected_chart_rect = ChartRect {
+        x: main_chart.chart.x,
+        y: main_chart.chart.y,
+        width: main_chart.chart.width,
+        height: main_chart.chart.height,
+    };
+
+    let corrected_state = ChartRenderState {
+        viewport: &corrected_viewport,
+        chart_rect: corrected_chart_rect,
+        price_scale: state.price_scale,
+        time_scale: state.time_scale,
+        bars: state.bars,
+        grid: state.grid,
+        crosshair: state.crosshair,
+        legend: state.legend,
+        theme: state.theme,
+        time_ticks: state.time_ticks,
+        current_timeframe: state.current_timeframe,
+        disable_clip: state.disable_clip,
+        time_format_settings: state.time_format_settings,
+        timeframe_minutes: state.timeframe_minutes,
+        scale_settings: state.scale_settings,
+        body_enabled: state.body_enabled,
+        border_enabled: state.border_enabled,
+        wick_enabled: state.wick_enabled,
+        use_prev_close: state.use_prev_close,
+    };
+
+    // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.
+    let total_chart_top = layout.sub_panes.iter()
+        .map(|p| p.content.y)
+        .fold(main_chart.chart.y, f64::min);
+    let total_chart_bottom = layout.sub_panes.iter()
+        .map(|p| p.content.y + p.content.height)
+        .fold(main_chart.chart.y + main_chart.chart.height, f64::max);
+
+    // 1. Main chart crosshair (vertical + horizontal for main chart)
+    draw_crosshair(
+        ctx,
+        &corrected_state,
+        &config.crosshair_config,
+        config.is_dragging,
+        total_chart_top,
+        total_chart_bottom,
+    );
+
+    // 2. Per-sub-pane horizontal crosshair + price label
+    for (pane_idx, pane_layout) in layout.sub_panes.iter().enumerate() {
+        let crosshair = state.crosshair;
+        if crosshair.visible && crosshair.pane_index == Some(pane_idx) {
+            let content = &pane_layout.content;
+            let price_scale_rect = &pane_layout.price_scale;
+
+            let pane_rect = ChartRect {
+                x: content.x,
+                y: content.y,
+                width: content.width,
+                height: content.height,
+            };
+
+            draw_pane_crosshair(
+                ctx,
+                &pane_rect,
+                crosshair.y,
+                &config.crosshair_config,
+                &state.theme.crosshair,
+                config.is_dragging,
+            );
+
+            // Draw price label only when we have the sub-pane value range.
+            if let Some(ranges) = sub_pane_ranges {
+                if let Some(&(_, pane_min, pane_max)) = ranges.iter().find(|&&(idx, _, _)| idx == pane_idx) {
+                    draw_sub_pane_crosshair_price_label(
+                        ctx,
+                        crosshair.y,
+                        content.height,
+                        price_scale_rect.x,
+                        price_scale_rect.y,
+                        price_scale_rect.width,
+                        price_scale_rect.height,
+                        pane_min,
+                        pane_max,
+                        &config.scale_theme,
+                        &config.scale_config,
+                    );
+                }
+            }
+        }
+    }
+
+    // 3. Price-scale cursor label
+    if state.crosshair.visible {
+        let mut leaf_scale_cfg = config.scale_config.clone();
+        leaf_scale_cfg.price_scale_width = main_chart.price_scale.width;
+        leaf_scale_cfg.time_scale_height = main_chart.time_scale.height;
+
+        let text_x = main_chart.price_scale.x + leaf_scale_cfg.price_scale_width / 2.0;
+        let dynamic_font_size = state.price_scale.calc_font_size(corrected_viewport.chart_height);
+
+        draw_price_scale_cursor_label(
+            ctx,
+            state.price_scale,
+            &corrected_viewport,
+            &leaf_scale_cfg,
+            &config.scale_theme,
+            state.crosshair,
+            main_chart.price_scale.x,
+            main_chart.price_scale.y,
+            text_x,
+            dynamic_font_size,
+        );
+
+        // 4. Time-scale cursor label
+        let label_y = main_chart.time_scale.y + leaf_scale_cfg.time_scale_height / 2.0;
+        draw_time_scale_cursor_label(
+            ctx,
+            &corrected_viewport,
+            state.bars,
+            &leaf_scale_cfg,
+            &config.scale_theme,
+            state.crosshair,
+            state.time_format_settings,
+            main_chart.time_scale.x,
+            main_chart.time_scale.y,
+            label_y,
+        );
+    }
+
+    // 5. In-progress drawing preview — main chart
+    if let Some(dm) = drawing_manager {
+        // Preview for main chart: set up same coordinate space as render_main_chart_primitives
+        if dm.is_drawing() && dm.current_pane().is_none() {
+            let price_range = state.price_scale.price_max - state.price_scale.price_min;
+            if state.viewport.bar_count > 0 && price_range > 0.0 && price_range.is_finite() {
+                ctx.save();
+                ctx.set_coordinate_space(
+                    main_chart.chart.width,
+                    main_chart.chart.height,
+                    corrected_viewport.view_start,
+                    corrected_viewport.bar_spacing,
+                    state.price_scale.price_min,
+                    state.price_scale.price_max,
+                );
+                ctx.set_bars(state.bars);
+                if !state.disable_clip {
+                    ctx.begin_path();
+                    ctx.rect(main_chart.chart.x, main_chart.chart.y, main_chart.chart.width, main_chart.chart.height);
+                    ctx.clip();
+                }
+                ctx.translate(main_chart.chart.x, main_chart.chart.y);
+                draw_main_chart_drawing_preview(ctx, &corrected_state, dm, main_chart.chart.height);
+                ctx.restore();
+            }
+        }
+
+        // Preview for sub-panes
+        if dm.is_drawing() && dm.current_pane().is_some() {
+            for pane_layout in &layout.sub_panes {
+                let instance_id = pane_layout.instance_id;
+                if dm.current_pane() != Some(instance_id) {
+                    continue;
+                }
+                let content = &pane_layout.content;
+                // We don't know pane_min/pane_max here without re-running indicator range.
+                // Use 0.0/100.0 as fallback (same as the label fallback).
+                let pane_min = 0.0_f64;
+                let pane_max = 100.0_f64;
+
+                let pane_viewport = crate::Viewport {
+                    view_start: corrected_viewport.view_start,
+                    bar_spacing: corrected_viewport.bar_spacing,
+                    bar_width_ratio: corrected_viewport.bar_width_ratio,
+                    chart_width: content.width,
+                    chart_height: content.height,
+                    bar_count: corrected_viewport.bar_count,
+                };
+                let pane_price_scale = crate::PriceScale {
+                    price_min: pane_min,
+                    price_max: pane_max,
+                    ..Default::default()
+                };
+
+                ctx.save();
+                ctx.set_coordinate_space(
+                    content.width,
+                    content.height,
+                    pane_viewport.view_start,
+                    pane_viewport.bar_spacing,
+                    pane_min,
+                    pane_max,
+                );
+                ctx.set_bars(state.bars);
+                if !state.disable_clip {
+                    ctx.begin_path();
+                    ctx.rect(content.x, content.y, content.width, content.height);
+                    ctx.clip();
+                }
+                ctx.translate(content.x, content.y);
+                draw_sub_pane_drawing_preview(ctx, &corrected_state, dm, instance_id, &pane_viewport, &pane_price_scale, content.height);
+                ctx.restore();
+            }
+        }
+    }
+
+    // 6. Tooltip (near cursor)
+    if let Some(tt) = tooltip {
+        if tt.visible {
+            draw_chart_tooltip(ctx, &corrected_state, tt);
+        }
+    }
+
+    // NOTE: draw_chart_legend (OHLC-at-cursor row) is intentionally NOT called.
+    // It was dead code in the pre-overlay static path (defined, never invoked) —
+    // the overlay refactor must not resurrect it, or stale OHLC numbers render
+    // unclipped over the scales/tab area. Kept defined for potential future use.
+    let _ = (symbol, timeframe);
 }

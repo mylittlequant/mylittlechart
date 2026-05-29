@@ -1,6 +1,6 @@
 //! ApplicationHandler::window_event — OS window event → App dispatch.
 
-use crate::{chrome, screenshot, cursor_style_to_winit, App};
+use crate::{chrome, cursor_style_to_winit, screenshot, App};
 use winit::{
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::ActiveEventLoop,
@@ -216,8 +216,13 @@ impl App<'_> {
                     return;
                 }
 
-                // Crosshair, hover highlights and price labels update with every
-                // mouse move inside the chart area — mark the chart scene dirty.
+                // Synchronous on_mouse_move — cheap because:
+                //   • crosshair is in overlay_scene (no chart_scene rebuild for move)
+                //   • build_extended_layout geometry is cached
+                //   • MA indicators are deleted
+                // chart_dirty=true is required so begin_frame/end_frame run and
+                // hovered_widget() is fresh, keeping hover highlights correct.
+                pw.overlay_dirty = true;
                 pw.chart_dirty = true;
 
                 // Mark toolbar dirty when the cursor enters or moves within a
@@ -303,6 +308,7 @@ impl App<'_> {
                     }
                     pw.last_drag_pos = Some((x, y));
                 } else {
+                    // Full synchronous hover — cheap with cached geometry + overlay split.
                     pw.chart.on_mouse_move(x, chart_y);
 
                     // Auto-focus agent PTY terminal on hover.
@@ -310,7 +316,7 @@ impl App<'_> {
                         pw.sidebar_dirty_scene = true;
                     }
 
-                    // Update toolbar tooltip based on hovered toolbar button
+                    // Update toolbar tooltip based on hovered toolbar button.
                     let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
                     let hovered_id = pw.chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
                         .or(pw.chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
@@ -368,15 +374,15 @@ impl App<'_> {
                             pw.toolbar_tooltip.update(None, time_ms);
                         }
                     }
-                }
 
-                if pw.chart.is_magnet_snapped() {
-                    // Hide system cursor when magnet-locked (crosshair drawn at snapped pos)
-                    pw.window.set_cursor_visible(false);
-                } else {
-                    pw.window.set_cursor_visible(true);
-                    pw.window
-                        .set_cursor(cursor_style_to_winit(pw.chart.get_cursor(x, chart_y)));
+                    // Cursor style — computed from now-fresh hover state.
+                    if pw.chart.is_magnet_snapped() {
+                        pw.window.set_cursor_visible(false);
+                    } else {
+                        pw.window.set_cursor_visible(true);
+                        pw.window
+                            .set_cursor(cursor_style_to_winit(pw.chart.get_cursor(x, chart_y)));
+                    }
                 }
             }
 

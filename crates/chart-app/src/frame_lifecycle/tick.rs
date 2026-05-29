@@ -38,7 +38,6 @@ impl ChartApp {
 
         // Reset per-tick accumulators for profiling.
         self.last_auto_scale_us = 0;
-        self.last_moving_avg_us = 0;
         self.last_indicator_recalc_us = 0;
 
         // ── Live data: drain the async update channel ─────────────────────
@@ -438,9 +437,6 @@ impl ChartApp {
                             }
                             // Manual mode: no viewport adjustments.
 
-                            let _ma_start = std::time::Instant::now();
-                            window.calc_moving_averages();
-                            self.last_moving_avg_us += _ma_start.elapsed().as_micros() as u64;
                         }
                     }
 

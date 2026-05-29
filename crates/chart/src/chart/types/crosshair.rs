@@ -268,8 +268,6 @@ impl Crosshair {
         &self,
         bar: &Bar,
         mouse_price: f64,
-        _ma_fast: Option<f64>,  // Unused now, keep param for API compat
-        _ma_slow: Option<f64>,  // Unused now, keep param for API compat
         price_to_y: F,
         bar_spacing: f64,
     ) -> (f64, f64)
@@ -508,12 +506,12 @@ mod tests {
 
         // In Magnet mode, should snap to nearest of open/close (body)
         // Mouse at 103.0 -> closest body value is close (105.0), dist=2px < 20px
-        let (price, y) = crosshair.find_nearest_ohlc(&bar, 103.0, None, None, price_to_y, 8.0);
+        let (price, y) = crosshair.find_nearest_ohlc(&bar, 103.0, price_to_y, 8.0);
         assert!((price - 105.0).abs() < 0.001); // close is nearest body value
         assert!((y - 95.0).abs() < 0.001); // 200 - 105 = 95
 
         // Mouse at 101.0 -> closest body value is open (100.0), dist=1px < 20px
-        let (price2, _y2) = crosshair.find_nearest_ohlc(&bar, 101.0, None, None, price_to_y, 8.0);
+        let (price2, _y2) = crosshair.find_nearest_ohlc(&bar, 101.0, price_to_y, 8.0);
         assert!((price2 - 100.0).abs() < 0.001); // open is nearest body value
     }
 
@@ -525,11 +523,11 @@ mod tests {
         let price_to_y = |p: f64| 200.0 - p;
 
         // Mouse at 109.0 should snap to high (110.0)
-        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 109.0, None, None, price_to_y, 8.0);
+        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 109.0, price_to_y, 8.0);
         assert!((price - 110.0).abs() < 0.001);
 
         // Mouse at 91.0 should snap to low (90.0)
-        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 91.0, None, None, price_to_y, 8.0);
+        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 91.0, price_to_y, 8.0);
         assert!((price - 90.0).abs() < 0.001);
     }
 
@@ -540,11 +538,11 @@ mod tests {
         let bar = Bar::new(0, 100.0, 110.0, 90.0, 105.0);
         let price_to_y = |p: f64| 200.0 - p;
 
-        // MA params are now ignored; mouse at 97.0 should snap to nearest OHLC
+        // Mouse at 97.0 should snap to nearest OHLC
         // Nearest OHLC is low=90.0 (dist=7px) or open=100.0 (dist=3px)
         // open is nearest at 3px < 10px tolerance
-        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 97.0, Some(98.0), None, price_to_y, 8.0);
-        assert!((price - 100.0).abs() < 0.001); // open, not MA
+        let (price, _y) = crosshair.find_nearest_ohlc(&bar, 97.0, price_to_y, 8.0);
+        assert!((price - 100.0).abs() < 0.001); // open
     }
 
     #[test]

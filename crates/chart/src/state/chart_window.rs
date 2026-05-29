@@ -152,12 +152,6 @@ pub struct ChartWindow {
     /// Default is "S" (Spot) to match existing data on disk.
     pub account_type: String,
 
-    // === Computed Data ===
-    /// Fast moving average
-    pub ma_fast: Vec<f64>,
-    /// Slow moving average
-    pub ma_slow: Vec<f64>,
-
     // === Interaction State ===
     /// Whether this window is active/focused
     pub is_active: bool,
@@ -362,8 +356,6 @@ impl ChartWindow {
             timeframe,
             exchange: data_provider.exchange_name(symbol),
             account_type: default_account_type_spot(),
-            ma_fast: Vec::new(),
-            ma_slow: Vec::new(),
             // Interaction
             is_active: false,
             active_pane_index: None,
@@ -547,10 +539,6 @@ impl ChartWindow {
             exchange: self.exchange.clone(),
             account_type: self.account_type.clone(),
 
-            // === Computed Data (cloned) ===
-            ma_fast: self.ma_fast.clone(),
-            ma_slow: self.ma_slow.clone(),
-
             // === Interaction State (reset) ===
             is_active: false,
             active_pane_index: None,
@@ -730,39 +718,7 @@ impl ChartWindow {
         self.price_scale.calc_auto_scale(
             &self.bars,
             self.viewport.visible_range(),
-            &self.ma_fast,
-            &self.ma_slow,
         );
-    }
-
-    /// Calculate moving averages from bar data
-    pub fn calc_moving_averages(&mut self) {
-        self.ma_fast.clear();
-        self.ma_slow.clear();
-
-        for i in 0..self.bars.len() {
-            // MA10 (fast)
-            if i >= 9 {
-                let sum: f64 = self.bars[i.saturating_sub(9)..=i]
-                    .iter()
-                    .map(|b| b.close)
-                    .sum();
-                self.ma_fast.push(sum / 10.0);
-            } else {
-                self.ma_fast.push(f64::NAN);
-            }
-
-            // MA20 (slow)
-            if i >= 19 {
-                let sum: f64 = self.bars[i.saturating_sub(19)..=i]
-                    .iter()
-                    .map(|b| b.close)
-                    .sum();
-                self.ma_slow.push(sum / 20.0);
-            } else {
-                self.ma_slow.push(f64::NAN);
-            }
-        }
     }
 
     /// Set bars for initial load — resets viewport position and auto-scales.
@@ -776,7 +732,6 @@ impl ChartWindow {
     /// `needs_auto_scale_after_bars`.
     pub fn set_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
-        self.calc_moving_averages();
 
         // Calculate prev_close (use first bar's open as proxy for previous session close)
         if !self.bars.is_empty() {
@@ -811,10 +766,9 @@ impl ChartWindow {
     ///
     /// Used for backfill / WebSocket reconnect — the user's current pan/zoom
     /// and scale mode are preserved.  Only `bar_count` and derived data
-    /// (MAs, prev-close) are recalculated.
+    /// (prev-close) are recalculated.
     pub fn update_bars(&mut self, bars: Vec<Bar>) {
         self.bars = bars;
-        self.calc_moving_averages();
 
         if !self.bars.is_empty() {
             self.prev_close_price = Some(self.bars[0].open);
@@ -1024,8 +978,6 @@ impl ChartWindow {
     /// Clone data from another window (bars, symbol, timeframe, viewport settings)
     pub fn clone_data_from(&mut self, source: &ChartWindow) {
         self.bars = source.bars.clone();
-        self.ma_fast = source.ma_fast.clone();
-        self.ma_slow = source.ma_slow.clone();
 
         self.symbol = source.symbol.clone();
         self.timeframe = source.timeframe.clone();
@@ -1302,8 +1254,6 @@ impl ChartWindow {
                 let (snapped_price, snapped_y) = self.crosshair.find_nearest_ohlc(
                     bar,
                     raw_price,
-                    None,
-                    None,
                     |p| {
                         let ratio = (price_max - p) / price_range;
                         ratio * pane_height

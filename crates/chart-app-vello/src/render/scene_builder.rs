@@ -116,6 +116,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
         // Chart content (chart panels, modals) — toolbar skipped because
         // it is composited from the cached toolbar_scene below.
         // The chart scene is cached: only rebuild when chart_dirty is set.
+        let chart_rebuilt = pw.chart_dirty;
         if pw.chart_dirty {
             pw.chart_scene.reset();
             let mut render_ctx = VelloGpuRenderContext::new(
@@ -133,10 +134,30 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
 
         // In skeleton mode (profile manager / welcome wizard active) the sidebar
-        // is hidden — its width is forced to 0 in render_to_scene() and we skip
-        // compositing the sidebar scene so no stale sidebar pixels appear.
+        // and overlay are hidden — skip compositing both so no stale pixels appear.
         let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
             || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+
+        // Overlay layer (crosshair / cursor labels / tooltip / drawing preview).
+        // Rebuilt when chart geometry changed this frame OR overlay_dirty is set.
+        // Composited on top of the chart content every frame (append is cheap).
+        // Skipped entirely in skeleton mode so the crosshair never draws over the
+        // loading/profile-unlock screen.
+        if !skeleton_active {
+            if chart_rebuilt || pw.overlay_dirty {
+                pw.overlay_scene.reset();
+                let mut overlay_ctx = VelloGpuRenderContext::new(
+                    &mut pw.overlay_scene,
+                    0.0,
+                    chrome::CHROME_HEIGHT,
+                    None,
+                    None,
+                );
+                pw.chart.render_overlay(&mut overlay_ctx);
+                pw.overlay_dirty = false;
+            }
+            pw.scene.append(&pw.overlay_scene, None);
+        }
 
         // Sidebar scene rebuild (after render, within the same input frame)
         if sidebar_is_open && !skeleton_active && pw.sidebar_dirty_scene {

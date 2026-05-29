@@ -129,6 +129,14 @@ struct PerWindowState {
     /// Starts true; set on resize, mouse events in chart area, scroll, key
     /// press, tick/data updates, and timer events.  Cleared after rebuild.
     chart_dirty: bool,
+    /// Cached overlay sub-scene — crosshair, axis cursor labels, tooltip,
+    /// drawing preview.  Rebuilt when `overlay_dirty` (every mouse move) —
+    /// cheap, a few lines + labels — WITHOUT rebuilding the heavy static
+    /// `chart_scene`.
+    overlay_scene: vello::Scene,
+    /// Rebuilt-overlay request.  Set by CursorMoved (hover) instead of
+    /// chart_dirty so moving the cursor never rebuilds candles/indicators.
+    overlay_dirty: bool,
     // ChartApp — per-window tabs/presets, shared DataBridge via broadcast
     chart: chart_app::ChartApp,
     // Input state
@@ -1356,6 +1364,8 @@ impl App<'_> {
             sidebar_dirty_scene: true,
             chart_scene: Scene::new(),
             chart_dirty: true,
+            overlay_scene: Scene::new(),
+            overlay_dirty: true,
             chart,
             last_mouse_pos: (0.0, 0.0),
             mouse_pressed: false,
@@ -3876,7 +3886,14 @@ impl ApplicationHandler for App<'_> {
         let _t5 = std::time::Instant::now();
 
         // ── Populate performance panel data ─────────────────────────────────
-        {
+        // Only run when the Performance panel is actually visible — avoids
+        // per_core_cpu.clone() + gpu_name.clone() + ~25 field writes every frame.
+        let perf_visible = self.windows.values().any(|pw| {
+            pw.chart.sidebar_state.is_right_open()
+                && pw.chart.sidebar_state.right_panel
+                    == sidebar_content::state::RightSidebarPanel::Performance
+        });
+        if perf_visible {
             let ws_connections = self.bridge.ws_task_count_total();
             let window_count = self.windows.len();
             // Use the cached connector count — refreshed once per second below.
@@ -3953,10 +3970,9 @@ impl ApplicationHandler for App<'_> {
                 perf.indicator_full_count = pw.chart.indicator_manager.last_full_count;
                 perf.event_process_us = pw.chart.last_event_process_us;
                 perf.auto_scale_us = pw.chart.last_auto_scale_us;
-                perf.moving_avg_us = pw.chart.last_moving_avg_us;
             }
 
-        }
+        } // end if perf_visible
         let _t6 = std::time::Instant::now();
 
         // NOTE: alert delivery events are drained AFTER render_window() below,
@@ -4070,13 +4086,10 @@ impl ApplicationHandler for App<'_> {
                 pw.chart_dirty = true;
             }
         }
-        // Sidebar redraws at FPS-cap rate — same cadence as chart.
-        // The FPS cap is already paid for; no reason to throttle sidebar
-        // separately.  This ensures cursor blink, hover highlights and
-        // agent PTY output are rendered within one frame of the event.
-        for pw in self.windows.values_mut() {
-            pw.sidebar_dirty_scene = true;
-        }
+        // Sidebar rebuilds event-driven: hover-row change, data tick, resize, PTY drain.
+        // The per-second timer above already marks sidebar_dirty_scene for data refresh.
+        // No unconditional per-frame force — avoids ~25 String allocs + 137 register
+        // calls every frame when the sidebar is open.
 
         let _t7 = std::time::Instant::now();
 

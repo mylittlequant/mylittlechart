@@ -4462,9 +4462,6 @@ fn render_performance_panel(
     // Auto Scale sub-row
     draw_row(ctx, &mut y, "  Auto Scale", &format!("{}μs", perf.auto_scale_us), &text_color);
 
-    // Moving Avg sub-row
-    draw_row(ctx, &mut y, "  Moving Avg", &format!("{}μs", perf.moving_avg_us), &text_color);
-
     // Indicator recalc row — color by incremental/full split
     let indicator_color = if perf.indicator_recalc_count == 0 {
         &text_color as &str

@@ -91,7 +91,6 @@ pub fn draw_price_scale(
 ) {
     let viewport = state.viewport;
     let price_scale = state.price_scale;
-    let crosshair = state.crosshair;
 
     // Blur background (FrostedGlass/LiquidGlass) - draws before solid background
     ctx.draw_blur_background(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
@@ -229,39 +228,71 @@ pub fn draw_price_scale(
         }
     }
 
-    // Draw crosshair price indicator
-    if crosshair.visible {
-        let display_y = price_scale.price_to_y(crosshair.price, viewport.chart_height);
+}
 
-        if display_y > 0.0 && display_y < viewport.chart_height {
-            let label = price_scale.format_label(crosshair.price, viewport.chart_height);
-            let width = config.price_scale_width - 2.0;
-            let height = 20.0;
-            let label_x = origin_x + 1.0;
-            let label_y = origin_y + display_y - 10.0;
-
-            // Clip to price scale column so the label never overflows above/below the chart area
-            ctx.save();
-            ctx.begin_path();
-            ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
-            ctx.clip();
-
-            // Draw blur background (for FrostedGlass/LiquidGlass styles)
-            ctx.draw_blur_background(label_x, label_y, width, height);
-
-            // Draw label background with style opacity
-            ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
-            ctx.fill_rect(label_x, label_y, width, height);
-
-            // Draw label text
-            ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
-            ctx.set_fill_color(&scale_theme.crosshair_label_text);
-            ctx.fill_text(&label, text_x, origin_y + display_y);
-
-            ctx.restore();
-        }
+/// Draw only the crosshair price-indicator label on the price scale.
+///
+/// This is the cursor-dependent part of price-scale rendering, split out so
+/// it can be called from the overlay pass without re-drawing the static ticks.
+///
+/// # Parameters
+/// - `ctx`           – Render context
+/// - `price_scale`   – Price scale for coordinate conversion and label formatting
+/// - `viewport`      – Viewport (supplies `chart_height`)
+/// - `config`        – Scale configuration (widths, font sizes)
+/// - `scale_theme`   – Scale-specific theme colors (crosshair label colors)
+/// - `crosshair`     – Crosshair state (price, visible)
+/// - `origin_x`      – X position where chart area ends (left edge of price scale)
+/// - `origin_y`      – Y position of chart top
+/// - `text_x`        – Horizontal centre of the price scale (for text centering)
+/// - `dynamic_font_size` – Font size computed in the static pass
+pub fn draw_price_scale_cursor_label(
+    ctx: &mut dyn RenderContext,
+    price_scale: &crate::chart::types::PriceScale,
+    viewport: &crate::chart::types::Viewport,
+    config: &ScaleConfig,
+    scale_theme: &ScaleTheme,
+    crosshair: &crate::chart::types::Crosshair,
+    origin_x: f64,
+    origin_y: f64,
+    text_x: f64,
+    dynamic_font_size: f64,
+) {
+    if !crosshair.visible {
+        return;
     }
 
+    let display_y = price_scale.price_to_y(crosshair.price, viewport.chart_height);
+
+    if display_y > 0.0 && display_y < viewport.chart_height {
+        let label = price_scale.format_label(crosshair.price, viewport.chart_height);
+        let width = config.price_scale_width - 2.0;
+        let height = 20.0;
+        let label_x = origin_x + 1.0;
+        let label_y = origin_y + display_y - 10.0;
+
+        // Clip to price scale column so the label never overflows above/below the chart area
+        ctx.save();
+        ctx.begin_path();
+        ctx.rect(origin_x, origin_y, config.price_scale_width, viewport.chart_height);
+        ctx.clip();
+
+        // Draw blur background (for FrostedGlass/LiquidGlass styles)
+        ctx.draw_blur_background(label_x, label_y, width, height);
+
+        // Draw label background with style opacity
+        ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
+        ctx.fill_rect(label_x, label_y, width, height);
+
+        // Draw label text
+        ctx.set_font(&format!("{}px sans-serif", dynamic_font_size));
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&scale_theme.crosshair_label_text);
+        ctx.fill_text(&label, text_x, origin_y + display_y);
+
+        ctx.restore();
+    }
 }
 
 /// Draw the time scale (X-axis) at the bottom of the chart
@@ -283,7 +314,6 @@ pub fn draw_time_scale(
 ) {
     let viewport = state.viewport;
     let time_scale = state.time_scale;
-    let crosshair = state.crosshair;
     let bars = state.bars;
 
     // Blur background (FrostedGlass/LiquidGlass) - draws before solid background
@@ -338,67 +368,101 @@ pub fn draw_time_scale(
 
     ctx.restore();
 
+}
+
+/// Draw only the crosshair time-indicator label on the time scale.
+///
+/// This is the cursor-dependent part of time-scale rendering, split out so
+/// it can be called from the overlay pass without re-drawing the static ticks.
+///
+/// # Parameters
+/// - `ctx`            – Render context
+/// - `viewport`       – Viewport (supplies `chart_width`, `bar_to_x`, etc.)
+/// - `bars`           – Bar data (used to resolve bar index to timestamp)
+/// - `config`         – Scale configuration (font sizes, scale height)
+/// - `scale_theme`    – Scale-specific theme colors (crosshair label colors)
+/// - `crosshair`      – Crosshair state (bar_idx, bar_f64, visible)
+/// - `time_format_settings` – Optional time format settings
+/// - `origin_x`       – X position of chart left edge
+/// - `origin_y`       – Y position where time scale starts (below chart)
+/// - `label_y`        – Vertical center of the time scale (for text placement)
+pub fn draw_time_scale_cursor_label(
+    ctx: &mut dyn RenderContext,
+    viewport: &crate::chart::types::Viewport,
+    bars: &[crate::Bar],
+    config: &ScaleConfig,
+    scale_theme: &ScaleTheme,
+    crosshair: &crate::chart::types::Crosshair,
+    time_format_settings: Option<&TimeFormatSettings>,
+    origin_x: f64,
+    origin_y: f64,
+    label_y: f64,
+) {
     // Draw crosshair time indicator.
     // Works for both in-data and future (extrapolated) positions.
-    if crosshair.visible {
-        // Resolve timestamp: use bar data when available, extrapolate for future bars.
-        let ts_opt: Option<i64> = if let Some(bar_idx) = crosshair.bar_idx {
-            bars.get(bar_idx).map(|b| b.timestamp)
-        } else if bars.len() >= 2 {
-            // Cursor is outside the data range (future or past).  Extrapolate from the
-            // last two bars: derive the bar interval and apply it to bar_f64.
-            let last = bars[bars.len() - 1].timestamp;
-            let prev = bars[bars.len() - 2].timestamp;
-            let interval_secs = last - prev; // seconds per bar (may be 0 for bad data)
-            if interval_secs > 0 {
-                let bars_past_end = crosshair.bar_f64 - (bars.len() - 1) as f64;
-                let extra_secs = (bars_past_end * interval_secs as f64).round() as i64;
-                Some(last + extra_secs)
-            } else {
-                None
-            }
-        } else if bars.len() == 1 {
-            // Only one bar — can't derive interval; show that bar's time.
-            Some(bars[0].timestamp)
+    if !crosshair.visible {
+        return;
+    }
+
+    // Resolve timestamp: use bar data when available, extrapolate for future bars.
+    let ts_opt: Option<i64> = if let Some(bar_idx) = crosshair.bar_idx {
+        bars.get(bar_idx).map(|b| b.timestamp)
+    } else if bars.len() >= 2 {
+        // Cursor is outside the data range (future or past).  Extrapolate from the
+        // last two bars: derive the bar interval and apply it to bar_f64.
+        let last = bars[bars.len() - 1].timestamp;
+        let prev = bars[bars.len() - 2].timestamp;
+        let interval_secs = last - prev; // seconds per bar (may be 0 for bad data)
+        if interval_secs > 0 {
+            let bars_past_end = crosshair.bar_f64 - (bars.len() - 1) as f64;
+            let extra_secs = (bars_past_end * interval_secs as f64).round() as i64;
+            Some(last + extra_secs)
         } else {
             None
+        }
+    } else if bars.len() == 1 {
+        // Only one bar — can't derive interval; show that bar's time.
+        Some(bars[0].timestamp)
+    } else {
+        None
+    };
+
+    if let Some(ts) = ts_opt {
+        let x = if let Some(bar_idx) = crosshair.bar_idx {
+            viewport.bar_to_x(bar_idx)
+        } else {
+            viewport.bar_to_x_f64(crosshair.bar_f64)
         };
 
-        if let Some(ts) = ts_opt {
-            let x = if let Some(bar_idx) = crosshair.bar_idx {
-                viewport.bar_to_x(bar_idx)
-            } else {
-                viewport.bar_to_x_f64(crosshair.bar_f64)
-            };
+        // Get format settings (use default if not provided)
+        let default_settings = TimeFormatSettings::default();
+        let format_settings = time_format_settings.unwrap_or(&default_settings);
 
-            // Get format settings (use default if not provided)
-            let default_settings = TimeFormatSettings::default();
-            let format_settings = state.time_format_settings.unwrap_or(&default_settings);
+        // Use new formatting function
+        let label = format_time_full_with_settings(ts, format_settings);
 
-            // Use new formatting function
-            let label = format_time_full_with_settings(ts, format_settings);
+        // Measure label width for centering
+        let tw = ctx.measure_text(&label) + 10.0;
+        let min_x = tw / 2.0;
+        let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
+        let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
+        let box_x = origin_x + tx - tw / 2.0;
+        let box_y = origin_y + 2.0;
+        let box_height = config.time_scale_height - 4.0;
 
-            // Measure label width for centering
-            let tw = ctx.measure_text(&label) + 10.0;
-            let min_x = tw / 2.0;
-            let max_x = (viewport.chart_width - tw / 2.0).max(min_x);
-            let tx = if max_x >= min_x { x.clamp(min_x, max_x) } else { viewport.chart_width / 2.0 };
-            let box_x = origin_x + tx - tw / 2.0;
-            let box_y = origin_y + 2.0;
-            let box_height = config.time_scale_height - 4.0;
+        // Draw blur background (for FrostedGlass/LiquidGlass styles)
+        ctx.draw_blur_background(box_x, box_y, tw, box_height);
 
-            // Draw blur background (for FrostedGlass/LiquidGlass styles)
-            ctx.draw_blur_background(box_x, box_y, tw, box_height);
+        // Draw label background with style opacity
+        ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
+        ctx.fill_rect(box_x, box_y, tw, box_height);
 
-            // Draw label background with style opacity
-            ctx.set_fill_color(&scale_theme.crosshair_label_bg_styled);
-            ctx.fill_rect(box_x, box_y, tw, box_height);
-
-            // Draw label text
-            ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
-            ctx.set_fill_color(&scale_theme.crosshair_label_text);
-            ctx.fill_text(&label, origin_x + tx, label_y);
-        }
+        // Draw label text
+        ctx.set_font(&format!("{}px sans-serif", config.crosshair_font_size));
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&scale_theme.crosshair_label_text);
+        ctx.fill_text(&label, origin_x + tx, label_y);
     }
 }
 

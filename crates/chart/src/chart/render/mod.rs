@@ -40,7 +40,11 @@ pub use series::{
     draw_baseline_series, draw_step_line, draw_line_with_markers,
     draw_line_from_data, draw_hlc_area, draw_columns, draw_compare_overlay,
 };
-pub use scales::{draw_price_scale, draw_time_scale, ScaleConfig, ScaleTheme};
+pub use scales::{
+    draw_price_scale, draw_price_scale_cursor_label,
+    draw_time_scale, draw_time_scale_cursor_label,
+    ScaleConfig, ScaleTheme,
+};
 pub use crosshair::{draw_crosshair, draw_pane_crosshair, CrosshairConfig};
 pub use overlays::{
     draw_watermark, draw_legend, draw_tooltip, draw_price_lines, draw_markers,

@@ -176,6 +176,7 @@ pub use layout::{
     render_chart_window, render_chart_splits,
     // Full panel rendering (chart-internal, replaces terminal-assembled path)
     ChartPanelRenderData, ChartPanelRenderResult, render_full_chart_panel,
+    render_chart_overlay,
     // Sub-pane overlay hit-test results (produced each frame, cached on ChartWindow)
     SubPaneOverlayResult,
     draw_content_borders, draw_frame_borders,
