@@ -9,7 +9,7 @@ use crate::engine::render::draw_svg_icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
-use crate::i18n::{current_language, TextKey, UserSettingsKey};
+use crate::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_render::ToolbarTheme;
@@ -326,23 +326,15 @@ fn render_general_tab(
     cy += 20.0;
 
     {
-        let lang_options = [
-            RadioOption {
-                key: "en",
-                label: "English",
-                description: "",
-            },
-            RadioOption {
-                key: "ru",
-                label: "Русский",
-                description: "",
-            },
-        ];
+        let lang_options: Vec<RadioOption<'_>> = Language::all().iter().map(|l| RadioOption {
+            key: l.code(),
+            label: l.native_name(),
+            description: "",
+        }).collect();
 
-        let lang_selected = match state.language.as_str() {
-            "ru" => 1,
-            _    => 0,
-        };
+        let lang_selected = Language::all().iter()
+            .position(|l| l.code() == state.language.as_str())
+            .unwrap_or(0);
 
         let lang_radio_result = draw_radio_group(
             ctx,

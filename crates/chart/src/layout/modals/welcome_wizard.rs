@@ -58,7 +58,8 @@ pub fn render_welcome_wizard(
     // ── Modal dimensions ─────────────────────────────────────────────────────
     let modal_w: f64 = 580.0;
     let modal_h: f64 = match state.wizard_page {
-        0 => 400.0,  // welcome + language + mascot
+        // Page 0: 15 langs × 32px rows + mascot + title + button + padding ≈ 720px
+        0 => (window_h * 0.92).min(760.0).max(500.0),
         1 => 420.0,  // theme
         2 => 520.0,  // profile + passphrase + confirm passphrase
         3 => 360.0,  // recovery key display
@@ -129,17 +130,16 @@ fn render_page0(
     *cy += mascot_size + 20.0;
 
     // Language selection rows
-    let langs: &[(Language, &str)] = &[
-        (Language::En, "wizard_lang_en"),
-        (Language::Ru, "wizard_lang_ru"),
-    ];
+    let langs: Vec<(Language, String)> = Language::all().iter()
+        .map(|l| (*l, format!("wizard_lang_{}", l.code())))
+        .collect();
 
-    let row_h = 44.0;
-    let row_gap = 8.0;
+    let row_h = 32.0;
+    let row_gap = 4.0;
 
-    for (lang, widget_id) in langs {
+    for (lang, widget_id) in &langs {
         let is_active = active_lang == *lang;
-        let is_row_hovered = hovered == Some(widget_id);
+        let is_row_hovered = hovered == Some(widget_id.as_str());
 
         let row_bg = if is_row_hovered {
             toolbar_theme.button_bg_hover.as_str()

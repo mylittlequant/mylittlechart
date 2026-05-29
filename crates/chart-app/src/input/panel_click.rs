@@ -3588,10 +3588,8 @@ impl ChartApp {
                 // Language radio option selected — hit id: "language:{code}"
                 rest if rest.starts_with("language:") => {
                     let lang_code = &rest["language:".len()..];
-                    let lang = match lang_code {
-                        "ru" => crate::Language::Ru,
-                        _    => crate::Language::En,
-                    };
+                    let lang = zengeld_chart::i18n::Language::from_code(lang_code)
+                        .unwrap_or(crate::Language::En);
                     crate::set_language(lang);
                     self.panel_app.user_settings_state.language = lang_code.to_string();
                     self.language_changed = Some(lang_code.to_string());
@@ -3655,13 +3653,14 @@ impl ChartApp {
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
                 }
-                "wizard_lang_en" => {
-                    crate::set_language(crate::Language::En);
-                    eprintln!("[ChartApp] wizard: language set to English");
-                }
-                "wizard_lang_ru" => {
-                    crate::set_language(crate::Language::Ru);
-                    eprintln!("[ChartApp] wizard: language set to Russian");
+                id if id.starts_with("wizard_lang_") => {
+                    let code = &id["wizard_lang_".len()..];
+                    if let Some(lang) = zengeld_chart::i18n::Language::from_code(code) {
+                        crate::set_language(lang);
+                        self.panel_app.user_settings_state.language = code.to_string();
+                        self.language_changed = Some(code.to_string());
+                        eprintln!("[ChartApp] wizard: language set to {}", code);
+                    }
                 }
                 "wizard_theme_dark" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
