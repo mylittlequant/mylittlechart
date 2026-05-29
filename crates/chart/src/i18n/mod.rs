@@ -36,6 +36,8 @@ pub use keys::{
     SettingsKey,
     UserSettingsKey,
     ProfileKey,
+    ModalKey,
+    IndicatorKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -125,6 +127,18 @@ pub fn t_user_settings(key: UserSettingsKey) -> &'static str {
 /// Translate a profile manager key using current global language
 #[inline]
 pub fn t_profile(key: ProfileKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a shared modal key using current global language
+#[inline]
+pub fn t_modal(key: ModalKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate an indicator settings modal key using current global language
+#[inline]
+pub fn t_indicator(key: IndicatorKey) -> &'static str {
     key.get(current_language())
 }
 

@@ -15,6 +15,7 @@ use crate::ui::widgets::types::WidgetState;
 use crate::ui::Icon;
 use crate::ui::z_order::ZLayer;
 use crate::templates::indicator_set::IndicatorSet;
+use crate::i18n::{ModalKey, t_modal};
 
 /// Render search overlay (symbol/indicator search).
 pub fn render_search_overlay(
@@ -35,9 +36,9 @@ pub fn render_search_overlay(
     let mut result = ModalSearchResult::default();
 
     let (title, placeholder, _icon) = match modal_state.current {
-        OpenModal::SymbolSearch => ("Symbol Search", "Search symbol...", Icon::Search),
-        OpenModal::IndicatorSearch => ("Add Indicator", "Search indicator...", Icon::Indicators),
-        OpenModal::CompareSearch => ("Compare Symbol", "Search symbol to compare...", Icon::Search),
+        OpenModal::SymbolSearch => (t_modal(ModalKey::SymbolSearch), t_modal(ModalKey::SearchSymbolPlaceholder), Icon::Search),
+        OpenModal::IndicatorSearch => (t_modal(ModalKey::AddIndicator), t_modal(ModalKey::SearchIndicatorPlaceholder), Icon::Indicators),
+        OpenModal::CompareSearch => (t_modal(ModalKey::CompareSymbol), t_modal(ModalKey::SearchCompareSymbolPlaceholder), Icon::Search),
         _ => return result,
     };
 
@@ -335,7 +336,7 @@ pub fn render_search_overlay(
             ctx.set_fill_color(&theme.toolbar_border);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text("No indicators in this category", content_x + content_width / 2.0, results_y + 20.0);
+            ctx.fill_text(t_modal(ModalKey::NoIndicatorsInCategory), content_x + content_width / 2.0, results_y + 20.0);
         }
     } else if (modal_state.current == OpenModal::SymbolSearch || modal_state.current == OpenModal::CompareSearch)
         && !modal_state.symbol_search_results.is_empty()
@@ -356,9 +357,9 @@ pub fn render_search_overlay(
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
         if modal_state.search_query.is_empty() {
-            ctx.fill_text("Type to search...", center_x, results_y + 20.0);
+            ctx.fill_text(t_modal(ModalKey::TypeToSearch), center_x, results_y + 20.0);
         } else {
-            ctx.fill_text("Nothing found", center_x, results_y + 20.0);
+            ctx.fill_text(t_modal(ModalKey::NothingFound), center_x, results_y + 20.0);
         }
     }
 
@@ -622,7 +623,7 @@ fn render_indicator_sets_scrollable(
         ctx.set_fill_color(if is_btn_hovered { &toolbar_theme.item_text_active } else { &toolbar_theme.accent });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Save current indicators as set", x + 10.0 + btn_icon_size + 6.0, btn_y + create_btn_height / 2.0);
+        ctx.fill_text(t_modal(ModalKey::SaveIndicatorSet), x + 10.0 + btn_icon_size + 6.0, btn_y + create_btn_height / 2.0);
     }
 
     input_coordinator.register_on_layer(
@@ -644,7 +645,7 @@ fn render_indicator_sets_scrollable(
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text("No saved indicator sets yet", x + width / 2.0, msg_y);
+            ctx.fill_text(t_modal(ModalKey::NoSavedIndicatorSets), x + width / 2.0, msg_y);
         }
     }
 

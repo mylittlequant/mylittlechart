@@ -18,6 +18,7 @@ use crate::ui::Icon;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
+use crate::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
 
 fn render_level_item(
     ctx: &mut dyn RenderContext,
@@ -1172,7 +1173,7 @@ pub fn render_primitive_settings_modal(
                 }
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.fill_text("Ж", bold_rect.right() + 4.0, row_y + row_height / 2.0);
+                ctx.fill_text(crate::i18n::IndicatorKey::TextBold.get(crate::i18n::current_language()), bold_rect.right() + 4.0, row_y + row_height / 2.0);
                 result.content_items.push(("text_bold".to_string(), bold_rect));
 
                 // Italic toggle
@@ -1192,7 +1193,7 @@ pub fn render_primitive_settings_modal(
                 }
                 ctx.set_font("italic 12px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.fill_text("К", italic_rect.right() + 4.0, row_y + row_height / 2.0);
+                ctx.fill_text(crate::i18n::IndicatorKey::TextItalic.get(crate::i18n::current_language()), italic_rect.right() + 4.0, row_y + row_height / 2.0);
                 result.content_items.push(("text_italic".to_string(), italic_rect));
                 row_y += row_height + row_gap;
 
@@ -1274,7 +1275,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text("Этот примитив не поддерживает текст", content_left, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::NoTextSupport), content_left, row_y);
             }
         }
 
@@ -1310,7 +1311,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Bottom);
-                ctx.fill_text("Цена", control_left, field_y - 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::PriceLabel), control_left, field_y - 2.0);
 
                 let price_text = format!("{:.4}", price);
                 let (price_display, price_cursor, price_sel_start, price_sel_end) = if is_editing_price {
@@ -1361,7 +1362,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Bottom);
-                ctx.fill_text("Бар", bar_rect.x, field_y - 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::BarLabel), bar_rect.x, field_y - 2.0);
 
                 let bar_text = format!("{:.0}", bar);
                 let (bar_display, bar_cursor, bar_sel_start, bar_sel_end) = if is_editing_bar {
@@ -1450,14 +1451,14 @@ pub fn render_primitive_settings_modal(
                     ctx.set_fill_color(&toolbar_theme.item_text);
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Top);
-                    ctx.fill_text("Этот примитив не поддерживает уровни", content_left, row_y);
+                    ctx.fill_text(t_indicator(IndicatorKey::NoLevelsSupport), content_left, row_y);
                 }
             } else {
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text("Этот примитив не поддерживает уровни", content_left, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::NoLevelsSupport), content_left, row_y);
             }
 
             if !level_props.is_empty() {
@@ -1761,7 +1762,7 @@ pub fn render_primitive_settings_modal(
         ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Шаблон", template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
 
         result.content_items.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
 
@@ -1778,7 +1779,7 @@ pub fn render_primitive_settings_modal(
         ctx.set_font("13px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("OK", ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
 
         result.content_items.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
 
@@ -1795,7 +1796,7 @@ pub fn render_primitive_settings_modal(
         ctx.set_font("13px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Отмена", cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
 
         result.content_items.push(("cancel".to_string(), WidgetRect::new(cancel_btn_x, button_y, cancel_btn_width, button_height)));
 
@@ -1839,7 +1840,7 @@ pub fn render_primitive_settings_modal(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Сохранить как...", dd_x + 8.0, row_y + opt_h / 2.0);
+            ctx.fill_text(t_settings(SettingsKey::SaveAsTemplate), dd_x + 8.0, row_y + opt_h / 2.0);
             result.content_items.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
             row_y += opt_h;
 
@@ -1853,7 +1854,7 @@ pub fn render_primitive_settings_modal(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Применить по умолчанию", dd_x + 8.0, row_y + opt_h / 2.0);
+            ctx.fill_text(t_settings(SettingsKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
             result.content_items.push(("template_default".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
             row_y += opt_h;
 

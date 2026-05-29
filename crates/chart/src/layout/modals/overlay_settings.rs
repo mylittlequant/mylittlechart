@@ -23,6 +23,7 @@ use crate::state::sub_panel::ChartSubPanel;
 use crate::theme::ThemeManager;
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
+use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 
 // =============================================================================
@@ -540,7 +541,7 @@ pub fn render_overlay_settings_modal(
                     ctx.set_font("12px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Delete", btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
+                    ctx.fill_text(t_text(TextKey::Delete), btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
@@ -556,7 +557,7 @@ pub fn render_overlay_settings_modal(
                 ctx.set_font("12px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("No panels", content_left, row_y + row_height / 2.0);
+                ctx.fill_text(t_modal(ModalKey::NoPanels), content_left, row_y + row_height / 2.0);
             }
         }
 
@@ -569,7 +570,7 @@ pub fn render_overlay_settings_modal(
                 ctx.set_font("12px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("No hidden panels", content_left, row_y + row_height / 2.0);
+                ctx.fill_text(t_modal(ModalKey::NoHiddenPanels), content_left, row_y + row_height / 2.0);
             } else {
                 for leaf in &hidden_leaves {
                     let leaf_id_val = leaf.id.0;
@@ -605,7 +606,7 @@ pub fn render_overlay_settings_modal(
                     ctx.set_font("12px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Restore", btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
+                    ctx.fill_text(t_modal(ModalKey::Restore), btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
@@ -866,7 +867,7 @@ pub fn render_overlay_settings_modal(
                     ctx.set_font("12px sans-serif");
                     ctx.set_text_align(TextAlign::Left);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Select a panel on the map", content_left, row_y + row_height / 2.0);
+                    ctx.fill_text(t_modal(ModalKey::SelectPanelOnMap), content_left, row_y + row_height / 2.0);
                 }
             } else {
                 // No valid chart area dimensions
@@ -874,7 +875,7 @@ pub fn render_overlay_settings_modal(
                 ctx.set_font("12px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("No panel data available", content_left, row_y + row_height / 2.0);
+                ctx.fill_text(t_modal(ModalKey::NoPanelData), content_left, row_y + row_height / 2.0);
             }
         }
     }

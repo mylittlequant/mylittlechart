@@ -25,6 +25,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
+use crate::i18n::{SettingsKey, TextKey, t_settings, t_text};
 
 // =============================================================================
 // Result type
@@ -230,7 +231,7 @@ fn draw_header(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Настройки", modal_x + 14.0, modal_y + header_h / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Title), modal_x + 14.0, modal_y + header_h / 2.0);
 
     // Close (×) button
     let close_size = 20.0;
@@ -320,7 +321,7 @@ fn draw_style_tab(
 
     // --- Row 1: Line color ---
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.fill_text("Цвет", content_x, row_y + ROW_H / 2.0);
+    ctx.fill_text(t_text(TextKey::Color), content_x, row_y + ROW_H / 2.0);
 
     let swatch_x = content_x + LABEL_W;
     let swatch_y = row_y + (ROW_H - SWATCH_SIZE) / 2.0;
@@ -346,7 +347,7 @@ fn draw_style_tab(
     // --- Row 2: Line width slider ---
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Ширина", content_x, row_y + ROW_H / 2.0);
+    ctx.fill_text(t_text(TextKey::Width), content_x, row_y + ROW_H / 2.0);
 
     let track_x = content_x + LABEL_W;
     let track_w = content_w - LABEL_W - 52.0;
@@ -419,7 +420,7 @@ fn draw_style_tab(
     // --- Row 3: Line style dropdown ---
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Стиль линии", content_x, row_y + ROW_H / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::LineStyle), content_x, row_y + ROW_H / 2.0);
 
     let dd_x = content_x + LABEL_W;
     let dd_w = 120.0;
@@ -854,7 +855,7 @@ fn draw_footer(
     ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Шаблон", template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
 
     input_coordinator.register_on_layer(
         "cmp_settings:template_dropdown",
@@ -876,7 +877,7 @@ fn draw_footer(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("OK", ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
 
     input_coordinator.register_on_layer(
         "cmp_settings:ok",
@@ -898,7 +899,7 @@ fn draw_footer(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Отмена", cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
 
     input_coordinator.register_on_layer(
         "cmp_settings:cancel",
@@ -945,7 +946,7 @@ fn draw_footer(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Сохранить как...", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::SaveAsTemplate), dd_x + 8.0, row_y + opt_h / 2.0);
         input_coordinator.register_on_layer(
             "cmp_settings:template_save_as",
             WidgetRect::new(dd_x, row_y, menu_w, opt_h),
@@ -964,7 +965,7 @@ fn draw_footer(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Применить по умолчанию", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
         input_coordinator.register_on_layer(
             "cmp_settings:template_default",
             WidgetRect::new(dd_x, row_y, menu_w, opt_h),

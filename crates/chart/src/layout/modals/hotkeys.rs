@@ -5,6 +5,7 @@ use uzor::types::Rect as WidgetRect;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::ChartScreenArea;
 use crate::ui::widgets::{render_modal, ModalTheme, ModalConfig, ModalSize};
+use crate::i18n::{ModalKey, t_modal};
 
 /// Render hotkeys reference modal.
 pub fn render_hotkeys_modal(
@@ -16,7 +17,7 @@ pub fn render_hotkeys_modal(
 
     let screen_rect = WidgetRect::new(screen.x, screen.y, screen.width, screen.height);
 
-    let config = ModalConfig::confirmation("Keyboard Shortcuts")
+    let config = ModalConfig::confirmation(t_modal(ModalKey::KeyboardShortcuts))
         .with_size(ModalSize::Custom { width: 600, height: 500 });
 
     let modal_theme = ModalTheme::from_frame_theme(
@@ -28,18 +29,18 @@ pub fn render_hotkeys_modal(
     );
 
     let hotkeys = [
-        ("Ctrl+Z", "Undo"),
-        ("Ctrl+Y", "Redo"),
-        ("Ctrl+S", "Save template"),
-        ("Del", "Delete selected"),
-        ("Esc", "Deselect / Close modal"),
-        ("Space", "Play/Pause replay"),
-        ("/", "Search indicators"),
-        ("Alt+S", "Symbol search"),
-        ("Ctrl+C", "Copy"),
-        ("Ctrl+V", "Paste"),
-        ("+/-", "Zoom in/out"),
-        ("Scroll", "Pan chart"),
+        ("Ctrl+Z",  t_modal(ModalKey::HkUndo)),
+        ("Ctrl+Y",  t_modal(ModalKey::HkRedo)),
+        ("Ctrl+S",  t_modal(ModalKey::HkSaveTemplate)),
+        ("Del",     t_modal(ModalKey::HkDeleteSelected)),
+        ("Esc",     t_modal(ModalKey::HkDeselect)),
+        ("Space",   t_modal(ModalKey::HkPlayPause)),
+        ("/",       t_modal(ModalKey::HkSearchIndicators)),
+        ("Alt+S",   t_modal(ModalKey::HkSymbolSearch)),
+        ("Ctrl+C",  t_modal(ModalKey::HkCopy)),
+        ("Ctrl+V",  t_modal(ModalKey::HkPaste)),
+        ("+/-",     t_modal(ModalKey::HkZoom)),
+        ("Scroll",  t_modal(ModalKey::HkPan)),
     ];
 
     render_modal(ctx, &config, screen_rect, &modal_theme, false, |ctx, content_rect| {

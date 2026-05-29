@@ -17,6 +17,7 @@ use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use crate::preset::preset::ChartPreset;
+use crate::i18n::{ModalKey, t_modal};
 
 // =============================================================================
 // Result type
@@ -134,7 +135,7 @@ pub fn render_chart_browser(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Charts", modal_x + padding, modal_y + header_h / 2.0);
+    ctx.fill_text(t_modal(ModalKey::Charts), modal_x + padding, modal_y + header_h / 2.0);
 
     // Close button (X)
     let close_x = modal_x + modal_w - icon_size - 12.0;
@@ -174,7 +175,7 @@ pub fn render_chart_browser(
     let input_config = InputConfig::new(&state.search_editing.text)
         .with_focused(true)
         .with_cursor(state.search_editing.cursor)
-        .with_placeholder("Search charts...")
+        .with_placeholder(t_modal(ModalKey::SearchChartsPlaceholder))
         .with_padding(26.0);  // Leave room for the search icon on left
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, search_input_rect, &widget_theme);
@@ -227,7 +228,7 @@ pub fn render_chart_browser(
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("CHART NAME", modal_x + padding, col_header_y + col_header_h / 2.0);
+    ctx.fill_text(t_modal(ModalKey::ColChartName), modal_x + padding, col_header_y + col_header_h / 2.0);
 
     // Column header bottom separator
     ctx.set_stroke_color(&toolbar_theme.separator);

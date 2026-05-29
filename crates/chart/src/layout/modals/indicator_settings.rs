@@ -25,6 +25,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::indicator_source::{SignalDisplayConfig, SignalShape};
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
+use crate::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
 
 /// Render the indicator settings modal.
 ///
@@ -435,7 +436,7 @@ pub fn render_indicator_settings_modal(
             if params.is_empty() {
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("Нет настраиваемых параметров", content_x + content_padding, scrollable.content_y() + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::NoParams), content_x + content_padding, scrollable.content_y() + row_height / 2.0);
             }
 
             let widget_theme = WidgetTheme::default();
@@ -503,7 +504,7 @@ pub fn render_indicator_settings_modal(
             if outputs.is_empty() {
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
-                ctx.fill_text("Нет настраиваемых выходов", content_x + content_padding, scrollable.content_y() + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::NoOutputs), content_x + content_padding, scrollable.content_y() + row_height / 2.0);
             }
 
             let widget_theme = WidgetTheme::default();
@@ -726,7 +727,7 @@ pub fn render_indicator_settings_modal(
             ctx.set_fill_color(text_color);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Включить сигналы", content_x + content_padding, row_y + row_height / 2.0);
+            ctx.fill_text(t_indicator(IndicatorKey::EnableSignals), content_x + content_padding, row_y + row_height / 2.0);
 
             // Toggle switch
             let toggle_x = content_x + content_padding + 180.0;
@@ -758,9 +759,9 @@ pub fn render_indicator_settings_modal(
             // Description
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text("Автоматически определяет сигналы на основе", content_x + content_padding, row_y);
+            ctx.fill_text(t_indicator(IndicatorKey::SignalsAutoLine1), content_x + content_padding, row_y);
             row_y += row_height * 0.6;
-            ctx.fill_text("значений индикатора (пересечения, уровни и т.д.)", content_x + content_padding, row_y);
+            ctx.fill_text(t_indicator(IndicatorKey::SignalsAutoLine2), content_x + content_padding, row_y);
             row_y += row_height;
 
             // Signal display configuration controls (shown only when signals are enabled)
@@ -770,7 +771,7 @@ pub fn render_indicator_settings_modal(
                 // --- Shape selector ---
                 ctx.set_fill_color(text_color);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Форма:", content_x + content_padding, row_y + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::Shape), content_x + content_padding, row_y + row_height / 2.0);
 
                 let shape_btn_size = 24.0;
                 let shape_btn_gap = 6.0;
@@ -876,7 +877,7 @@ pub fn render_indicator_settings_modal(
 
                 ctx.set_fill_color(text_color);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Цвет бычий:", content_x + content_padding, row_y + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::BullColor), content_x + content_padding, row_y + row_height / 2.0);
 
                 let bull_swatch_y = row_y + (row_height - swatch_size) / 2.0;
                 if is_bullish_picker_open {
@@ -902,7 +903,7 @@ pub fn render_indicator_settings_modal(
 
                 ctx.set_fill_color(text_color);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Цвет медведь:", content_x + content_padding, row_y + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::BearColor), content_x + content_padding, row_y + row_height / 2.0);
 
                 let bear_swatch_y = row_y + (row_height - swatch_size) / 2.0;
                 if is_bearish_picker_open {
@@ -930,7 +931,7 @@ pub fn render_indicator_settings_modal(
 
                 ctx.set_fill_color(text_color);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Размер:", content_x + content_padding, row_y + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::SignalSize), content_x + content_padding, row_y + row_height / 2.0);
 
                 // Dec button
                 let dec_size_x = stepper_x;
@@ -982,7 +983,7 @@ pub fn render_indicator_settings_modal(
                 // --- Offset stepper (0–16 range) ---
                 ctx.set_fill_color(text_color);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Отступ:", content_x + content_padding, row_y + row_height / 2.0);
+                ctx.fill_text(t_indicator(IndicatorKey::SignalOffset), content_x + content_padding, row_y + row_height / 2.0);
 
                 // Dec button
                 let dec_off_x = stepper_x;
@@ -1101,21 +1102,21 @@ pub fn render_indicator_settings_modal(
 
                 // Short name
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("Короткое имя:", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::ShortName), content_x + content_padding, row_y);
                 ctx.set_fill_color(text_color);
                 ctx.fill_text(&def.short_name, content_x + content_padding + 120.0, row_y);
                 row_y += row_height * 0.8;
 
                 // Category
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("Категория:", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::Category), content_x + content_padding, row_y);
                 ctx.set_fill_color(text_color);
                 ctx.fill_text(&def.category_name, content_x + content_padding + 120.0, row_y);
                 row_y += row_height * 0.8;
 
                 // Overlay
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("Оверлей:", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::Overlay), content_x + content_padding, row_y);
                 ctx.set_fill_color(text_color);
                 ctx.fill_text(if def.overlay { "Да" } else { "Нет" }, content_x + content_padding + 120.0, row_y);
                 row_y += row_height * 0.8;
@@ -1123,7 +1124,7 @@ pub fn render_indicator_settings_modal(
                 // Bounds (if any)
                 if let Some((min, max)) = def.bounds {
                     ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                    ctx.fill_text("Границы:", content_x + content_padding, row_y);
+                    ctx.fill_text(t_indicator(IndicatorKey::Bounds), content_x + content_padding, row_y);
                     ctx.set_fill_color(text_color);
                     ctx.fill_text(&format!("{} - {}", min, max), content_x + content_padding + 120.0, row_y);
                     row_y += row_height * 0.8;
@@ -1133,13 +1134,13 @@ pub fn render_indicator_settings_modal(
 
                 // Description
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("Описание:", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::Description), content_x + content_padding, row_y);
                 row_y += row_height * 0.7;
 
                 ctx.set_fill_color(text_color);
                 if def.description.is_empty() {
                     ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                    ctx.fill_text("Описание отсутствует", content_x + content_padding, row_y);
+                    ctx.fill_text(t_indicator(IndicatorKey::NoDescription), content_x + content_padding, row_y);
                     row_y += row_height * 0.7;
                 } else {
                     // Word wrap description
@@ -1171,11 +1172,11 @@ pub fn render_indicator_settings_modal(
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
                 ctx.set_fill_color(text_color);
-                ctx.fill_text("Информация об индикаторе", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::IndicatorInfo), content_x + content_padding, row_y);
                 row_y += row_height;
 
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text("Метаданные недоступны", content_x + content_padding, row_y);
+                ctx.fill_text(t_indicator(IndicatorKey::MetadataUnavailable), content_x + content_padding, row_y);
             }
 
             // End scrollable area and draw scrollbar
@@ -1311,7 +1312,7 @@ pub fn render_indicator_settings_modal(
     ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Шаблон", template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_indicator(IndicatorKey::Template), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
 
     result.footer_buttons.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
 
@@ -1326,7 +1327,7 @@ pub fn render_indicator_settings_modal(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("OK", ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
 
     // ── "Отмена" button (before OK, outline only) ─────────────────────────────
     let cancel_btn_x = ok_btn_x - button_padding - cancel_btn_width;
@@ -1342,7 +1343,7 @@ pub fn render_indicator_settings_modal(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Отмена", cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
 
     // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
     if indicator_state.template_dropdown_open {
@@ -1383,7 +1384,7 @@ pub fn render_indicator_settings_modal(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Сохранить как...", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_indicator(IndicatorKey::SaveAs), dd_x + 8.0, row_y + opt_h / 2.0);
         result.footer_buttons.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
         row_y += opt_h;
 
@@ -1397,7 +1398,7 @@ pub fn render_indicator_settings_modal(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Применить по умолчанию", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_indicator(IndicatorKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
         result.footer_buttons.push(("template_default".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
         row_y += opt_h;
 

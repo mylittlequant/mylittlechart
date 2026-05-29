@@ -18,6 +18,7 @@ use crate::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState a
 use crate::ui::toolbar_render::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme};
 use crate::ui::z_order::ZLayer;
+use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 use crate::ui::Icon;
 use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
@@ -154,7 +155,7 @@ fn draw_buttons(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Cancel", buttons_x + BTN_W / 2.0, y + BTN_H / 2.0);
+        ctx.fill_text(t_text(TextKey::Cancel), buttons_x + BTN_W / 2.0, y + BTN_H / 2.0);
 
         let r = WidgetRect::new(buttons_x, y, BTN_W, BTN_H);
         result.content_items.push(("alert_set:cancel".to_string(), r));
@@ -173,7 +174,7 @@ fn draw_buttons(
         ctx.set_font("bold 12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        let label = if editing { "Save" } else { "Create" };
+        let label = if editing { t_modal(ModalKey::AlertSave) } else { t_modal(ModalKey::AlertCreate) };
         ctx.fill_text(label, save_x + BTN_W / 2.0, y + BTN_H / 2.0);
 
         let r = WidgetRect::new(save_x, y, BTN_W, BTN_H);
@@ -254,7 +255,7 @@ pub fn render_alert_settings_modal(
         &layer_id,
     );
 
-    let title = if state.editing_alert_id.is_some() { "Edit Alert" } else { "Create Alert" };
+    let title = if state.editing_alert_id.is_some() { t_modal(ModalKey::EditAlert) } else { t_modal(ModalKey::CreateAlert) };
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_font("bold 14px sans-serif");
     ctx.set_text_align(TextAlign::Left);
@@ -285,8 +286,8 @@ pub fn render_alert_settings_modal(
     let tab_bar_y = modal_y + HEADER_H;
     let alerts_count = state.all_alerts.len();
     let tab_labels: [(&str, &str); 3] = [
-        ("Settings", "alert_set:tab:settings"),
-        ("Notifications", "alert_set:tab:notifications"),
+        (t_modal(ModalKey::AlertTabSettings), "alert_set:tab:settings"),
+        (t_modal(ModalKey::AlertTabNotifications), "alert_set:tab:notifications"),
         ("", "alert_set:tab:list"), // rendered specially below
     ];
     let tab_w = MODAL_WIDTH / 3.0;
@@ -448,16 +449,16 @@ fn render_settings_tab(
     let mut y = content_y + PADDING;
 
     // --- 1. Source (readonly) ---
-    draw_readonly_row(ctx, "Source", &state.source_name, content_x, y, ROW_H, LABEL_W, toolbar_theme);
+    draw_readonly_row(ctx, t_modal(ModalKey::AlertSource), &state.source_name, content_x, y, ROW_H, LABEL_W, toolbar_theme);
     y += ROW_H + ITEM_PADDING;
 
     // --- 1b. Signal Kind filter (only for Signal alerts with available kinds) ---
     if !state.available_signal_kinds.is_empty() {
-        let kind_display = state.kind_filter.as_deref().unwrap_or("Any");
+        let kind_display = state.kind_filter.as_deref().unwrap_or(t_modal(ModalKey::AlertAny));
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:kind_filter");
         draw_dropdown_field(
             ctx,
-            "Signal Kind",
+            t_modal(ModalKey::AlertSignalKind),
             kind_display,
             is_hovered,
             content_x,
@@ -478,7 +479,7 @@ fn render_settings_tab(
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:condition");
         draw_dropdown_field(
             ctx,
-            "Condition",
+            t_modal(ModalKey::AlertCondition),
             state.condition.display_name(),
             is_hovered,
             content_x,
@@ -499,7 +500,7 @@ fn render_settings_tab(
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:price");
         draw_field(
             ctx,
-            "Price",
+            t_modal(ModalKey::AlertPrice),
             &format!("{:.2}", state.price),
             is_hovered,
             content_x,
@@ -520,7 +521,7 @@ fn render_settings_tab(
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:price2");
         draw_field(
             ctx,
-            "Price 2",
+            t_modal(ModalKey::AlertPrice2),
             &format!("{:.2}", state.price2),
             is_hovered,
             content_x,
@@ -542,7 +543,7 @@ fn render_settings_tab(
         let pct_text = format!("{:.1}%", state.percentage);
         draw_field(
             ctx,
-            "Percentage",
+            t_modal(ModalKey::AlertPercentage),
             &pct_text,
             is_hovered,
             content_x,
@@ -563,7 +564,7 @@ fn render_settings_tab(
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:trigger_mode");
         draw_dropdown_field(
             ctx,
-            "Trigger Mode",
+            t_modal(ModalKey::AlertTriggerMode),
             state.trigger_mode.display_name(),
             is_hovered,
             content_x,
@@ -584,7 +585,7 @@ fn render_settings_tab(
         let is_hovered = state.hovered_item_id.as_deref() == Some("alert_set:item:times_n");
         draw_field(
             ctx,
-            "Count",
+            t_modal(ModalKey::AlertCount),
             &state.times_n.to_string(),
             is_hovered,
             content_x,
@@ -614,7 +615,7 @@ fn render_settings_tab(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Message", content_x, y + ROW_H / 2.0);
+        ctx.fill_text(t_modal(ModalKey::AlertMessage), content_x, y + ROW_H / 2.0);
 
         // Field background
         let name_bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
@@ -906,7 +907,7 @@ fn render_notifications_tab(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Subscribers", content_x + LABEL_W, y + ROW_H / 2.0);
+            ctx.fill_text(t_modal(ModalKey::Subscribers), content_x + LABEL_W, y + ROW_H / 2.0);
             y += ROW_H + ITEM_PADDING;
         }
 
@@ -971,7 +972,7 @@ fn render_notifications_tab(
                     ctx.set_font("11px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("X", rm_x + rm_btn_w / 2.0, y + ROW_H / 2.0);
+                    ctx.fill_text("✕", rm_x + rm_btn_w / 2.0, y + ROW_H / 2.0);
                     let rm_r = WidgetRect::new(rm_x, y, rm_btn_w, ROW_H);
                     result.content_items.push((remove_id.clone(), rm_r));
                     input_coordinator.register_on_layer(remove_id.as_str(), rm_r, Sense::CLICK, layer_id);
@@ -992,7 +993,7 @@ fn render_notifications_tab(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Detect Users", content_x + LABEL_W + detect_btn_w / 2.0, y + ROW_H / 2.0);
+            ctx.fill_text(t_modal(ModalKey::DetectUsers), content_x + LABEL_W + detect_btn_w / 2.0, y + ROW_H / 2.0);
             let detect_r = WidgetRect::new(content_x + LABEL_W, y, detect_btn_w, ROW_H);
             result.content_items.push(("alert_set:notif:tg_detect".to_string(), detect_r));
             input_coordinator.register_on_layer("alert_set:notif:tg_detect", detect_r, Sense::CLICK, layer_id);
@@ -1037,7 +1038,7 @@ fn render_notifications_tab(
                 ctx.set_font("11px sans-serif");
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Add", add_x + add_btn_w / 2.0, y + ROW_H / 2.0);
+                ctx.fill_text(t_modal(ModalKey::Add), add_x + add_btn_w / 2.0, y + ROW_H / 2.0);
                 let add_r = WidgetRect::new(add_x, y, add_btn_w, ROW_H);
                 result.content_items.push((add_id.clone(), add_r));
                 input_coordinator.register_on_layer(add_id.as_str(), add_r, Sense::CLICK, layer_id);
@@ -1069,7 +1070,7 @@ fn render_notifications_tab(
             ctx.set_font("12px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Test Connection", content_x + test_btn_w / 2.0, y + ROW_H / 2.0);
+            ctx.fill_text(t_modal(ModalKey::TestConnection), content_x + test_btn_w / 2.0, y + ROW_H / 2.0);
 
             let test_r = WidgetRect::new(content_x, y, test_btn_w, ROW_H);
             result.content_items.push(("alert_set:notif:tg_test".to_string(), test_r));
@@ -1119,7 +1120,7 @@ fn render_notifications_tab(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("URL", content_x, y + ROW_H / 2.0);
+        ctx.fill_text(t_modal(ModalKey::Url), content_x, y + ROW_H / 2.0);
 
         // Field background
         let bg = if is_focused { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
@@ -1242,7 +1243,7 @@ fn render_alerts_list_tab(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No alerts", content_x + content_w / 2.0, list_top + ROW_H / 2.0);
+        ctx.fill_text(t_modal(ModalKey::NoAlerts), content_x + content_w / 2.0, list_top + ROW_H / 2.0);
         result.list_total_content_height = ROW_H;
     } else {
         let list_item_h = ROW_H;

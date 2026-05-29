@@ -26,6 +26,7 @@ use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 use crate::state::panel_grid::ChartPanelGrid;
 use crate::state::sub_panel::ChartSubPanel;
+use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 
 // =============================================================================
 // Result type
@@ -159,7 +160,7 @@ pub fn render_tags_tabs_modal(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("TAGS & TABS", modal_x + 16.0, modal_y + HEADER_HEIGHT / 2.0);
+    ctx.fill_text(t_modal(ModalKey::TagsAndTabs), modal_x + 16.0, modal_y + HEADER_HEIGHT / 2.0);
 
     // Close button
     let close_x = modal_x + MODAL_WIDTH - CLOSE_BTN_SIZE - 12.0;
@@ -195,9 +196,9 @@ pub fn render_tags_tabs_modal(
     let sidebar_top    = modal_y + HEADER_HEIGHT;
     let sidebar_height = MODAL_HEIGHT - HEADER_HEIGHT;
     let sidebar_items  = [
-        ("tabs",  "TABS",  TagsTabsSidebar::Tabs),
-        ("tags",  "TAGS",  TagsTabsSidebar::Tags),
-        ("map",   "MAP",   TagsTabsSidebar::Map),
+        ("tabs",  t_modal(ModalKey::SectionTabs),  TagsTabsSidebar::Tabs),
+        ("tags",  t_modal(ModalKey::SectionTags),  TagsTabsSidebar::Tags),
+        ("map",   "MAP",                           TagsTabsSidebar::Map),
     ];
 
     let sidebar_item_height = 40.0;
@@ -776,7 +777,7 @@ fn render_tabs_section(
                     ctx.set_font("12px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Delete", btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
+                    ctx.fill_text(t_text(TextKey::Delete), btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
@@ -792,7 +793,7 @@ fn render_tabs_section(
                 ctx.set_font("12px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("No panels", content_left, row_y + ROW_HEIGHT / 2.0);
+                ctx.fill_text(t_modal(ModalKey::NoPanels), content_left, row_y + ROW_HEIGHT / 2.0);
             }
         }
 
@@ -805,7 +806,7 @@ fn render_tabs_section(
                 ctx.set_font("12px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("No hidden panels", content_left, row_y + ROW_HEIGHT / 2.0);
+                ctx.fill_text(t_modal(ModalKey::NoHiddenPanels), content_left, row_y + ROW_HEIGHT / 2.0);
             } else {
                 for leaf in &hidden_leaves {
                     let leaf_id_val = leaf.id.0;
@@ -844,7 +845,7 @@ fn render_tabs_section(
                     ctx.set_font("12px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Restore", btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
+                    ctx.fill_text(t_modal(ModalKey::Restore), btn_x + btn_w / 2.0, btn_y_inner + btn_h / 2.0);
 
                     let r = WidgetRect::new(btn_x, btn_y_inner, btn_w, btn_h);
                     result.content_items.push((wid_str.clone(), r));
@@ -1116,7 +1117,7 @@ fn render_map_section(
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Hidden:", content_left, row_y + 10.0);
+            ctx.fill_text(t_modal(ModalKey::Hidden), content_left, row_y + 10.0);
             row_y += 20.0;
 
             for leaf in &hidden_leaves_map {
@@ -1200,7 +1201,7 @@ fn render_map_section(
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("TABS", content_left, row_y + 6.0);
+                ctx.fill_text(t_modal(ModalKey::SectionTabs), content_left, row_y + 6.0);
                 row_y += 14.0;
 
                 let mut btn_x = content_left;
@@ -1351,7 +1352,7 @@ fn render_map_section(
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("TAGS", content_left, row_y + 6.0);
+                ctx.fill_text(t_modal(ModalKey::SectionTags), content_left, row_y + 6.0);
                 row_y += 14.0;
 
                 btn_x = content_left;
@@ -1413,7 +1414,7 @@ fn render_map_section(
             ctx.set_font("12px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Select a panel on the map", content_left, row_y + ROW_HEIGHT / 2.0);
+            ctx.fill_text(t_modal(ModalKey::SelectPanelOnMap), content_left, row_y + ROW_HEIGHT / 2.0);
         }
     } else {
         // No valid chart area dimensions
@@ -1421,7 +1422,7 @@ fn render_map_section(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("No panel data available", content_left, row_y + ROW_HEIGHT / 2.0);
+        ctx.fill_text(t_modal(ModalKey::NoPanelData), content_left, row_y + ROW_HEIGHT / 2.0);
     }
 }
 
@@ -1636,7 +1637,7 @@ fn render_tags_section(
                     ctx.set_fill_color(del_text_color);
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Delete", del_x + del_w / 2.0, del_y + del_h / 2.0);
+                    ctx.fill_text(t_text(TextKey::Delete), del_x + del_w / 2.0, del_y + del_h / 2.0);
                     let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
                     result.content_items.push((del_wid.clone(), del_rect));
                     input_coordinator.register_on_layer(del_wid.as_str(), del_rect, Sense::CLICK | Sense::HOVER, layer_id);

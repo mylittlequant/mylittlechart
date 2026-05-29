@@ -19,6 +19,7 @@ use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::{ScrollbarConfig, ScrollbarState, draw_scrollbar};
+use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 
 // =============================================================================
 // Public data types for modal items
@@ -198,7 +199,7 @@ pub fn render_watchlist_modal(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Watchlist", modal_x + padding, modal_y + header_h / 2.0);
+    ctx.fill_text(t_modal(ModalKey::Watchlist), modal_x + padding, modal_y + header_h / 2.0);
 
     // Close button
     let close_x = modal_x + modal_w - icon_size - 14.0;
@@ -252,8 +253,8 @@ pub fn render_watchlist_modal(
     let tab_bar_y = modal_y + header_h;
     // Only Overview and Groups tabs — Settings tab removed.
     let tabs: &[(&str, &str, WatchlistModalTab)] = &[
-        ("Overview", "wl_modal:tab:overview", WatchlistModalTab::Overview),
-        ("Groups",   "wl_modal:tab:groups",   WatchlistModalTab::Groups),
+        (t_modal(ModalKey::WatchlistOverview), "wl_modal:tab:overview", WatchlistModalTab::Overview),
+        (t_modal(ModalKey::WatchlistGroups),   "wl_modal:tab:groups",   WatchlistModalTab::Groups),
     ];
     let tab_w = modal_w / tabs.len() as f64;
 
@@ -531,29 +532,29 @@ fn render_overview_tab(
 
     // SYMBOL — left-aligned from sym_x
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("SYMBOL", cols.sym_x, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColSymbol), cols.sym_x, header_mid_y);
 
     // EXCHANGE — left-aligned from exch_x
-    ctx.fill_text("EXCHANGE", cols.exch_x, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColExchange), cols.exch_x, header_mid_y);
 
     // LAST — right-aligned, right edge at chg_pct_x
     ctx.set_text_align(TextAlign::Right);
-    ctx.fill_text("LAST", cols.chg_pct_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColLast), cols.chg_pct_x - 4.0, header_mid_y);
 
     // CHG% — right-aligned, right edge at chg_abs_x
-    ctx.fill_text("CHG%", cols.chg_abs_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColChgPct), cols.chg_abs_x - 4.0, header_mid_y);
 
     // CHG — right-aligned, right edge at high_x
-    ctx.fill_text("CHG", cols.high_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColChg), cols.high_x - 4.0, header_mid_y);
 
     // HIGH — right-aligned, right edge at low_x
-    ctx.fill_text("HIGH", cols.low_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColHigh), cols.low_x - 4.0, header_mid_y);
 
     // LOW — right-aligned, right edge at vol_x
-    ctx.fill_text("LOW", cols.vol_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColLow), cols.vol_x - 4.0, header_mid_y);
 
     // VOL — right-aligned, right edge at del_x
-    ctx.fill_text("VOL", cols.del_x - 4.0, header_mid_y);
+    ctx.fill_text(t_modal(ModalKey::ColVol), cols.del_x - 4.0, header_mid_y);
 
     // Column header separator
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -1290,7 +1291,7 @@ pub fn render_wl_group_name_input(
     ctx.set_fill_color("#ffffff");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Save", save_rect.center_x(), save_rect.center_y());
+    ctx.fill_text(t_text(TextKey::Save), save_rect.center_x(), save_rect.center_y());
 
     input_coordinator.register_on_layer(
         "wl_group_name:save",
@@ -1309,7 +1310,7 @@ pub fn render_wl_group_name_input(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Cancel", cancel_rect.center_x(), cancel_rect.center_y());
+    ctx.fill_text(t_text(TextKey::Cancel), cancel_rect.center_x(), cancel_rect.center_y());
 
     input_coordinator.register_on_layer(
         "wl_group_name:cancel",

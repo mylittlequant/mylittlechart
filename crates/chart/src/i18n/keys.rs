@@ -16,6 +16,8 @@ use super::tables::{
     SETTINGS_KEY_TABLE,
     USER_SETTINGS_KEY_TABLE,
     PROFILE_KEY_TABLE,
+    MODAL_KEY_TABLE,
+    INDICATOR_MODAL_KEY_TABLE,
 };
 
 // =============================================================================
@@ -793,6 +795,283 @@ impl uzor::i18n::Translate for ProfileKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&PROFILE_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Modal Keys  (shared across modals: alert, watchlist, tags_tabs, chart_browser,
+//              template_name, overlay_settings, search_overlay, hotkeys)
+// =============================================================================
+
+/// Shared modal UI string keys.
+///
+/// Variant order is **frozen** — discriminant == row index in `MODAL_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ModalKey {
+    // ---- Alert Settings ----
+    /// "Edit Alert"
+    EditAlert              = 0,
+    /// "Create Alert"
+    CreateAlert            = 1,
+    /// "Settings" (tab)
+    AlertTabSettings       = 2,
+    /// "Notifications" (tab)
+    AlertTabNotifications  = 3,
+    /// "Source"
+    AlertSource            = 4,
+    /// "Condition"
+    AlertCondition         = 5,
+    /// "Price"
+    AlertPrice             = 6,
+    /// "Price 2"
+    AlertPrice2            = 7,
+    /// "Percentage"
+    AlertPercentage        = 8,
+    /// "Trigger Mode"
+    AlertTriggerMode       = 9,
+    /// "Count"
+    AlertCount             = 10,
+    /// "Message"
+    AlertMessage           = 11,
+    /// "Signal Kind"
+    AlertSignalKind        = 12,
+    /// "Any"
+    AlertAny               = 13,
+    /// "Save" (alert edit button)
+    AlertSave              = 14,
+    /// "Create" (alert create button)
+    AlertCreate            = 15,
+    /// "No alerts"
+    NoAlerts               = 16,
+    /// "Subscribers"
+    Subscribers            = 17,
+    /// "Detect Users"
+    DetectUsers            = 18,
+    /// "Add"
+    Add                    = 19,
+    /// "Test Connection"
+    TestConnection         = 20,
+    /// "URL"
+    Url                    = 21,
+
+    // ---- Watchlist Modal ----
+    /// "Watchlist"
+    Watchlist              = 22,
+    /// "Overview" (tab)
+    WatchlistOverview      = 23,
+    /// "Groups" (tab)
+    WatchlistGroups        = 24,
+    /// "SYMBOL" column header
+    ColSymbol              = 25,
+    /// "EXCHANGE" column header
+    ColExchange            = 26,
+    /// "LAST" column header
+    ColLast                = 27,
+    /// "CHG%" column header
+    ColChgPct              = 28,
+    /// "CHG" column header
+    ColChg                 = 29,
+    /// "HIGH" column header
+    ColHigh                = 30,
+    /// "LOW" column header
+    ColLow                 = 31,
+    /// "VOL" column header
+    ColVol                 = 32,
+
+    // ---- Tags & Tabs Modal ----
+    /// "TAGS & TABS"
+    TagsAndTabs            = 33,
+    /// "TABS" (section label)
+    SectionTabs            = 34,
+    /// "TAGS" (section label)
+    SectionTags            = 35,
+    /// "Hidden:" (section label)
+    Hidden                 = 36,
+
+    // ---- Chart Browser ----
+    /// "Charts"
+    Charts                 = 37,
+    /// "CHART NAME" column header
+    ColChartName           = 38,
+    /// "Search charts..." placeholder
+    SearchChartsPlaceholder= 39,
+
+    // ---- Template Name Modal ----
+    /// "Сохранить шаблон как..." / "Save template as..."
+    SaveTemplateAs         = 40,
+    /// "Название шаблона..." / "Template name..." placeholder
+    TemplateNamePlaceholder= 41,
+    /// "Сохранить" / "Save"
+    SaveTemplate           = 42,
+
+    // ---- Overlay / Tags-Tabs shared panel states ----
+    /// "No panels"
+    NoPanels               = 43,
+    /// "No hidden panels"
+    NoHiddenPanels         = 44,
+    /// "Restore"
+    Restore                = 45,
+    /// "Select a panel on the map"
+    SelectPanelOnMap       = 46,
+    /// "No panel data available"
+    NoPanelData            = 47,
+    /// "Delete" (panel delete button — same as TextKey::Delete but kept here
+    /// so overlay_settings doesn't need to import keys_common)
+    DeletePanel            = 48,
+
+    // ---- Search Overlay ----
+    /// "Symbol Search"
+    SymbolSearch           = 49,
+    /// "Add Indicator"
+    AddIndicator           = 50,
+    /// "Compare Symbol"
+    CompareSymbol          = 51,
+    /// "Search symbol..." placeholder
+    SearchSymbolPlaceholder= 52,
+    /// "Search indicator..." placeholder
+    SearchIndicatorPlaceholder = 53,
+    /// "Search symbol to compare..." placeholder
+    SearchCompareSymbolPlaceholder = 54,
+    /// "No indicators in this category"
+    NoIndicatorsInCategory = 55,
+    /// "Type to search..."
+    TypeToSearch           = 56,
+    /// "Nothing found"
+    NothingFound           = 57,
+    /// "Save current indicators as set"
+    SaveIndicatorSet       = 58,
+    /// "No saved indicator sets yet"
+    NoSavedIndicatorSets   = 59,
+
+    // ---- Hotkeys Modal ----
+    /// "Keyboard Shortcuts"
+    KeyboardShortcuts      = 60,
+    /// "Undo" hotkey description
+    HkUndo                 = 61,
+    /// "Redo"
+    HkRedo                 = 62,
+    /// "Save template"
+    HkSaveTemplate         = 63,
+    /// "Delete selected"
+    HkDeleteSelected       = 64,
+    /// "Deselect / Close modal"
+    HkDeselect             = 65,
+    /// "Play/Pause replay"
+    HkPlayPause            = 66,
+    /// "Search indicators"
+    HkSearchIndicators     = 67,
+    /// "Symbol search"
+    HkSymbolSearch         = 68,
+    /// "Copy"
+    HkCopy                 = 69,
+    /// "Paste"
+    HkPaste                = 70,
+    /// "Zoom in/out"
+    HkZoom                 = 71,
+    /// "Pan chart"
+    HkPan                  = 72,
+}
+
+impl ModalKey {
+    pub const COUNT: usize = 73;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&MODAL_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ModalKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&MODAL_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Indicator Settings Modal Keys
+// =============================================================================
+
+/// Indicator settings modal string keys.
+///
+/// Variant order is **frozen** — discriminant == row index in `INDICATOR_MODAL_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum IndicatorKey {
+    /// "No configurable parameters"
+    NoParams               = 0,
+    /// "No configurable outputs"
+    NoOutputs              = 1,
+    /// "Enable signals"
+    EnableSignals          = 2,
+    /// "Auto-detects signals based on"
+    SignalsAutoLine1       = 3,
+    /// "indicator values (crossovers, levels, etc.)"
+    SignalsAutoLine2       = 4,
+    /// "Shape:"
+    Shape                  = 5,
+    /// "Bull color:"
+    BullColor              = 6,
+    /// "Bear color:"
+    BearColor              = 7,
+    /// "Size:"
+    SignalSize             = 8,
+    /// "Offset:"
+    SignalOffset           = 9,
+    /// "Short name:"
+    ShortName              = 10,
+    /// "Category:"
+    Category               = 11,
+    /// "Overlay:"
+    Overlay                = 12,
+    /// "Bounds:"
+    Bounds                 = 13,
+    /// "Description:"
+    Description            = 14,
+    /// "No description"
+    NoDescription          = 15,
+    /// "Indicator info"
+    IndicatorInfo          = 16,
+    /// "Metadata unavailable"
+    MetadataUnavailable    = 17,
+    /// "Template" (footer button)
+    Template               = 18,
+    /// "Save as..." (dropdown item)
+    SaveAs                 = 19,
+    /// "Apply default" (dropdown item)
+    ApplyDefault           = 20,
+
+    // ---- Primitive settings specific ----
+    /// "This primitive does not support text"
+    NoTextSupport          = 21,
+    /// "This primitive does not support levels"
+    NoLevelsSupport        = 22,
+    /// "Price" (field label in primitive coordinate editor)
+    PriceLabel             = 23,
+    /// "Bar" (field label in primitive coordinate editor)
+    BarLabel               = 24,
+    /// Bold toggle marker ("B" / "Ж")
+    TextBold               = 25,
+    /// Italic toggle marker ("I" / "К")
+    TextItalic             = 26,
+}
+
+impl IndicatorKey {
+    pub const COUNT: usize = 27;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&INDICATOR_MODAL_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for IndicatorKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&INDICATOR_MODAL_KEY_TABLE[self as usize], lang_index)
     }
 }
 

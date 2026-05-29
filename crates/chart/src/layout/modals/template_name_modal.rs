@@ -19,6 +19,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
+use crate::i18n::{ModalKey, TextKey, t_modal, t_text};
 
 /// Hit-test rectangles returned from a `render_template_name_modal` call.
 #[derive(Clone, Debug, Default)]
@@ -107,7 +108,7 @@ pub fn render_template_name_modal(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Сохранить шаблон как...", modal_x + padding, modal_y + header_h / 2.0);
+    ctx.fill_text(t_modal(ModalKey::SaveTemplateAs), modal_x + padding, modal_y + header_h / 2.0);
 
     // Close (X) button — right side of header.
     let close_size = 16.0;
@@ -151,7 +152,7 @@ pub fn render_template_name_modal(
     let input_config = InputConfig::new(&editing.text)
         .with_focused(true)
         .with_cursor(editing.cursor)
-        .with_placeholder("Название шаблона...")
+        .with_placeholder(t_modal(ModalKey::TemplateNamePlaceholder))
         .with_selection(sel_start, sel_end);
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
@@ -199,7 +200,7 @@ pub fn render_template_name_modal(
     ctx.set_fill_color("#ffffff");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Сохранить", save_rect.center_x(), save_rect.center_y());
+    ctx.fill_text(t_modal(ModalKey::SaveTemplate), save_rect.center_x(), save_rect.center_y());
 
     input_coordinator.register_on_layer(
         format!("{}:save", ns_prefix),
@@ -218,7 +219,7 @@ pub fn render_template_name_modal(
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Отмена", cancel_rect.center_x(), cancel_rect.center_y());
+    ctx.fill_text(t_text(TextKey::Cancel), cancel_rect.center_x(), cancel_rect.center_y());
 
     input_coordinator.register_on_layer(
         format!("{}:cancel", ns_prefix),
