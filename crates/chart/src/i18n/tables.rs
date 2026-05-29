@@ -1024,3 +1024,50 @@ pub(super) static CITY_KEY_TABLE: [[&str; N_LANG]; 25] = [
     /* 23 Magadan      UTC+11 */ [ "Magadan",        "Магадан",          "Magadán",           "Magadan",           "Magadan",           "Magadan",           "马加丹",     "マガダン",        "마가단",        "ماغادان",           "Magadan",           "Magadan",           "Magadan",           "Магадан",           "मगादान"         ],
     /* 24 Auckland     UTC+12 */ [ "Auckland",       "Окленд",           "Auckland",          "Auckland",          "Auckland",          "Auckland",          "奥克兰",     "オークランド",    "오클랜드",      "أوكلاند",           "Auckland",          "Auckland",          "Auckland",          "Окленд",            "ऑकलैंड"         ],
 ];
+
+// =============================================================================
+// Completeness invariant (executable documentation)
+// =============================================================================
+//
+// Every cell of every chart table must be non-empty: an empty cell would make
+// `table_lookup!` silently fall back to English, hiding a missing translation.
+// This test fails the build if a key is added without filling all N_LANG
+// columns — so language coverage cannot regress unnoticed.
+#[cfg(test)]
+mod completeness {
+    use super::*;
+
+    fn assert_full(name: &str, rows: &[[&str; N_LANG]]) {
+        for (r, row) in rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                assert!(
+                    !cell.is_empty(),
+                    "{name}: empty translation at row {r}, language column {c}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_chart_table_is_fully_translated() {
+        assert_full("MENU_KEY_TABLE", &MENU_KEY_TABLE);
+        assert_full("CONFIG_KEY_TABLE", &CONFIG_KEY_TABLE);
+        assert_full("WAVE_DEGREE_KEY_TABLE", &WAVE_DEGREE_KEY_TABLE);
+        assert_full("STYLE_KEY_TABLE", &STYLE_KEY_TABLE);
+        assert_full("LABEL_POSITION_KEY_TABLE", &LABEL_POSITION_KEY_TABLE);
+        assert_full("TOOLBAR_TOOLTIP_KEY_TABLE", &TOOLBAR_TOOLTIP_KEY_TABLE);
+        assert_full("WIZARD_KEY_TABLE", &WIZARD_KEY_TABLE);
+        assert_full("CLOCK_KEY_TABLE", &CLOCK_KEY_TABLE);
+        assert_full("SETTINGS_KEY_TABLE", &SETTINGS_KEY_TABLE);
+        assert_full("USER_SETTINGS_KEY_TABLE", &USER_SETTINGS_KEY_TABLE);
+        assert_full("PROFILE_KEY_TABLE", &PROFILE_KEY_TABLE);
+        assert_full("MODAL_KEY_TABLE", &MODAL_KEY_TABLE);
+        assert_full("INDICATOR_MODAL_KEY_TABLE", &INDICATOR_MODAL_KEY_TABLE);
+        assert_full("SIDEBAR_KEY_TABLE", &SIDEBAR_KEY_TABLE);
+        assert_full("PRIMITIVE_NAME_TABLE", &PRIMITIVE_NAME_TABLE);
+        assert_full("PRIMITIVE_TOOLTIP_TABLE", &PRIMITIVE_TOOLTIP_TABLE);
+        assert_full("TRADING_KEY_TABLE", &TRADING_KEY_TABLE);
+        assert_full("TOOLBAR_MENU_KEY_TABLE", &TOOLBAR_MENU_KEY_TABLE);
+        assert_full("CITY_KEY_TABLE", &CITY_KEY_TABLE);
+    }
+}

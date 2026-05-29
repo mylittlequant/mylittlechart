@@ -20,6 +20,7 @@ mylittlechart is a desktop application that connects to 18 crypto exchanges and 
 - **Exchanges** — 18 exchanges for live market data: Binance, Bybit, OKX, Kraken, Coinbase, KuCoin, Bitget, GateIO, HTX, Bitfinex, Bitstamp, BingX, MEXC, CryptoCom, HyperLiquid, Dydx, Lighter, Deribit.
 - **Agent API** — local HTTP server on `127.0.0.1:17420`, 22 endpoints. Read bars and indicator snapshots, control viewport and symbol, take chart screenshots, manage drawing primitives. No auth — binds loopback only.
 - **Alerts** — in-app toast, Telegram (multi-subscriber, optional PNG screenshot attachment), HTTP webhook. All channels run concurrently; a failed channel does not block the others.
+- **Languages** — UI translated into 15 languages (English, Russian, Spanish, German, French, Portuguese, Chinese, Japanese, Korean, Arabic, Italian, Turkish, Polish, Ukrainian, Hindi); switch live in User Settings.
 - **Profile encryption** — user profile encrypted at rest with AES-256-GCM, passphrase → PBKDF2-HMAC-SHA256 (600K iterations) + HKDF-SHA256.
 
 ## Install

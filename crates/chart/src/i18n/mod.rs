@@ -1,8 +1,41 @@
-//! Internationalization (i18n) module
+//! Internationalization (i18n) module.
 //!
-//! Language, TextKey, MonthKey, TooltipKey, Translatable are defined locally in mlc.
-//! uzor provides only the generic Translate trait + global lang-index storage.
-//! This module re-exports everything and provides chart-specific convenience functions.
+//! # Architecture
+//!
+//! - The **mechanism** lives in `uzor`: a generic `Translate` trait
+//!   (`fn translate(self, lang_index: usize) -> &'static str`), a global
+//!   language-index (`current_lang_index` / `set_lang_index`), and the
+//!   `uzor::table_lookup!` macro (returns the cell, falling back to column 0
+//!   when empty). uzor knows nothing about concrete languages or strings.
+//! - The **data** lives here: the [`Language`] enum (15 langs), every key enum
+//!   (`TextKey`, `MenuKey`, `ConfigKey`, `PrimitiveNameKey`, …) and their
+//!   `[[&str; N_LANG]; COUNT]` translation tables in `tables*.rs`. Each key enum
+//!   `impl uzor::i18n::Translate` by indexing its table.
+//!
+//! UI code is immediate-mode: render calls `Key::X.get(current_language())`
+//! every frame, so switching language is picked up automatically. The only
+//! things that must be rebuilt on a language change are values cached outside
+//! the render loop (e.g. `ToolbarConfig`, rebuilt in chart-app-vello).
+//!
+//! # Adding a translation key
+//!
+//! 1. Append a variant to the relevant enum in `keys.rs` / `keys_common.rs`
+//!    (order is **frozen** — discriminant == row index; only add at the end).
+//! 2. Bump that enum's `COUNT`.
+//! 3. Append a row to its table in `tables.rs` / `tables_common.rs` with all
+//!    `N_LANG` columns filled (column 0 = En is mandatory).
+//! 4. Use it: `fill_text(MyKey::Variant.get(current_language()), …)`.
+//!
+//! # Adding a language
+//!
+//! 1. Add a variant to [`Language`] + a `LANG_META` row in `lang.rs`, bump `N_LANG`.
+//! 2. Add one column to every table (empty `""` falls back to En until filled).
+//! 3. Expose it in the language pickers — they already iterate `Language::all()`.
+//! 4. Non-Latin scripts need a font in the uzor fallback chain (see uzor-fonts).
+//!
+//! The `tests::every_key_translated_in_all_languages` test fails the build if a
+//! cell is left empty, so coverage can't silently regress — it is the source of
+//! truth, not a hand-maintained doc.
 
 mod lang;
 mod keys_common;

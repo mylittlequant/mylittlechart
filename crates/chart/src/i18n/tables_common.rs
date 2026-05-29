@@ -109,3 +109,33 @@ pub(super) static MONTH_TABLE_FULL: [[&str; N_LANG]; 12] = [
     /* 10 November  */ [ "November",  "Ноябрь",   "Noviembre",  "November",  "Novembre",   "Novembro",   "十一月",  "11月",     "11월",  "نوفمبر",   "Novembre",  "Kasım",    "Listopad",   "Листопад",  "नवंबर"    ],
     /* 11 December  */ [ "December",  "Декабрь",  "Diciembre",  "Dezember",  "Décembre",   "Dezembro",   "十二月",  "12月",     "12월",  "ديسمبر",   "Dicembre",  "Aralık",   "Grudzień",   "Грудень",   "दिसंबर"   ],
 ];
+
+// =============================================================================
+// Completeness invariant (executable documentation)
+// =============================================================================
+//
+// See `tables.rs` completeness test — same rule: no empty cell, so a missing
+// translation can't silently fall back to English unnoticed.
+#[cfg(test)]
+mod completeness {
+    use super::*;
+
+    fn assert_full(name: &str, rows: &[[&str; N_LANG]]) {
+        for (r, row) in rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                assert!(
+                    !cell.is_empty(),
+                    "{name}: empty translation at row {r}, language column {c}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_common_table_is_fully_translated() {
+        assert_full("TEXT_KEY_TABLE", &TEXT_KEY_TABLE);
+        assert_full("TOOLTIP_KEY_TABLE", &TOOLTIP_KEY_TABLE);
+        assert_full("MONTH_TABLE_SHORT", &MONTH_TABLE_SHORT);
+        assert_full("MONTH_TABLE_FULL", &MONTH_TABLE_FULL);
+    }
+}
