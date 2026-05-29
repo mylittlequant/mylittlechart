@@ -525,7 +525,11 @@ impl ChartApp {
         // Hit-test primitives and indicators, then dispatch to context menu.
         // Steps 1–5 (geometry + hit-test) live in ChartPanelGrid::handle_right_click.
         // Step 6 (opening context menu / settings) stays here — it touches panel_app state.
-        let extended = self.build_extended_layout();
+        let _fallback_rc;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_rc = self.build_extended_layout(); &_fallback_rc }
+        };
 
         // Pre-extract active-window data needed by the indicator closures.
         // Done before the mutable borrow of panel_grid inside handle_right_click.
@@ -567,7 +571,7 @@ impl ChartApp {
         };
 
         let hit = self.panel_app.panel_grid.handle_right_click(
-            x as f64, y as f64, &extended,
+            x as f64, y as f64, extended,
             indicator_overlay_hit,
             indicator_subpane_hit,
         );
@@ -738,11 +742,15 @@ impl ChartApp {
             }
         }
 
-        let extended = self.build_extended_layout();
+        let _fallback_dc;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_dc = self.build_extended_layout(); &_fallback_dc }
+        };
         let overlay_results_dc = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_dc);
 
         // Capture hit result before passing hit_tester into process_action.
@@ -2460,18 +2468,22 @@ impl ChartApp {
             });
         }
 
-        let extended = self.build_extended_layout();
+        let _fallback_ds;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_ds = self.build_extended_layout(); &_fallback_ds }
+        };
         let overlay_results_ds = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_ds);
 
         // Delegate freehand-start and primitive/control-point hit-test to ChartPanelGrid.
         // Freehand: drawing_manager.start_freehand() runs inside handle_drag_start.
         // Background: viewport_before_drag already captured above.
         use zengeld_chart::state::ChartDragStartHit;
-        let drag_start_hit = self.panel_app.panel_grid.handle_drag_start(x, y, &extended);
+        let drag_start_hit = self.panel_app.panel_grid.handle_drag_start(x, y, extended);
 
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
@@ -3425,8 +3437,12 @@ impl ChartApp {
         // active leaf) via update_crosshair_split so the correct leaf layout is
         // used (F1).  Propagation to sync-group peers is also applied (F11).
         {
-            let extended = self.build_extended_layout();
-            if self.panel_app.panel_grid.extend_freehand(x, y, &extended) {
+            let _fallback_fh;
+            let extended = match self.active_frame_layout.as_ref() {
+                Some(e) => e,
+                None => { _fallback_fh = self.build_extended_layout(); &_fallback_fh }
+            };
+            if self.panel_app.panel_grid.extend_freehand(x, y, extended) {
                 let drag_mode = self.input_handler.state.drag_mode;
                 if self.panel_app.panel_grid.is_split() {
                     // Freehand drawing is on the active leaf; use its layout for
@@ -3435,7 +3451,9 @@ impl ChartApp {
                     if let Some(active_leaf) = active_leaf_opt {
                         let leaf_rect_opt = self.get_leaf_absolute_rect(active_leaf);
                         if let Some(leaf_rect) = leaf_rect_opt {
-                            let ext_opt = self.build_extended_layout_for_leaf(active_leaf, &leaf_rect);
+                            let ext_opt = self.frame_layouts.get(&active_leaf)
+                                .cloned()
+                                .or_else(|| self.build_extended_layout_for_leaf(active_leaf, &leaf_rect));
                             if let Some(ext) = ext_opt {
                                 if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
                                     .update_crosshair_split(x, y, active_leaf, &ext)
@@ -3475,11 +3493,19 @@ impl ChartApp {
                 if let Some(leaf_rect) = self.get_leaf_absolute_rect(leaf) {
                     let available_h = leaf_rect.height.max(1.0);
                     let rendered_heights: std::collections::HashMap<u64, f64> =
-                        match self.build_extended_layout_for_leaf(leaf, &leaf_rect) {
+                        match self.frame_layouts.get(&leaf)
+                            .map(|e| e as &zengeld_chart::ExtendedFrameLayout)
+                            .or_else(|| None)
+                        {
                             Some(ext) => ext.sub_panes.iter()
                                 .map(|sp| (sp.instance_id, sp.content.height))
                                 .collect(),
-                            None => std::collections::HashMap::new(),
+                            None => match self.build_extended_layout_for_leaf(leaf, &leaf_rect) {
+                                Some(ext) => ext.sub_panes.iter()
+                                    .map(|sp| (sp.instance_id, sp.content.height))
+                                    .collect(),
+                                None => std::collections::HashMap::new(),
+                            },
                         };
                     self.panel_app.panel_grid.drag_pane_separator(
                         instance_id,
@@ -3492,11 +3518,16 @@ impl ChartApp {
             return;
         }
 
-        let extended = self.build_extended_layout();
+        // Use the frame-cached layout; fall back to building on demand.
+        let _fallback_dm;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_dm = self.build_extended_layout(); &_fallback_dm }
+        };
         let overlay_results_dm = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_dm);
         let actions = self.input_handler.process_action(
             ChartInputAction::DragMove { mode: drag_mode, x, y, delta_x: dx, delta_y: dy },
@@ -3508,7 +3539,12 @@ impl ChartApp {
         // In split mode, resolve the hovered leaf and use update_crosshair_split
         // so the crosshair follows the hovered leaf (not the active leaf) — F2.
         // Propagation also uses the hovered leaf — F3.
-        let extended2 = self.build_extended_layout();
+        // Re-read active_frame_layout after process_output_actions (may have updated it).
+        let _fallback_dm2;
+        let extended2 = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_dm2 = self.build_extended_layout(); &_fallback_dm2 }
+        };
         let drag_mode = self.input_handler.state.drag_mode;
         if self.panel_app.panel_grid.is_split() {
             use zengeld_chart::state::ChartInputTarget;
@@ -3524,7 +3560,9 @@ impl ChartApp {
             if let Some(leaf_id) = hovered_leaf {
                 let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
                 if let Some(leaf_rect) = leaf_rect_opt {
-                    let ext_opt = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect);
+                    let ext_opt = self.frame_layouts.get(&leaf_id)
+                        .cloned()
+                        .or_else(|| self.build_extended_layout_for_leaf(leaf_id, &leaf_rect));
                     if let Some(ext) = ext_opt {
                         if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
                             .update_crosshair_split(x, y, leaf_id, &ext)
@@ -3535,7 +3573,7 @@ impl ChartApp {
                 }
             }
         } else if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
-            .update_crosshair(x, y, drag_mode, false, &extended2)
+            .update_crosshair(x, y, drag_mode, false, extended2)
         {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let Some(active_leaf) = active_leaf_opt {
@@ -4203,11 +4241,15 @@ impl ChartApp {
         }
 
         let drag_mode = self.input_handler.state.drag_mode;
-        let extended = self.build_extended_layout();
+        let _fallback_de;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_de = self.build_extended_layout(); &_fallback_de }
+        };
         let overlay_results_de = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_de);
         let actions = self.input_handler.process_action(
             ChartInputAction::DragEnd { mode: drag_mode, x, y },
@@ -4603,13 +4645,16 @@ impl ChartApp {
                 use zengeld_chart::engine::input::HitResult;
                 let (extended, overlays) = if let Some(hovered) = split_hovered_leaf {
                     let leaf_rect_opt = self.get_leaf_absolute_rect(hovered);
-                    let ext = leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(hovered, &r));
+                    let ext = self.frame_layouts.get(&hovered)
+                        .cloned()
+                        .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(hovered, &r)));
                     let ovl = self.panel_app.panel_grid.window_for_leaf(hovered)
                         .map(|w| w.sub_pane_overlay_results.clone())
                         .unwrap_or_default();
                     (ext, ovl)
                 } else {
-                    let ext = Some(self.build_extended_layout());
+                    let ext = self.active_frame_layout.clone()
+                        .or_else(|| Some(self.build_extended_layout()));
                     let ovl = self.panel_app.panel_grid.active_window()
                         .map(|w| w.sub_pane_overlay_results.clone())
                         .unwrap_or_default();
@@ -4674,18 +4719,18 @@ impl ChartApp {
                 | ChartInputTarget::PriceScale { leaf_id }
                 | ChartInputTarget::TimeScale { leaf_id }
                 | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
-                    // Build layout for the hovered leaf and delegate crosshair
+                    // Use frame-cached layout for the hovered leaf; delegate crosshair
                     // update to ChartPanelGrid::update_crosshair_split.
                     let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
-                    if let Some(leaf_rect) = leaf_rect_opt {
-                        let extended_opt = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect);
-                        if let Some(extended) = extended_opt {
-                            if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
-                                .update_crosshair_split(x, y, leaf_id, &extended)
-                            {
-                                // Propagate to sync-group peers (handles order-flow panels too).
-                                self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
-                            }
+                    let extended_opt = self.frame_layouts.get(&leaf_id)
+                        .cloned()
+                        .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)));
+                    if let Some(extended) = extended_opt {
+                        if let Some((ts, price, vis, pane_idx)) = self.panel_app.panel_grid
+                            .update_crosshair_split(x, y, leaf_id, &extended)
+                        {
+                            // Propagate to sync-group peers (handles order-flow panels too).
+                            self.propagate_crosshair_to_sync_group(leaf_id, ts, price, vis, pane_idx);
                         }
                     }
                     // Hide crosshair on leaves outside the sync group.
@@ -4703,7 +4748,9 @@ impl ChartApp {
                 let hovered_leaf = split_hovered_leaf;
                 if let Some(leaf_id) = hovered_leaf {
                     let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
-                    let extended_opt = leaf_rect_opt.and_then(|lr| self.build_extended_layout_for_leaf(leaf_id, &lr));
+                    let extended_opt = self.frame_layouts.get(&leaf_id)
+                        .cloned()
+                        .or_else(|| leaf_rect_opt.and_then(|lr| self.build_extended_layout_for_leaf(leaf_id, &lr)));
                     let overlay_results_split = self.panel_app.panel_grid
                         .window_for_leaf(leaf_id)
                         .map(|w| w.sub_pane_overlay_results.clone())
@@ -4788,10 +4835,7 @@ impl ChartApp {
 
         // --- Update crosshair (only when not over any UI element, or when
         // actively drawing a primitive so the preview follows the cursor) ---
-        // Build the extended layout first so we drop the immutable borrow on
-        // panel_grid before the mutable borrow in active_window_mut.
-        let extended = self.build_extended_layout();
-
+        // Read from the frame-cached layout — no need to rebuild on every mouse event.
         let is_drawing = self.panel_app.panel_grid.active_window()
             .map(|w| w.drawing_manager.is_drawing())
             .unwrap_or(false);
@@ -4801,6 +4845,10 @@ impl ChartApp {
             self.hide_crosshair();
             return;
         }
+        // Clone the cached layout so the borrow ends here, allowing the mutable
+        // propagate_crosshair_to_sync_group and update_sub_pane_overlay_hover calls below.
+        let extended = self.active_frame_layout.clone()
+            .unwrap_or_else(|| self.build_extended_layout());
         let drag_mode = self.input_handler.state.drag_mode;
         if let Some((timestamp, price, crosshair_visible, pane_index)) = self.panel_app.panel_grid
             .update_crosshair(x, y, drag_mode, is_drawing, &extended)
@@ -5065,14 +5113,16 @@ impl ChartApp {
                 | ChartInputTarget::PriceScale { leaf_id }
                 | ChartInputTarget::TimeScale { leaf_id }
                 | ChartInputTarget::ScaleCorner { leaf_id, .. } => {
-                    // Build layout for the hovered leaf to get correct cursor.
-                    if let Some(leaf_rect) = self.get_leaf_absolute_rect(leaf_id) {
-                        if let Some(extended) = self.build_extended_layout_for_leaf(leaf_id, &leaf_rect) {
-                            let tester = zengeld_chart::layout::ExtendedLayoutHitTester::new(&extended);
-                            use zengeld_chart::input::ChartHitTester;
-                            let hit = tester.hit_test(x, y);
-                            return hit.cursor();
-                        }
+                    // Use frame-cached layout for the hovered leaf to get correct cursor.
+                    let leaf_rect_opt = self.get_leaf_absolute_rect(leaf_id);
+                    let ext_opt = self.frame_layouts.get(&leaf_id)
+                        .cloned()
+                        .or_else(|| leaf_rect_opt.and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)));
+                    if let Some(extended) = ext_opt {
+                        let tester = zengeld_chart::layout::ExtendedLayoutHitTester::new(&extended);
+                        use zengeld_chart::input::ChartHitTester;
+                        let hit = tester.hit_test(x, y);
+                        return hit.cursor();
                     }
                     return CursorStyle::Default;
                 }
@@ -5082,8 +5132,12 @@ impl ChartApp {
 
         // Not over any UI element — use extended layout hit_test for chart zones
         // (includes sub-pane price scales and separators).
-        let extended = self.build_extended_layout();
-        let tester = zengeld_chart::layout::ExtendedLayoutHitTester::new(&extended);
+        let _fallback_cursor;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_cursor = self.build_extended_layout(); &_fallback_cursor }
+        };
+        let tester = zengeld_chart::layout::ExtendedLayoutHitTester::new(extended);
         use zengeld_chart::input::ChartHitTester;
         let hit = tester.hit_test(x, y);
         hit.cursor()
@@ -5832,11 +5886,15 @@ impl ChartApp {
             }
         }
 
-        let extended = self.build_extended_layout();
+        let _fallback_sc;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_sc = self.build_extended_layout(); &_fallback_sc }
+        };
         let overlay_results_sc = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_sc);
         let actions = self.input_handler.process_action(
             ChartInputAction::Scroll { x, y, delta_x: dx, delta_y: dy },

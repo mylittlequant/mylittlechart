@@ -133,12 +133,6 @@ struct PerWindowState {
     chart: chart_app::ChartApp,
     // Input state
     last_mouse_pos: (f64, f64),
-    /// Latest cursor position from a CursorMoved event not yet processed by the
-    /// frame. Hover/hit-test work is expensive (build_extended_layout etc.) and
-    /// winit delivers CursorMoved at 125-500 Hz, so we coalesce: the handler only
-    /// stashes the position here and the frame loop processes the latest one once,
-    /// capped to the frame rate. `None` = nothing pending.
-    pending_mouse_move: Option<(f64, f64)>,
     mouse_pressed: bool,
     drag_start_pos: Option<(f64, f64)>,
     last_drag_pos: Option<(f64, f64)>,
@@ -266,8 +260,13 @@ struct App<'s> {
 
     /// Shared state for the internal Agent API server.
     agent_state: Option<std::sync::Arc<zengeld_server::AgentState>>,
-    /// Wall-clock time of the last indicator snapshot update.
+    /// Wall-clock time of the last per-second maintenance pass (snapshots, sysinfo).
     last_indicator_snapshot: std::time::Instant,
+    /// Round-robin cursor for agent snapshot rebuilds. The four snapshots
+    /// (indicator/terminal/watchlist/connector) each clone large amounts of
+    /// state; building all four in one frame stalls it 20-30ms. We build one
+    /// per maintenance pass instead, spreading the cost across frames.
+    agent_snapshot_phase: u8,
 
     /// Alert delivery engine (Telegram, webhook, toast).
     alert_delivery: Option<alert_delivery::AlertDelivery>,
@@ -282,6 +281,11 @@ struct App<'s> {
     fps_ema: f64,
     /// Last frame time in ms.
     last_frame_time_ms: f64,
+    /// Per-frame interval jitter accumulators (reset each timing report window).
+    /// Used by the [PERF] line to expose pacing jitter, not just the average FPS.
+    dt_min_ms: f64,
+    dt_max_ms: f64,
+    dt_samples: u32,
     /// Current FPS limit (0 = unlimited/Poll, otherwise WaitUntil target).
     fps_limit: u32,
     /// Current MSAA sample count (0=off, 4, 8, 16).
@@ -869,15 +873,19 @@ impl App<'_> {
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
             last_indicator_snapshot: std::time::Instant::now(),
+            agent_snapshot_phase: 0,
             alert_delivery: Some(alert_delivery_engine),
             toast_rx: Some(toast_rx),
             active_toasts: Vec::new(),
             last_frame_instant: std::time::Instant::now(),
             fps_ema: 60.0,
             last_frame_time_ms: 16.0,
+            dt_min_ms: f64::INFINITY,
+            dt_max_ms: 0.0,
+            dt_samples: 0,
             fps_limit: ds_init.fps_limit,
             msaa_samples: ds_init.msaa_samples,
-            perf_log_enabled: false,
+            perf_log_enabled: std::env::var("MLC_PERF_LOG").is_ok(),
             render_backend: {
                 use sidebar_content::state::RenderBackend;
                 // Only VelloGpu and VelloCpu are exposed in the OSS build.
@@ -1293,7 +1301,6 @@ impl App<'_> {
             chart_dirty: true,
             chart,
             last_mouse_pos: (0.0, 0.0),
-            pending_mouse_move: None,
             mouse_pressed: false,
             drag_start_pos: None,
             last_drag_pos: None,
@@ -1914,6 +1921,10 @@ impl ApplicationHandler for App<'_> {
             let instant_fps = 1000.0 / dt_ms;
             self.fps_ema = self.fps_ema * 0.9 + instant_fps * 0.1;
             self.last_frame_time_ms = dt_ms;
+            // Track pacing jitter for the [PERF] line (min/max interval, not just avg).
+            if dt_ms < self.dt_min_ms { self.dt_min_ms = dt_ms; }
+            if dt_ms > self.dt_max_ms { self.dt_max_ms = dt_ms; }
+            self.dt_samples += 1;
         }
 
         // ── App-level tick ────────────────────────────────────────────────
@@ -3940,41 +3951,66 @@ impl ApplicationHandler for App<'_> {
             }
         }
 
-        // ── Agent API: update snapshots at most once per second ──────────────
+        // ── Per-second maintenance pass ──────────────────────────────────────
+        // Historically this block did ALL of the following synchronously in one
+        // frame every second: collect_metrics(), three sysinfo refreshes, and
+        // four agent-snapshot rebuilds that clone every indicator's full output
+        // series. Measured cost: a 20-30ms (sometimes >1000ms) frame stall once
+        // per second — the real source of the "choppy / laggy" rendering, not
+        // mouse movement. It is now gated and spread out:
+        //   • agent snapshots: only when an agent queried us recently, and only
+        //     ONE snapshot per pass (round-robin) so the clone cost is amortised.
+        //   • sysinfo (cpu/mem/processes): only when the Performance panel is open.
+        //   • collect_metrics + clock/perf dirty: cheap, always.
         if self.last_indicator_snapshot.elapsed() >= std::time::Duration::from_secs(1) {
-            // Refresh connector metrics once per second — collect_metrics() locks
-            // and allocates; calling it every frame at 60 fps is wasteful.
+            self.last_indicator_snapshot = std::time::Instant::now();
+
+            // Connector stream count for the perf panel — cheap, keep every second.
             {
                 let metrics = self.bridge.collect_metrics();
-                self.cached_connector_count = metrics.len(); // streams, used by perf panel
+                self.cached_connector_count = metrics.len();
             }
 
-            // Refresh CPU/RAM metrics (expensive — once per second).
-            self.sys.refresh_cpu_usage();
-            self.sys.refresh_memory();
-            self.sys.refresh_processes(
-                ProcessesToUpdate::Some(&[self.self_pid]),
-                false,
-            );
-
-            if let Some(ref agent_state) = self.agent_state {
-                self.update_indicator_snapshot(agent_state);
-                self.update_terminal_snapshot(agent_state);
-                self.update_watchlist_snapshot(agent_state);
-                self.update_connector_snapshot(agent_state);
+            // CPU/RAM metrics are expensive (sysinfo syscalls). Only the
+            // Performance panel consumes them, so skip the refresh entirely
+            // unless that panel is currently open in some window.
+            let perf_panel_open = self.windows.values().any(|pw| {
+                pw.chart.sidebar_state.is_right_open()
+                    && pw.chart.sidebar_state.right_panel
+                        == sidebar_content::state::RightSidebarPanel::Performance
+            });
+            if perf_panel_open {
+                self.sys.refresh_cpu_usage();
+                self.sys.refresh_memory();
+                self.sys.refresh_processes(
+                    ProcessesToUpdate::Some(&[self.self_pid]),
+                    false,
+                );
             }
-            // Clock time in the toolbar updates every second — mark all toolbars dirty
-            // so the clock string is refreshed on the next frame.
-            // Also mark sidebar dirty: performance panel data (fps, frame_time, etc.)
-            // updates every second, so the performance panel needs a redraw.
-            // Mark chart dirty: time-based indicators (current-bar progress, etc.) update.
+
+            // Agent snapshots: skip entirely when no agent has queried recently
+            // (the common case). When active, rebuild ONE snapshot per pass in
+            // round-robin order so a single frame never pays for all four clones.
+            if let Some(agent_state) = self.agent_state.clone() {
+                if agent_state.accessed_within(std::time::Duration::from_secs(5)) {
+                    match self.agent_snapshot_phase % 4 {
+                        0 => self.update_indicator_snapshot(&agent_state),
+                        1 => self.update_terminal_snapshot(&agent_state),
+                        2 => self.update_watchlist_snapshot(&agent_state),
+                        _ => self.update_connector_snapshot(&agent_state),
+                    }
+                    self.agent_snapshot_phase = self.agent_snapshot_phase.wrapping_add(1);
+                }
+            }
+
+            // Clock string + time-based indicator progress refresh once per second.
+            // Mark toolbar dirty (clock), sidebar dirty (perf panel data) and chart
+            // dirty (current-bar progress). Cheap scene rebuilds (~1ms measured).
             for pw in self.windows.values_mut() {
                 pw.toolbar_dirty = true;
                 pw.sidebar_dirty_scene = true;
                 pw.chart_dirty = true;
             }
-
-            self.last_indicator_snapshot = std::time::Instant::now();
         }
 
         // Propagate chart.sidebar_data_dirty → pw.sidebar_dirty_scene.
@@ -4056,14 +4092,6 @@ impl ApplicationHandler for App<'_> {
                 }
             }
         }
-
-        // ── Coalesced hover processing ───────────────────────────────────────
-        // CursorMoved only stashed the latest position; run the expensive hover
-        // hit-test / tooltip / cursor work once per frame here. This MUST be
-        // after Step 1 (GPU done with the previous frame): it mutates chart
-        // state and calls set_cursor, which must not race the GPU thread holding
-        // surface/scene resources.
-        self.process_pending_mouse_moves();
 
         // Step 2: drain alert delivery events (screenshots attached by GPU thread).
         if let Some(ref delivery) = self.alert_delivery {
@@ -4173,9 +4201,13 @@ impl ApplicationHandler for App<'_> {
                     .map(|pw| pw.chart.render_timing_us)
                     .unwrap_or((0, 0, 0, 0));
                 eprintln!(
-                    "[PERF] Frame {} total={:.1}ms | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms",
+                    "[PERF] Frame {} total={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms",
                     self.frame_count,
                     total as f64 / 1000.0,
+                    self.dt_min_ms,
+                    self.dt_max_ms,
+                    self.dt_samples,
+                    self.fps_ema,
                     _t1.duration_since(_t0).as_micros() as f64 / 1000.0,
                     _t2.duration_since(_t1).as_micros() as f64 / 1000.0,
                     _t3.duration_since(_t2).as_micros() as f64 / 1000.0,
@@ -4193,6 +4225,9 @@ impl ApplicationHandler for App<'_> {
                 );
             }
             self.last_timing_report = std::time::Instant::now();
+            self.dt_min_ms = f64::INFINITY;
+            self.dt_max_ms = 0.0;
+            self.dt_samples = 0;
         }
 
         // ── Deferred profile hot-reload ──────────────────────────────────────

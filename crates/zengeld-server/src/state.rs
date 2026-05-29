@@ -5,6 +5,7 @@
 //! HTTP handlers read them via `RwLock`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +45,16 @@ pub struct AgentState {
     /// Wall-clock time when the server was created (used to compute uptime).
     pub start_time: std::time::Instant,
 
+    /// Milliseconds since `start_time` when an Agent API request was last served.
+    ///
+    /// Bumped by the access-tracking middleware on every HTTP request. The render
+    /// thread reads this to skip building the (expensive) indicator/terminal/
+    /// watchlist/connector snapshots when no agent has talked to us recently —
+    /// those snapshots clone every indicator's full output series, which is a
+    /// 20-30ms-per-second frame stall when nothing is even listening.
+    /// `0` = never accessed.
+    pub last_agent_access_ms: AtomicU64,
+
     /// Application version string (e.g. `"0.1.0"`).
     pub version: String,
 }
@@ -61,8 +72,28 @@ impl AgentState {
             connector_snapshot: RwLock::new(ConnectorSnapshot::default()),
             command_queue: Mutex::new(Vec::new()),
             start_time: std::time::Instant::now(),
+            last_agent_access_ms: AtomicU64::new(0),
             version: version.into(),
         }
+    }
+
+    /// Record that an Agent API request was just served (called by middleware).
+    pub fn bump_access(&self) {
+        let ms = self.start_time.elapsed().as_millis() as u64;
+        self.last_agent_access_ms.store(ms, Ordering::Relaxed);
+    }
+
+    /// Whether an Agent API request was served within the last `within` window.
+    ///
+    /// Used by the render thread to gate snapshot rebuilds: if no agent has
+    /// queried recently, skip the expensive snapshot cloning entirely.
+    pub fn accessed_within(&self, within: std::time::Duration) -> bool {
+        let last = self.last_agent_access_ms.load(Ordering::Relaxed);
+        if last == 0 {
+            return false;
+        }
+        let now = self.start_time.elapsed().as_millis() as u64;
+        now.saturating_sub(last) <= within.as_millis() as u64
     }
 
     /// Push an agent command into the queue (called from HTTP handlers).

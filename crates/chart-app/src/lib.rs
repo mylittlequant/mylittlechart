@@ -587,6 +587,16 @@ pub struct ChartApp {
 
     /// Trading manager — order routing, position tracking, paper engine.
     pub trading_manager: Option<trading_manager::TradingManager>,
+
+    /// Active-leaf (or single-window) chart geometry for the current frame.
+    ///
+    /// PRODUCED once per frame by the layout phase (`sync_sub_pane_geometry`),
+    /// CONSUMED read-only by input handlers and `process_output_actions`.
+    /// Plain mouse movement never changes geometry, so it is built in the layout
+    /// phase rather than rebuilt per mouse event (was a 1500+ calls/sec hotspot).
+    pub(crate) active_frame_layout: Option<zengeld_chart::ExtendedFrameLayout>,
+    /// Per-leaf chart geometry for split mode, keyed by LeafId. Same lifecycle.
+    pub(crate) frame_layouts: std::collections::HashMap<zengeld_chart::LeafId, zengeld_chart::ExtendedFrameLayout>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -932,6 +942,8 @@ impl ChartApp {
                 bridge.clone(),
                 std::path::PathBuf::from("."),
             ).ok(),
+            active_frame_layout: None,
+            frame_layouts: std::collections::HashMap::new(),
         };
 
         if let Some(tm) = &app.trading_manager {
@@ -1242,6 +1254,8 @@ impl ChartApp {
             active_drag_panel: None,
             slot_tradetape_drag: None,
             trading_manager: None,
+            active_frame_layout: None,
+            frame_layouts: std::collections::HashMap::new(),
         };
 
         app.sidebar_state.watchlist_manager = sidebar_content::watchlist::WatchlistManager::new(
@@ -1436,6 +1450,8 @@ impl ChartApp {
             active_drag_panel: None,
             slot_tradetape_drag: None,
             trading_manager: None,
+            active_frame_layout: None,
+            frame_layouts: std::collections::HashMap::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_user_state below.
@@ -2063,6 +2079,10 @@ impl ChartApp {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.width = width;
         self.height = height;
+        // Refresh the cached layout so sync_viewport_from_layout reads fresh
+        // geometry — resize runs outside prepare_frame where the layout phase
+        // has not yet run, so active_frame_layout could be stale or None.
+        self.active_frame_layout = Some(self.build_extended_layout());
         self.sync_viewport_from_layout();
 
         // On the very first resize after a preset restore, chart_width is now
@@ -2099,7 +2119,12 @@ impl ChartApp {
         if self.panel_app.panel_grid.is_split() {
             return;
         }
-        let extended = self.build_extended_layout();
+        // Prefer the frame-cached layout; fall back to building on demand so
+        // that resize() (called outside prepare_frame, where active_frame_layout
+        // may be stale/None) always uses fresh geometry.  Clone to end the
+        // immutable borrow before the mutable windows_mut() call below.
+        let extended = self.active_frame_layout.clone()
+            .unwrap_or_else(|| self.build_extended_layout());
         let new_width = extended.main_chart.chart.width;
         let new_height = extended.main_chart.chart.height;
         for window in self.panel_app.panel_grid.windows_mut().values_mut() {
@@ -5109,6 +5134,17 @@ impl ChartApp {
                 }
             }
         }
+
+        // Phase 3: store per-leaf layouts as state so input handlers can read
+        // them without rebuilding (producer/consumer split).  Rebuild fresh each
+        // call so removed leaves never linger.
+        self.frame_layouts = extended_layouts.into_iter().collect();
+
+        // Build and cache the single/active-leaf layout used by non-split input
+        // paths and process_output_actions.  This is the correct place because
+        // sync_sub_pane_geometry runs in the layout phase (prepare_frame) once
+        // per frame, before any input events for that frame are processed.
+        self.active_frame_layout = Some(self.build_extended_layout());
     }
 
     /// Build indicator catalog items from the IndicatorManager definitions.
@@ -5220,7 +5256,10 @@ impl ChartApp {
         // Compute chart layout ONCE for coordinate conversion.
         // All actions from DefaultChartInputHandler use screen-absolute coords;
         // viewport/crosshair expect chart-local coords (0,0 = top-left of chart canvas).
-        let extended = self.build_extended_layout();
+        // Clone the frame-cached layout so the borrow ends here, allowing the mutable
+        // &mut self calls (propagate_viewport_to_sync_group, etc.) that follow.
+        let extended = self.active_frame_layout.clone()
+            .unwrap_or_else(|| self.build_extended_layout());
         let chart_x = extended.main_chart.chart.x;
         let chart_y = extended.main_chart.chart.y;
         let _chart_w = extended.main_chart.chart.width;

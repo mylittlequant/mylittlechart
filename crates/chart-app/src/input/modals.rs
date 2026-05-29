@@ -1075,8 +1075,12 @@ impl ChartApp {
             let overlay_results_btn = self.panel_app.panel_grid.active_window()
                 .map(|w| w.sub_pane_overlay_results.clone())
                 .unwrap_or_default();
-            let extended_btn = self.build_extended_layout();
-            let tester_btn = ExtendedLayoutHitTester::new(&extended_btn)
+            let _fallback_btn;
+            let extended_btn = match self.active_frame_layout.as_ref() {
+                Some(e) => e,
+                None => { _fallback_btn = self.build_extended_layout(); &_fallback_btn }
+            };
+            let tester_btn = ExtendedLayoutHitTester::new(extended_btn)
                 .with_overlays(&overlay_results_btn);
             use zengeld_chart::input::ChartHitTester;
             if let zengeld_chart::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } = tester_btn.hit_test(x, y) {
@@ -1240,11 +1244,15 @@ impl ChartApp {
         //    (price range = indicator values, e.g. RSI 0-100).
         let tool_id_opt = self.panel_app.toolbar_state.active_tool_id.clone();
         if let Some(ref _tool_id) = tool_id_opt {
-            // Build the extended layout so we get the exact same main_chart rect
+            // Read the frame-cached layout so we get the exact same main_chart rect
             // that render_full_chart_panel uses.  This accounts for sub-panes
             // (RSI, MACD, …) that reduce the main chart height below
             // viewport.chart_height.
-            let extended = self.build_extended_layout();
+            let _fallback_tl;
+            let extended = match self.active_frame_layout.as_ref() {
+                Some(e) => e,
+                None => { _fallback_tl = self.build_extended_layout(); &_fallback_tl }
+            };
             let chart_rect = extended.main_chart.chart;
 
             let is_freehand = self.panel_app.panel_grid.active_window()
@@ -1556,7 +1564,11 @@ impl ChartApp {
         //    Check if the click hits any primitive (drawing_manager.hit_test).
         //    Check main chart first, then sub-panes.
         {
-            let extended = self.build_extended_layout();
+            let _fallback_cc2;
+            let extended = match self.active_frame_layout.as_ref() {
+                Some(e) => e,
+                None => { _fallback_cc2 = self.build_extended_layout(); &_fallback_cc2 }
+            };
             let chart_rect = extended.main_chart.chart;
             let local_x = x - chart_rect.x;
             let local_y = y - chart_rect.y;
@@ -1717,11 +1729,15 @@ impl ChartApp {
             window.drawing_manager.deselect();
         }
 
-        let extended = self.build_extended_layout();
+        let _fallback_cc3;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback_cc3 = self.build_extended_layout(); &_fallback_cc3 }
+        };
         let overlay_results_cc = self.panel_app.panel_grid.active_window()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
-        let hit_tester = ExtendedLayoutHitTester::new(&extended)
+        let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_cc);
         let actions = self.input_handler.process_action(
             ChartInputAction::Click {

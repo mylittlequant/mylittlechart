@@ -11,10 +11,26 @@ pub mod routes;
 pub mod state;
 
 use std::sync::Arc;
-use axum::Router;
+use axum::{Router, extract::State, middleware::Next, response::Response};
+use axum::http::Request;
 use socket2::{Domain, Protocol, Socket, Type};
 
 pub use state::AgentState;
+
+/// Middleware: record the time of every Agent API request.
+///
+/// The render thread reads `AgentState::accessed_within` to decide whether to
+/// build the expensive per-second snapshots. When no agent is talking to the
+/// terminal (the common case), the snapshots — which clone every indicator's
+/// full output series — are skipped, eliminating a 20-30ms periodic frame stall.
+async fn track_access(
+    State(state): State<Arc<AgentState>>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    state.bump_access();
+    next.run(req).await
+}
 
 /// Start the internal Agent API server on the given tokio runtime.
 ///
@@ -40,6 +56,10 @@ pub fn start_server(
         .merge(routes::catalog::routes())
         .merge(routes::watchlists::routes())
         .merge(routes::connectors_status::routes())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            track_access,
+        ))
         .with_state(state);
 
     runtime.spawn(async move {

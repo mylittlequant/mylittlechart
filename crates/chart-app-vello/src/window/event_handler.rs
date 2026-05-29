@@ -303,13 +303,80 @@ impl App<'_> {
                     }
                     pw.last_drag_pos = Some((x, y));
                 } else {
-                    // Hover hit-testing (on_mouse_move + tooltip scan + cursor query)
-                    // is expensive and winit fires CursorMoved at 125-500 Hz. Don't
-                    // run it per event — just stash the latest position. The frame
-                    // loop processes it once, capped to the frame rate
-                    // (`process_pending_mouse_move` after the FPS gate). Cheap dirty
-                    // flags above already ran so the next frame redraws.
-                    pw.pending_mouse_move = Some((x, y));
+                    pw.chart.on_mouse_move(x, chart_y);
+
+                    // Auto-focus agent PTY terminal on hover.
+                    if pw.chart.check_agent_hover(x, chart_y) {
+                        pw.sidebar_dirty_scene = true;
+                    }
+
+                    // Update toolbar tooltip based on hovered toolbar button
+                    let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                    let hovered_id = pw.chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
+                        .or(pw.chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
+                        .or(pw.chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
+                        .or(pw.chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
+                    if let Some(btn_id) = hovered_id {
+                        let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
+                        pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                        if let Some(text) = zengeld_chart::toolbar::find_toolbar_tooltip(btn_id) {
+                            pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
+                        }
+                    } else {
+                        // No toolbar button hovered — check sidebar buttons (agents + free slots).
+                        let mut sidebar_tip = false;
+                        if pw.chart.sidebar_state.is_right_open() {
+                            use sidebar_content::state::RightSidebarPanel;
+                            let panel = pw.chart.sidebar_state.right_panel;
+                            let is_agents = panel == RightSidebarPanel::Agents;
+                            let is_slot = matches!(
+                                panel,
+                                RightSidebarPanel::Slot1
+                                    | RightSidebarPanel::Slot2
+                                    | RightSidebarPanel::Slot3
+                                    | RightSidebarPanel::Slot4
+                            );
+                            if is_agents || is_slot {
+                                if let Some(ref sr) = pw.chart.last_sidebar_result {
+                                    for (wid_str, wrect) in &sr.item_rects {
+                                        // item_rects are in chart-space (rendered with
+                                        // translate(0, CHROME_HEIGHT)), so compare
+                                        // against chart_y, not window y.
+                                        if x >= wrect.x && x < wrect.x + wrect.width
+                                            && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
+                                        {
+                                            let tip_text = if is_agents {
+                                                sidebar_content::render::find_agent_tooltip(wid_str)
+                                            } else {
+                                                sidebar_content::render::find_free_slot_tooltip(wid_str)
+                                            };
+                                            if let Some(tip_text) = tip_text {
+                                                let wid = uzor::WidgetId::from(wid_str.as_str());
+                                                pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                                                // Tooltip renders in window-space (no
+                                                // translate), so pass window y for position.
+                                                pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
+                                                sidebar_tip = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !sidebar_tip {
+                            pw.toolbar_tooltip.update(None, time_ms);
+                        }
+                    }
+                }
+
+                if pw.chart.is_magnet_snapped() {
+                    // Hide system cursor when magnet-locked (crosshair drawn at snapped pos)
+                    pw.window.set_cursor_visible(false);
+                } else {
+                    pw.window.set_cursor_visible(true);
+                    pw.window
+                        .set_cursor(cursor_style_to_winit(pw.chart.get_cursor(x, chart_y)));
                 }
             }
 
@@ -842,102 +909,6 @@ impl App<'_> {
             }
 
             _ => {}
-        }
-    }
-
-    /// Process the coalesced hover position for every window, once per frame.
-    ///
-    /// CursorMoved events only stash `pending_mouse_move` (winit fires them at
-    /// 125-500 Hz). The expensive hover work — `on_mouse_move` (hit-test +
-    /// extended-layout), tooltip resolution and the cursor-style query — runs
-    /// here, after the FPS gate, so it happens at most once per rendered frame
-    /// instead of once per OS event. Call this from `about_to_wait` after the
-    /// frame-rate guard has decided a frame is due.
-    pub(crate) fn process_pending_mouse_moves(&mut self) {
-        for pw in self.windows.values_mut() {
-            // Don't run hover hit-testing mid-drag: drag has its own handling and
-            // overwrites the cursor anyway. Keep the pending position for later.
-            if pw.mouse_pressed {
-                continue;
-            }
-            let Some((x, y)) = pw.pending_mouse_move.take() else { continue };
-            let chart_y = y - chrome::CHROME_HEIGHT;
-            if chart_y < 0.0 {
-                continue;
-            }
-
-            pw.chart.on_mouse_move(x, chart_y);
-
-            // Auto-focus agent PTY terminal on hover.
-            if pw.chart.check_agent_hover(x, chart_y) {
-                pw.sidebar_dirty_scene = true;
-            }
-
-            // Update toolbar tooltip based on hovered toolbar button.
-            let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
-            let hovered_id = pw.chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
-                .or(pw.chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
-                .or(pw.chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
-                .or(pw.chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
-            if let Some(btn_id) = hovered_id {
-                let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
-                pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
-                if let Some(text) = zengeld_chart::toolbar::find_toolbar_tooltip(btn_id) {
-                    pw.toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
-                }
-            } else {
-                // No toolbar button hovered — check sidebar buttons (agents + free slots).
-                let mut sidebar_tip = false;
-                if pw.chart.sidebar_state.is_right_open() {
-                    use sidebar_content::state::RightSidebarPanel;
-                    let panel = pw.chart.sidebar_state.right_panel;
-                    let is_agents = panel == RightSidebarPanel::Agents;
-                    let is_slot = matches!(
-                        panel,
-                        RightSidebarPanel::Slot1
-                            | RightSidebarPanel::Slot2
-                            | RightSidebarPanel::Slot3
-                            | RightSidebarPanel::Slot4
-                    );
-                    if is_agents || is_slot {
-                        if let Some(ref sr) = pw.chart.last_sidebar_result {
-                            for (wid_str, wrect) in &sr.item_rects {
-                                // item_rects are in chart-space (rendered with
-                                // translate(0, CHROME_HEIGHT)), so compare against chart_y.
-                                if x >= wrect.x && x < wrect.x + wrect.width
-                                    && chart_y >= wrect.y && chart_y < wrect.y + wrect.height
-                                {
-                                    let tip_text = if is_agents {
-                                        sidebar_content::render::find_agent_tooltip(wid_str)
-                                    } else {
-                                        sidebar_content::render::find_free_slot_tooltip(wid_str)
-                                    };
-                                    if let Some(tip_text) = tip_text {
-                                        let wid = uzor::WidgetId::from(wid_str.as_str());
-                                        pw.toolbar_tooltip.update(Some(wid.clone()), time_ms);
-                                        // Tooltip renders in window-space, so pass window y.
-                                        pw.toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
-                                        sidebar_tip = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if !sidebar_tip {
-                    pw.toolbar_tooltip.update(None, time_ms);
-                }
-            }
-
-            // Cursor style (magnet hides the OS cursor; otherwise query the chart).
-            if pw.chart.is_magnet_snapped() {
-                pw.window.set_cursor_visible(false);
-            } else {
-                pw.window.set_cursor_visible(true);
-                pw.window
-                    .set_cursor(cursor_style_to_winit(pw.chart.get_cursor(x, chart_y)));
-            }
         }
     }
 }
