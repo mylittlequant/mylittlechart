@@ -33,6 +33,7 @@ pub use keys::{
     ToolbarTooltipKey,
     WizardKey,
     ClockKey,
+    SettingsKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -104,6 +105,12 @@ pub fn t_label_pos(key: LabelPositionKey) -> &'static str {
 /// Translate a wizard key using current global language
 #[inline]
 pub fn t_wizard(key: WizardKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a settings modal key using current global language
+#[inline]
+pub fn t_settings(key: SettingsKey) -> &'static str {
     key.get(current_language())
 }
 

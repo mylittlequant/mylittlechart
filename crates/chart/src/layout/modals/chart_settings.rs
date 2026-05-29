@@ -5,7 +5,7 @@
 
 use crate::engine::render::RenderContext;
 use crate::engine::render::draw_svg_icon;
-use crate::i18n::{current_language, ClockKey};
+use crate::i18n::{current_language, ClockKey, SettingsKey, t_settings};
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{ChartSettingsModalResult, SliderTrackInfo};
 use crate::layout::render_ui::toolbar_to_widget_theme;
@@ -249,7 +249,7 @@ pub fn render_settings_modal(
     // =========================================================================
     // Header
     // =========================================================================
-    let title = "Настройки";
+    let title = t_settings(SettingsKey::Title);
     let text_color = &toolbar_theme.item_text;
     ctx.set_font("14px sans-serif");
     ctx.set_fill_color(text_color);
@@ -438,7 +438,7 @@ pub fn render_settings_modal(
     ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Шаблон", template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
 
     // Right side buttons
     let ok_btn_width = 70.0;
@@ -455,7 +455,7 @@ pub fn render_settings_modal(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("OK", ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
 
     // "Отмена" button
     let is_cancel_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("cancel");
@@ -470,7 +470,7 @@ pub fn render_settings_modal(
     ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Отмена", cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
 
     // Populate result
     result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
@@ -558,7 +558,7 @@ pub fn render_settings_modal(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Сохранить как...", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::SaveAsTemplate), dd_x + 8.0, row_y + opt_h / 2.0);
         {
             let rect = WidgetRect::new(dd_x, row_y, menu_w, opt_h);
             result.footer_buttons.push(("template_save_as".to_string(), rect));
@@ -581,7 +581,7 @@ pub fn render_settings_modal(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Применить по умолчанию", dd_x + 8.0, row_y + opt_h / 2.0);
+        ctx.fill_text(t_settings(SettingsKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
         {
             let rect = WidgetRect::new(dd_x, row_y, menu_w, opt_h);
             result.footer_buttons.push(("template_default".to_string(), rect));
@@ -609,7 +609,7 @@ pub fn render_settings_modal(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
+            ctx.fill_text(t_settings(SettingsKey::NoTemplates), dd_x + 8.0, row_y + opt_h / 2.0);
         } else {
             for tmpl in templates {
                 let row_id = format!("template_option:{}", tmpl.id);
@@ -698,7 +698,7 @@ pub fn render_settings_modal(
                 ChartSettingsTab::Instrument => {
                     match active_field.as_str() {
                         "precision" => Some(vec![
-                            DropdownItem::item("auto", "Авто"),
+                            DropdownItem::item("auto", t_settings(SettingsKey::PrecisionAuto)),
                             DropdownItem::item("0", "0 (1)"),
                             DropdownItem::item("1", "1 (0.1)"),
                             DropdownItem::item("2", "2 (0.01)"),
@@ -710,16 +710,16 @@ pub fn render_settings_modal(
                             DropdownItem::item("8", "8 (0.00000001)"),
                         ]),
                         "timezone" => Some(vec![
-                            DropdownItem::item("utc", "UTC (GMT+0)"),
-                            DropdownItem::item("europe_moscow", "(UTC+3) Москва"),
-                            DropdownItem::item("europe_london", "(UTC+0) Лондон"),
-                            DropdownItem::item("america_new_york", "(UTC-5) Нью-Йорк"),
-                            DropdownItem::item("america_chicago", "(UTC-6) Чикаго"),
-                            DropdownItem::item("america_los_angeles", "(UTC-8) Лос-Анджелес"),
-                            DropdownItem::item("asia_tokyo", "(UTC+9) Токио"),
-                            DropdownItem::item("asia_hong_kong", "(UTC+8) Гонконг"),
-                            DropdownItem::item("asia_singapore", "(UTC+8) Сингапур"),
-                            DropdownItem::item("australia_sydney", "(UTC+11) Сидней"),
+                            DropdownItem::item("utc", t_settings(SettingsKey::TimezoneUtc)),
+                            DropdownItem::item("europe_moscow", t_settings(SettingsKey::TimezoneMoscow)),
+                            DropdownItem::item("europe_london", t_settings(SettingsKey::TimezoneLondon)),
+                            DropdownItem::item("america_new_york", t_settings(SettingsKey::TimezoneNewYork)),
+                            DropdownItem::item("america_chicago", t_settings(SettingsKey::TimezoneChicago)),
+                            DropdownItem::item("america_los_angeles", t_settings(SettingsKey::TimezoneLosAngeles)),
+                            DropdownItem::item("asia_tokyo", t_settings(SettingsKey::TimezoneTokyo)),
+                            DropdownItem::item("asia_hong_kong", t_settings(SettingsKey::TimezoneHongKong)),
+                            DropdownItem::item("asia_singapore", t_settings(SettingsKey::TimezoneSingapore)),
+                            DropdownItem::item("australia_sydney", t_settings(SettingsKey::TimezoneSydney)),
                         ]),
                         _ => None,
                     }
@@ -727,31 +727,31 @@ pub fn render_settings_modal(
                 ChartSettingsTab::ScalesLines => {
                     match active_field.as_str() {
                         "crosshair_mode" => Some(vec![
-                            DropdownItem::item("Normal", "Обычный"),
-                            DropdownItem::item("Magnet", "Магнит (Strong)"),
-                            DropdownItem::item("MagnetOHLC", "Магнит (Light)"),
-                            DropdownItem::item("Hidden", "Скрыт"),
+                            DropdownItem::item("Normal", t_settings(SettingsKey::CrosshairNormal)),
+                            DropdownItem::item("Magnet", t_settings(SettingsKey::CrosshairMagnetStrong)),
+                            DropdownItem::item("MagnetOHLC", t_settings(SettingsKey::CrosshairMagnetLight)),
+                            DropdownItem::item("Hidden", t_settings(SettingsKey::CrosshairHidden)),
                         ]),
                         "crosshair_line_style" => Some(vec![
-                            DropdownItem::item("Solid", "Сплошная"),
-                            DropdownItem::item("Dashed", "Штриховая"),
-                            DropdownItem::item("Dotted", "Пунктирная"),
-                            DropdownItem::item("LargeDashed", "Крупный пунктир"),
-                            DropdownItem::item("SparseDotted", "Редкие точки"),
+                            DropdownItem::item("Solid", t_settings(SettingsKey::LineStyleSolid)),
+                            DropdownItem::item("Dashed", t_settings(SettingsKey::LineStyleDashed)),
+                            DropdownItem::item("Dotted", t_settings(SettingsKey::LineStyleDotted)),
+                            DropdownItem::item("LargeDashed", t_settings(SettingsKey::LineStyleLargeDashed)),
+                            DropdownItem::item("SparseDotted", t_settings(SettingsKey::LineStyleSparseDotted)),
                         ]),
                         "price_position" => Some(vec![
-                            DropdownItem::item("left", "Слева"),
-                            DropdownItem::item("right", "Справа"),
-                            DropdownItem::item("hidden", "Нет"),
+                            DropdownItem::item("left", t_settings(SettingsKey::ScalePosLeft)),
+                            DropdownItem::item("right", t_settings(SettingsKey::ScalePosRight)),
+                            DropdownItem::item("hidden", t_settings(SettingsKey::ScalePosHidden)),
                         ]),
                         "time_position" => Some(vec![
-                            DropdownItem::item("top", "Сверху"),
-                            DropdownItem::item("bottom", "Снизу"),
-                            DropdownItem::item("hidden", "Нет"),
+                            DropdownItem::item("top", t_settings(SettingsKey::ScalePosTop)),
+                            DropdownItem::item("bottom", t_settings(SettingsKey::ScalePosBottom)),
+                            DropdownItem::item("hidden", t_settings(SettingsKey::ScalePosHidden)),
                         ]),
                         "corner_visibility" => Some(vec![
-                            DropdownItem::item("always", "Видимо"),
-                            DropdownItem::item("never", "Скрыто"),
+                            DropdownItem::item("always", t_settings(SettingsKey::CornerAlways)),
+                            DropdownItem::item("never", t_settings(SettingsKey::CornerNever)),
                         ]),
                         "date_format" => Some(vec![
                             DropdownItem::item("day_month_year", "ДД.ММ.ГГГГ (26.01.2025)"),
@@ -765,17 +765,17 @@ pub fn render_settings_modal(
                 ChartSettingsTab::StatusLine => {
                     match active_field.as_str() {
                         "legend_position" => Some(vec![
-                            DropdownItem::item("top_left", "Сверху слева"),
-                            DropdownItem::item("top_right", "Сверху справа"),
-                            DropdownItem::item("bottom_left", "Снизу слева"),
-                            DropdownItem::item("bottom_right", "Снизу справа"),
+                            DropdownItem::item("top_left", t_settings(SettingsKey::LegendTopLeft)),
+                            DropdownItem::item("top_right", t_settings(SettingsKey::LegendTopRight)),
+                            DropdownItem::item("bottom_left", t_settings(SettingsKey::LegendBottomLeft)),
+                            DropdownItem::item("bottom_right", t_settings(SettingsKey::LegendBottomRight)),
                         ]),
                         "watermark_position" => Some(vec![
-                            DropdownItem::item("top_left", "Сверху слева"),
-                            DropdownItem::item("top_right", "Сверху справа"),
-                            DropdownItem::item("bottom_left", "Снизу слева"),
-                            DropdownItem::item("bottom_right", "Снизу справа"),
-                            DropdownItem::item("center", "Центр"),
+                            DropdownItem::item("top_left", t_settings(SettingsKey::LegendTopLeft)),
+                            DropdownItem::item("top_right", t_settings(SettingsKey::LegendTopRight)),
+                            DropdownItem::item("bottom_left", t_settings(SettingsKey::LegendBottomLeft)),
+                            DropdownItem::item("bottom_right", t_settings(SettingsKey::LegendBottomRight)),
+                            DropdownItem::item("center", t_settings(SettingsKey::LegendCenter)),
                         ]),
                         _ => None,
                     }
@@ -896,11 +896,11 @@ fn render_instrument_settings(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
 
-    // Section: ЯПОНСКИЕ СВЕЧИ
+    // Section: JAPANESE CANDLES
     let mut row_y = content_start_y;
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ЯПОНСКИЕ СВЕЧИ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionCandles), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Color swatch helper closure
@@ -921,7 +921,7 @@ fn render_instrument_settings(
     result.content_items.push(("instrument:use_prev_close".to_string(), check_rect));
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Цвет баров основан на цене предыдущего закрытия", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::BodyColorPrevClose), label_x, row_y + row_height / 2.0);
     row_y += row_height + 8.0;
 
     // Row: body
@@ -930,7 +930,7 @@ fn render_instrument_settings(
     draw_checkbox(ctx, check_rect, settings.body_enabled, theme);
     result.content_items.push(("instrument:body_enabled".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Тело", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Body), label_x, row_y + row_height / 2.0);
 
     let swatch_y = row_y + (row_height - swatch_size) / 2.0;
     let body_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.body_up_color, theme);
@@ -945,7 +945,7 @@ fn render_instrument_settings(
     draw_checkbox(ctx, check_rect, settings.border_enabled, theme);
     result.content_items.push(("instrument:border_enabled".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Границы", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Borders), label_x, row_y + row_height / 2.0);
 
     let swatch_y = row_y + (row_height - swatch_size) / 2.0;
     let border_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.border_up_color, theme);
@@ -960,7 +960,7 @@ fn render_instrument_settings(
     draw_checkbox(ctx, check_rect, settings.wick_enabled, theme);
     result.content_items.push(("instrument:wick_enabled".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Фитиль", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Wick), label_x, row_y + row_height / 2.0);
 
     let swatch_y = row_y + (row_height - swatch_size) / 2.0;
     let wick_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.wick_up_color, theme);
@@ -969,10 +969,10 @@ fn render_instrument_settings(
     result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
     row_y += row_height + 16.0;
 
-    // Section: НАСТРОЙКА ДАННЫХ
+    // Section: DATA SETTINGS
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("НАСТРОЙКА ДАННЫХ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionDataConfig), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Row: show_bar_countdown
@@ -983,13 +983,13 @@ fn render_instrument_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Обратный отсчёт до закрытия бара", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::CountdownToClose), x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
-    // Section: ТИК ТЕКУЩЕЙ ЦЕНЫ
+    // Section: CURRENT PRICE TICK
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ТИК ТЕКУЩЕЙ ЦЕНЫ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionPriceTick), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Row: price_tick_extend_right
@@ -1000,7 +1000,7 @@ fn render_instrument_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Продлить вправо", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ExtendRight), x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Row: price_tick_extend_left
@@ -1011,23 +1011,23 @@ fn render_instrument_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Продлить влево", x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ExtendLeft), x + checkbox_size + 12.0, row_y + row_height / 2.0);
     row_y += row_height;
 
     // Row: price_tick_style dropdown
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Стиль линии", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::LineStyle), x, row_y + row_height / 2.0);
 
     let dropdown_x = x + 140.0;
     let dropdown_width = 140.0;
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let tick_style_label = match settings.price_tick_style.as_str() {
-        "dashed" => "Штрих",
-        "solid"  => "Линия",
-        _        => "Точки",
+        "dashed" => t_settings(SettingsKey::TickStyleDash),
+        "solid"  => t_settings(SettingsKey::TickStyleLine),
+        _        => t_settings(SettingsKey::TickStyleDots),
     };
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, tick_style_label, row_y + row_height / 2.0, theme);
     let chevron_w = 20.0;
@@ -1039,7 +1039,7 @@ fn render_instrument_settings(
     // Precision dropdown
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Точность", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Precision), x, row_y + row_height / 2.0);
 
     let dropdown_x = x + 140.0;
     let dropdown_width = 140.0;
@@ -1184,15 +1184,15 @@ fn render_appearance_settings(
     ctx.set_fill_color(muted_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("ПРЕСЕТЫ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionPresets), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     let themes = [
-        ("dark", "Темная", "#1e222d"),
-        ("light", "Светлая", "#ffffff"),
-        ("high_contrast", "Высокий контраст", "#000000"),
-        ("high_contrast_mono", "High Contrast Mono", "#000000"),
-        ("mascot", "Wizard Hat", "#0a0f1a"),
+        ("dark", t_settings(SettingsKey::ThemeDark), "#1e222d"),
+        ("light", t_settings(SettingsKey::ThemeLight), "#ffffff"),
+        ("high_contrast", t_settings(SettingsKey::ThemeHighContrast), "#000000"),
+        ("high_contrast_mono", t_settings(SettingsKey::ThemeHighContrastMono), "#000000"),
+        ("mascot", t_settings(SettingsKey::ThemeWizardHat), "#0a0f1a"),
     ];
     let current_theme = theme_manager.preset_name();
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
@@ -1237,7 +1237,7 @@ fn render_appearance_settings(
     ctx.set_fill_color(muted_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("СТИЛЬ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionStyle), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     use crate::theme::UIStyle;
@@ -1263,20 +1263,20 @@ fn render_appearance_settings(
     // Style Parameters section
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(muted_color);
-    ctx.fill_text("НАСТРОЙКИ СТИЛЯ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionStyleSettings), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     let slider_height = 32.0;
     let slider_width_total = 300.0;
 
     let opacity_sliders = [
-        ("Прозрачность тулбаров:", "toolbar_opacity", current_runtime.style_params.toolbar_bg_opacity),
-        ("Прозрачность модалок:", "modal_opacity", current_runtime.style_params.modal_bg_opacity),
-        ("Прозрачность сайдбаров:", "sidebar_opacity", current_runtime.style_params.sidebar_bg_opacity),
-        ("Прозрачность меню:", "menu_opacity", current_runtime.style_params.menu_bg_opacity),
-        ("Прозрачность шкал:", "scale_opacity", current_runtime.style_params.scale_bg_opacity),
-        ("Прозрачность hover:", "hover_opacity", current_runtime.style_params.hover_bg_opacity),
-        ("Прозрачность crosshair label:", "crosshair_label_opacity", current_runtime.style_params.crosshair_label_bg_opacity),
+        (t_settings(SettingsKey::ToolbarOpacity), "toolbar_opacity", current_runtime.style_params.toolbar_bg_opacity),
+        (t_settings(SettingsKey::ModalOpacity), "modal_opacity", current_runtime.style_params.modal_bg_opacity),
+        (t_settings(SettingsKey::SidebarOpacity), "sidebar_opacity", current_runtime.style_params.sidebar_bg_opacity),
+        (t_settings(SettingsKey::MenuOpacity), "menu_opacity", current_runtime.style_params.menu_bg_opacity),
+        (t_settings(SettingsKey::ScaleOpacity), "scale_opacity", current_runtime.style_params.scale_bg_opacity),
+        (t_settings(SettingsKey::HoverOpacity), "hover_opacity", current_runtime.style_params.hover_bg_opacity),
+        (t_settings(SettingsKey::CrosshairLabelOpacity), "crosshair_label_opacity", current_runtime.style_params.crosshair_label_bg_opacity),
     ];
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
@@ -1347,7 +1347,7 @@ fn render_appearance_settings(
             &blur_config,
             blur_display,
             slider_rect,
-            "Радиус размытия:",
+            t_settings(SettingsKey::BlurRadius),
             &widget_theme,
             hovered,
             None,
@@ -1467,11 +1467,11 @@ fn render_scales_settings(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
 
-    // Section: СЕТКА
+    // Section: GRID
     let mut row_y = viewport_y - scroll_offset;
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("СЕТКА", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionGrid), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1481,7 +1481,7 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.show_grid, theme);
     result.content_items.push(("scales:show_grid".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать сетку", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowGrid), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // vert_lines
@@ -1490,7 +1490,7 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.vert_lines, theme);
     result.content_items.push(("scales:vert_lines".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Вертикальные линии", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::VerticalLines), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // horz_lines
@@ -1499,13 +1499,13 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.horz_lines, theme);
     result.content_items.push(("scales:horz_lines".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Горизонтальные линии", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::HorizontalLines), label_x, row_y + row_height / 2.0);
     row_y += row_height + 12.0;
 
-    // Section: ЦЕНОВАЯ ШКАЛА
+    // Section: PRICE SCALE
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ЦЕНОВАЯ ШКАЛА", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionPriceScale), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1515,7 +1515,7 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.price_scale_right, theme);
     result.content_items.push(("scales:price_scale_right".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать шкалу справа", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowPriceScaleRight), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // auto_scale
@@ -1524,13 +1524,13 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.auto_scale, theme);
     result.content_items.push(("scales:auto_scale".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Автомасштаб", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::AutoScale), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
-    // Section: ВРЕМЕННАЯ ШКАЛА
+    // Section: TIME SCALE
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ВРЕМЕННАЯ ШКАЛА", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionTimeScale), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1540,13 +1540,13 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.time_scale_bottom, theme);
     result.content_items.push(("scales:time_scale_bottom".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать шкалу снизу", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowTimeScaleBottom), label_x, row_y + row_height / 2.0);
     row_y += row_height + 12.0;
 
-    // Section: ЛИНИИ ЦЕНЫ
+    // Section: PRICE LINES
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ЛИНИИ ЦЕНЫ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionPriceLines), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1556,20 +1556,20 @@ fn render_scales_settings(
     draw_checkbox(ctx, check_rect, settings.show_prev_close, theme);
     result.content_items.push(("scales:show_prev_close".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Цена закрытия предыдущего дня", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::PrevDayClosePrice), label_x, row_y + row_height / 2.0);
     row_y += row_height + 12.0;
 
-    // Section: ПЕРЕКРЕСТИЕ
+    // Section: CROSSHAIR
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ПЕРЕКРЕСТИЕ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionCrosshair), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
 
     // Crosshair mode dropdown
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Режим", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::CrosshairMode), x, row_y + row_height / 2.0);
 
     let dropdown_x = x + 100.0;
     let dropdown_width = 120.0;
@@ -1577,10 +1577,10 @@ fn render_scales_settings(
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
 
     let mode_label = match settings.crosshair_mode.as_str() {
-        "Normal" => "Обычный",
-        "Magnet" => "Strong",
-        "MagnetOHLC" => "Light",
-        "Hidden" => "Скрыть",
+        "Normal" => t_settings(SettingsKey::CrosshairNormal),
+        "Magnet" => t_settings(SettingsKey::CrosshairMagnetStrong),
+        "MagnetOHLC" => t_settings(SettingsKey::CrosshairMagnetLight),
+        "Hidden" => t_settings(SettingsKey::CrosshairHidden),
         _ => &settings.crosshair_mode,
     };
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, mode_label, row_y + row_height / 2.0, theme);
@@ -1593,15 +1593,15 @@ fn render_scales_settings(
     // Crosshair line style dropdown
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Стиль линии", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::CrosshairLineStyle), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let style_label = match settings.crosshair_line_style.as_str() {
-        "Solid" => "Сплошная",
-        "Dashed" => "Штриховая",
-        "Dotted" => "Пунктирная",
-        "LargeDashed" => "Крупный пунктир",
-        "SparseDotted" => "Редкие точки",
+        "Solid" => t_settings(SettingsKey::LineStyleSolid),
+        "Dashed" => t_settings(SettingsKey::LineStyleDashed),
+        "Dotted" => t_settings(SettingsKey::LineStyleDotted),
+        "LargeDashed" => t_settings(SettingsKey::LineStyleLargeDashed),
+        "SparseDotted" => t_settings(SettingsKey::LineStyleSparseDotted),
         _ => &settings.crosshair_line_style,
     };
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, style_label, row_y + row_height / 2.0, theme);
@@ -1625,7 +1625,7 @@ fn render_scales_settings(
         .and_then(|d| d.floating_value)
         .unwrap_or(settings.crosshair_line_width);
 
-    let slider_result = render_single_slider(ctx, &slider_config, crosshair_width_display, slider_rect, "Толщина линии:", &widget_theme, hovered, None);
+    let slider_result = render_single_slider(ctx, &slider_config, crosshair_width_display, slider_rect, t_settings(SettingsKey::CrosshairLineWidth), &widget_theme, hovered, None);
     result.content_items.push(("scales:crosshair_line_width".to_string(), slider_result.full_rect));
     if let Some(input_rect) = slider_result.input_rect {
         result.content_items.push(("scales:crosshair_line_width_value".to_string(), input_rect));
@@ -1645,7 +1645,7 @@ fn render_scales_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Цвет линии", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::CrosshairLineColor), x, row_y + row_height / 2.0);
 
     let swatch_size = 24.0;
     let swatch_x = dropdown_x;
@@ -1664,22 +1664,22 @@ fn render_scales_settings(
     result.content_items.push(("scales:crosshair_line_color".to_string(), color_rect));
     row_y += row_height + 12.0;
 
-    // Section: ПОЛОЖЕНИЕ ШКАЛ
+    // Section: SCALE POSITION
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ПОЛОЖЕНИЕ ШКАЛ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionScalePosition), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Ценовая шкала", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::PriceScalePosition), x, row_y + row_height / 2.0);
 
     let dropdown_x2 = x + 120.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let price_pos_label = match settings.price_scale_position.as_str() {
-        "left" => "Слева",
-        "right" => "Справа",
-        "hidden" => "Скрыта",
+        "left" => t_settings(SettingsKey::ScalePosLeft),
+        "right" => t_settings(SettingsKey::ScalePosRight),
+        "hidden" => t_settings(SettingsKey::ScalePosHidden),
         _ => &settings.price_scale_position,
     };
     draw_split_dropdown(ctx, dropdown_x2, dropdown_y, dropdown_width, dropdown_height, price_pos_label, row_y + row_height / 2.0, theme);
@@ -1690,13 +1690,13 @@ fn render_scales_settings(
 
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Временная шкала", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::TimeScalePosition), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let time_pos_label = match settings.time_scale_position.as_str() {
-        "top" => "Сверху",
-        "bottom" => "Снизу",
-        "hidden" => "Скрыта",
+        "top" => t_settings(SettingsKey::ScalePosTop),
+        "bottom" => t_settings(SettingsKey::ScalePosBottom),
+        "hidden" => t_settings(SettingsKey::ScalePosHidden),
         _ => &settings.time_scale_position,
     };
     draw_split_dropdown(ctx, dropdown_x2, dropdown_y, dropdown_width, dropdown_height, time_pos_label, row_y + row_height / 2.0, theme);
@@ -1706,13 +1706,13 @@ fn render_scales_settings(
 
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text("Угловые кнопки", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::CornerButtons), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let corner_vis_label = match settings.corner_visibility.as_str() {
-        "always" => "Всегда",
-        "on_hover" => "При наведении",
-        "never" => "Никогда",
+        "always" => t_settings(SettingsKey::CornerAlways),
+        "on_hover" => t_settings(SettingsKey::CornerOnHover),
+        "never" => t_settings(SettingsKey::CornerNever),
         _ => &settings.corner_visibility,
     };
     draw_split_dropdown(ctx, dropdown_x2, dropdown_y, dropdown_width, dropdown_height, corner_vis_label, row_y + row_height / 2.0, theme);
@@ -1720,10 +1720,10 @@ fn render_scales_settings(
     result.content_items.push(("dropdown_menu:corner_visibility".to_string(), WidgetRect::new(dropdown_x2 + tw2, dropdown_y, cw, dropdown_height)));
     row_y += row_height + 12.0;
 
-    // Section: РАЗМЕРЫ ШКАЛ
+    // Section: SCALE SIZE
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("РАЗМЕРЫ ШКАЛ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionScaleSize), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     let slider_config = SliderConfig::new(50.0, 150.0).with_step(1.0);
@@ -1740,7 +1740,7 @@ fn render_scales_settings(
         .and_then(|d| d.floating_value)
         .unwrap_or(settings.price_scale_width);
 
-    let slider_result = render_single_slider(ctx, &slider_config, price_width_display, slider_rect, "Ширина ценовой шкалы:", &widget_theme, hovered, None);
+    let slider_result = render_single_slider(ctx, &slider_config, price_width_display, slider_rect, t_settings(SettingsKey::PriceScaleWidth), &widget_theme, hovered, None);
     result.content_items.push(("scales:price_width_slider".to_string(), slider_result.full_rect));
     if let Some(input_rect) = slider_result.input_rect {
         result.content_items.push(("scales:price_width_value".to_string(), input_rect));
@@ -1768,7 +1768,7 @@ fn render_scales_settings(
         .and_then(|d| d.floating_value)
         .unwrap_or(settings.time_scale_height);
 
-    let slider_result = render_single_slider(ctx, &time_slider_config, time_height_display, slider_rect, "Высота временной шкалы:", &widget_theme, hovered, None);
+    let slider_result = render_single_slider(ctx, &time_slider_config, time_height_display, slider_rect, t_settings(SettingsKey::TimeScaleHeight), &widget_theme, hovered, None);
     result.content_items.push(("scales:time_height_slider".to_string(), slider_result.full_rect));
     if let Some(input_rect) = slider_result.input_rect {
         result.content_items.push(("scales:time_height_value".to_string(), input_rect));
@@ -1784,10 +1784,10 @@ fn render_scales_settings(
     }
     row_y += row_height + 12.0;
 
-    // Section: ФОРМАТ ВРЕМЕНИ
+    // Section: TIME FORMAT
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ФОРМАТ ВРЕМЕНИ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionTimeFormat), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1887,15 +1887,15 @@ fn render_status_line_settings(
 
     let mut row_y = content_start_y;
 
-    // Section: ЛЕГЕНДА
+    // Section: LEGEND
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ЛЕГЕНДА", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionLegend), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Позиция", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Position), x, row_y + row_height / 2.0);
 
     let dropdown_x = x + 100.0;
     let dropdown_width = 150.0;
@@ -1903,11 +1903,11 @@ fn render_status_line_settings(
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
 
     let legend_pos_label = match settings.legend_position.as_str() {
-        "top_left" => "Сверху слева",
-        "top_right" => "Сверху справа",
-        "bottom_left" => "Снизу слева",
-        "bottom_right" => "Снизу справа",
-        _ => "Сверху слева",
+        "top_left" => t_settings(SettingsKey::LegendTopLeft),
+        "top_right" => t_settings(SettingsKey::LegendTopRight),
+        "bottom_left" => t_settings(SettingsKey::LegendBottomLeft),
+        "bottom_right" => t_settings(SettingsKey::LegendBottomRight),
+        _ => t_settings(SettingsKey::LegendTopLeft),
     };
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, legend_pos_label, dropdown_y + dropdown_height / 2.0, theme);
     let cw = 20.0;
@@ -1923,7 +1923,7 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.legend_show_ohlc, theme);
     result.content_items.push(("status:legend_show_ohlc".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать OHLC", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowOhlc), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // legend_show_change
@@ -1932,7 +1932,7 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.legend_show_change, theme);
     result.content_items.push(("status:legend_show_change".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать изменение", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowChange), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // legend_show_percent
@@ -1941,13 +1941,13 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.legend_show_percent, theme);
     result.content_items.push(("status:legend_show_percent".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать процент", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowPercent), label_x, row_y + row_height / 2.0);
     row_y += row_height + 12.0;
 
-    // Section: ПОДСКАЗКА
+    // Section: TOOLTIP
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ПОДСКАЗКА", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionTooltip), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1957,7 +1957,7 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.tooltip_visible, theme);
     result.content_items.push(("status:tooltip_visible".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Show), label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // tooltip_follow_cursor
@@ -1966,13 +1966,13 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.tooltip_follow_cursor, theme);
     result.content_items.push(("status:tooltip_follow".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Следовать за курсором", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::FollowCursor), label_x, row_y + row_height / 2.0);
     row_y += row_height + 12.0;
 
-    // Section: ВОДЯНОЙ ЗНАК
+    // Section: WATERMARK
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ВОДЯНОЙ ЗНАК", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionWatermark), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -1983,22 +1983,22 @@ fn render_status_line_settings(
     result.content_items.push(("status:watermark_visible".to_string(), check_rect));
     let wm_label_x = check_rect.right() + 8.0;
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать", wm_label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Show), wm_label_x, row_y + row_height / 2.0);
     row_y += row_height;
 
     // watermark_position dropdown
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Позиция", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Position), x, row_y + row_height / 2.0);
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let watermark_pos_label = match settings.watermark_position.as_str() {
-        "top_left" => "Сверху слева",
-        "top_right" => "Сверху справа",
-        "bottom_left" => "Снизу слева",
-        "bottom_right" => "Снизу справа",
-        "center" => "Центр",
-        _ => "Снизу слева",
+        "top_left" => t_settings(SettingsKey::LegendTopLeft),
+        "top_right" => t_settings(SettingsKey::LegendTopRight),
+        "bottom_left" => t_settings(SettingsKey::LegendBottomLeft),
+        "bottom_right" => t_settings(SettingsKey::LegendBottomRight),
+        "center" => t_settings(SettingsKey::LegendCenter),
+        _ => t_settings(SettingsKey::LegendBottomLeft),
     };
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, watermark_pos_label, dropdown_y + dropdown_height / 2.0, theme);
     result.content_items.push(("status:dropdown_cycle:watermark_position".to_string(), WidgetRect::new(dropdown_x, dropdown_y, tw, dropdown_height)));
@@ -2008,7 +2008,7 @@ fn render_status_line_settings(
     // watermark_color swatch
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Цвет", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Color), x, row_y + row_height / 2.0);
 
     let swatch_size = 24.0;
     let swatch_x = dropdown_x;
@@ -2029,7 +2029,7 @@ fn render_status_line_settings(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Текст", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::Text), x, row_y + row_height / 2.0);
 
     let input_rect = WidgetRect::new(dropdown_x, row_y + 2.0, 200.0, row_height - 4.0);
     let is_editing = chart_settings_state.editing_text.as_ref()
@@ -2069,10 +2069,10 @@ fn render_status_line_settings(
     result.content_items.push(("status:watermark_text".to_string(), input_rect));
     row_y += row_height + 12.0;
 
-    // Section: ИНДИКАТОРЫ
+    // Section: INDICATORS
     ctx.set_fill_color(muted_color);
     ctx.set_font("11px sans-serif");
-    ctx.fill_text("ИНДИКАТОРЫ", x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::SectionIndicators), x, row_y + row_height / 2.0);
     row_y += row_height;
 
     ctx.set_font("12px sans-serif");
@@ -2081,7 +2081,7 @@ fn render_status_line_settings(
     draw_checkbox(ctx, check_rect, settings.show_indicator_overlay, theme);
     result.content_items.push(("status:show_indicator_overlay".to_string(), check_rect));
     ctx.set_fill_color(text_color);
-    ctx.fill_text("Показывать панель индикаторов", label_x, row_y + row_height / 2.0);
+    ctx.fill_text(t_settings(SettingsKey::ShowIndicatorPanel), label_x, row_y + row_height / 2.0);
 
     let widget_theme = WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, total_content_height, &widget_theme);

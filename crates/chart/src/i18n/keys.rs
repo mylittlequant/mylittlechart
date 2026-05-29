@@ -13,6 +13,7 @@ use super::tables::{
     TOOLBAR_TOOLTIP_KEY_TABLE,
     WIZARD_KEY_TABLE,
     CLOCK_KEY_TABLE,
+    SETTINGS_KEY_TABLE,
 };
 
 // =============================================================================
@@ -483,6 +484,178 @@ impl uzor::i18n::Translate for ClockKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&CLOCK_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Settings Modal Keys
+// =============================================================================
+
+/// Chart settings modal string keys
+///
+/// Variant order is **frozen** — discriminant == row index in `SETTINGS_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum SettingsKey {
+    // Header / footer
+    Title                       = 0,
+    ButtonTemplate              = 1,
+    ButtonOk                    = 2,
+    ButtonCancel                = 3,
+    SaveAsTemplate              = 4,
+    ApplyDefault                = 5,
+    NoTemplates                 = 6,
+
+    // Tab: Instrument — section headers
+    SectionCandles              = 7,
+    SectionDataConfig           = 8,
+    SectionPriceTick            = 9,
+
+    // Tab: Instrument — row labels
+    BodyColorPrevClose          = 10,
+    Body                        = 11,
+    Borders                     = 12,
+    Wick                        = 13,
+    CountdownToClose            = 14,
+    ExtendRight                 = 15,
+    ExtendLeft                  = 16,
+    LineStyle                   = 17,
+    Precision                   = 18,
+
+    // Precision dropdown
+    PrecisionAuto               = 19,
+
+    // Timezone dropdown values
+    TimezoneUtc                 = 20,
+    TimezoneMoscow              = 21,
+    TimezoneLondon              = 22,
+    TimezoneNewYork             = 23,
+    TimezoneChicago             = 24,
+    TimezoneLosAngeles          = 25,
+    TimezoneTokyo               = 26,
+    TimezoneHongKong            = 27,
+    TimezoneSingapore           = 28,
+    TimezoneSydney              = 29,
+
+    // Tab: Appearance — section headers
+    SectionPresets              = 30,
+    SectionStyle                = 31,
+    SectionStyleSettings        = 32,
+
+    // Tab: Appearance — theme labels
+    ThemeDark                   = 33,
+    ThemeLight                  = 34,
+    ThemeHighContrast           = 35,
+    ThemeHighContrastMono       = 36,
+    ThemeWizardHat              = 37,
+
+    // Tab: Appearance — opacity slider labels
+    ToolbarOpacity              = 38,
+    ModalOpacity                = 39,
+    SidebarOpacity              = 40,
+    MenuOpacity                 = 41,
+    ScaleOpacity                = 42,
+    HoverOpacity                = 43,
+    CrosshairLabelOpacity       = 44,
+    BlurRadius                  = 45,
+
+    // Tab: ScalesLines — section headers
+    SectionGrid                 = 46,
+    SectionPriceScale           = 47,
+    SectionTimeScale            = 48,
+    SectionPriceLines           = 49,
+    SectionCrosshair            = 50,
+    SectionScalePosition        = 51,
+    SectionScaleSize            = 52,
+    SectionTimeFormat           = 53,
+
+    // Tab: ScalesLines — row labels
+    ShowGrid                    = 54,
+    VerticalLines               = 55,
+    HorizontalLines             = 56,
+    ShowPriceScaleRight         = 57,
+    AutoScale                   = 58,
+    ShowTimeScaleBottom         = 59,
+    PrevDayClosePrice           = 60,
+    CrosshairMode               = 61,
+    CrosshairLineStyle          = 62,
+    CrosshairLineWidth          = 63,
+    CrosshairLineColor          = 64,
+    PriceScalePosition          = 65,
+    TimeScalePosition           = 66,
+    CornerButtons               = 67,
+    PriceScaleWidth             = 68,
+    TimeScaleHeight             = 69,
+
+    // Crosshair mode dropdown values
+    CrosshairNormal             = 70,
+    CrosshairMagnetStrong       = 71,
+    CrosshairMagnetLight        = 72,
+    CrosshairHidden             = 73,
+
+    // Line style dropdown values
+    LineStyleSolid              = 74,
+    LineStyleDashed             = 75,
+    LineStyleDotted             = 76,
+    LineStyleLargeDashed        = 77,
+    LineStyleSparseDotted       = 78,
+
+    // Tick line style values (compact)
+    TickStyleDash               = 79,
+    TickStyleLine               = 80,
+    TickStyleDots               = 81,
+
+    // Scale position dropdown values
+    ScalePosLeft                = 82,
+    ScalePosRight               = 83,
+    ScalePosHidden              = 84,
+    ScalePosTop                 = 85,
+    ScalePosBottom              = 86,
+
+    // Corner visibility dropdown values
+    CornerAlways                = 87,
+    CornerOnHover               = 88,
+    CornerNever                 = 89,
+
+    // Tab: Status Line — section headers
+    SectionLegend               = 90,
+    SectionTooltip              = 91,
+    SectionWatermark            = 92,
+    SectionIndicators           = 93,
+
+    // Tab: Status Line — row labels
+    Position                    = 94,
+    ShowOhlc                    = 95,
+    ShowChange                  = 96,
+    ShowPercent                 = 97,
+    Show                        = 98,
+    FollowCursor                = 99,
+    Color                       = 100,
+    Text                        = 101,
+    ShowIndicatorPanel          = 102,
+
+    // Legend position dropdown values
+    LegendTopLeft               = 103,
+    LegendTopRight              = 104,
+    LegendBottomLeft            = 105,
+    LegendBottomRight           = 106,
+    LegendCenter                = 107,
+}
+
+impl SettingsKey {
+    pub const COUNT: usize = 108;
+
+    /// Get translation for this key
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&SETTINGS_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for SettingsKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&SETTINGS_KEY_TABLE[self as usize], lang_index)
     }
 }
 
