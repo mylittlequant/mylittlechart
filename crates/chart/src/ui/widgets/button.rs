@@ -205,3 +205,89 @@ where
         pressed: effective_state.is_pressed(),
     }
 }
+
+// =============================================================================
+// i18n-aware sizing helpers
+// =============================================================================
+//
+// Hardcoding button widths breaks under i18n: a label that fits in English
+// ("Rename") overflows in other languages ("Переименовать"). These helpers
+// implement the "grow when there's room, clip when there isn't" rule:
+//   1. each button wants `measure_text + padding` (clamped to a minimum), so it
+//      grows to fit its own label;
+//   2. if the row of buttons would collide (sum exceeds the available space),
+//      the widths are scaled down proportionally and the labels are truncated
+//      with an ellipsis — no overlap, no clipping under a neighbour.
+
+/// Width a single button wants in order to show `text` fully, clamped to
+/// `min_w`. The caller must `set_font(font)` consistency is handled here.
+pub fn auto_btn_width(
+    ctx: &mut dyn RenderContext,
+    text: &str,
+    font: &str,
+    padding_x: f64,
+    min_w: f64,
+) -> f64 {
+    ctx.set_font(font);
+    (ctx.measure_text(text) + padding_x * 2.0).max(min_w)
+}
+
+/// Truncate `text` with a trailing ellipsis so it fits within `max_width`
+/// at the currently-set font. Returns the original string when it already fits.
+/// (Local copy so chart widgets don't depend on sidebar-content.)
+pub fn fit_text_to_width(ctx: &dyn RenderContext, text: &str, max_width: f64) -> String {
+    if max_width <= 0.0 {
+        return String::new();
+    }
+    if ctx.measure_text(text) <= max_width {
+        return text.to_string();
+    }
+    let ellipsis = "\u{2026}";
+    let available = max_width - ctx.measure_text(ellipsis);
+    if available <= 0.0 {
+        return String::new();
+    }
+    let mut s = text.to_string();
+    while !s.is_empty() && ctx.measure_text(&s) > available {
+        s.pop();
+    }
+    s.push_str(ellipsis);
+    s
+}
+
+/// Lay out a horizontal row of buttons sharing `available_w` (excluding the
+/// inter-button gaps). Each entry grows to fit its label; if the total would
+/// exceed the budget the widths are scaled down proportionally so the row
+/// never overflows — labels are then clipped at render time via
+/// [`fit_text_to_width`]. Returns one width per label, in order.
+pub fn layout_btn_row(
+    ctx: &mut dyn RenderContext,
+    labels: &[&str],
+    font: &str,
+    padding_x: f64,
+    min_w: f64,
+    gap: f64,
+    available_w: f64,
+) -> Vec<f64> {
+    let mut widths: Vec<f64> = labels
+        .iter()
+        .map(|t| auto_btn_width(ctx, t, font, padding_x, min_w))
+        .collect();
+
+    if widths.is_empty() {
+        return widths;
+    }
+
+    let total_gap = gap * (widths.len() as f64 - 1.0);
+    let total: f64 = widths.iter().sum::<f64>() + total_gap;
+
+    // Overflow: scale every button down by the same factor so the row fits.
+    if total > available_w && available_w > total_gap {
+        let scale = (available_w - total_gap) / (total - total_gap);
+        for w in widths.iter_mut() {
+            *w *= scale;
+        }
+    }
+
+    widths
+}

@@ -13,7 +13,7 @@ use crate::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_render::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group};
+use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::{render_single_slider, SliderConfig, SliderTrackInfo};
 use crate::ui::widgets::types::WidgetState;
@@ -345,6 +345,7 @@ fn render_general_tab(
             cy,
             available_w,
             scroll_widget_theme,
+            true, // compact — language options are single-line (no description)
         );
 
         for (i, (rx, ry, rw, rh)) in lang_radio_result.option_rects.iter().enumerate() {
@@ -361,7 +362,10 @@ fn render_general_tab(
             );
         }
 
-        cy += lang_options.len() as f64 * (52.0 + 8.0) - 8.0 + 16.0;
+        // Advance past the rendered rows using their actual bottom edge.
+        if let Some((_, ry, _, rh)) = lang_radio_result.option_rects.last() {
+            cy = ry + rh + 16.0;
+        }
     }
 
     // ── Version info (always shown at bottom) ─────────────────────────────────
@@ -502,7 +506,8 @@ fn render_profile_section(
     let profile_row_h = 32.0;
     let btn_h = 22.0;
     let btn_gap = 6.0;
-    let small_btn_w = 46.0;
+    let btn_padding_x = 8.0;
+    let btn_min_w = 40.0;
 
     for (id, name, avatar) in &state.available_profiles {
         // Use runtime_profile_id (the ACTUALLY loaded profile) so that buttons
@@ -559,19 +564,80 @@ fn render_profile_section(
         let name_alpha = if is_active { "1.0" } else { "0.65" };
         let row_name_color = format!("rgba(254,255,238,{})", name_alpha);
 
-        // Right-side buttons layout (computed from right edge)
+        // Right-side buttons layout (computed from right edge, i18n-aware auto-width)
         // All rows: [Rename] [Avatar] [Delete]
         // Active row: Delete is hidden (can't delete the running profile).
         // Inactive row: all three buttons visible + whole-row click area for switch.
         let right_edge = x + available_w;
-        let delete_btn_x = right_edge - small_btn_w;
-        let avatar_btn_x = delete_btn_x - small_btn_w - btn_gap;
-        let rename_btn_x = avatar_btn_x - small_btn_w - btn_gap;
 
+        // Measure per-row button widths from actual translated labels.
+        let rename_label = UserSettingsKey::BtnRename.get(current_language());
+        let avatar_label = UserSettingsKey::BtnAvatar.get(current_language());
+        let delete_label = TextKey::Delete.get(current_language());
+        let save_label   = TextKey::Save.get(current_language());
+        let cancel_label = TextKey::Cancel.get(current_language());
+
+        ctx.set_font("11px sans-serif");
+        let rename_w = auto_btn_width(ctx, rename_label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let avatar_w = auto_btn_width(ctx, avatar_label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let delete_w = auto_btn_width(ctx, delete_label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let save_w   = auto_btn_width(ctx, save_label,   "11px sans-serif", btn_padding_x, btn_min_w);
+        let cancel_w = auto_btn_width(ctx, cancel_label, "11px sans-serif", btn_padding_x, btn_min_w);
+
+        // Available horizontal space for buttons (from name_x to right_edge).
+        let avail_btns = (right_edge - name_x).max(0.0);
+
+        // For inactive rows: clamp each width if total would overflow.
+        let (rename_w, avatar_w, delete_w) = {
+            let total = rename_w + avatar_w + delete_w + btn_gap * 2.0;
+            if total > avail_btns && total > 0.0 {
+                let scale = avail_btns / total;
+                (rename_w * scale, avatar_w * scale, delete_w * scale)
+            } else {
+                (rename_w, avatar_w, delete_w)
+            }
+        };
+        // For active rows (no Delete): clamp rename+avatar.
+        let (rename_w_active, avatar_w_active) = {
+            let total = rename_w + avatar_w + btn_gap;
+            if total > avail_btns && total > 0.0 {
+                let scale = avail_btns / total;
+                (rename_w * scale, avatar_w * scale)
+            } else {
+                (rename_w, avatar_w)
+            }
+        };
+        // For rename mode: clamp save+cancel.
+        let (save_w, cancel_w) = {
+            let total = save_w + cancel_w + btn_gap;
+            if total > avail_btns && total > 0.0 {
+                let scale = avail_btns / total;
+                (save_w * scale, cancel_w * scale)
+            } else {
+                (save_w, cancel_w)
+            }
+        };
+
+        // Positions right-to-left for each mode:
+        // inactive: delete | avatar | rename (leftmost)
+        let delete_btn_x = right_edge - delete_w;
+        let avatar_btn_x_inactive = delete_btn_x - avatar_w - btn_gap;
+        let rename_btn_x_inactive = avatar_btn_x_inactive - rename_w - btn_gap;
+        // active (no delete): avatar | rename (leftmost)
+        let avatar_btn_x_active = right_edge - avatar_w_active;
+        let rename_btn_x_active  = avatar_btn_x_active - rename_w_active - btn_gap;
+        // rename mode: cancel | save (leftmost)
+        let cancel_btn_x = right_edge - cancel_w;
+        let confirm_btn_x = cancel_btn_x - save_w - btn_gap;
+
+        // Per-row convenience aliases resolved after is_active check below.
+        let (rename_btn_x, avatar_btn_x, cur_rename_w, cur_avatar_w) = if is_active {
+            (rename_btn_x_active, avatar_btn_x_active, rename_w_active, avatar_w_active)
+        } else {
+            (rename_btn_x_inactive, avatar_btn_x_inactive, rename_w, avatar_w)
+        };
         if is_renaming {
             // Inline rename input replaces name text
-            let confirm_btn_x = rename_btn_x;
-            let cancel_btn_x = avatar_btn_x;
             let input_w = confirm_btn_x - name_x - btn_gap;
             let input_h = 22.0;
             let input_y = cy + (profile_row_h - input_h) / 2.0;
@@ -615,42 +681,42 @@ fn render_profile_section(
 
             // Save button (green tint)
             ctx.set_fill_color("rgba(76,175,80,0.2)");
-            ctx.fill_rounded_rect(confirm_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+            ctx.fill_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
             ctx.set_stroke_color("rgba(76,175,80,0.6)");
             ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(confirm_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+            ctx.stroke_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color("#81c784");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(TextKey::Save.get(current_language()), confirm_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.fill_text(fit_text_to_width(ctx, save_label, save_w - btn_padding_x).as_str(), confirm_btn_x + save_w / 2.0, btn_y + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
-            result.content_items.push(("profile_rename_confirm".to_string(), WidgetRect::new(confirm_btn_x, btn_y, small_btn_w, btn_h)));
+            result.content_items.push(("profile_rename_confirm".to_string(), WidgetRect::new(confirm_btn_x, btn_y, save_w, btn_h)));
             input_coordinator.register_on_layer(
                 "user_settings:profile_rename_confirm",
-                uzor::types::Rect::new(confirm_btn_x, btn_y, small_btn_w, btn_h),
+                uzor::types::Rect::new(confirm_btn_x, btn_y, save_w, btn_h),
                 Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
 
             // Cancel button
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(cancel_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+            ctx.fill_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(cancel_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+            ctx.stroke_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color("rgba(254,255,238,0.7)");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(TextKey::Cancel.get(current_language()), cancel_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.fill_text(fit_text_to_width(ctx, cancel_label, cancel_w - btn_padding_x).as_str(), cancel_btn_x + cancel_w / 2.0, btn_y + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
-            result.content_items.push(("profile_rename_cancel".to_string(), WidgetRect::new(cancel_btn_x, btn_y, small_btn_w, btn_h)));
+            result.content_items.push(("profile_rename_cancel".to_string(), WidgetRect::new(cancel_btn_x, btn_y, cancel_w, btn_h)));
             input_coordinator.register_on_layer(
                 "user_settings:profile_rename_cancel",
-                uzor::types::Rect::new(cancel_btn_x, btn_y, small_btn_w, btn_h),
+                uzor::types::Rect::new(cancel_btn_x, btn_y, cancel_w, btn_h),
                 Sense::CLICK | Sense::HOVER,
                 layer_id,
             );
@@ -670,22 +736,22 @@ fn render_profile_section(
                 let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
                 let rename_bg = if is_rename_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
                 ctx.set_fill_color(rename_bg);
-                ctx.fill_rounded_rect(rename_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.fill_rounded_rect(rename_btn_x, btn_y, cur_rename_w, btn_h, 3.0);
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(rename_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.stroke_rounded_rect(rename_btn_x, btn_y, cur_rename_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(if is_rename_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(UserSettingsKey::BtnRename.get(current_language()), rename_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(fit_text_to_width(ctx, rename_label, cur_rename_w - btn_padding_x).as_str(), rename_btn_x + cur_rename_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let rename_hit_id = format!("user_settings:profile_rename:{}", id);
-                result.content_items.push((format!("profile_rename:{}", id), WidgetRect::new(rename_btn_x, btn_y, small_btn_w, btn_h)));
+                result.content_items.push((format!("profile_rename:{}", id), WidgetRect::new(rename_btn_x, btn_y, cur_rename_w, btn_h)));
                 input_coordinator.register_on_layer(
                     rename_hit_id.as_str(),
-                    uzor::types::Rect::new(rename_btn_x, btn_y, small_btn_w, btn_h),
+                    uzor::types::Rect::new(rename_btn_x, btn_y, cur_rename_w, btn_h),
                     Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
@@ -697,22 +763,22 @@ fn render_profile_section(
                 let is_avatar_hovered = state.hovered_item_id.as_deref() == Some(avatar_toggle_hover_id.as_str());
                 let avatar_bg = if is_avatar_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
                 ctx.set_fill_color(avatar_bg);
-                ctx.fill_rounded_rect(avatar_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.fill_rounded_rect(avatar_btn_x, btn_y, cur_avatar_w, btn_h, 3.0);
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(avatar_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.stroke_rounded_rect(avatar_btn_x, btn_y, cur_avatar_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(if is_avatar_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(UserSettingsKey::BtnAvatar.get(current_language()), avatar_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(fit_text_to_width(ctx, avatar_label, cur_avatar_w - btn_padding_x).as_str(), avatar_btn_x + cur_avatar_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let avatar_hit_id = format!("user_settings:profile_avatar_toggle:{}", id);
-                result.content_items.push((format!("profile_avatar_toggle:{}", id), WidgetRect::new(avatar_btn_x, btn_y, small_btn_w, btn_h)));
+                result.content_items.push((format!("profile_avatar_toggle:{}", id), WidgetRect::new(avatar_btn_x, btn_y, cur_avatar_w, btn_h)));
                 input_coordinator.register_on_layer(
                     avatar_hit_id.as_str(),
-                    uzor::types::Rect::new(avatar_btn_x, btn_y, small_btn_w, btn_h),
+                    uzor::types::Rect::new(avatar_btn_x, btn_y, cur_avatar_w, btn_h),
                     Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
@@ -724,22 +790,22 @@ fn render_profile_section(
                 let is_delete_hovered = state.hovered_item_id.as_deref() == Some(delete_hover_id.as_str());
                 let delete_bg = if is_delete_hovered { "rgba(229,57,53,0.2)" } else { &toolbar_theme.item_bg_hover };
                 ctx.set_fill_color(delete_bg);
-                ctx.fill_rounded_rect(delete_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.fill_rounded_rect(delete_btn_x, btn_y, delete_w, btn_h, 3.0);
                 ctx.set_stroke_color(if is_delete_hovered { "rgba(229,57,53,0.5)" } else { &toolbar_theme.separator });
                 ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(delete_btn_x, btn_y, small_btn_w, btn_h, 3.0);
+                ctx.stroke_rounded_rect(delete_btn_x, btn_y, delete_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(if is_delete_hovered { "rgba(239,154,154,0.95)" } else { "rgba(254,255,238,0.5)" });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(TextKey::Delete.get(current_language()), delete_btn_x + small_btn_w / 2.0, btn_y + btn_h / 2.0);
+                ctx.fill_text(fit_text_to_width(ctx, delete_label, delete_w - btn_padding_x).as_str(), delete_btn_x + delete_w / 2.0, btn_y + btn_h / 2.0);
                 ctx.set_text_align(TextAlign::Left);
 
                 let delete_hit_id = format!("user_settings:profile_delete:{}", id);
-                result.content_items.push((format!("profile_delete:{}", id), WidgetRect::new(delete_btn_x, btn_y, small_btn_w, btn_h)));
+                result.content_items.push((format!("profile_delete:{}", id), WidgetRect::new(delete_btn_x, btn_y, delete_w, btn_h)));
                 input_coordinator.register_on_layer(
                     delete_hit_id.as_str(),
-                    uzor::types::Rect::new(delete_btn_x, btn_y, small_btn_w, btn_h),
+                    uzor::types::Rect::new(delete_btn_x, btn_y, delete_w, btn_h),
                     Sense::CLICK | Sense::HOVER,
                     layer_id,
                 );
@@ -1024,6 +1090,7 @@ fn render_performance_tab(
         cy,
         available_w,
         &widget_theme,
+        false, // full rows — these options have descriptions
     );
 
     // Register a hit zone for each radio option row

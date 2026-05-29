@@ -41,9 +41,12 @@ pub fn draw_radio_group(
     y: f64,
     width: f64,
     theme: &WidgetTheme,
+    // Compact mode: single-line rows (no description) — tighter height/gap.
+    // Use for option lists where every `description` is empty (e.g. language picker).
+    compact: bool,
 ) -> RadioGroupResult {
-    let item_height = 52.0;
-    let gap = 8.0;
+    let item_height = if compact { 32.0 } else { 52.0 };
+    let gap = if compact { 4.0 } else { 8.0 };
     let circle_radius = 7.0;
     let inner_dot_radius = 4.0;
     let label_font_size = 13.0;
@@ -69,8 +72,8 @@ pub fn draw_radio_group(
         }
 
         // ---- Outer ring of the radio circle ----
-        // Vertically align with the label baseline (top of item + 14px ≈ middle of label).
-        let circle_cy = current_y + 14.0;
+        // Compact: centre of the single-line row. Else: aligned with label baseline.
+        let circle_cy = if compact { current_y + item_height / 2.0 } else { current_y + 14.0 };
         ctx.begin_path();
         ctx.arc(
             circle_x,
@@ -104,18 +107,23 @@ pub fn draw_radio_group(
         // ---- Label text ----
         ctx.set_font(&format!("{}px sans-serif", label_font_size));
         ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
         ctx.set_fill_color(if is_selected {
             &theme.text_hover
         } else {
             &theme.text_normal
         });
-        ctx.fill_text(option.label, text_x, current_y + 4.0);
-
-        // ---- Description text (muted, smaller) ----
-        ctx.set_font(&format!("{}px sans-serif", desc_font_size));
-        ctx.set_fill_color(&theme.text_disabled);
-        ctx.fill_text(option.description, text_x, current_y + 24.0);
+        if compact {
+            // Single line, vertically centred.
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(option.label, text_x, current_y + item_height / 2.0);
+        } else {
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text(option.label, text_x, current_y + 4.0);
+            // ---- Description text (muted, smaller) ----
+            ctx.set_font(&format!("{}px sans-serif", desc_font_size));
+            ctx.set_fill_color(&theme.text_disabled);
+            ctx.fill_text(option.description, text_x, current_y + 24.0);
+        }
 
         // ---- Store rect for caller's hit-zone registration ----
         result.option_rects.push((x, current_y, width, item_height));

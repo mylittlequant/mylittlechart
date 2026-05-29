@@ -8,7 +8,7 @@ pub mod button;
 pub mod radio_group;
 
 pub use types::{WidgetState, WidgetTheme};
-pub use button::{ButtonConfig, ButtonResult, draw_button};
+pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_text_to_width, layout_btn_row};
 pub use modal::{
     ModalSize, ModalConfig, ModalTheme, ModalResult, ModalTab,
     draw_modal_backdrop, draw_modal_frame, draw_close_icon,
