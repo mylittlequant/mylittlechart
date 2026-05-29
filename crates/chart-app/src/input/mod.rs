@@ -4612,9 +4612,6 @@ impl ChartApp {
                 None
             };
         {
-            let hovered_chart_pane = self.input_coordinator.borrow().hovered_widget()
-                .map(|w| w.as_str().starts_with("chart:pane:"))
-                .unwrap_or(false);
             // Drawing bypass: keep crosshair visible while the hovered leaf's
             // drawing manager reports an in-progress primitive.  In split mode
             // the hovered leaf (not the active leaf) is checked so a drawing on
@@ -4640,9 +4637,20 @@ impl ChartApp {
             // the correct coordinate space — the cursor is outside the active leaf's
             // rect in split mode, making an active-leaf layout always return
             // on_canvas=false and suppressing the crosshair incorrectly (F8).
-            let on_canvas = if hovered_chart_pane {
+            //
+            // STALE-HOVER FIX: hovered_widget() reflects the last begin_frame, which
+            // can lag behind rapid cursor movement (the render loop hasn't run yet for
+            // the new position). When hovered_chart_pane is false purely because the
+            // hover state is stale/None, we must NOT suppress the crosshair — that
+            // causes a deadlock (no redraw requested from this path → hover never
+            // refreshes → crosshair stays hidden forever). The geometry hit-test uses
+            // fresh frame_layouts/active_frame_layout, so we always run it and use
+            // the widget-name check only as an ADDITIONAL suppressor (i.e. when a
+            // known non-chart widget is explicitly hovered, trust that over geometry).
+            let on_canvas = {
                 use zengeld_chart::input::ChartHitTester;
                 use zengeld_chart::engine::input::HitResult;
+                // Resolve the layout and overlay for the relevant leaf.
                 let (extended, overlays) = if let Some(hovered) = split_hovered_leaf {
                     let leaf_rect_opt = self.get_leaf_absolute_rect(hovered);
                     let ext = self.frame_layouts.get(&hovered)
@@ -4660,7 +4668,7 @@ impl ChartApp {
                         .unwrap_or_default();
                     (ext, ovl)
                 };
-                if let Some(ext) = extended {
+                let geometry_says_canvas = if let Some(ext) = extended {
                     let tester = ExtendedLayoutHitTester::new(&ext).with_overlays(&overlays);
                     matches!(
                         tester.hit_test(x, y),
@@ -4671,9 +4679,13 @@ impl ChartApp {
                     )
                 } else {
                     false
-                }
-            } else {
-                false
+                };
+                // A non-chart widget is explicitly hovered → trust that, suppress crosshair.
+                // An empty/stale hover (None) → trust the geometry instead.
+                let explicit_non_chart = self.input_coordinator.borrow().hovered_widget()
+                    .map(|w| !w.as_str().starts_with("chart:pane:"))
+                    .unwrap_or(false);
+                geometry_says_canvas && !explicit_non_chart
             };
 
             if !on_canvas && !is_drawing {

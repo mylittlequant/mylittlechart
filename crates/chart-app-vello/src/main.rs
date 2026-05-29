@@ -45,7 +45,7 @@ use winit::{
     window::{CursorIcon, Icon, Window, WindowId},
 };
 use zengeld_chart::CursorStyle;
-use sysinfo::{System, Pid, ProcessesToUpdate};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use app_state::AppState;
 
@@ -296,10 +296,15 @@ struct App<'s> {
     render_backend: sidebar_content::state::RenderBackend,
     /// True if no backend was explicitly saved — triggers auto-detection on first GPU info.
     backend_auto_detect: bool,
-    /// System info — CPU/RAM metrics, refreshed once per second.
-    sys: System,
-    /// Our process ID for per-process CPU/memory tracking.
-    self_pid: Pid,
+    /// Latest CPU/RAM snapshot produced by the background sampler thread.
+    ///
+    /// The background thread owns its own `sysinfo::System`, refreshes it once
+    /// per second, and writes here. The main thread reads the cached values
+    /// instead of calling the expensive `refresh_*` syscalls on the frame thread.
+    perf_sys_sample: std::sync::Arc<std::sync::Mutex<PerfSysSample>>,
+    /// Handle to the background sysinfo sampler thread (kept to avoid joining
+    /// before shutdown, though we never explicitly join it — drop is fine).
+    _perf_sys_thread: std::thread::JoinHandle<()>,
     /// GPU adapter name (queried once at startup).
     gpu_name: String,
     /// GPU driver info (queried once at startup).
@@ -392,6 +397,23 @@ struct App<'s> {
     orderbook_service: orderbook_service::OrderbookService,
     /// Wall-clock instant of the last periodic orderbook-cache save.
     last_orderbook_cache_save: std::time::Instant,
+}
+
+/// Snapshot of system CPU/RAM metrics produced by the background sampler thread.
+///
+/// The background thread owns its own [`sysinfo::System`] and refreshes it once
+/// per second, storing results here. The main thread reads this (cheap) instead
+/// of calling the expensive `refresh_*` sysinfo syscalls on the frame thread.
+#[derive(Default)]
+struct PerfSysSample {
+    /// Per-core CPU usage percentages (one entry per logical CPU).
+    per_core_cpu: Vec<f32>,
+    /// Process CPU usage as reported by sysinfo (sum-of-threads, can exceed 100%).
+    process_cpu: f32,
+    /// Process RSS memory in bytes.
+    process_mem_bytes: u64,
+    /// Total system RAM in bytes.
+    total_mem_bytes: u64,
 }
 
 /// Render toast notifications as semi-transparent overlays in the top-right corner.
@@ -857,6 +879,50 @@ impl App<'_> {
         // Load device settings once for App struct initialisation.
         let ds_init = zengeld_chart::user_profile::DeviceSettings::load();
 
+        // ── Background sysinfo sampler ────────────────────────────────────────
+        // sysinfo refresh_* calls cost 15-25 ms on Windows. We move them off the
+        // main/render thread into a dedicated 1 s sampler that writes into a shared
+        // Mutex<PerfSysSample>. The main thread reads the cached snapshot cheaply.
+        let perf_sys_sample_arc: std::sync::Arc<std::sync::Mutex<PerfSysSample>> =
+            std::sync::Arc::new(std::sync::Mutex::new(PerfSysSample::default()));
+        let perf_sys_thread = {
+            let shared = perf_sys_sample_arc.clone();
+            let self_pid = Pid::from_u32(std::process::id());
+            std::thread::Builder::new()
+                .name("perf-sys-sampler".into())
+                .spawn(move || {
+                    let mut sys = System::new();
+                    // Prime the CPU usage baseline (sysinfo needs two samples to
+                    // compute a meaningful delta; the first call returns 0 for all cores).
+                    sys.refresh_cpu_usage();
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        sys.refresh_cpu_usage();
+                        sys.refresh_memory();
+                        sys.refresh_processes(
+                            ProcessesToUpdate::Some(&[self_pid]),
+                            false,
+                        );
+                        let per_core_cpu: Vec<f32> =
+                            sys.cpus().iter().map(|c| c.cpu_usage()).collect();
+                        let process_cpu = sys.process(self_pid)
+                            .map(|p| p.cpu_usage())
+                            .unwrap_or(0.0);
+                        let process_mem_bytes = sys.process(self_pid)
+                            .map(|p| p.memory())
+                            .unwrap_or(0);
+                        let total_mem_bytes = sys.total_memory();
+                        if let Ok(mut sample) = shared.lock() {
+                            sample.per_core_cpu = per_core_cpu;
+                            sample.process_cpu = process_cpu;
+                            sample.process_mem_bytes = process_mem_bytes;
+                            sample.total_mem_bytes = total_mem_bytes;
+                        }
+                    }
+                })
+                .expect("perf-sys-sampler thread spawn must succeed")
+        };
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -899,17 +965,8 @@ impl App<'_> {
                 }
             },
             backend_auto_detect: ds_init.render_backend.is_none(),
-            sys: {
-                let mut s = System::new();
-                s.refresh_cpu_usage();
-                s.refresh_memory();
-                s.refresh_processes(
-                    ProcessesToUpdate::Some(&[Pid::from_u32(std::process::id())]),
-                    false,
-                );
-                s
-            },
-            self_pid: Pid::from_u32(std::process::id()),
+            perf_sys_sample: perf_sys_sample_arc,
+            _perf_sys_thread: perf_sys_thread,
             gpu_name: String::new(),
             gpu_driver: String::new(),
             frame_count: 0,
@@ -3832,28 +3889,28 @@ impl ApplicationHandler for App<'_> {
             let perf_log_enabled = self.perf_log_enabled;
             let render_backend = self.render_backend;
 
-            // System metrics (refreshed 1x/sec in the indicator snapshot timer)
-            // global_cpu_usage() is unreliable on Windows — compute the average of per-core values instead.
-            let cpus = self.sys.cpus();
-            let cpu_usage = if cpus.is_empty() {
-                0.0_f32
-            } else {
-                cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
+            // System metrics — read the latest snapshot from the background
+            // sampler thread (cheap lock + copy, no sysinfo syscalls here).
+            // global_cpu_usage() is unreliable on Windows — compute the average
+            // of per-core values instead (same logic as before, data from snapshot).
+            let (cpu_usage, process_cpu, process_cpu_normalized, ram_mb, ram_total_mb, per_core_cpu) = {
+                let sample = self.perf_sys_sample.lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let per_core = sample.per_core_cpu.clone();
+                let cpu_avg = if per_core.is_empty() {
+                    0.0_f32
+                } else {
+                    per_core.iter().copied().sum::<f32>() / per_core.len() as f32
+                };
+                let proc_cpu = sample.process_cpu;
+                let num_cores = per_core.len().max(1) as f32;
+                let proc_cpu_norm = proc_cpu / num_cores;
+                let ram = sample.process_mem_bytes as f64 / (1024.0 * 1024.0);
+                let ram_total = sample.total_mem_bytes as f64 / (1024.0 * 1024.0);
+                (cpu_avg, proc_cpu, proc_cpu_norm, ram, ram_total, per_core)
             };
-            let process_cpu = self.sys.process(self.self_pid)
-                .map(|p| p.cpu_usage())
-                .unwrap_or(0.0);
-            // Normalize process CPU: sysinfo reports sum-of-threads (can exceed 100%).
-            // Divide by core count to get "fraction of total machine capacity".
-            let num_cores = self.sys.cpus().len().max(1) as f32;
-            let process_cpu_normalized = process_cpu / num_cores;
-            let ram_mb = self.sys.process(self.self_pid)
-                .map(|p| p.memory() as f64 / (1024.0 * 1024.0))
-                .unwrap_or(0.0);
-            let ram_total_mb = self.sys.total_memory() as f64 / (1024.0 * 1024.0);
             let gpu_name = self.gpu_name.clone();
             let gpu_driver = self.gpu_driver.clone();
-            let per_core_cpu: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
             let scene_build_us = self.cached_scene_us;
             let gpu_render_us = self.cached_gpu_us;
 
@@ -3971,22 +4028,10 @@ impl ApplicationHandler for App<'_> {
                 self.cached_connector_count = metrics.len();
             }
 
-            // CPU/RAM metrics are expensive (sysinfo syscalls). Only the
-            // Performance panel consumes them, so skip the refresh entirely
-            // unless that panel is currently open in some window.
-            let perf_panel_open = self.windows.values().any(|pw| {
-                pw.chart.sidebar_state.is_right_open()
-                    && pw.chart.sidebar_state.right_panel
-                        == sidebar_content::state::RightSidebarPanel::Performance
-            });
-            if perf_panel_open {
-                self.sys.refresh_cpu_usage();
-                self.sys.refresh_memory();
-                self.sys.refresh_processes(
-                    ProcessesToUpdate::Some(&[self.self_pid]),
-                    false,
-                );
-            }
+            // CPU/RAM metrics are now refreshed by the background perf-sys-sampler
+            // thread (1 s interval) and published into self.perf_sys_sample. No
+            // sysinfo syscalls on the frame thread; the perf panel reads the
+            // cached snapshot cheaply in the populate block above.
 
             // Agent snapshots: skip entirely when no agent has queried recently
             // (the common case). When active, rebuild ONE snapshot per pass in
