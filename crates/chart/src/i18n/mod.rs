@@ -39,6 +39,8 @@ pub use keys::{
     ModalKey,
     IndicatorKey,
     SidebarKey,
+    PrimitiveNameKey,
+    PrimitiveTooltipKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -147,6 +149,27 @@ pub fn t_indicator(key: IndicatorKey) -> &'static str {
 #[inline]
 pub fn t_sidebar(key: SidebarKey) -> &'static str {
     key.get(current_language())
+}
+
+/// Translate a primitive name key using current global language
+#[inline]
+pub fn t_primitive_name(key: PrimitiveNameKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a primitive tooltip key using current global language
+#[inline]
+pub fn t_primitive_tooltip(key: PrimitiveTooltipKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Localize a primitive display name by type_id, returning an owned `String`.
+/// Falls back to `raw_name.to_string()` for unrecognized type_ids (e.g. individual emoji_* variants).
+#[inline]
+pub fn localize_primitive_name(type_id: &str, raw_name: &str) -> String {
+    PrimitiveNameKey::from_type_id(type_id)
+        .map(|k| k.get(current_language()).to_string())
+        .unwrap_or_else(|| raw_name.to_string())
 }
 
 #[cfg(test)]

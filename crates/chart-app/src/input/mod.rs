@@ -90,6 +90,7 @@ use zengeld_chart::{
     ChartPanelLayout,
     CursorStyle,
     input::DragMode,
+    localize_primitive_name,
 };
 use zengeld_chart::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
@@ -560,7 +561,10 @@ impl ChartApp {
                         win.drawing_manager.primitive_list()
                             .into_iter()
                             .find(|item| item.index == prim_idx)
-                            .map(|item| (item.display_name, item.locked, item.visible))
+                            .map(|item| {
+                                let localized = localize_primitive_name(&item.type_id, &item.display_name);
+                                (localized, item.locked, item.visible)
+                            })
                     })
                     .unwrap_or_else(|| ("Primitive".to_string(), false, true));
 

@@ -10,6 +10,7 @@ use zengeld_chart::{
     ScaleCornerButton,
     input::MouseButton,
     ScaleMode,
+    localize_primitive_name,
 };
 use zengeld_chart::ui::context_menu::ContextMenuTarget;
 use zengeld_chart::ui::modal_state::{OpenModal, IndicatorCategoryFilter};
@@ -172,7 +173,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
                     if let Some(prim) = window.drawing_manager.selected_primitive() {
                         let prim_id = prim.data().id;
-                        let label = prim.display_name().to_string();
+                        let label = localize_primitive_name(prim.type_id(), prim.display_name());
                         let pts = prim.points();
                         let price = if !pts.is_empty() {
                             pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64

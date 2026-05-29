@@ -5,7 +5,7 @@
 use crate::ChartApp;
 use uzor::WidgetId;
 use zengeld_chart::{
-    ChartId, ChartPanelLayout, LayoutRect,
+    ChartId, ChartPanelLayout, LayoutRect, localize_primitive_name,
 };
 use zengeld_chart::ui::modal_state::OpenModal;
 use zengeld_terminal_indicators::RecalcMode;
@@ -264,7 +264,7 @@ impl ChartApp {
                     for p in group.primitives.iter() {
                         let data = p.data();
                         let kind = p.kind();
-                        let display = p.display_name().to_string();
+                        let display = localize_primitive_name(&data.type_id, p.display_name());
                         let name = if display.is_empty() { data.type_id.as_str() } else { display.as_str() };
                         // Compare the full instrument key (symbol, exchange, account_type).
                         // For primitives created before exchange/account_type fields existed,
@@ -344,7 +344,7 @@ impl ChartApp {
                         .map(|p| {
                             let data = p.data();
                             let kind = p.kind();
-                            let display = p.display_name().to_string();
+                            let display = localize_primitive_name(&data.type_id, p.display_name());
                             (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone())
                         })
                         .collect())
@@ -403,7 +403,7 @@ impl ChartApp {
                         .map(|p| {
                             let data = p.data();
                             let kind = p.kind();
-                            let display = p.display_name().to_string();
+                            let display = localize_primitive_name(&data.type_id, p.display_name());
                             (data.id, display, data.type_id.clone(), kind, data.visible, data.locked, data.color.stroke.clone(), data.symbol.clone(), data.exchange.clone(), data.account_type.clone())
                         })
                         .collect())

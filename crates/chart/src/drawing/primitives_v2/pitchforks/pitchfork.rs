@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -47,9 +48,9 @@ impl PitchforkLevelMode {
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            PitchforkLevelMode::Base => "Базовые",
-            PitchforkLevelMode::Fibonacci => "Фибоначчи",
-            PitchforkLevelMode::Both => "Все",
+            PitchforkLevelMode::Base => ConfigKey::BaseLevels.get(current_language()),
+            PitchforkLevelMode::Fibonacci => ConfigKey::FibonacciLevels.get(current_language()),
+            PitchforkLevelMode::Both => ConfigKey::AllLevels.get(current_language()),
         }
     }
 }

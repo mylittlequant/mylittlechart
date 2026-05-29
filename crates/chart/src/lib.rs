@@ -451,9 +451,11 @@ pub use render::{
 pub use i18n::{
     Language, current_language, set_language,
     t, t_tooltip, t_menu, t_config, t_wave, t_style, t_label_pos,
+    t_primitive_name, t_primitive_tooltip, localize_primitive_name,
     TextKey, TooltipKey, MenuKey, ConfigKey, WaveDegreeKey, StyleKey, LabelPositionKey,
     MonthKey, month_names_short,
     Translatable,
+    PrimitiveNameKey, PrimitiveTooltipKey,
 };
 
 // User profile (aggregate persistent state — active selections, UI state)

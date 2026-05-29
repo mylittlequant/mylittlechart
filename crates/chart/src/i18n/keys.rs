@@ -19,6 +19,8 @@ use super::tables::{
     MODAL_KEY_TABLE,
     INDICATOR_MODAL_KEY_TABLE,
     SIDEBAR_KEY_TABLE,
+    PRIMITIVE_NAME_TABLE,
+    PRIMITIVE_TOOLTIP_TABLE,
 };
 
 // =============================================================================
@@ -1215,6 +1217,449 @@ impl uzor::i18n::Translate for SidebarKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&SIDEBAR_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Primitive Name Keys  (drawing toolbar / object tree / context menu names)
+// =============================================================================
+
+/// Localized display name keys for the 84 built-in drawing primitives.
+///
+/// Variant order is **frozen** — discriminant == row index in `PRIMITIVE_NAME_TABLE`.
+/// Map a registry `type_id` string → this key via `PrimitiveNameKey::from_type_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum PrimitiveNameKey {
+    // Lines (0-8)
+    TrendLine           = 0,
+    HorizontalLine      = 1,
+    VerticalLine        = 2,
+    Ray                 = 3,
+    ExtendedLine        = 4,
+    InfoLine            = 5,
+    TrendAngle          = 6,
+    HorizontalRay       = 7,
+    CrossLine           = 8,
+    // Channels (9-12)
+    ParallelChannel     = 9,
+    RegressionTrend     = 10,
+    FlatTopBottom       = 11,
+    DisjointChannel     = 12,
+    // Shapes (13-22)
+    Rectangle           = 13,
+    Circle              = 14,
+    Ellipse             = 15,
+    Triangle            = 16,
+    Arc                 = 17,
+    Polyline            = 18,
+    Path                = 19,
+    RotatedRectangle    = 20,
+    Curve               = 21,
+    DoubleCurve         = 22,
+    // Fibonacci (23-33)
+    FibRetracement      = 23,
+    FibExtension        = 24,
+    FibChannel          = 25,
+    FibTimeZones        = 26,
+    FibSpeedResistance  = 27,
+    FibTrendTime        = 28,
+    FibCircles          = 29,
+    FibSpiral           = 30,
+    FibArcs             = 31,
+    FibWedge            = 32,
+    FibFan              = 33,
+    // Pitchforks (34-37)
+    Pitchfork           = 34,
+    SchiffPitchfork     = 35,
+    ModifiedSchiff      = 36,
+    InsidePitchfork     = 37,
+    // Gann (38-41)
+    GannBox             = 38,
+    GannSquareFixed     = 39,
+    GannSquare          = 40,
+    GannFan             = 41,
+    // Arrows (42)
+    ArrowLine           = 42,
+    // Annotations (43-55)
+    Text                = 43,
+    AnchoredText        = 44,
+    Note                = 45,
+    PriceNote           = 46,
+    Signpost            = 47,
+    Callout             = 48,
+    Comment             = 49,
+    PriceLabel          = 50,
+    Sign                = 51,
+    Flag                = 52,
+    Table               = 53,
+    TriangleUp          = 54,
+    TriangleDown        = 55,
+    // Patterns (56-61)
+    XabcdPattern        = 56,
+    CypherPattern       = 57,
+    HeadShoulders       = 58,
+    AbcdPattern         = 59,
+    TrianglePattern     = 60,
+    ThreeDrives         = 61,
+    // Elliott (62-66)
+    ElliottImpulse      = 62,
+    ElliottCorrection   = 63,
+    ElliottTriangle     = 64,
+    ElliottDoubleCombo  = 65,
+    ElliottTripleCombo  = 66,
+    // Cycles (67-69)
+    CycleLines          = 67,
+    TimeCycles          = 68,
+    SineWave            = 69,
+    // Projection (70-74)
+    LongPosition        = 70,
+    ShortPosition       = 71,
+    BarsPattern         = 72,
+    PriceProjection     = 73,
+    Projection          = 74,
+    // Volume (75-76)
+    FixedVolumeProfile  = 75,
+    AnchoredVolumeProfile = 76,
+    // Measurement (77-79)
+    PriceRange          = 77,
+    DateRange           = 78,
+    PriceDateRange      = 79,
+    // Brushes (80-81)
+    Brush               = 80,
+    Highlighter         = 81,
+    // Icons (82-83)
+    Image               = 82,
+    Sticker             = 83,
+}
+
+impl PrimitiveNameKey {
+    pub const COUNT: usize = 84;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&PRIMITIVE_NAME_TABLE[self as usize], lang as usize)
+    }
+
+    /// Map a registry `type_id` string to the corresponding key.
+    /// Returns `None` for unknown or emoji_* variant type_ids.
+    pub fn from_type_id(type_id: &str) -> Option<Self> {
+        match type_id {
+            "trend_line"               => Some(Self::TrendLine),
+            "horizontal_line"          => Some(Self::HorizontalLine),
+            "vertical_line"            => Some(Self::VerticalLine),
+            "ray"                      => Some(Self::Ray),
+            "extended_line"            => Some(Self::ExtendedLine),
+            "info_line"                => Some(Self::InfoLine),
+            "trend_angle"              => Some(Self::TrendAngle),
+            "horizontal_ray"           => Some(Self::HorizontalRay),
+            "cross_line"               => Some(Self::CrossLine),
+            "parallel_channel"         => Some(Self::ParallelChannel),
+            "regression_trend"         => Some(Self::RegressionTrend),
+            "flat_top_bottom"          => Some(Self::FlatTopBottom),
+            "disjoint_channel"         => Some(Self::DisjointChannel),
+            "rectangle"                => Some(Self::Rectangle),
+            "circle"                   => Some(Self::Circle),
+            "ellipse"                  => Some(Self::Ellipse),
+            "triangle"                 => Some(Self::Triangle),
+            "arc"                      => Some(Self::Arc),
+            "polyline"                 => Some(Self::Polyline),
+            "path"                     => Some(Self::Path),
+            "rotated_rectangle"        => Some(Self::RotatedRectangle),
+            "curve"                    => Some(Self::Curve),
+            "double_curve"             => Some(Self::DoubleCurve),
+            "fib_retracement"          => Some(Self::FibRetracement),
+            "fib_trend_extension"      => Some(Self::FibExtension),
+            "fib_channel"              => Some(Self::FibChannel),
+            "fib_time_zones"           => Some(Self::FibTimeZones),
+            "fib_speed_resistance"     => Some(Self::FibSpeedResistance),
+            "fib_trend_time"           => Some(Self::FibTrendTime),
+            "fib_circles"              => Some(Self::FibCircles),
+            "fib_spiral"               => Some(Self::FibSpiral),
+            "fib_arcs"                 => Some(Self::FibArcs),
+            "fib_wedge"                => Some(Self::FibWedge),
+            "fib_fan"                  => Some(Self::FibFan),
+            "pitchfork"                => Some(Self::Pitchfork),
+            "schiff_pitchfork"         => Some(Self::SchiffPitchfork),
+            "modified_schiff"          => Some(Self::ModifiedSchiff),
+            "inside_pitchfork"         => Some(Self::InsidePitchfork),
+            "gann_box"                 => Some(Self::GannBox),
+            "gann_square_fixed"        => Some(Self::GannSquareFixed),
+            "gann_square"              => Some(Self::GannSquare),
+            "gann_fan"                 => Some(Self::GannFan),
+            "arrow_line"               => Some(Self::ArrowLine),
+            "text"                     => Some(Self::Text),
+            "anchored_text"            => Some(Self::AnchoredText),
+            "note"                     => Some(Self::Note),
+            "price_note"               => Some(Self::PriceNote),
+            "signpost"                 => Some(Self::Signpost),
+            "callout"                  => Some(Self::Callout),
+            "comment"                  => Some(Self::Comment),
+            "price_label"              => Some(Self::PriceLabel),
+            "sign"                     => Some(Self::Sign),
+            "flag"                     => Some(Self::Flag),
+            "table"                    => Some(Self::Table),
+            "triangle_up"              => Some(Self::TriangleUp),
+            "triangle_down"            => Some(Self::TriangleDown),
+            "xabcd_pattern"            => Some(Self::XabcdPattern),
+            "cypher_pattern"           => Some(Self::CypherPattern),
+            "head_shoulders"           => Some(Self::HeadShoulders),
+            "abcd_pattern"             => Some(Self::AbcdPattern),
+            "triangle_pattern"         => Some(Self::TrianglePattern),
+            "three_drives"             => Some(Self::ThreeDrives),
+            "elliott_impulse"          => Some(Self::ElliottImpulse),
+            "elliott_correction"       => Some(Self::ElliottCorrection),
+            "elliott_triangle"         => Some(Self::ElliottTriangle),
+            "elliott_double_combo"     => Some(Self::ElliottDoubleCombo),
+            "elliott_triple_combo"     => Some(Self::ElliottTripleCombo),
+            "cycle_lines"              => Some(Self::CycleLines),
+            "time_cycles"              => Some(Self::TimeCycles),
+            "sine_wave"                => Some(Self::SineWave),
+            "long_position"            => Some(Self::LongPosition),
+            "short_position"           => Some(Self::ShortPosition),
+            "bars_pattern"             => Some(Self::BarsPattern),
+            "price_projection"         => Some(Self::PriceProjection),
+            "projection"               => Some(Self::Projection),
+            "fixed_volume_profile"     => Some(Self::FixedVolumeProfile),
+            "anchored_volume_profile"  => Some(Self::AnchoredVolumeProfile),
+            "price_range"              => Some(Self::PriceRange),
+            "date_range"               => Some(Self::DateRange),
+            "price_date_range"         => Some(Self::PriceDateRange),
+            "brush"                    => Some(Self::Brush),
+            "highlighter"              => Some(Self::Highlighter),
+            "image"                    => Some(Self::Image),
+            "emoji"                    => Some(Self::Sticker),
+            _                          => None,
+        }
+    }
+}
+
+impl uzor::i18n::Translate for PrimitiveNameKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&PRIMITIVE_NAME_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Primitive Tooltip Keys  (drawing toolbar hover tooltips)
+// =============================================================================
+
+/// Localized tooltip keys for the 84 built-in drawing primitives.
+///
+/// Variant order is **frozen** — discriminant == row index in `PRIMITIVE_TOOLTIP_TABLE`.
+/// Map a registry `type_id` string → this key via `PrimitiveTooltipKey::from_type_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum PrimitiveTooltipKey {
+    // Lines (0-8)
+    TrendLine           = 0,
+    HorizontalLine      = 1,
+    VerticalLine        = 2,
+    Ray                 = 3,
+    ExtendedLine        = 4,
+    InfoLine            = 5,
+    TrendAngle          = 6,
+    HorizontalRay       = 7,
+    CrossLine           = 8,
+    // Channels (9-12)
+    ParallelChannel     = 9,
+    RegressionTrend     = 10,
+    FlatTopBottom       = 11,
+    DisjointChannel     = 12,
+    // Shapes (13-22)
+    Rectangle           = 13,
+    Circle              = 14,
+    Ellipse             = 15,
+    Triangle            = 16,
+    Arc                 = 17,
+    Polyline            = 18,
+    Path                = 19,
+    RotatedRectangle    = 20,
+    Curve               = 21,
+    DoubleCurve         = 22,
+    // Fibonacci (23-33)
+    FibRetracement      = 23,
+    FibExtension        = 24,
+    FibChannel          = 25,
+    FibTimeZones        = 26,
+    FibSpeedResistance  = 27,
+    FibTrendTime        = 28,
+    FibCircles          = 29,
+    FibSpiral           = 30,
+    FibArcs             = 31,
+    FibWedge            = 32,
+    FibFan              = 33,
+    // Pitchforks (34-37)
+    Pitchfork           = 34,
+    SchiffPitchfork     = 35,
+    ModifiedSchiff      = 36,
+    InsidePitchfork     = 37,
+    // Gann (38-41)
+    GannBox             = 38,
+    GannSquareFixed     = 39,
+    GannSquare          = 40,
+    GannFan             = 41,
+    // Arrows (42)
+    ArrowLine           = 42,
+    // Annotations (43-55)
+    Text                = 43,
+    AnchoredText        = 44,
+    Note                = 45,
+    PriceNote           = 46,
+    Signpost            = 47,
+    Callout             = 48,
+    Comment             = 49,
+    PriceLabel          = 50,
+    Sign                = 51,
+    Flag                = 52,
+    Table               = 53,
+    TriangleUp          = 54,
+    TriangleDown        = 55,
+    // Patterns (56-61)
+    XabcdPattern        = 56,
+    CypherPattern       = 57,
+    HeadShoulders       = 58,
+    AbcdPattern         = 59,
+    TrianglePattern     = 60,
+    ThreeDrives         = 61,
+    // Elliott (62-66)
+    ElliottImpulse      = 62,
+    ElliottCorrection   = 63,
+    ElliottTriangle     = 64,
+    ElliottDoubleCombo  = 65,
+    ElliottTripleCombo  = 66,
+    // Cycles (67-69)
+    CycleLines          = 67,
+    TimeCycles          = 68,
+    SineWave            = 69,
+    // Projection (70-74)
+    LongPosition        = 70,
+    ShortPosition       = 71,
+    BarsPattern         = 72,
+    PriceProjection     = 73,
+    Projection          = 74,
+    // Volume (75-76)
+    FixedVolumeProfile  = 75,
+    AnchoredVolumeProfile = 76,
+    // Measurement (77-79)
+    PriceRange          = 77,
+    DateRange           = 78,
+    PriceDateRange      = 79,
+    // Brushes (80-81)
+    Brush               = 80,
+    Highlighter         = 81,
+    // Icons (82-83)
+    Image               = 82,
+    Sticker             = 83,
+}
+
+impl PrimitiveTooltipKey {
+    pub const COUNT: usize = 84;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&PRIMITIVE_TOOLTIP_TABLE[self as usize], lang as usize)
+    }
+
+    /// Map a registry `type_id` string to the corresponding tooltip key.
+    pub fn from_type_id(type_id: &str) -> Option<Self> {
+        match type_id {
+            "trend_line"               => Some(Self::TrendLine),
+            "horizontal_line"          => Some(Self::HorizontalLine),
+            "vertical_line"            => Some(Self::VerticalLine),
+            "ray"                      => Some(Self::Ray),
+            "extended_line"            => Some(Self::ExtendedLine),
+            "info_line"                => Some(Self::InfoLine),
+            "trend_angle"              => Some(Self::TrendAngle),
+            "horizontal_ray"           => Some(Self::HorizontalRay),
+            "cross_line"               => Some(Self::CrossLine),
+            "parallel_channel"         => Some(Self::ParallelChannel),
+            "regression_trend"         => Some(Self::RegressionTrend),
+            "flat_top_bottom"          => Some(Self::FlatTopBottom),
+            "disjoint_channel"         => Some(Self::DisjointChannel),
+            "rectangle"                => Some(Self::Rectangle),
+            "circle"                   => Some(Self::Circle),
+            "ellipse"                  => Some(Self::Ellipse),
+            "triangle"                 => Some(Self::Triangle),
+            "arc"                      => Some(Self::Arc),
+            "polyline"                 => Some(Self::Polyline),
+            "path"                     => Some(Self::Path),
+            "rotated_rectangle"        => Some(Self::RotatedRectangle),
+            "curve"                    => Some(Self::Curve),
+            "double_curve"             => Some(Self::DoubleCurve),
+            "fib_retracement"          => Some(Self::FibRetracement),
+            "fib_trend_extension"      => Some(Self::FibExtension),
+            "fib_channel"              => Some(Self::FibChannel),
+            "fib_time_zones"           => Some(Self::FibTimeZones),
+            "fib_speed_resistance"     => Some(Self::FibSpeedResistance),
+            "fib_trend_time"           => Some(Self::FibTrendTime),
+            "fib_circles"              => Some(Self::FibCircles),
+            "fib_spiral"               => Some(Self::FibSpiral),
+            "fib_arcs"                 => Some(Self::FibArcs),
+            "fib_wedge"                => Some(Self::FibWedge),
+            "fib_fan"                  => Some(Self::FibFan),
+            "pitchfork"                => Some(Self::Pitchfork),
+            "schiff_pitchfork"         => Some(Self::SchiffPitchfork),
+            "modified_schiff"          => Some(Self::ModifiedSchiff),
+            "inside_pitchfork"         => Some(Self::InsidePitchfork),
+            "gann_box"                 => Some(Self::GannBox),
+            "gann_square_fixed"        => Some(Self::GannSquareFixed),
+            "gann_square"              => Some(Self::GannSquare),
+            "gann_fan"                 => Some(Self::GannFan),
+            "arrow_line"               => Some(Self::ArrowLine),
+            "text"                     => Some(Self::Text),
+            "anchored_text"            => Some(Self::AnchoredText),
+            "note"                     => Some(Self::Note),
+            "price_note"               => Some(Self::PriceNote),
+            "signpost"                 => Some(Self::Signpost),
+            "callout"                  => Some(Self::Callout),
+            "comment"                  => Some(Self::Comment),
+            "price_label"              => Some(Self::PriceLabel),
+            "sign"                     => Some(Self::Sign),
+            "flag"                     => Some(Self::Flag),
+            "table"                    => Some(Self::Table),
+            "triangle_up"              => Some(Self::TriangleUp),
+            "triangle_down"            => Some(Self::TriangleDown),
+            "xabcd_pattern"            => Some(Self::XabcdPattern),
+            "cypher_pattern"           => Some(Self::CypherPattern),
+            "head_shoulders"           => Some(Self::HeadShoulders),
+            "abcd_pattern"             => Some(Self::AbcdPattern),
+            "triangle_pattern"         => Some(Self::TrianglePattern),
+            "three_drives"             => Some(Self::ThreeDrives),
+            "elliott_impulse"          => Some(Self::ElliottImpulse),
+            "elliott_correction"       => Some(Self::ElliottCorrection),
+            "elliott_triangle"         => Some(Self::ElliottTriangle),
+            "elliott_double_combo"     => Some(Self::ElliottDoubleCombo),
+            "elliott_triple_combo"     => Some(Self::ElliottTripleCombo),
+            "cycle_lines"              => Some(Self::CycleLines),
+            "time_cycles"              => Some(Self::TimeCycles),
+            "sine_wave"                => Some(Self::SineWave),
+            "long_position"            => Some(Self::LongPosition),
+            "short_position"           => Some(Self::ShortPosition),
+            "bars_pattern"             => Some(Self::BarsPattern),
+            "price_projection"         => Some(Self::PriceProjection),
+            "projection"               => Some(Self::Projection),
+            "fixed_volume_profile"     => Some(Self::FixedVolumeProfile),
+            "anchored_volume_profile"  => Some(Self::AnchoredVolumeProfile),
+            "price_range"              => Some(Self::PriceRange),
+            "date_range"               => Some(Self::DateRange),
+            "price_date_range"         => Some(Self::PriceDateRange),
+            "brush"                    => Some(Self::Brush),
+            "highlighter"              => Some(Self::Highlighter),
+            "image"                    => Some(Self::Image),
+            "emoji"                    => Some(Self::Sticker),
+            _                          => None,
+        }
+    }
+}
+
+impl uzor::i18n::Translate for PrimitiveTooltipKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&PRIMITIVE_TOOLTIP_TABLE[self as usize], lang_index)
     }
 }
 

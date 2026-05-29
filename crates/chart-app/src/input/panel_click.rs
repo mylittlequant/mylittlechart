@@ -4,6 +4,7 @@
 
 use crate::ChartApp;
 use uzor::WidgetId;
+use zengeld_chart::localize_primitive_name;
 
 impl ChartApp {
     /// Dispatch a click that landed on a registered widget.
@@ -2630,7 +2631,7 @@ impl ChartApp {
                 if let Some(window) = self.panel_app.panel_grid.active_window() {
                     if let Some(idx) = window.drawing_manager.find_index_by_id(id) {
                         let prim = &window.drawing_manager.primitives()[idx];
-                        source_name = prim.display_name().to_string();
+                        source_name = localize_primitive_name(prim.type_id(), prim.display_name());
                         let pts = prim.points();
                         if !pts.is_empty() {
                             price = pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64;
