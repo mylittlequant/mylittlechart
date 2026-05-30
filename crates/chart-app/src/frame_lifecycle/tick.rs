@@ -60,14 +60,24 @@ impl ChartApp {
         let (mut n_bars, mut n_trade, mut n_ticker, mut n_connector, mut n_scroll, mut n_backfill, mut n_other) =
             (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
-        // Coalesce orderbook panel updates: instead of re-aggregating DOM/L2/heatmap
-        // on EVERY drained OB snapshot/delta (N events/frame => N full re-aggregations
-        // of the ~1000-level book, measured at ~4.5ms each), collect the affected
-        // (symbol, exchange, account_type) keys here and tick each panel ONCE after
-        // the drain loop.  The panel's internal version check then reads only the
-        // latest published view.  N->1 per frame.
-        let mut ob_dirty: std::collections::HashSet<(String, String, String)> =
-            std::collections::HashSet::new();
+        // Coalesce orderbook panel updates: collect per-(symbol,exchange,account_type)
+        // delta accumulation so each panel is ticked ONCE per frame with the
+        // accumulated raw changes from the WS delta events. DOM/L2 apply the delta
+        // incrementally (O(delta)) instead of rebuilding the full ~1000-level book
+        // on every update. Heatmap still uses the old view-based tick path.
+        //
+        // Event routing:
+        //   OrderbookSnapshot{source:Rest}  → force_rebuild = true (deep REST seed)
+        //   OrderbookSnapshot{source:Ws}    → SKIP (the Delta event that follows carries the changes)
+        //   OrderbookDelta{bids, asks}       → accumulate bid_changes/ask_changes
+        struct ObDeltaEntry {
+            bid_changes: Vec<(f64, f64)>,
+            ask_changes: Vec<(f64, f64)>,
+            /// True when a REST snapshot arrived this frame → panels must full-rebuild.
+            force_rebuild: bool,
+        }
+        let mut ob_dirty: std::collections::HashMap<(String, String, String), ObDeltaEntry> =
+            std::collections::HashMap::new();
         let events_start = std::time::Instant::now();
         loop {
             let update = match self.live_update_rx.try_recv() {
@@ -663,16 +673,40 @@ impl ChartApp {
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
-                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source: _ } => {
-                    // Coalesced: the bridge already wrote the new data into the
-                    // shared OrderbookSeries before broadcasting; we just record
-                    // which panels are stale and re-aggregate them once after drain.
+                LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source } => {
                     self.last_ob_event_count += 1;
-                    ob_dirty.insert((symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string()));
+                    match source {
+                        live_data::OrderbookSource::Rest => {
+                            // REST bootstrap — force a full rebuild so panels seed
+                            // from the deep snapshot now in the shared series.
+                            let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
+                            let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
+                                bid_changes: Vec::new(),
+                                ask_changes: Vec::new(),
+                                force_rebuild: false,
+                            });
+                            entry.force_rebuild = true;
+                        }
+                        live_data::OrderbookSource::Ws => {
+                            // WS snapshot is always paired with a following
+                            // OrderbookDelta event that carries the actual changes.
+                            // Ignore the snapshot here; the delta will be processed
+                            // below. This avoids a redundant full-rebuild per delta.
+                        }
+                    }
                 }
-                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _ } => {
+                LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids, asks, timestamp: _ } => {
                     self.last_ob_event_count += 1;
-                    ob_dirty.insert((symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string()));
+                    // Accumulate raw delta changes (5-20 levels typical).
+                    // Multiple deltas per frame are concatenated in arrival order.
+                    let key = (symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string());
+                    let entry = ob_dirty.entry(key).or_insert_with(|| ObDeltaEntry {
+                        bid_changes: Vec::new(),
+                        ask_changes: Vec::new(),
+                        force_rebuild: false,
+                    });
+                    entry.bid_changes.extend_from_slice(&bids);
+                    entry.ask_changes.extend_from_slice(&asks);
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
@@ -699,24 +733,35 @@ impl ChartApp {
         // (measured ~4.5ms each on a ~1000-level book) into one.
         if !ob_dirty.is_empty() {
             let _ob_panel_start = std::time::Instant::now();
-            for (symbol, ex_str, at_str) in &ob_dirty {
+            for ((symbol, ex_str, at_str), entry) in &ob_dirty {
+                // ── DOM: incremental or full-rebuild ──────────────────────────
                 let dom_t0 = std::time::Instant::now();
                 for state in self.panels_store.dom.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
-                        state.tick();
+                        state.apply_ob_update(
+                            &entry.bid_changes,
+                            &entry.ask_changes,
+                            entry.force_rebuild,
+                        );
                     }
                 }
                 self.last_dom_panel_us += dom_t0.elapsed().as_micros() as u64;
 
+                // ── L2 Tape: incremental or full-rebuild ──────────────────────
                 let l2_t0 = std::time::Instant::now();
                 for state in self.panels_store.l2_tape.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
-                        state.tick();
+                        state.apply_ob_update(
+                            &entry.bid_changes,
+                            &entry.ask_changes,
+                            entry.force_rebuild,
+                        );
                         state.prune_flash();
                     }
                 }
                 self.last_l2_panel_us += l2_t0.elapsed().as_micros() as u64;
 
+                // ── Heatmap: view-based tick (rate-limited, untouched path) ───
                 let heat_t0 = std::time::Instant::now();
                 for state in self.panels_store.liquidity_heatmap.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {

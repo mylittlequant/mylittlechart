@@ -1216,6 +1216,8 @@ impl ChartApp {
                                         state.account_type = account_type_str.clone();
                                         state.shared_orderbook = Some(ob_handle);
                                         state.last_seen_orderbook_version = 0;
+                                        state.level_qty_bid.clear();
+                                        state.level_qty_ask.clear();
                                         state.shared_trades = Some(trade_handle);
                                     }
                                 } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
@@ -1317,6 +1319,7 @@ impl ChartApp {
                                         state.account_type = account_type_str.clone();
                                         state.shared_orderbook = Some(handle);
                                         state.last_seen_orderbook_version = 0;
+                                        state.previous_book.clear();
                                     }
                                 } else if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
                                     state.symbol = symbol.clone();

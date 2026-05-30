@@ -4862,6 +4862,8 @@ impl ChartApp {
                     s.account_type = account_type.clone();
                     s.shared_orderbook = new_ob_handle;
                     s.last_seen_orderbook_version = 0;
+                    s.level_qty_bid.clear();
+                    s.level_qty_ask.clear();
                     s.shared_trades = new_trade_handle;
                     s.volume_by_price.clear();
                     s.max_volume = 0.0;

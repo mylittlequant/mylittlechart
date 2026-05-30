@@ -89,6 +89,18 @@ pub struct DomState {
     /// differs we pull a fresh aggregation from the shared series.
     pub last_seen_orderbook_version: u64,
 
+    /// Per-level quantity cache for incremental bucket updates.
+    ///
+    /// Maps the exact raw price (as `OrderedFloat<f64>` bit pattern stored as `i64`)
+    /// to the current qty at that level on the bid side.  Used by `apply_ob_update`
+    /// to compute the old qty before subtracting it from the aggregated bucket.
+    ///
+    /// Key: `price.to_bits() as i64` (lossless round-trip for f64 prices).
+    pub level_qty_bid: HashMap<i64, f64>,
+
+    /// Same as `level_qty_bid` but for the ask side.
+    pub level_qty_ask: HashMap<i64, f64>,
+
     /// Shared trade series — read each tick to accumulate trade volume per price.
     pub shared_trades: Option<Arc<RwLock<TradeSeries>>>,
 
@@ -203,6 +215,8 @@ impl DomState {
             ob_view: None,
             ob_series_ptr: 0,
             last_seen_orderbook_version: 0,
+            level_qty_bid: HashMap::new(),
+            level_qty_ask: HashMap::new(),
             shared_trades: None,
             last_seen_trade_version: 0,
             trade_volume_by_price: HashMap::new(),
@@ -494,6 +508,150 @@ impl DomState {
         }
     }
 
+    /// Apply an orderbook update from the live-data frame tick.
+    ///
+    /// Called once per frame when the (symbol, exchange, account_type) key for
+    /// this panel appears in the dirty map.  Acquires the lock-free view for
+    /// price/best-bid/ask metadata, then either does a full rebuild or applies
+    /// the raw delta incrementally.
+    ///
+    /// ## When full rebuild is chosen
+    /// - `force_rebuild` is true (REST snapshot or first delta after reassign)
+    /// - `level_qty_bid`/`level_qty_ask` are empty (panel just opened / reassigned)
+    /// - No delta changes were accumulated (`delta_bids` and `delta_asks` both empty
+    ///   AND `force_rebuild` is false) — nothing to do, but view may have advanced
+    ///   due to `set_last_trade_price`; update price trackers from view in that case.
+    ///
+    /// ## Incremental update (delta path)
+    /// For each `(price, new_qty)` in the delta:
+    /// 1. Look up `old_qty` from `level_qty_bid/ask`.
+    /// 2. Compute the bucket key (`floor` for bids, `ceil` for asks).
+    /// 3. Subtract `old_qty` from the bucket, add `new_qty`.
+    /// 4. Remove the bucket entry when it reaches ~0.
+    /// 5. Update `level_qty_bid/ask`.
+    ///
+    /// `recompute_max_volume()` is called after both paths.
+    pub fn apply_ob_update(
+        &mut self,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        force_rebuild: bool,
+    ) {
+        // Acquire lock-free view for price metadata and (on full rebuild) level data.
+        // Must happen before any mutable borrow below.
+        let view_opt = {
+            // Handle reassignment: if the Arc pointer changed, re-subscribe.
+            if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+                let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+                if cur_ptr != self.ob_series_ptr {
+                    self.ob_view = None;
+                    self.ob_series_ptr = cur_ptr;
+                    self.level_qty_bid.clear();
+                    self.level_qty_ask.clear();
+                }
+                if self.ob_view.is_none() {
+                    if let Ok(series) = ob_handle.read() {
+                        self.ob_view = Some(series.subscribe_view());
+                    }
+                }
+            }
+            self.ob_view.as_ref().map(|va| va.load_full())
+        };
+
+        let Some(view) = view_opt else { return };
+
+        // Always update price trackers from the authoritative view.
+        self.best_bid_price = view.best_bid;
+        self.best_ask_price = view.best_ask;
+        if let Some(mid) = view.mid {
+            self.market_price = mid;
+            if self.center_price == 0.0 || self.auto_center {
+                self.center_price = mid;
+            }
+        }
+
+        let need_full = force_rebuild
+            || self.level_qty_bid.is_empty() && self.level_qty_ask.is_empty()
+            || (delta_bids.is_empty() && delta_asks.is_empty());
+
+        if need_full {
+            // Full rebuild from the published view.
+            self.rebuild_aggregation_from_levels(&view.bids, &view.asks);
+            // Re-seed the per-level cache from the view.
+            self.level_qty_bid.clear();
+            self.level_qty_ask.clear();
+            for &(price, qty) in &view.bids {
+                if qty > 0.0 {
+                    self.level_qty_bid.insert(price.to_bits() as i64, qty);
+                }
+            }
+            for &(price, qty) in &view.asks {
+                if qty > 0.0 {
+                    self.level_qty_ask.insert(price.to_bits() as i64, qty);
+                }
+            }
+            self.last_seen_orderbook_version = view.version;
+            return;
+        }
+
+        // ── Incremental path ─────────────────────────────────────────────────
+        // Apply each delta level to the aggregated bucket map.
+        let tick_size = self.tick_size;
+
+        // Bid side: bucket = floor(price / tick_size)
+        for &(price, new_qty) in delta_bids {
+            let price_key = price.to_bits() as i64;
+            let old_qty = self.level_qty_bid.get(&price_key).copied().unwrap_or(0.0);
+            let bucket = (price / tick_size).floor() as i64;
+
+            // Adjust bucket entry.
+            let bucket_entry = self.volume_by_price.entry(bucket).or_insert((0.0, 0.0, 0, 0));
+            // Subtract old contribution.
+            bucket_entry.0 = (bucket_entry.0 - old_qty).max(0.0);
+            if old_qty > 0.0 && bucket_entry.2 > 0 {
+                bucket_entry.2 -= 1;
+            }
+            // Add new contribution.
+            if new_qty > 0.0 {
+                bucket_entry.0 += new_qty;
+                bucket_entry.2 += 1;
+                self.level_qty_bid.insert(price_key, new_qty);
+            } else {
+                self.level_qty_bid.remove(&price_key);
+            }
+            // Prune empty bucket.
+            if bucket_entry.0 < f64::EPSILON && bucket_entry.1 < f64::EPSILON {
+                self.volume_by_price.remove(&bucket);
+            }
+        }
+
+        // Ask side: bucket = ceil(price / tick_size)
+        for &(price, new_qty) in delta_asks {
+            let price_key = price.to_bits() as i64;
+            let old_qty = self.level_qty_ask.get(&price_key).copied().unwrap_or(0.0);
+            let bucket = (price / tick_size).ceil() as i64;
+
+            let bucket_entry = self.volume_by_price.entry(bucket).or_insert((0.0, 0.0, 0, 0));
+            bucket_entry.1 = (bucket_entry.1 - old_qty).max(0.0);
+            if old_qty > 0.0 && bucket_entry.3 > 0 {
+                bucket_entry.3 -= 1;
+            }
+            if new_qty > 0.0 {
+                bucket_entry.1 += new_qty;
+                bucket_entry.3 += 1;
+                self.level_qty_ask.insert(price_key, new_qty);
+            } else {
+                self.level_qty_ask.remove(&price_key);
+            }
+            if bucket_entry.0 < f64::EPSILON && bucket_entry.1 < f64::EPSILON {
+                self.volume_by_price.remove(&bucket);
+            }
+        }
+
+        self.recompute_max_volume();
+        self.last_seen_orderbook_version = view.version;
+    }
+
     /// Recompute max_trade_volume across all stored trade levels.
     fn recompute_max_trade_volume(&mut self) {
         self.max_trade_volume = self.trade_volume_by_price.values()
@@ -555,9 +713,11 @@ impl DomState {
             return;
         }
         self.tick_size = new_tick;
-        // Force a full rebuild on the next tick by resetting the version cursor.
+        // Force a full rebuild: clear per-level cache (bucket keys change with tick_size).
         self.last_seen_orderbook_version = 0;
         self.last_seen_trade_version = 0;
+        self.level_qty_bid.clear();
+        self.level_qty_ask.clear();
         self.tick();
     }
 

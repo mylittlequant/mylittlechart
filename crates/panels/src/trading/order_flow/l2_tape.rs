@@ -855,6 +855,193 @@ impl L2TapeState {
         }
     }
 
+    /// Apply an orderbook update from the live-data frame tick.
+    ///
+    /// Called once per frame by the coalesced ob_dirty loop in tick.rs.
+    /// Generates L2Events by diffing the delta against `previous_book` —
+    /// O(delta) instead of O(full book) as in the old `diff_and_push_events` path.
+    ///
+    /// ## Full rebuild path (`force_rebuild` or empty `previous_book`)
+    /// Rebuilds `previous_book` from the current shared view without pushing
+    /// any events (the panel just opened or was reassigned — we're seeding, not
+    /// reporting historical changes).  Also updates `dom_market_price`.
+    ///
+    /// ## Incremental path
+    /// For each `(price, qty)` in `delta_bids`/`delta_asks`: compare against
+    /// `previous_book`, emit Add/Modify/Cancel, update `previous_book`.
+    /// Uses the same classification logic as `diff_and_push_events`.
+    pub fn apply_ob_update(
+        &mut self,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        force_rebuild: bool,
+    ) {
+        // Acquire lock-free view (needed for full rebuild and for best-bid/ask).
+        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            if cur_ptr != self.ob_series_ptr {
+                self.ob_view = None;
+                self.ob_series_ptr = cur_ptr;
+                // Pointer changed → treat as new panel, full rebuild next.
+                self.previous_book.clear();
+                self.last_seen_orderbook_version = 0;
+            }
+            if self.ob_view.is_none() {
+                if let Ok(series) = ob_handle.read() {
+                    self.ob_view = Some(series.subscribe_view());
+                }
+            }
+        }
+
+        let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
+
+        // Update mid-price tracker from view when available.
+        if let Some(ref view) = view_opt {
+            let best_bid = view.bids.last().map(|(p, _)| *p).unwrap_or(0.0);
+            let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+            if best_bid > 0.0 && best_ask > 0.0 {
+                self.dom_market_price = Some((best_bid + best_ask) / 2.0);
+            }
+        }
+
+        // Full rebuild: seed previous_book from view, no events.
+        if force_rebuild || self.previous_book.is_empty() {
+            if let Some(ref view) = view_opt {
+                self.previous_book.clear();
+                for &(price, qty) in &view.bids {
+                    if qty > 0.0 {
+                        let tick = self.price_to_tick(price);
+                        let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                        entry.0 = qty;
+                    }
+                }
+                for &(price, qty) in &view.asks {
+                    if qty > 0.0 {
+                        let tick = self.price_to_tick(price);
+                        let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                        entry.1 = qty;
+                    }
+                }
+                if let Some(ref v) = view_opt {
+                    self.last_seen_orderbook_version = v.version;
+                }
+            }
+            return;
+        }
+
+        // Nothing to do when delta is empty (e.g. only trade-price bump).
+        if delta_bids.is_empty() && delta_asks.is_empty() {
+            return;
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        // Incremental: classify each delta level and push events.
+        for &(price, qty) in delta_bids {
+            let tick = self.price_to_tick(price);
+            let prev_qty = self.previous_book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
+
+            let event_type = if qty == 0.0 && prev_qty > 0.0 {
+                L2EventType::Cancel
+            } else if qty > 0.0 && prev_qty == 0.0 {
+                L2EventType::Add
+            } else if qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
+                L2EventType::Modify
+            } else {
+                // Unchanged — update previous_book and skip.
+                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                entry.0 = qty;
+                continue;
+            };
+
+            if let Some(min_q) = self.min_quantity {
+                let relevant = if qty > 0.0 { qty } else { prev_qty };
+                if relevant < min_q {
+                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    entry.0 = qty;
+                    continue;
+                }
+            }
+
+            self.push_event(L2Event {
+                timestamp,
+                event_type,
+                side: L2Side::Bid,
+                price,
+                quantity: if qty > 0.0 { qty } else { prev_qty },
+                order_count: None,
+                order_id: None,
+            });
+
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.0 = qty;
+        }
+
+        for &(price, qty) in delta_asks {
+            let tick = self.price_to_tick(price);
+            let prev_qty = self.previous_book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
+
+            let event_type = if qty == 0.0 && prev_qty > 0.0 {
+                L2EventType::Cancel
+            } else if qty > 0.0 && prev_qty == 0.0 {
+                L2EventType::Add
+            } else if qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
+                L2EventType::Modify
+            } else {
+                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                entry.1 = qty;
+                continue;
+            };
+
+            if let Some(min_q) = self.min_quantity {
+                let relevant = if qty > 0.0 { qty } else { prev_qty };
+                if relevant < min_q {
+                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    entry.1 = qty;
+                    continue;
+                }
+            }
+
+            self.push_event(L2Event {
+                timestamp,
+                event_type,
+                side: L2Side::Ask,
+                price,
+                quantity: if qty > 0.0 { qty } else { prev_qty },
+                order_count: None,
+                order_id: None,
+            });
+
+            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            entry.1 = qty;
+        }
+
+        // Time-based retention: drain events older than retention_ms.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
+        let before_len = self.events.len();
+        while let Some(front) = self.events.front() {
+            if front.timestamp < cutoff_ms {
+                self.events.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.events.len() < before_len {
+            self.recalc_max_qty();
+        }
+
+        if let Some(ref v) = view_opt {
+            self.last_seen_orderbook_version = v.version;
+        }
+    }
+
     /// Apply a full orderbook snapshot.
     ///
     /// Deprecated — L2Tape now reads from `shared_orderbook` via `tick()`.
