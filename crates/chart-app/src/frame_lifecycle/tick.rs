@@ -78,6 +78,14 @@ impl ChartApp {
         }
         let mut ob_dirty: std::collections::HashMap<(String, String, String), ObDeltaEntry> =
             std::collections::HashMap::new();
+        // Coalesce last-trade-price → orderbook ghost-filter updates.  Calling
+        // `set_last_trade_price` per trade is O(book): it sweeps ghost levels
+        // (~1000) AND rebuilds the published view (full ~1000×2 clone) every time.
+        // On a burst (172 trades/frame) that was the dominant ~21ms tick spike.
+        // Only the LAST price per symbol matters for the ghost filter, so record
+        // it here and apply once after the drain loop.
+        let mut last_trade_price_by_symbol: std::collections::HashMap<(String, String, String), f64> =
+            std::collections::HashMap::new();
         let events_start = std::time::Instant::now();
         loop {
             let update = match self.live_update_rx.try_recv() {
@@ -574,20 +582,14 @@ impl ChartApp {
                         }
                     }
 
-                    // Update orderbook last_trade_price so the ghost-level filter
-                    // has an authoritative mid to work with.
-                    {
-                        let ob_key = orderbook_service::OrderbookKey::new(exchange_id, account_type, &symbol);
-                        let series_arc = {
-                            let ob_map = self.bridge.orderbook_map();
-                            ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned())
-                        };
-                        if let Some(arc) = series_arc {
-                            if let Ok(mut s) = arc.write() {
-                                s.set_last_trade_price(price);
-                            }
-                        }
-                    }
+                    // Record the latest trade price for the ghost-level filter.
+                    // Applied ONCE per symbol after the drain loop (coalesced) so a
+                    // 172-trade burst does not trigger 172 full book sweeps + view
+                    // republishes (the old ~21ms spike).
+                    last_trade_price_by_symbol.insert(
+                        (symbol.clone(), exchange_id.as_str().to_string(), account_type.short_label().to_string()),
+                        price,
+                    );
                 }
                 LiveUpdate::MiniTickerUpdate { exchange_id, symbol, last_price, price_change_percent, high_price, low_price, volume, account_type } => {
                     // Cache the 24h ticker stats keyed by symbol:exchange:account_type so that
@@ -615,20 +617,14 @@ impl ChartApp {
                     if let Some(v) = low_price            { entry.low_price = v; }
                     if let Some(v) = volume               { entry.volume = v; }
 
-                    // Mirror last_price into the matching OrderbookSeries so the ghost
-                    // filter has an authoritative mid even on slow markets with no trades.
-                    {
-                        let ob_key = orderbook_service::OrderbookKey::new(exchange_id, account_type, &symbol);
-                        let series_arc = {
-                            let ob_map = self.bridge.orderbook_map();
-                            ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned())
-                        };
-                        if let Some(arc) = series_arc {
-                            if let Ok(mut s) = arc.write() {
-                                s.set_last_trade_price(last_price);
-                            }
-                        }
-                    }
+                    // Mirror last_price into the ghost filter — coalesced with the
+                    // trade-price map (applied once per symbol after drain), so a
+                    // burst of BBO ticker events does not trigger per-event book
+                    // sweeps + view republishes.
+                    last_trade_price_by_symbol.insert(
+                        (symbol.clone(), exchange_id.as_str().to_string(), account_type.short_label().to_string()),
+                        last_price,
+                    );
                 }
                 LiveUpdate::ConnectorReady { exchange_id } => {
                     let eid_str = exchange_id.as_str();
@@ -724,6 +720,30 @@ impl ChartApp {
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;
+
+        // ── Coalesced last-trade-price → ghost filter (once per symbol) ──────
+        // Applied before the panel re-aggregation below so DOM/L2 see the
+        // ghost-filtered book in the same frame.  One sweep + view republish per
+        // symbol instead of one per trade (was the dominant burst spike).
+        if !last_trade_price_by_symbol.is_empty() {
+            let ob_map = self.bridge.orderbook_map();
+            for ((symbol, ex_str, _at_str), price) in &last_trade_price_by_symbol {
+                // Reconstruct the OrderbookKey for this symbol.  exchange_id parse
+                // mirrors the trade arm's construction.
+                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_str) {
+                    // account_type is encoded in the key tuple's short label; rebuild
+                    // via the same helper used elsewhere.
+                    let at = account_type_from_label(_at_str);
+                    let ob_key = orderbook_service::OrderbookKey::new(eid, at, symbol);
+                    let series_arc = ob_map.read().ok().and_then(|map| map.get(&ob_key).cloned());
+                    if let Some(arc) = series_arc {
+                        if let Ok(mut s) = arc.write() {
+                            s.set_last_trade_price(*price);
+                        }
+                    }
+                }
+            }
+        }
 
         // ── Coalesced orderbook panel re-aggregation ─────────────────────────
         // Tick each affected order-flow panel ONCE per frame regardless of how
