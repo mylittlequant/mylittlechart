@@ -331,6 +331,11 @@ struct App<'s> {
     /// GPU render time (µs) from the previous frame, written after GpuDone is
     /// received and read in the next frame's populate block.
     cached_gpu_us: u64,
+    /// Total wall-clock time (µs) spent inside the last about_to_wait call.
+    /// Distinct from dt (interval between frames): this is the actual work time.
+    /// Small about_to_wait_us + large dt → loop was idle/WaitUntil, not overloaded.
+    /// Large about_to_wait_us → genuinely heavy frame.
+    cached_about_to_wait_us: u64,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -982,6 +987,7 @@ impl App<'_> {
             cached_connector_count: 0,
             cached_scene_us: 0,
             cached_gpu_us: 0,
+            cached_about_to_wait_us: 0,
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -1977,6 +1983,7 @@ impl ApplicationHandler for App<'_> {
         }
 
         let _t0 = std::time::Instant::now();
+        let _atw_start = _t0; // alias — both measure from same point (after FPS guard return)
 
         // ── Frame timing ────────────────────────────────────────────────────
         let now = std::time::Instant::now();
@@ -3970,6 +3977,15 @@ impl ApplicationHandler for App<'_> {
                 perf.indicator_full_count = pw.chart.indicator_manager.last_full_count;
                 perf.event_process_us = pw.chart.last_event_process_us;
                 perf.auto_scale_us = pw.chart.last_auto_scale_us;
+
+                // Detailed profiling — new fields.
+                perf.orderbook_panel_us = pw.chart.last_orderbook_panel_us;
+                perf.trade_panel_us = pw.chart.last_trade_panel_us;
+                perf.bar_apply_us = pw.chart.last_bar_apply_us;
+                perf.ob_event_count = pw.chart.last_ob_event_count;
+                perf.trade_event_count = pw.chart.last_trade_event_count;
+                perf.composite_us = pw.chart.last_composite_us;
+                perf.about_to_wait_us = self.cached_about_to_wait_us;
             }
 
         } // end if perf_visible
@@ -4262,6 +4278,8 @@ impl ApplicationHandler for App<'_> {
         }
 
         let _t8 = std::time::Instant::now();
+        // Record actual work time for this about_to_wait invocation.
+        self.cached_about_to_wait_us = _atw_start.elapsed().as_micros() as u64;
 
         // ── Timing report every 5 seconds ───────────────────────────────────
         self.frame_count += 1;
@@ -4277,10 +4295,23 @@ impl ApplicationHandler for App<'_> {
                     .next()
                     .map(|pw| (pw.chart.diag_queue_len, pw.chart.diag_series_handles, pw.chart.diag_mini_ticker))
                     .unwrap_or((0, 0, 0));
+                let (ob_panel_us, tr_panel_us, bar_apply_us, ob_ev, tr_ev, composite_us) =
+                    self.windows.values()
+                    .next()
+                    .map(|pw| (
+                        pw.chart.last_orderbook_panel_us,
+                        pw.chart.last_trade_panel_us,
+                        pw.chart.last_bar_apply_us,
+                        pw.chart.last_ob_event_count,
+                        pw.chart.last_trade_event_count,
+                        pw.chart.last_composite_us,
+                    ))
+                    .unwrap_or((0, 0, 0, 0, 0, 0));
                 eprintln!(
-                    "[PERF] Frame {} total={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | LEAK[queue={} handles={} ticker={}]",
+                    "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} handles={} ticker={}]",
                     self.frame_count,
                     total as f64 / 1000.0,
+                    self.cached_about_to_wait_us as f64 / 1000.0,
                     self.dt_min_ms,
                     self.dt_max_ms,
                     self.dt_samples,
@@ -4299,6 +4330,10 @@ impl ApplicationHandler for App<'_> {
                     toolbar_us as f64 / 1000.0,
                     sidebar_us as f64 / 1000.0,
                     setup_us as f64 / 1000.0,
+                    ob_panel_us, ob_ev,
+                    tr_panel_us, tr_ev,
+                    bar_apply_us,
+                    composite_us,
                     q_len,
                     n_handles,
                     n_ticker,

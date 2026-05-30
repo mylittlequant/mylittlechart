@@ -678,6 +678,23 @@ pub struct PerformanceData {
     pub event_process_us: u64,
     /// Accumulated time spent in calc_auto_scale() calls this frame.
     pub auto_scale_us: u64,
+
+    // ── New detailed profiling fields (added for deep perf visibility) ────────
+    /// Accumulated time in orderbook panel .tick() calls (DOM/L2Tape/Heatmap) per frame, μs.
+    pub orderbook_panel_us: u64,
+    /// Accumulated time in trade panel .tick() calls (BigTrades/VolumeProfile/Footprint/TradeTape) per frame, μs.
+    pub trade_panel_us: u64,
+    /// Accumulated time in bar apply (BarService.apply_trade + window.bars loop) per frame, μs.
+    pub bar_apply_us: u64,
+    /// Number of OrderbookSnapshot + OrderbookDelta events drained this frame.
+    pub ob_event_count: u32,
+    /// Number of TradeUpdate events drained this frame.
+    pub trade_event_count: u32,
+    /// Scene composite time: scene.reset + scene.append calls (VelloGpu path), μs.
+    pub composite_us: u64,
+    /// Total wall-clock time of the last about_to_wait call (actual frame work), μs.
+    /// Distinct from frame_time_ms (interval between frames).
+    pub about_to_wait_us: u64,
 }
 
 impl Default for PerformanceData {
@@ -714,6 +731,13 @@ impl Default for PerformanceData {
             indicator_full_count: 0,
             event_process_us: 0,
             auto_scale_us: 0,
+            orderbook_panel_us: 0,
+            trade_panel_us: 0,
+            bar_apply_us: 0,
+            ob_event_count: 0,
+            trade_event_count: 0,
+            composite_us: 0,
+            about_to_wait_us: 0,
         }
     }
 }

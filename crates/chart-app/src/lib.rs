@@ -561,6 +561,25 @@ pub struct ChartApp {
     /// Accumulated time in calc_auto_scale() calls during the last tick.
     pub last_auto_scale_us: u64,
 
+    /// Scene composite time (scene.reset + scene.append for chart/overlay/sidebar/toolbar)
+    /// measured in the last build_window_scene call, in microseconds.
+    /// Written by scene_builder.rs, read by the PERF populate block in main.rs.
+    pub last_composite_us: u64,
+
+    /// Accumulated time in orderbook panel .tick() calls (DOM + L2Tape + LiquidityHeatmap)
+    /// for OrderbookSnapshot and OrderbookDelta events during the last tick.
+    pub last_orderbook_panel_us: u64,
+    /// Accumulated time in trade panel .tick() calls (BigTrades + VolumeProfile + Footprint + TradeTape)
+    /// for TradeUpdate events during the last tick.
+    pub last_trade_panel_us: u64,
+    /// Accumulated time in bar apply operations (BarsLoaded + BackfillComplete + ScrollBarsLoaded + TradeUpdate bar update)
+    /// during the last tick.
+    pub last_bar_apply_us: u64,
+    /// Number of OrderbookSnapshot + OrderbookDelta events drained during the last tick.
+    pub last_ob_event_count: u32,
+    /// Number of TradeUpdate + BarUpdate events drained during the last tick.
+    pub last_trade_event_count: u32,
+
     /// Heavy state for all trading panels docked into the free-slot sidebars.
     ///
     /// Keyed by `PanelId`. The matching `FreeItem` leaves in each slot's
@@ -940,6 +959,12 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
+            last_composite_us: 0,
+            last_orderbook_panel_us: 0,
+            last_trade_panel_us: 0,
+            last_bar_apply_us: 0,
+            last_ob_event_count: 0,
+            last_trade_event_count: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
@@ -1257,6 +1282,12 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
+            last_composite_us: 0,
+            last_orderbook_panel_us: 0,
+            last_trade_panel_us: 0,
+            last_bar_apply_us: 0,
+            last_ob_event_count: 0,
+            last_trade_event_count: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,
@@ -1455,6 +1486,12 @@ impl ChartApp {
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
             last_auto_scale_us: 0,
+            last_composite_us: 0,
+            last_orderbook_panel_us: 0,
+            last_trade_panel_us: 0,
+            last_bar_apply_us: 0,
+            last_ob_event_count: 0,
+            last_trade_event_count: 0,
             panels_store: panels_store::TradingPanelsStore::new(),
             agent_sep_drag: None,
             slot_sep_drag: None,

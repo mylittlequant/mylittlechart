@@ -4483,6 +4483,25 @@ fn render_performance_panel(
         }
     }
 
+    // Orderbook panel tick breakdown
+    draw_row(ctx, &mut y, "  OB Panels", &format!("{}μs ({}ev)", perf.orderbook_panel_us, perf.ob_event_count), &text_color);
+
+    // Trade panel tick breakdown
+    draw_row(ctx, &mut y, "  Trade Panels", &format!("{}μs ({}ev)", perf.trade_panel_us, perf.trade_event_count), &text_color);
+
+    // Bar apply
+    draw_row(ctx, &mut y, "  Bar Apply", &format!("{}μs", perf.bar_apply_us), &text_color);
+
+    // Scene composite (reset + append calls, VelloGpu path)
+    draw_row(ctx, &mut y, "  Composite", &format!("{}μs", perf.composite_us), &text_color);
+
+    // AboutToWait vs dt (frame interval) — distinguish idle from heavy frames
+    {
+        let atw_ms = perf.about_to_wait_us as f64 / 1000.0;
+        let atw_color = if atw_ms > 10.0 { "#f87171" } else if atw_ms > 5.0 { "#fbbf24" } else { &text_color };
+        draw_row(ctx, &mut y, "AboutToWait", &format!("{:.1}ms", atw_ms), atw_color);
+    }
+
     // =========================================================================
     // SETTINGS section (clickable controls)
     // =========================================================================

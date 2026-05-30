@@ -39,6 +39,11 @@ impl ChartApp {
         // Reset per-tick accumulators for profiling.
         self.last_auto_scale_us = 0;
         self.last_indicator_recalc_us = 0;
+        self.last_orderbook_panel_us = 0;
+        self.last_trade_panel_us = 0;
+        self.last_bar_apply_us = 0;
+        self.last_ob_event_count = 0;
+        self.last_trade_event_count = 0;
 
         // ── Live data: drain the async update channel ─────────────────────
         // The channel is a broadcast — handle Lagged by continuing to drain.
@@ -344,11 +349,14 @@ impl ChartApp {
                 }
                 LiveUpdate::TradeUpdate { exchange_id, symbol, price, quantity, timestamp, account_type, is_buyer_maker } => {
                     self.trade_count += 1;
+                    self.last_trade_event_count += 1;
                     had_trade_update = true;
                     // Track whether any window formed a new bar for this symbol.
                     let mut is_new_bar = false;
                     // Track whether a multi-bar gap was detected (needs REST backfill).
                     let mut needs_backfill = false;
+
+                    let _bar_apply_start = std::time::Instant::now();
 
                     // Feed trade into BarService for each active timeframe.
                     {
@@ -455,6 +463,8 @@ impl ChartApp {
                         }
                     }
 
+                    self.last_bar_apply_us += _bar_apply_start.elapsed().as_micros() as u64;
+
                     // Multi-bar gap detected — trigger REST backfill to fill missing candles.
                     if needs_backfill {
                         eprintln!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
@@ -503,6 +513,7 @@ impl ChartApp {
 
                     // Pull new trades from the shared ring into all order-flow panels.
                     // All four panel kinds now read from shared_trades via tick().
+                    let _trade_panel_start = std::time::Instant::now();
                     for state in self.panels_store.big_trades.values_mut() {
                         state.tick();
                     }
@@ -515,6 +526,7 @@ impl ChartApp {
                     for state in self.panels_store.trade_tape.values_mut() {
                         state.tick();
                     }
+                    self.last_trade_panel_us += _trade_panel_start.elapsed().as_micros() as u64;
 
                     // Schedule indicator recalculation according to the current mode.
                     match self.indicator_manager.recalc_mode {
@@ -643,9 +655,11 @@ impl ChartApp {
                 LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source: _ } => {
                     let ex_str = exchange_id.as_str();
                     let at_str = account_type.short_label();
+                    self.last_ob_event_count += 1;
                     // All orderbook panels now read from the shared OrderbookSeries via tick().
                     // The bridge already wrote the new data into the shared series before
                     // broadcasting this LiveUpdate, so tick() will see the version bump.
+                    let _ob_snap_start = std::time::Instant::now();
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.tick();
@@ -662,11 +676,14 @@ impl ChartApp {
                             state.tick();
                         }
                     }
+                    self.last_orderbook_panel_us += _ob_snap_start.elapsed().as_micros() as u64;
                 }
                 LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _ } => {
                     let ex_str = exchange_id.as_str();
                     let at_str = account_type.short_label();
+                    self.last_ob_event_count += 1;
                     // All orderbook panels read from shared OrderbookSeries via tick().
+                    let _ob_delta_start = std::time::Instant::now();
                     for state in self.panels_store.dom.values_mut() {
                         if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
                             state.tick();
@@ -683,6 +700,7 @@ impl ChartApp {
                             state.tick();
                         }
                     }
+                    self.last_orderbook_panel_us += _ob_delta_start.elapsed().as_micros() as u64;
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
@@ -1027,11 +1045,16 @@ impl ChartApp {
         // silent in normal runs.
         if self.last_tick_us > 3000 && std::env::var("MLC_PERF_LOG").is_ok() {
             eprintln!(
-                "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
+                "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
                 self.last_tick_us,
                 self.last_event_process_us,
                 self.last_indicator_recalc_us,
                 self.last_auto_scale_us,
+                self.last_orderbook_panel_us,
+                self.last_ob_event_count,
+                self.last_trade_panel_us,
+                self.last_trade_event_count,
+                self.last_bar_apply_us,
                 _drain_count, n_bars, n_backfill, n_scroll, n_trade, n_ticker, n_connector, n_other,
                 self.lag_event_count,
             );

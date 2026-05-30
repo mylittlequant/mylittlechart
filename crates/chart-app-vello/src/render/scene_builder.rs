@@ -27,7 +27,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
 
     let t0 = std::time::Instant::now();
 
+    let _reset_start = std::time::Instant::now();
     pw.scene.reset();
+    let reset_us = _reset_start.elapsed().as_micros() as u64;
 
     // Sync chrome colours from the chart theme.
     #[cfg(target_os = "windows")]
@@ -129,6 +131,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
             pw.chart.render(&mut render_ctx, frame_time, true);
             pw.chart_dirty = false;
         }
+        let _composite_start = std::time::Instant::now();
         pw.scene.append(&pw.chart_scene, None);
 
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
@@ -180,6 +183,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[alert
 
         // Composite cached toolbar on top of chart content.
         pw.scene.append(&pw.toolbar_scene, None);
+        let composite_us = _composite_start.elapsed().as_micros() as u64;
+        // Store composite timing (reset + core appends) in per-window state for the PERF panel.
+        pw.chart.last_composite_us = reset_us + composite_us;
 
         // Panel overlay popups — drawn after sidebar and toolbar so they appear
         // on top of both.  These include the sync color grid (panel target) and
