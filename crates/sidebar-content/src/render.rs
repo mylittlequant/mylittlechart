@@ -4357,11 +4357,11 @@ fn render_performance_panel(
     draw_row(ctx, &mut y, "FPS", &format!("{:.0}", perf.fps), fps_color);
     draw_row(ctx, &mut y, "Frame Time", &format!("{:.1} ms", perf.frame_time_ms), &text_color);
 
-    // Scene build / GPU render / GPU present
-    if perf.scene_build_us > 0 || perf.gpu_render_us > 0 || perf.gpu_present_us > 0 {
-        draw_row(ctx, &mut y, "Scene Build", &format!("{}μs", perf.scene_build_us), &text_color);
-        draw_row(ctx, &mut y, "GPU Render", &format!("{}μs", perf.gpu_render_us), &text_color);
-        draw_row(ctx, &mut y, "GPU Present", &format!("{}μs", perf.gpu_present_us), &text_color);
+    // Scene build / GPU render / GPU present — always shown (no flicker).
+    draw_row(ctx, &mut y, "Scene Build", &format!("{}μs", perf.scene_build_us), &text_color);
+    draw_row(ctx, &mut y, "GPU Render", &format!("{}μs", perf.gpu_render_us), &text_color);
+    draw_row(ctx, &mut y, "GPU Present", &format!("{}μs", perf.gpu_present_us), &text_color);
+    {
         let total_us = perf.scene_build_us + perf.gpu_render_us + perf.gpu_present_us;
         draw_row(ctx, &mut y, "Total", &format!("{}μs", total_us), accent);
     }
@@ -4474,22 +4474,17 @@ fn render_performance_panel(
     };
     draw_row(ctx, &mut y, "  Indicators", &format!("{}μs", perf.indicator_recalc_us), indicator_color);
 
-    // Incremental / full counts
-    if perf.indicator_recalc_count > 0 {
-        draw_row(ctx, &mut y, "    Instances", &format!("{}", perf.indicator_recalc_count), &text_color);
-        draw_row(ctx, &mut y, "    Incremental", &format!("{}", perf.indicator_incremental_count), "#4ade80");
-        if perf.indicator_full_count > 0 {
-            draw_row(ctx, &mut y, "    Full Recalc", &format!("{}", perf.indicator_full_count), "#f87171");
-        }
-    }
+    // Incremental / full counts — always shown (no flicker).
+    draw_row(ctx, &mut y, "    Instances", &format!("{}", perf.indicator_recalc_count), &text_color);
+    draw_row(ctx, &mut y, "    Incremental", &format!("{}", perf.indicator_incremental_count), "#4ade80");
+    draw_row(ctx, &mut y, "    Full Recalc", &format!("{}", perf.indicator_full_count), "#f87171");
 
-    // Orderbook panel tick breakdown
+    // Orderbook panel tick breakdown — always shown (0 is a valid reading; the
+    // earlier conditional made the rows flicker in/out between quiet and busy frames).
     draw_row(ctx, &mut y, "  OB Panels", &format!("{}μs ({}ev)", perf.orderbook_panel_us, perf.ob_event_count), &text_color);
-    if perf.dom_panel_us > 0 || perf.l2_panel_us > 0 || perf.heatmap_panel_us > 0 {
-        draw_row(ctx, &mut y, "    DOM", &format!("{}μs", perf.dom_panel_us), &text_color);
-        draw_row(ctx, &mut y, "    L2", &format!("{}μs", perf.l2_panel_us), &text_color);
-        draw_row(ctx, &mut y, "    Heatmap", &format!("{}μs", perf.heatmap_panel_us), &text_color);
-    }
+    draw_row(ctx, &mut y, "    DOM", &format!("{}μs", perf.dom_panel_us), &text_color);
+    draw_row(ctx, &mut y, "    L2", &format!("{}μs", perf.l2_panel_us), &text_color);
+    draw_row(ctx, &mut y, "    Heatmap", &format!("{}μs", perf.heatmap_panel_us), &text_color);
 
     // Trade panel tick breakdown
     draw_row(ctx, &mut y, "  Trade Panels", &format!("{}μs ({}ev)", perf.trade_panel_us, perf.trade_event_count), &text_color);
