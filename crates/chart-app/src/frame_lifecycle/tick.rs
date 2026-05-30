@@ -92,7 +92,7 @@ impl ChartApp {
                 Ok(u) => { _drain_count += 1; u },
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                     self.lag_event_count += 1;
-                    eprintln!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
+                    crate::dlog!("[ChartApp:{}] broadcast LAGGED — skipped {} messages (total lag events: {})",
                         self.panel_app.panel_grid.windows().values().next()
                             .map(|w| w.symbol.as_str()).unwrap_or("?"),
                         n, self.lag_event_count);
@@ -135,7 +135,7 @@ impl ChartApp {
             match update {
                 LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type } => {
                     let loaded_tf = parse_timeframe_name(&tf_name);
-                    eprintln!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
+                    crate::dlog!("[ChartApp] BarsLoaded: {:?} {} tf={} bars={} first_ts={} last_ts={}",
                         exchange_id, symbol, tf_name, bars.len(),
                         bars.first().map(|b| b.timestamp).unwrap_or(0),
                         bars.last().map(|b| b.timestamp).unwrap_or(0));
@@ -184,7 +184,7 @@ impl ChartApp {
                             } else {
                                 !window.bars.is_empty()
                             };
-                            eprintln!("[ChartApp]   -> window matched: sym={} exch={} tf={} is_backfill={} bars_len={} pending_sym={}",
+                            crate::dlog!("[ChartApp]   -> window matched: sym={} exch={} tf={} is_backfill={} bars_len={} pending_sym={}",
                                 window.symbol, window.exchange, window.timeframe.name,
                                 is_backfill, window.bars.len(), window.pending_symbol_load);
                             if is_backfill {
@@ -216,7 +216,7 @@ impl ChartApp {
                                     ));
                                 }
                             }
-                            eprintln!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
+                            crate::dlog!("[BarsLoaded] after set_bars: view_start={} chart_width={} bar_spacing={}",
                                 window.viewport.view_start, window.viewport.chart_width, window.viewport.bar_spacing);
                         }
                     }
@@ -225,7 +225,7 @@ impl ChartApp {
                     // Done after the window loop to avoid borrow conflicts with self.bridge.
                     let bg_target = self.panel_app.user_manager.profile.data_load.background_bar_count;
                     for (sym, tf, at) in backfill_requests {
-                        eprintln!("[ChartApp] Scheduling background backfill: {} {} tf={} target={}", exchange_id.as_str(), sym, tf.name, bg_target);
+                        crate::dlog!("[ChartApp] Scheduling background backfill: {} {} tf={} target={}", exchange_id.as_str(), sym, tf.name, bg_target);
                         self.bridge.request_background_backfill(exchange_id, &sym, &tf, at, bg_target);
                     }
 
@@ -273,7 +273,7 @@ impl ChartApp {
                     }
                 }
                 LiveUpdate::BackfillComplete { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
-                    eprintln!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
+                    crate::dlog!("[ChartApp] BackfillComplete: {} {} tf={} bars={}", exchange_id.as_str(), symbol, tf_name, bars.len());
                     for window in self.panel_app.panel_grid.windows_mut().values_mut() {
                         let tf_matches = window.timeframe.name == tf_name;
                         if !(window.symbol == symbol
@@ -311,7 +311,7 @@ impl ChartApp {
                     self.bars_cache_dirty = true;
                 }
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
-                    eprintln!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
+                    crate::dlog!("[ChartApp] ScrollBarsLoaded: {} {} tf={} bars={} prepend={}",
                         exchange_id.as_str(), symbol, tf_name, bars.len(), prepend_count);
 
                     let at_label = account_type.short_label();
@@ -496,7 +496,7 @@ impl ChartApp {
 
                     // Multi-bar gap detected — trigger REST backfill to fill missing candles.
                     if needs_backfill {
-                        eprintln!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
+                        crate::dlog!("[ChartApp] Multi-bar gap detected for {} — requesting REST backfill", symbol);
                         let bridge = self.bridge.clone();
                         for window in self.panel_app.panel_grid.windows().values() {
                             if window.symbol == symbol && window.account_type == account_type.short_label() {
@@ -572,7 +572,7 @@ impl ChartApp {
                         }
                         RecalcMode::PerBar => {
                             if is_new_bar {
-                                eprintln!("[ChartApp] PerBar: new bar detected for {}", symbol);
+                                crate::dlog!("[ChartApp] PerBar: new bar detected for {}", symbol);
                                 self.indicator_manager.mark_new_bar(&symbol);
                             } else {
                                 // Still mark dirty so the flag exists; drain_pending_recalc
@@ -629,7 +629,7 @@ impl ChartApp {
                 LiveUpdate::ConnectorReady { exchange_id } => {
                     let eid_str = exchange_id.as_str();
                     if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                        eprintln!("[ChartApp] ConnectorReady for disabled {}, ignoring", eid_str);
+                        crate::dlog!("[ChartApp] ConnectorReady for disabled {}, ignoring", eid_str);
                         continue;
                     }
                     // Always load symbols for any connector that becomes ready.
@@ -1001,7 +1001,7 @@ impl ChartApp {
                 RecalcMode::PerFrame => "PerFrame",
                 RecalcMode::PerBar => "PerBar",
             };
-            eprintln!(
+            crate::dlog!(
                 "[ChartApp] RecalcMode={} | trades={} recalcs={} in 5s",
                 mode, self.trade_count, self.recalc_count
             );
@@ -1024,7 +1024,7 @@ impl ChartApp {
                 if window.scroll_fetch_in_flight {
                     if let Some(started) = window.scroll_fetch_started {
                         if started.elapsed() > std::time::Duration::from_secs(10) {
-                            eprintln!("[ChartApp] scroll_fetch_in_flight timeout, resetting for {}", window.symbol);
+                            crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for {}", window.symbol);
                             window.scroll_fetch_in_flight = false;
                             window.scroll_fetch_started = None;
                         }

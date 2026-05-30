@@ -53,6 +53,22 @@ pub use bridge::{DataBridge, LiveUpdate, OrderbookSource, account_type_from_shor
 pub use provider::LiveDataProvider;
 pub use convert::{kline_to_bar, timeframe_to_interval};
 
+// ── Debug log gate (MLC_PERF_LOG) ────────────────────────────────────────────
+static DEBUG_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn debug_log_enabled() -> bool {
+    *DEBUG_LOG.get_or_init(|| std::env::var("MLC_PERF_LOG").is_ok())
+}
+
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        if $crate::debug_log_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+pub(crate) use dlog;
+
 /// A broadcast receiver for [`LiveUpdate`] messages.
 ///
 /// Re-exported here so that crates that depend on `live-data` but not directly

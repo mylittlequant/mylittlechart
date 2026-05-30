@@ -207,7 +207,7 @@ async fn run_ws_actor(
         // Reset depth book on reconnect — wait for a fresh WS snapshot.
         if let Some(ref mut db) = depth_book {
             if db.is_seeded() {
-                eprintln!("[WsActor] {:?} depth book reset on reconnect", key.exchange_id);
+                crate::dlog!("[WsActor] {:?} depth book reset on reconnect", key.exchange_id);
             }
             *db = DepthBook::new();
         }
@@ -309,7 +309,7 @@ async fn run_ws_actor(
                             let depth = ws.orderbook_capabilities(key.account_type).clamp_depth(Some(50));
                             let req = make_sub_request(key.stream_type, key.exchange_id, &symbol, key.account_type, depth);
                             let _ = ws.unsubscribe(req).await;
-                            eprintln!(
+                            crate::dlog!(
                                 "[WsActor] {:?} unsubscribed {} after 30s grace",
                                 key.exchange_id, symbol
                             );
@@ -434,7 +434,7 @@ async fn run_ws_actor(
                         }
                         Ok(None) => break,   // Stream ended normally; reconnect.
                         Err(_) => {
-                            eprintln!(
+                            crate::dlog!(
                                 "[WsActor] {:?}/{:?} 60s silence, reconnecting",
                                 key.exchange_id, key.stream_type
                             );
@@ -549,7 +549,7 @@ async fn run_private_ws_actor(
                         }
                         Ok(None) => break,
                         Err(_) => {
-                            eprintln!(
+                            crate::dlog!(
                                 "[WsActor] {:?}/Private 60s silence, reconnecting",
                                 key.exchange_id
                             );

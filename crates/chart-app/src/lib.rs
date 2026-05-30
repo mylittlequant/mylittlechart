@@ -36,6 +36,25 @@ pub use sidebar_content::watchlist::{WatchlistManager, WatchlistSymbol};
 pub use zengeld_terminal_indicators::RecalcMode;
 pub use zengeld_chart::{Language, set_language};
 
+// ── Debug log gate (MLC_PERF_LOG) ────────────────────────────────────────────
+// Checked once at first use via OnceLock; hot path reads a single bool.
+static DEBUG_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn debug_log_enabled() -> bool {
+    *DEBUG_LOG.get_or_init(|| std::env::var("MLC_PERF_LOG").is_ok())
+}
+
+/// Diagnostic log — gated by `MLC_PERF_LOG` env var.
+/// Set `MLC_PERF_LOG=1` (any non-empty value) to enable.
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        if $crate::debug_log_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+pub(crate) use dlog;
+
 use std::cell::RefCell;
 
 use zengeld_chart::{
@@ -1572,7 +1591,7 @@ impl ChartApp {
         app.panel_app.user_manager.profile = user_manager.profile.clone();
         app.panel_app.user_manager.snapshots = user_manager.snapshots.clone();
 
-        eprintln!(
+        dlog!(
             "[ChartApp] new_window: using {} presets, {} prim-templates, {} ind-templates",
             app.panel_app.presets.len(),
             app.panel_app.template_manager.primitive_templates.len(),
@@ -1846,7 +1865,7 @@ impl ChartApp {
         }
 
         // Notification settings — load from profile into alert settings state.
-        eprintln!(
+        dlog!(
             "[ChartApp] apply_profile_state: tg_enabled={} token_len={} subscribers={}",
             profile.notification_settings.telegram.enabled,
             profile.notification_settings.telegram.bot_token.len(),
@@ -1948,7 +1967,7 @@ impl ChartApp {
                                         }
                                     }
                                 }
-                                eprintln!(
+                                dlog!(
                                     "[ChartApp] agents docking restored: {} leaves",
                                     self.sidebar_state.agent_leaves.len()
                                 );
@@ -1992,7 +2011,7 @@ impl ChartApp {
     /// performs GPU readback to capture the frame as a PNG file.
     pub fn request_screenshot(&mut self) {
         self.pending_screenshot = true;
-        eprintln!("[Screenshot] Capture requested");
+        dlog!("[Screenshot] Capture requested");
     }
 
     // -------------------------------------------------------------------------
@@ -2006,7 +2025,7 @@ impl ChartApp {
     /// channel each frame and feeds bars into the window once they arrive.
     pub fn switch_to_exchange(&mut self, exchange_id: digdigdig3::ExchangeId) {
         if !self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-            eprintln!("[ChartApp] Exchange {} is disabled, skipping", exchange_id.as_str());
+            dlog!("[ChartApp] Exchange {} is disabled, skipping", exchange_id.as_str());
             return;
         }
         // Capture old trade-stream identity BEFORE updating active_exchange or window state.
@@ -5067,7 +5086,7 @@ impl ChartApp {
                 .unwrap_or(self.active_exchange);
             let old_at = crate::account_type_from_label(old_at_label);
             self.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
-            eprintln!(
+            dlog!(
                 "[TagManager] unsubscribed depth for panel group {} ← {} @ {} ({})",
                 group_id.0, old_sym, old_exch, old_at_label
             );
@@ -5083,7 +5102,7 @@ impl ChartApp {
                 .unwrap_or(self.active_exchange);
             let at = crate::account_type_from_label(&account_type);
             self.bridge.subscribe_depth(eid, &symbol, at);
-            eprintln!(
+            dlog!(
                 "[TagManager] subscribed depth for panel group {} → {} @ {} ({})",
                 group_id.0, symbol, exchange, account_type
             );
@@ -5658,7 +5677,7 @@ impl ChartApp {
                         UndoAction::PrimitiveDeleted { index, data: _data } => {
                             // Deletion undo is handled externally when the delete action fires.
                             // We log it here rather than silently drop it.
-                            eprintln!("[Undo] PrimitiveDeleted at index {} — deletion undo handled at call site", index);
+                            dlog!("[Undo] PrimitiveDeleted at index {} — deletion undo handled at call site", index);
                             None
                         }
                     };

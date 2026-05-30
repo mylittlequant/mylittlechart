@@ -457,7 +457,7 @@ impl DataBridge {
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&cache_key) {
-                eprintln!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
+                crate::dlog!("[Bridge] fetch already in flight for {:?} sym={} tf={}, skipping", exchange_id, symbol_str, tf_name);
                 return;
             }
             af.insert(cache_key.clone());
@@ -472,7 +472,7 @@ impl DataBridge {
         // If cache exists, send it immediately (Level 1 — instant render while
         // the network fetch is in flight).
         if let Some(ref bars) = cached_bars {
-            eprintln!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
+            crate::dlog!("[Bridge] {:?} serving {} cached bars instantly for sym={} tf={}", exchange_id, bars.len(), symbol_str, tf_name);
             let _ = tx.send(LiveUpdate::BarsLoaded {
                 exchange_id,
                 account_type,
@@ -534,7 +534,7 @@ impl DataBridge {
                 .unwrap_or(false);
 
             if cache_is_fresh && !force {
-                eprintln!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
+                crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} cache is fresh (age={}s < {}s), skipping fetch",
                     exchange_id, symbol_str, interval,
                     now_secs - disk_last_ts.unwrap_or(0),
                     interval_secs * 2);
@@ -542,7 +542,7 @@ impl DataBridge {
                 return;
             }
 
-            eprintln!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
+            crate::dlog!("[Bridge] Phase A: {:?} sym={} interval={} fetching 300 fresh bars", exchange_id, symbol_str, interval);
 
             let phase_a_result = connector
                 .get_klines((&sym).into(),&interval, Some(300), account_type, None)
@@ -551,7 +551,7 @@ impl DataBridge {
             let fresh_300: Vec<Bar> = match phase_a_result {
                 Ok(klines) => {
                     let bars: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
-                    eprintln!("[Bridge] Phase A: got {} bars", bars.len());
+                    crate::dlog!("[Bridge] Phase A: got {} bars", bars.len());
                     bars
                 }
                 Err(e) => {
@@ -569,7 +569,7 @@ impl DataBridge {
             let fresh_last_ts: Option<i64> = fresh_300.last().map(|b| b.timestamp);
 
             if let (Some(ft), Some(lt)) = (fresh_first_ts, fresh_last_ts) {
-                eprintln!("[Bridge] Phase A fresh range: {} -> {} ({} bars)", ft, lt, fresh_300.len());
+                crate::dlog!("[Bridge] Phase A fresh range: {} -> {} ({} bars)", ft, lt, fresh_300.len());
             }
 
             // Merge fresh_300 into any existing session cache.
@@ -580,7 +580,7 @@ impl DataBridge {
                     set_series_bars(&cache, &cache_key, fresh_300.clone(), period_secs);
                     fresh_300.clone()
                 } else {
-                    eprintln!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
+                    crate::dlog!("[Bridge] Phase A merging {} fresh + {} cached", fresh_300.len(), old.len());
                     merge_into_series(&cache, &cache_key, fresh_300.clone(), period_secs)
                 }
             };
@@ -597,7 +597,7 @@ impl DataBridge {
             // ── Phase B: Async heal — fill gap between disk cache and fresh bars ──
             // Only runs when a disk cache existed before this call.
             if !had_disk_cache {
-                eprintln!("[Bridge] Phase B: skipped (no disk cache)");
+                crate::dlog!("[Bridge] Phase B: skipped (no disk cache)");
                 finish_fetch!();
                 return;
             }
@@ -619,7 +619,7 @@ impl DataBridge {
 
             let gap_seconds = fresh_first - disk_last;
             if gap_seconds <= 0 {
-                eprintln!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
+                crate::dlog!("[Bridge] Phase B: no gap (disk_last={} fresh_first={}), done", disk_last, fresh_first);
                 finish_fetch!();
                 return;
             }
@@ -628,7 +628,7 @@ impl DataBridge {
             let gap_bars = if interval_secs > 0 { gap_seconds / interval_secs } else { gap_seconds };
             let heal_target = (gap_bars * 2).max(100) as usize;
 
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] Phase B: gap={}s = ~{} bars, heal_target={} bars (disk_last={} fresh_first={})",
                 gap_seconds, gap_bars, heal_target, disk_last, fresh_first
             );
@@ -647,7 +647,7 @@ impl DataBridge {
                 match result {
                     Ok(klines) => {
                         if klines.is_empty() {
-                            eprintln!("[Bridge] Phase B: empty page, stopping");
+                            crate::dlog!("[Bridge] Phase B: empty page, stopping");
                             break 'heal;
                         }
                         pages += 1;
@@ -662,42 +662,42 @@ impl DataBridge {
                         // batch is fresh REST data and wins on conflicts (second arg wins).
                         heal_bars = merge_bars(heal_bars, batch);
 
-                        eprintln!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
+                        crate::dlog!("[Bridge] Phase B: page {} -> {} heal bars (oldest_ts={})", pages, heal_bars.len(), oldest_bar_ts);
 
                         if heal_bars.len() >= heal_target {
-                            eprintln!("[Bridge] Phase B: reached heal_target={}", heal_target);
+                            crate::dlog!("[Bridge] Phase B: reached heal_target={}", heal_target);
                             break 'heal;
                         }
                         // Stop when we've reached into the disk cache range.
                         if oldest_bar_ts <= disk_last {
-                            eprintln!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
+                            crate::dlog!("[Bridge] Phase B: reached disk_last={}, gap covered", disk_last);
                             break 'heal;
                         }
                         if pages >= 20 {
-                            eprintln!("[Bridge] Phase B: capped at 20 pages");
+                            crate::dlog!("[Bridge] Phase B: capped at 20 pages");
                             break 'heal;
                         }
                     }
                     Err(e) => {
-                        eprintln!("[Bridge] Phase B error at page {}: {}", pages, e);
+                        crate::dlog!("[Bridge] Phase B error at page {}: {}", pages, e);
                         break 'heal;
                     }
                 }
             }
 
             if heal_bars.is_empty() {
-                eprintln!("[Bridge] Phase B: no heal bars fetched, done");
+                crate::dlog!("[Bridge] Phase B: no heal bars fetched, done");
                 finish_fetch!();
                 return;
             }
 
-            eprintln!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
+            crate::dlog!("[Bridge] Phase B: fetched {} heal bars over {} pages, merging", heal_bars.len(), pages);
 
             // Merge heal bars into current cache (which already has Phase A result).
             // heal_bars goes as "old" so that the already-cached Phase A data wins on conflicts.
             let merged_b = merge_into_series(&cache, &cache_key, heal_bars, period_secs);
 
-            eprintln!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
+            crate::dlog!("[Bridge] Phase B done: sending {} bars (fully healed)", merged_b.len());
 
             // Send Phase B BarsLoaded (Level 3 — fully healed dataset).
             let _ = tx.send(LiveUpdate::BarsLoaded {
@@ -1134,7 +1134,7 @@ impl DataBridge {
                 .collect();
             for key in keys {
                 actors.remove(&key);
-                eprintln!("[Bridge] Stopped WS actor: {:?}/{:?}", key.exchange_id, key.stream_type);
+                crate::dlog!("[Bridge] Stopped WS actor: {:?}/{:?}", key.exchange_id, key.stream_type);
             }
         }
     }
@@ -1145,7 +1145,7 @@ impl DataBridge {
         let was_connected = self.hub.is_connected(exchange_id);
         self.hub.shutdown(exchange_id);
         if was_connected {
-            eprintln!("[Bridge] Removed connector: {:?}", exchange_id);
+            crate::dlog!("[Bridge] Removed connector: {:?}", exchange_id);
         }
     }
 
@@ -1276,7 +1276,7 @@ impl DataBridge {
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&backfill_fetch_key) {
-                eprintln!(
+                crate::dlog!(
                     "[Bridge] backfill already in flight for {:?} sym={} tf={}, skipping",
                     exchange_id, symbol_str, tf_name
                 );
@@ -1289,7 +1289,7 @@ impl DataBridge {
         let cached_len = read_series_len(&cache, &cache_key);
 
         if cached_len >= target_bars as usize {
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] backfill {:?} sym={} tf={}: cache already has {} >= {} bars, skipping",
                 exchange_id, symbol_str, tf_name, cached_len, target_bars
             );
@@ -1342,7 +1342,7 @@ impl DataBridge {
             let (still_need, end_time_cursor_init) = {
                 let bars = read_series_bars(&cache, &cache_key);
                 if bars.len() >= target_bars as usize {
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge] backfill {:?} sym={} tf={}: satisfied after connector wait ({} bars)",
                         exchange_id, symbol_str, tf_name, bars.len()
                     );
@@ -1358,7 +1358,7 @@ impl DataBridge {
                 }
             };
 
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] backfill {:?} sym={} tf={}: need {} more bars, cursor={:?}",
                 exchange_id, symbol_str, tf_name, still_need, end_time_cursor_init
             );
@@ -1381,7 +1381,7 @@ impl DataBridge {
                         if klines.is_empty() {
                             // Exchange has no more data — record oldest_ts so scroll
                             // can stop asking for more.
-                            eprintln!("[Bridge] backfill: empty page at page {}, stopping", pages);
+                            crate::dlog!("[Bridge] backfill: empty page at page {}, stopping", pages);
                             if let Some(oldest_so_far) = accumulated.first().map(|b| b.timestamp) {
                                 if let Ok(mut map) = oldest_fetched_ts.lock() {
                                     let entry = map.entry(cache_key.clone()).or_insert(i64::MAX);
@@ -1420,7 +1420,7 @@ impl DataBridge {
 
                         accumulated = merge_bars(batch, accumulated);
 
-                        eprintln!(
+                        crate::dlog!(
                             "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={}, page_len={})",
                             pages,
                             accumulated.len(),
@@ -1429,7 +1429,7 @@ impl DataBridge {
                         );
 
                         if accumulated.len() >= still_need {
-                            eprintln!(
+                            crate::dlog!(
                                 "[Bridge] backfill: reached target ({} >= {}), more data may exist on exchange",
                                 accumulated.len(),
                                 still_need
@@ -1439,25 +1439,25 @@ impl DataBridge {
                             break 'backfill;
                         }
                         if pages >= 40 {
-                            eprintln!("[Bridge] backfill: capped at 40 pages (~20k bars)");
+                            crate::dlog!("[Bridge] backfill: capped at 40 pages (~20k bars)");
                             // Page cap also does not mean exchange ran out.
                             break 'backfill;
                         }
                     }
                     Err(e) => {
-                        eprintln!("[Bridge] backfill: error at page {}: {}", pages, e);
+                        crate::dlog!("[Bridge] backfill: error at page {}: {}", pages, e);
                         break 'backfill;
                     }
                 }
             }
 
             if accumulated.is_empty() {
-                eprintln!("[Bridge] backfill: no bars fetched, done");
+                crate::dlog!("[Bridge] backfill: no bars fetched, done");
                 finish_backfill!();
                 return;
             }
 
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, merging into cache",
                 exchange_id, symbol_str, tf_name, accumulated.len(), pages
             );
@@ -1467,7 +1467,7 @@ impl DataBridge {
             let period_secs = tf_period_secs(&tf_name);
             let merged = merge_into_series(&cache, &cache_key, accumulated, period_secs);
 
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] backfill done: sending BackfillComplete with {} bars",
                 merged.len()
             );
@@ -1544,7 +1544,7 @@ impl DataBridge {
         {
             let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
             if af.contains(&scroll_fetch_key) {
-                eprintln!(
+                crate::dlog!(
                     "[Bridge] scroll fetch already in flight for {:?} sym={} tf={}, skipping",
                     exchange_id, symbol_str, tf_name
                 );
@@ -1573,7 +1573,7 @@ impl DataBridge {
                 // Full merged set is whatever is in cache (already sorted).
                 let full_bars: Vec<Bar> = all_cached_bars;
 
-                eprintln!(
+                crate::dlog!(
                     "[Bridge] scroll {:?} sym={} tf={}: {} cached bars older than {}, serving {} from cache",
                     exchange_id, symbol_str, tf_name, older_bars.len(), before_ts, prepend_count
                 );
@@ -1606,7 +1606,7 @@ impl DataBridge {
                 // at this timestamp in a previous fetch, so there are no older bars.
                 // All available bars are already loaded — scroll has reached the beginning
                 // of the exchange's history for this symbol/timeframe.
-                eprintln!(
+                crate::dlog!(
                     "[Bridge] scroll {}: all available bars already loaded (oldest_fetched={}, before_ts={})",
                     symbol_str, oldest, before_ts
                 );
@@ -1652,7 +1652,7 @@ impl DataBridge {
             // end_time = just before the oldest timestamp the caller has (ms).
             let end_time_ms = Some(before_ts * 1000 - 1);
 
-            eprintln!(
+            crate::dlog!(
                 "[Bridge] scroll fetch: {:?} sym={} tf={} end_time_ms={:?} batch={}",
                 exchange_id, symbol_str, tf_name, end_time_ms, batch_size
             );
@@ -1676,7 +1676,7 @@ impl DataBridge {
                     finish_scroll!();
                 }
                 Ok(klines) if klines.is_empty() => {
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge] scroll fetch: {:?} sym={} tf={}: empty page, no more history",
                         exchange_id, symbol_str, tf_name
                     );
@@ -1694,7 +1694,7 @@ impl DataBridge {
                     let new_page: Vec<Bar> = klines.iter().map(kline_to_bar).collect();
                     let prepend_count = new_page.len();
 
-                    eprintln!(
+                    crate::dlog!(
                         "[Bridge] scroll fetch: {:?} sym={} tf={}: got {} bars",
                         exchange_id, symbol_str, tf_name, prepend_count
                     );
