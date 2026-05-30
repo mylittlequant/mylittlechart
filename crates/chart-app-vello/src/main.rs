@@ -4246,6 +4246,21 @@ impl ApplicationHandler for App<'_> {
         self.cached_scene_us = total_scene_us;
         self.cached_gpu_us = total_gpu_us;
 
+        // ── Scene-build spike log ────────────────────────────────────────────
+        // The scene-build (CPU) phase occasionally explodes to 14-20ms with no
+        // obvious cause while chart/sidebar sub-scenes stay ~1ms. Print a per-
+        // window breakdown when scene blows past budget so we can see which
+        // sub-scene (or the composite/swap itself) cost the time. Gated by env.
+        if total_scene_us > 5000 && std::env::var("MLC_PERF_LOG").is_ok() {
+            for (i, pw) in self.windows.values().enumerate() {
+                let (c, tb, sb, setup) = pw.chart.render_timing_us;
+                eprintln!(
+                    "[SCENE-SPIKE] total_scene={}us win{}: chart={}us tb={}us side={}us setup={}us (sum of sub-scenes; if <<total, cost is in composite/swap/append)",
+                    total_scene_us, i, c, tb, sb, setup,
+                );
+            }
+        }
+
         let _t8 = std::time::Instant::now();
 
         // ── Timing report every 5 seconds ───────────────────────────────────
@@ -4258,8 +4273,12 @@ impl ApplicationHandler for App<'_> {
                     .next()
                     .map(|pw| pw.chart.render_timing_us)
                     .unwrap_or((0, 0, 0, 0));
+                let (q_len, n_handles, n_ticker) = self.windows.values()
+                    .next()
+                    .map(|pw| (pw.chart.diag_queue_len, pw.chart.diag_series_handles, pw.chart.diag_mini_ticker))
+                    .unwrap_or((0, 0, 0));
                 eprintln!(
-                    "[PERF] Frame {} total={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms",
+                    "[PERF] Frame {} total={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | LEAK[queue={} handles={} ticker={}]",
                     self.frame_count,
                     total as f64 / 1000.0,
                     self.dt_min_ms,
@@ -4280,6 +4299,9 @@ impl ApplicationHandler for App<'_> {
                     toolbar_us as f64 / 1000.0,
                     sidebar_us as f64 / 1000.0,
                     setup_us as f64 / 1000.0,
+                    q_len,
+                    n_handles,
+                    n_ticker,
                 );
             }
             self.last_timing_report = std::time::Instant::now();

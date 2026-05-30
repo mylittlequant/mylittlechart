@@ -46,6 +46,11 @@ impl ChartApp {
         // crossing checker can be skipped on quiet (no-trade) frames.
         let mut had_trade_update = false;
         let mut _drain_count = 0u32;
+        // Per-tick drain census by event type — printed only when this tick
+        // explodes (see the spike log at the end of tick), so we can see WHAT
+        // flooded the queue this frame (trade burst? backfill? reconnect?).
+        let (mut n_bars, mut n_trade, mut n_ticker, mut n_connector, mut n_scroll, mut n_backfill, mut n_other) =
+            (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
         let events_start = std::time::Instant::now();
         loop {
@@ -82,6 +87,16 @@ impl ChartApp {
                     }
                     _ => {}
                 }
+            }
+            // Census this drained event by type (for the spike log).
+            match &update {
+                LiveUpdate::BarsLoaded { .. } => n_bars += 1,
+                LiveUpdate::BackfillComplete { .. } => n_backfill += 1,
+                LiveUpdate::ScrollBarsLoaded { .. } => n_scroll += 1,
+                LiveUpdate::TradeUpdate { .. } | LiveUpdate::BarUpdate { .. } => n_trade += 1,
+                LiveUpdate::MiniTickerUpdate { .. } => n_ticker += 1,
+                LiveUpdate::ConnectorReady { .. } => n_connector += 1,
+                _ => n_other += 1,
             }
             match update {
                 LiveUpdate::BarsLoaded { exchange_id, symbol, timeframe: tf_name, bars, account_type } => {
@@ -997,5 +1012,29 @@ impl ChartApp {
             }
         }
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
+
+        // ── Leak / backpressure census ───────────────────────────────────────
+        // Snapshot growable structures so the [PERF] line can show whether they
+        // grow unbounded over time (the suspected "leak" / load-storm).
+        self.diag_queue_len = self.live_update_rx.len();
+        self.diag_series_handles = self.series_handles.len();
+        self.diag_mini_ticker = self.mini_ticker_cache.len();
+
+        // ── Tick spike log ───────────────────────────────────────────────────
+        // Print a one-line breakdown ONLY when this tick blew past budget, so we
+        // can attribute random multi-ms/multi-second tick explosions to the exact
+        // events that flooded the queue this frame. Gated by MLC_PERF_LOG so it's
+        // silent in normal runs.
+        if self.last_tick_us > 3000 && std::env::var("MLC_PERF_LOG").is_ok() {
+            eprintln!(
+                "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
+                self.last_tick_us,
+                self.last_event_process_us,
+                self.last_indicator_recalc_us,
+                self.last_auto_scale_us,
+                _drain_count, n_bars, n_backfill, n_scroll, n_trade, n_ticker, n_connector, n_other,
+                self.lag_event_count,
+            );
+        }
     }
 }

@@ -543,6 +543,14 @@ pub struct ChartApp {
     /// Tokio runtime is guaranteed to be available via `bridge.runtime()`.
     pub agent_autostarted: bool,
 
+    // ── Leak / backpressure diagnostics (snapshotted each tick) ──────────────
+    /// Pending events in the broadcast queue after this tick's drain (backpressure).
+    pub diag_queue_len: usize,
+    /// Live `series_handles` map size (should be bounded by open windows×series).
+    pub diag_series_handles: usize,
+    /// Live `mini_ticker_cache` map size (should be bounded by watchlist size).
+    pub diag_mini_ticker: usize,
+
     // ── Internal CPU profiling timers (updated each tick, read by sidebar) ────
     /// Total time spent in the last tick() call, in microseconds.
     pub last_tick_us: u64,
@@ -925,6 +933,9 @@ impl ChartApp {
             agent_pty_drag_active: false,
             agent_chat_drag_active: false,
             agent_autostarted: false,
+            diag_queue_len: 0,
+            diag_series_handles: 0,
+            diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1239,6 +1250,9 @@ impl ChartApp {
             agent_pty_drag_active: false,
             agent_chat_drag_active: false,
             agent_autostarted: false,
+            diag_queue_len: 0,
+            diag_series_handles: 0,
+            diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
@@ -1434,6 +1448,9 @@ impl ChartApp {
             agent_pty_drag_active: false,
             agent_chat_drag_active: false,
             agent_autostarted: false,
+            diag_queue_len: 0,
+            diag_series_handles: 0,
+            diag_mini_ticker: 0,
             last_tick_us: 0,
             last_indicator_recalc_us: 0,
             last_event_process_us: 0,
