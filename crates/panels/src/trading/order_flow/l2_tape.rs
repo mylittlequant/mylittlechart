@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 
-use orderbook_service::OrderbookSeries;
+use orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
@@ -132,6 +132,12 @@ pub struct L2TapeState {
 
     /// Shared orderbook series (written by the bridge, read here each tick).
     pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Lock-free view handle — cloned from `series.published` once on first tick.
+    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
+
+    /// Raw pointer identity of the current `shared_orderbook` Arc.
+    ob_series_ptr: usize,
 
     /// Last `OrderbookSnapshot::version` we consumed. When `series.current.version`
     /// differs we pull a fresh snapshot and generate L2 events from the diff.
@@ -477,6 +483,8 @@ impl L2TapeState {
             tick_size: 0.01,
             crosshair_price: None,
             shared_orderbook: None,
+            ob_view: None,
+            ob_series_ptr: 0,
             last_seen_orderbook_version: 0,
             column_config: L2TapeColumnConfig::default(),
         }
@@ -489,20 +497,33 @@ impl L2TapeState {
     /// advanced since the last call.
     pub fn tick(&mut self) {
         let Some(ref ob_handle) = self.shared_orderbook else { return };
-        let Ok(series) = ob_handle.read() else { return };
-        if series.current.version == self.last_seen_orderbook_version {
+
+        // Detect handle reassignment and acquire lock-free view Arc (cold path).
+        let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+        if cur_ptr != self.ob_series_ptr {
+            self.ob_view = None;
+            self.ob_series_ptr = cur_ptr;
+        }
+        if self.ob_view.is_none() {
+            if let Ok(series) = ob_handle.read() {
+                self.ob_view = Some(series.subscribe_view());
+            }
+        }
+        let Some(ref view_arc) = self.ob_view else { return };
+        let view = view_arc.load();
+
+        if view.version == self.last_seen_orderbook_version {
             return; // nothing new
         }
-        self.last_seen_orderbook_version = series.current.version;
+        self.last_seen_orderbook_version = view.version;
 
         // Use wall-clock time for event timestamps (not REST ts which may be stale).
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        let bids: Vec<(f64, f64)> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
-        let asks: Vec<(f64, f64)> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
-        drop(series);
+        let bids: Vec<(f64, f64)> = view.bids.clone();
+        let asks: Vec<(f64, f64)> = view.asks.clone();
 
         // Update mid-price tracker.
         let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);

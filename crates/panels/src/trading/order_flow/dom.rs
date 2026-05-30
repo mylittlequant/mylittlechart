@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use orderbook_service::OrderbookSeries;
+use orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
 use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
@@ -76,6 +76,14 @@ pub struct DomState {
 
     /// Shared orderbook series (written by the bridge, read here each tick).
     pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Lock-free view handle — cloned from `series.published` once on first tick.
+    /// After that, every tick reads `ob_view.load()` with zero series lock.
+    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
+
+    /// Raw pointer identity of the current `shared_orderbook` Arc.
+    /// When `shared_orderbook` is reassigned this changes, triggering re-acquire.
+    ob_series_ptr: usize,
 
     /// Last `OrderbookSnapshot::version` we consumed.  When `series.current.version`
     /// differs we pull a fresh aggregation from the shared series.
@@ -192,6 +200,8 @@ impl DomState {
             volume_by_price: HashMap::new(),
             max_volume: 0.0,
             shared_orderbook: None,
+            ob_view: None,
+            ob_series_ptr: 0,
             last_seen_orderbook_version: 0,
             shared_trades: None,
             last_seen_trade_version: 0,
@@ -386,24 +396,36 @@ impl DomState {
             .unwrap_or_default()
             .as_millis() as i64;
 
-        // --- Orderbook update ---
+        // --- Orderbook update (lock-free via ArcSwap) ---
         if let Some(ref ob_handle) = self.shared_orderbook.clone() {
-            if let Ok(series) = ob_handle.read() {
-                if series.current.version != self.last_seen_orderbook_version {
-                    self.last_seen_orderbook_version = series.current.version;
+            // Detect handle reassignment by comparing Arc pointer identity.
+            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            if cur_ptr != self.ob_series_ptr {
+                // New series assigned — acquire fresh view Arc (one-time read lock).
+                self.ob_view = None;
+                self.ob_series_ptr = cur_ptr;
+            }
+            if self.ob_view.is_none() {
+                if let Ok(series) = ob_handle.read() {
+                    self.ob_view = Some(series.subscribe_view());
+                }
+            }
+            if let Some(ref view_arc) = self.ob_view {
+                let view = view_arc.load();
+                if view.version != self.last_seen_orderbook_version {
+                    self.last_seen_orderbook_version = view.version;
 
-                    self.best_bid_price = series.current.best_bid();
-                    self.best_ask_price = series.current.best_ask();
-                    if let Some(mid) = series.current.mid() {
+                    self.best_bid_price = view.best_bid;
+                    self.best_ask_price = view.best_ask;
+                    if let Some(mid) = view.mid {
                         self.market_price = mid;
                         if self.center_price == 0.0 || self.auto_center {
                             self.center_price = mid;
                         }
                     }
 
-                    let bids: Vec<_> = series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
-                    let asks: Vec<_> = series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
-                    drop(series);
+                    let bids: Vec<_> = view.bids.clone();
+                    let asks: Vec<_> = view.asks.clone();
                     self.rebuild_aggregation_from_levels(&bids, &asks);
                 }
             }

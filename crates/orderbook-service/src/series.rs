@@ -1,6 +1,31 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
+use arc_swap::ArcSwap;
 use ordered_float::OrderedFloat;
 use orderbook_store::TimedSnapshot;
+
+/// Immutable, lock-free snapshot of an orderbook for render threads.
+///
+/// Published by `OrderbookSeries::publish_view()` after every mutation.
+/// Panels clone the `Arc<ArcSwap<OrderbookView>>` once on acquire and call
+/// `.load()` each tick — zero `RwLock` contention on the hot render path.
+///
+/// `bids` and `asks` are in ascending price order (matching BTreeMap iteration).
+/// DOM panels call `.iter().rev()` on bids for best-bid-first display.
+#[derive(Debug, Clone, Default)]
+pub struct OrderbookView {
+    pub version: u64,
+    /// price → qty ascending (lowest price first). Reverse for best-bid-first.
+    pub bids: Vec<(f64, f64)>,
+    /// price → qty ascending (lowest price first = best ask first).
+    pub asks: Vec<(f64, f64)>,
+    pub best_bid: Option<f64>,
+    pub best_ask: Option<f64>,
+    pub mid: Option<f64>,
+    pub last_trade_price: Option<f64>,
+    pub last_ws_ts_ms: i64,
+    pub last_rest_ts_ms: i64,
+}
 
 /// Default maximum snapshots held in memory per series.
 pub const DEFAULT_HISTORY_CAPACITY: usize = 100;
@@ -71,7 +96,13 @@ impl OrderbookSnapshot {
 ///    inserts or replaces it.
 ///
 /// No window tracking, no priority regions, no crossed-book sweep.
-#[derive(Debug)]
+///
+/// ## Lock-free read path
+///
+/// After every mutation the writer calls `publish_view()` which atomically
+/// stores a new `Arc<OrderbookView>` into `published`. Panels clone the
+/// `Arc<ArcSwap<OrderbookView>>` **once** at acquire time and call `.load()`
+/// each render tick — no `RwLock` held on the hot path.
 pub struct OrderbookSeries {
     /// Live merged state, updated on every apply_* call.
     pub current: OrderbookSnapshot,
@@ -89,6 +120,25 @@ pub struct OrderbookSeries {
 
     /// True when `current` has been mutated since the last disk flush.
     pub dirty: bool,
+
+    /// Lock-free snapshot for render threads.
+    ///
+    /// Panels clone this `Arc` once at acquire time. On each tick they call
+    /// `published.load()` — no lock on the series required.
+    pub published: Arc<ArcSwap<OrderbookView>>,
+}
+
+impl std::fmt::Debug for OrderbookSeries {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrderbookSeries")
+            .field("current", &self.current)
+            .field("history_len", &self.history.len())
+            .field("history_capacity", &self.history_capacity)
+            .field("refcount", &self.refcount)
+            .field("dirty", &self.dirty)
+            .field("published_version", &self.published.load().version)
+            .finish()
+    }
 }
 
 impl OrderbookSeries {
@@ -99,7 +149,34 @@ impl OrderbookSeries {
             history_capacity,
             refcount: 0,
             dirty: false,
+            published: Arc::new(ArcSwap::from_pointee(OrderbookView::default())),
         }
+    }
+
+    /// Return a clone of the `Arc<ArcSwap<OrderbookView>>` for lock-free panel reads.
+    ///
+    /// Call once at panel acquire time; hold the `Arc` locally; call `.load()` each tick.
+    pub fn subscribe_view(&self) -> Arc<ArcSwap<OrderbookView>> {
+        Arc::clone(&self.published)
+    }
+
+    /// Build an `OrderbookView` from `current` and atomically publish it.
+    ///
+    /// Called at the end of every mutator while the write-lock is still held.
+    /// Readers (`panel.tick()`) call `published.load()` with no series lock.
+    fn publish_view(&self) {
+        let view = OrderbookView {
+            version: self.current.version,
+            bids: self.current.bids.iter().map(|(k, &v)| (k.0, v)).collect(),
+            asks: self.current.asks.iter().map(|(k, &v)| (k.0, v)).collect(),
+            best_bid: self.current.best_bid(),
+            best_ask: self.current.best_ask(),
+            mid: self.current.mid(),
+            last_trade_price: self.current.last_trade_price,
+            last_ws_ts_ms: self.current.last_ws_ts_ms,
+            last_rest_ts_ms: self.current.last_rest_ts_ms,
+        };
+        self.published.store(Arc::new(view));
     }
 
     /// Append a snapshot to the history ring, evicting the oldest if at capacity.
@@ -137,6 +214,7 @@ impl OrderbookSeries {
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
         self.append_history(snap);
+        self.publish_view();
     }
 
     /// REST bootstrap — range-replace seeded from the REST snapshot.
@@ -157,6 +235,7 @@ impl OrderbookSeries {
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
         self.append_history(snap);
+        self.publish_view();
     }
 
     /// WS incremental delta — updates individual price levels.
@@ -186,6 +265,7 @@ impl OrderbookSeries {
         self.dirty = true;
         let snap = self.current_to_timed_snapshot();
         self.append_history(snap);
+        self.publish_view();
     }
 
     /// Shared range-replace logic used by both snapshot apply methods.
@@ -227,6 +307,7 @@ impl OrderbookSeries {
         self.sweep_ghost_levels();
         self.current.version += 1;
         self.dirty = true;
+        self.publish_view();
     }
 
     /// Legacy full-replace, kept for tests and potential callers that want to

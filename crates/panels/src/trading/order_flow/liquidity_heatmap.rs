@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
-use orderbook_service::OrderbookSeries;
+use orderbook_service::{OrderbookSeries, OrderbookView, ArcSwap};
 use trade_service::TradeSeries;
 
 use crate::panel_trait::TradingPanel;
@@ -56,6 +56,12 @@ pub struct LiquidityHeatmapState {
 
     /// Shared orderbook series (written by the bridge, read here each tick).
     pub shared_orderbook: Option<Arc<RwLock<OrderbookSeries>>>,
+
+    /// Lock-free view handle — cloned from `series.published` once on first tick.
+    ob_view: Option<Arc<ArcSwap<OrderbookView>>>,
+
+    /// Raw pointer identity of the current `shared_orderbook` Arc.
+    ob_series_ptr: usize,
 
     /// Last `OrderbookSnapshot::version` we consumed.
     pub last_seen_orderbook_version: u64,
@@ -121,6 +127,8 @@ impl LiquidityHeatmapState {
             max_snapshots: 1000,
             crosshair_price: None,
             shared_orderbook: None,
+            ob_view: None,
+            ob_series_ptr: 0,
             last_seen_orderbook_version: 0,
             shared_trades: None,
             last_seen_trade_version: 0,
@@ -186,27 +194,32 @@ impl LiquidityHeatmapState {
     /// Pull the latest snapshot from `shared_orderbook` and sample it into the heatmap.
     /// Also pulls new trades from `shared_trades` into the circle overlay buffer.
     pub fn tick(&mut self) {
-        // --- Orderbook ---
-        let ob_handle = self.shared_orderbook.clone();
-        if let Some(ob_handle) = ob_handle {
-            if let Ok(series) = ob_handle.read() {
-                if series.current.version != self.last_seen_orderbook_version {
-                    self.last_seen_orderbook_version = series.current.version;
+        // --- Orderbook (lock-free via ArcSwap) ---
+        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+            // Detect handle reassignment and acquire lock-free view Arc (cold path).
+            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            if cur_ptr != self.ob_series_ptr {
+                self.ob_view = None;
+                self.ob_series_ptr = cur_ptr;
+            }
+            if self.ob_view.is_none() {
+                if let Ok(series) = ob_handle.read() {
+                    self.ob_view = Some(series.subscribe_view());
+                }
+            }
+            if let Some(ref view_arc) = self.ob_view {
+                let view = view_arc.load();
+                if view.version != self.last_seen_orderbook_version {
+                    self.last_seen_orderbook_version = view.version;
 
-                    let timestamp = series.current.last_rest_ts_ms;
-                    let bids: Vec<(f64, f64)> =
-                        series.current.bids.iter().map(|(k, &v)| (k.0, v)).collect();
-                    let asks: Vec<(f64, f64)> =
-                        series.current.asks.iter().map(|(k, &v)| (k.0, v)).collect();
+                    let timestamp = view.last_rest_ts_ms;
+                    let bids: Vec<(f64, f64)> = view.bids.clone();
+                    let asks: Vec<(f64, f64)> = view.asks.clone();
 
                     // Compute mid price from best bid/ask
-                    let best_bid = bids.iter().map(|(p, _)| *p).fold(f64::NEG_INFINITY, f64::max);
-                    let best_ask = asks.iter().map(|(p, _)| *p).fold(f64::INFINITY, f64::min);
-                    if best_bid.is_finite() && best_ask.is_finite() {
+                    if let (Some(best_bid), Some(best_ask)) = (view.best_bid, view.best_ask) {
                         self.mid_price = Some((best_bid + best_ask) / 2.0);
                     }
-
-                    drop(series);
 
                     #[allow(deprecated)]
                     self.apply_snapshot(&bids, &asks, timestamp);
