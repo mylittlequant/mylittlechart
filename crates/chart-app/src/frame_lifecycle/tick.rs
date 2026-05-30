@@ -57,6 +57,14 @@ impl ChartApp {
         let (mut n_bars, mut n_trade, mut n_ticker, mut n_connector, mut n_scroll, mut n_backfill, mut n_other) =
             (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
+        // Coalesce orderbook panel updates: instead of re-aggregating DOM/L2/heatmap
+        // on EVERY drained OB snapshot/delta (N events/frame => N full re-aggregations
+        // of the ~1000-level book, measured at ~4.5ms each), collect the affected
+        // (symbol, exchange, account_type) keys here and tick each panel ONCE after
+        // the drain loop.  The panel's internal version check then reads only the
+        // latest published view.  N->1 per frame.
+        let mut ob_dirty: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
         let events_start = std::time::Instant::now();
         loop {
             let update = match self.live_update_rx.try_recv() {
@@ -653,54 +661,15 @@ impl ChartApp {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
                 }
                 LiveUpdate::OrderbookSnapshot { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _, source: _ } => {
-                    let ex_str = exchange_id.as_str();
-                    let at_str = account_type.short_label();
+                    // Coalesced: the bridge already wrote the new data into the
+                    // shared OrderbookSeries before broadcasting; we just record
+                    // which panels are stale and re-aggregate them once after drain.
                     self.last_ob_event_count += 1;
-                    // All orderbook panels now read from the shared OrderbookSeries via tick().
-                    // The bridge already wrote the new data into the shared series before
-                    // broadcasting this LiveUpdate, so tick() will see the version bump.
-                    let _ob_snap_start = std::time::Instant::now();
-                    for state in self.panels_store.dom.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                        }
-                    }
-                    for state in self.panels_store.l2_tape.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                            state.prune_flash();
-                        }
-                    }
-                    for state in self.panels_store.liquidity_heatmap.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                        }
-                    }
-                    self.last_orderbook_panel_us += _ob_snap_start.elapsed().as_micros() as u64;
+                    ob_dirty.insert((symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string()));
                 }
                 LiveUpdate::OrderbookDelta { exchange_id, account_type, symbol, bids: _, asks: _, timestamp: _ } => {
-                    let ex_str = exchange_id.as_str();
-                    let at_str = account_type.short_label();
                     self.last_ob_event_count += 1;
-                    // All orderbook panels read from shared OrderbookSeries via tick().
-                    let _ob_delta_start = std::time::Instant::now();
-                    for state in self.panels_store.dom.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                        }
-                    }
-                    for state in self.panels_store.l2_tape.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                            state.prune_flash();
-                        }
-                    }
-                    for state in self.panels_store.liquidity_heatmap.values_mut() {
-                        if state.symbol == symbol && state.exchange == ex_str && state.account_type == at_str {
-                            state.tick();
-                        }
-                    }
-                    self.last_orderbook_panel_us += _ob_delta_start.elapsed().as_micros() as u64;
+                    ob_dirty.insert((symbol, exchange_id.as_str().to_string(), account_type.short_label().to_string()));
                 }
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Metrics snapshots are collected on-demand by the metrics panel.
@@ -718,6 +687,35 @@ impl ChartApp {
             }
         }
         self.last_event_process_us = events_start.elapsed().as_micros() as u64;
+
+        // ── Coalesced orderbook panel re-aggregation ─────────────────────────
+        // Tick each affected order-flow panel ONCE per frame regardless of how
+        // many OB snapshot/delta events were drained.  The panel reads the latest
+        // published view via its internal version check, so a single tick reflects
+        // the final book state.  This collapses the per-event N re-aggregations
+        // (measured ~4.5ms each on a ~1000-level book) into one.
+        if !ob_dirty.is_empty() {
+            let _ob_panel_start = std::time::Instant::now();
+            for (symbol, ex_str, at_str) in &ob_dirty {
+                for state in self.panels_store.dom.values_mut() {
+                    if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
+                        state.tick();
+                    }
+                }
+                for state in self.panels_store.l2_tape.values_mut() {
+                    if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
+                        state.tick();
+                        state.prune_flash();
+                    }
+                }
+                for state in self.panels_store.liquidity_heatmap.values_mut() {
+                    if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
+                        state.tick();
+                    }
+                }
+            }
+            self.last_orderbook_panel_us += _ob_panel_start.elapsed().as_micros() as u64;
+        }
 
         if !trading_updates.is_empty() {
             if let Some(tm) = &mut self.trading_manager {
