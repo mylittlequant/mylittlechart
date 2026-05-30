@@ -3980,6 +3980,9 @@ impl ApplicationHandler for App<'_> {
 
                 // Detailed profiling — new fields.
                 perf.orderbook_panel_us = pw.chart.last_orderbook_panel_us;
+                perf.dom_panel_us = pw.chart.last_dom_panel_us;
+                perf.l2_panel_us = pw.chart.last_l2_panel_us;
+                perf.heatmap_panel_us = pw.chart.last_heatmap_panel_us;
                 perf.trade_panel_us = pw.chart.last_trade_panel_us;
                 perf.bar_apply_us = pw.chart.last_bar_apply_us;
                 perf.ob_event_count = pw.chart.last_ob_event_count;

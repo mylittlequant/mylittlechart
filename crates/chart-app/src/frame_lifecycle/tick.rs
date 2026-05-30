@@ -40,6 +40,9 @@ impl ChartApp {
         self.last_auto_scale_us = 0;
         self.last_indicator_recalc_us = 0;
         self.last_orderbook_panel_us = 0;
+        self.last_dom_panel_us = 0;
+        self.last_l2_panel_us = 0;
+        self.last_heatmap_panel_us = 0;
         self.last_trade_panel_us = 0;
         self.last_bar_apply_us = 0;
         self.last_ob_event_count = 0;
@@ -697,22 +700,30 @@ impl ChartApp {
         if !ob_dirty.is_empty() {
             let _ob_panel_start = std::time::Instant::now();
             for (symbol, ex_str, at_str) in &ob_dirty {
+                let dom_t0 = std::time::Instant::now();
                 for state in self.panels_store.dom.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         state.tick();
                     }
                 }
+                self.last_dom_panel_us += dom_t0.elapsed().as_micros() as u64;
+
+                let l2_t0 = std::time::Instant::now();
                 for state in self.panels_store.l2_tape.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         state.tick();
                         state.prune_flash();
                     }
                 }
+                self.last_l2_panel_us += l2_t0.elapsed().as_micros() as u64;
+
+                let heat_t0 = std::time::Instant::now();
                 for state in self.panels_store.liquidity_heatmap.values_mut() {
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         state.tick();
                     }
                 }
+                self.last_heatmap_panel_us += heat_t0.elapsed().as_micros() as u64;
             }
             self.last_orderbook_panel_us += _ob_panel_start.elapsed().as_micros() as u64;
         }
@@ -1043,13 +1054,16 @@ impl ChartApp {
         // silent in normal runs.
         if self.last_tick_us > 3000 && std::env::var("MLC_PERF_LOG").is_ok() {
             eprintln!(
-                "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
+                "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us obpanel={}us(n={}) dom={}us l2={}us heat={}us trpanel={}us(n={}) barapply={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
                 self.last_tick_us,
                 self.last_event_process_us,
                 self.last_indicator_recalc_us,
                 self.last_auto_scale_us,
                 self.last_orderbook_panel_us,
                 self.last_ob_event_count,
+                self.last_dom_panel_us,
+                self.last_l2_panel_us,
+                self.last_heatmap_panel_us,
                 self.last_trade_panel_us,
                 self.last_trade_event_count,
                 self.last_bar_apply_us,

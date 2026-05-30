@@ -397,9 +397,12 @@ impl DomState {
             .as_millis() as i64;
 
         // --- Orderbook update (lock-free via ArcSwap) ---
-        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+        // Use load_full() to obtain an owned Arc<OrderbookView> that is not a
+        // borrow of self.ob_view, allowing &mut self methods to be called below
+        // without a borrow conflict.
+        if let Some(ob_handle) = self.shared_orderbook.clone() {
             // Detect handle reassignment by comparing Arc pointer identity.
-            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            let cur_ptr = Arc::as_ptr(&ob_handle) as usize;
             if cur_ptr != self.ob_series_ptr {
                 // New series assigned — acquire fresh view Arc (one-time read lock).
                 self.ob_view = None;
@@ -410,8 +413,9 @@ impl DomState {
                     self.ob_view = Some(series.subscribe_view());
                 }
             }
-            if let Some(ref view_arc) = self.ob_view {
-                let view = view_arc.load();
+            // load_full() gives Arc<OrderbookView> — no borrow of self.ob_view held.
+            let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
+            if let Some(view) = view_opt {
                 if view.version != self.last_seen_orderbook_version {
                     self.last_seen_orderbook_version = view.version;
 
@@ -424,9 +428,8 @@ impl DomState {
                         }
                     }
 
-                    let bids: Vec<_> = view.bids.clone();
-                    let asks: Vec<_> = view.asks.clone();
-                    self.rebuild_aggregation_from_levels(&bids, &asks);
+                    // Pass slices directly — no Vec clone needed.
+                    self.rebuild_aggregation_from_levels(&view.bids, &view.asks);
                 }
             }
         }

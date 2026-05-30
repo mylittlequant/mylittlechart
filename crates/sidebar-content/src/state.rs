@@ -682,6 +682,12 @@ pub struct PerformanceData {
     // ── New detailed profiling fields (added for deep perf visibility) ────────
     /// Accumulated time in orderbook panel .tick() calls (DOM/L2Tape/Heatmap) per frame, μs.
     pub orderbook_panel_us: u64,
+    /// Per-panel breakdown: DOM .tick() time per frame, μs.
+    pub dom_panel_us: u64,
+    /// Per-panel breakdown: L2Tape .tick() time per frame, μs.
+    pub l2_panel_us: u64,
+    /// Per-panel breakdown: LiquidityHeatmap .tick() time per frame, μs.
+    pub heatmap_panel_us: u64,
     /// Accumulated time in trade panel .tick() calls (BigTrades/VolumeProfile/Footprint/TradeTape) per frame, μs.
     pub trade_panel_us: u64,
     /// Accumulated time in bar apply (BarService.apply_trade + window.bars loop) per frame, μs.
@@ -732,6 +738,9 @@ impl Default for PerformanceData {
             event_process_us: 0,
             auto_scale_us: 0,
             orderbook_panel_us: 0,
+            dom_panel_us: 0,
+            l2_panel_us: 0,
+            heatmap_panel_us: 0,
             trade_panel_us: 0,
             bar_apply_us: 0,
             ob_event_count: 0,

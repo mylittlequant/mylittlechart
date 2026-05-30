@@ -4485,6 +4485,11 @@ fn render_performance_panel(
 
     // Orderbook panel tick breakdown
     draw_row(ctx, &mut y, "  OB Panels", &format!("{}μs ({}ev)", perf.orderbook_panel_us, perf.ob_event_count), &text_color);
+    if perf.dom_panel_us > 0 || perf.l2_panel_us > 0 || perf.heatmap_panel_us > 0 {
+        draw_row(ctx, &mut y, "    DOM", &format!("{}μs", perf.dom_panel_us), &text_color);
+        draw_row(ctx, &mut y, "    L2", &format!("{}μs", perf.l2_panel_us), &text_color);
+        draw_row(ctx, &mut y, "    Heatmap", &format!("{}μs", perf.heatmap_panel_us), &text_color);
+    }
 
     // Trade panel tick breakdown
     draw_row(ctx, &mut y, "  Trade Panels", &format!("{}μs ({}ev)", perf.trade_panel_us, perf.trade_event_count), &text_color);

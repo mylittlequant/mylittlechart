@@ -569,6 +569,12 @@ pub struct ChartApp {
     /// Accumulated time in orderbook panel .tick() calls (DOM + L2Tape + LiquidityHeatmap)
     /// for OrderbookSnapshot and OrderbookDelta events during the last tick.
     pub last_orderbook_panel_us: u64,
+    /// Per-panel breakdown: DOM .tick() time (μs) in last tick.
+    pub last_dom_panel_us: u64,
+    /// Per-panel breakdown: L2Tape .tick() time (μs) in last tick.
+    pub last_l2_panel_us: u64,
+    /// Per-panel breakdown: LiquidityHeatmap .tick() time (μs) in last tick.
+    pub last_heatmap_panel_us: u64,
     /// Accumulated time in trade panel .tick() calls (BigTrades + VolumeProfile + Footprint + TradeTape)
     /// for TradeUpdate events during the last tick.
     pub last_trade_panel_us: u64,
@@ -961,6 +967,9 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_composite_us: 0,
             last_orderbook_panel_us: 0,
+            last_dom_panel_us: 0,
+            last_l2_panel_us: 0,
+            last_heatmap_panel_us: 0,
             last_trade_panel_us: 0,
             last_bar_apply_us: 0,
             last_ob_event_count: 0,
@@ -1284,6 +1293,9 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_composite_us: 0,
             last_orderbook_panel_us: 0,
+            last_dom_panel_us: 0,
+            last_l2_panel_us: 0,
+            last_heatmap_panel_us: 0,
             last_trade_panel_us: 0,
             last_bar_apply_us: 0,
             last_ob_event_count: 0,
@@ -1488,6 +1500,9 @@ impl ChartApp {
             last_auto_scale_us: 0,
             last_composite_us: 0,
             last_orderbook_panel_us: 0,
+            last_dom_panel_us: 0,
+            last_l2_panel_us: 0,
+            last_heatmap_panel_us: 0,
             last_trade_panel_us: 0,
             last_bar_apply_us: 0,
             last_ob_event_count: 0,

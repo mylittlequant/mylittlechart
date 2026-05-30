@@ -509,8 +509,12 @@ impl L2TapeState {
                 self.ob_view = Some(series.subscribe_view());
             }
         }
-        let Some(ref view_arc) = self.ob_view else { return };
-        let view = view_arc.load();
+        // load_full() gives owned Arc<OrderbookView>, releasing the borrow on
+        // self.ob_view so that &mut self methods can be called without conflict.
+        let view = match self.ob_view.as_ref() {
+            Some(va) => va.load_full(),
+            None => return,
+        };
 
         if view.version == self.last_seen_orderbook_version {
             return; // nothing new
@@ -522,20 +526,17 @@ impl L2TapeState {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        let bids: Vec<(f64, f64)> = view.bids.clone();
-        let asks: Vec<(f64, f64)> = view.asks.clone();
 
         // Update mid-price tracker.
-        let best_bid = bids.first().map(|(p, _)| *p).unwrap_or(0.0);
-        let best_ask = asks.first().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_bid = view.bids.first().map(|(p, _)| *p).unwrap_or(0.0);
+        let best_ask = view.asks.first().map(|(p, _)| *p).unwrap_or(0.0);
         if best_bid > 0.0 && best_ask > 0.0 {
             self.dom_market_price = Some((best_bid + best_ask) / 2.0);
         }
 
         // Diff current snapshot against previous_book and generate L2Events.
-        // This reuses the same logic as apply_delta but operates on the full
-        // current book (treating missing levels as qty=0).
-        self.diff_and_push_events(&bids, &asks, timestamp);
+        // Pass slices directly — no Vec clone needed.
+        self.diff_and_push_events(&view.bids, &view.asks, timestamp);
 
         // Time-based retention: drain events older than retention_ms.
         let now_ms = SystemTime::now()

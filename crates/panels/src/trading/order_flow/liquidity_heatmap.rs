@@ -195,9 +195,12 @@ impl LiquidityHeatmapState {
     /// Also pulls new trades from `shared_trades` into the circle overlay buffer.
     pub fn tick(&mut self) {
         // --- Orderbook (lock-free via ArcSwap) ---
-        if let Some(ref ob_handle) = self.shared_orderbook.clone() {
+        // Clone the Arc handle so the borrow of self.shared_orderbook ends before
+        // we need &mut self below.  load_full() then gives an owned Arc<OrderbookView>
+        // that is independent of self.ob_view, removing the need to clone bids/asks.
+        if let Some(ob_handle) = self.shared_orderbook.clone() {
             // Detect handle reassignment and acquire lock-free view Arc (cold path).
-            let cur_ptr = Arc::as_ptr(ob_handle) as usize;
+            let cur_ptr = Arc::as_ptr(&ob_handle) as usize;
             if cur_ptr != self.ob_series_ptr {
                 self.ob_view = None;
                 self.ob_series_ptr = cur_ptr;
@@ -207,22 +210,22 @@ impl LiquidityHeatmapState {
                     self.ob_view = Some(series.subscribe_view());
                 }
             }
-            if let Some(ref view_arc) = self.ob_view {
-                let view = view_arc.load();
+            // load_full() — owned Arc, no borrow of self.ob_view retained.
+            let view_opt = self.ob_view.as_ref().map(|va| va.load_full());
+            if let Some(view) = view_opt {
                 if view.version != self.last_seen_orderbook_version {
                     self.last_seen_orderbook_version = view.version;
 
                     let timestamp = view.last_rest_ts_ms;
-                    let bids: Vec<(f64, f64)> = view.bids.clone();
-                    let asks: Vec<(f64, f64)> = view.asks.clone();
 
                     // Compute mid price from best bid/ask
                     if let (Some(best_bid), Some(best_ask)) = (view.best_bid, view.best_ask) {
                         self.mid_price = Some((best_bid + best_ask) / 2.0);
                     }
 
+                    // Pass slices directly — no Vec clone needed.
                     #[allow(deprecated)]
-                    self.apply_snapshot(&bids, &asks, timestamp);
+                    self.apply_snapshot(&view.bids, &view.asks, timestamp);
                 }
             }
         }
