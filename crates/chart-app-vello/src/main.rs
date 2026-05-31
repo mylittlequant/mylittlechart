@@ -352,6 +352,13 @@ struct App<'s> {
     cached_render_tex_us: u64,
     /// µs in get_current_texture + blit + present — GPU half 2 (swapchain).
     cached_present_us: u64,
+    /// Startup-freeze diagnostics: the `Instant` at which the previous
+    /// about_to_wait pass finished its real work (after the FPS-cap guard). Used
+    /// to measure the GAP between consecutive worked frames. A multi-hundred-ms
+    /// gap with a tiny atw means the main thread vanished BETWEEN frames — stuck
+    /// on a lock, a sync IO, or the promote — not in render. This is the freeze
+    /// signature (atw≈0, n=2) the `dt` metric hides. `None` until the first pass.
+    last_atw_end: Option<std::time::Instant>,
 
     // ── Pipelined GPU render thread ───────────────────────────────────────
     /// Sender side of the command channel to the GPU render thread.
@@ -1007,6 +1014,7 @@ impl App<'_> {
             cached_gpu_wait_us: 0,
             cached_render_tex_us: 0,
             cached_present_us: 0,
+            last_atw_end: None,
             gpu_cmd_tx: None,
             gpu_done_rx: None,
             gpu_thread: None,
@@ -1581,9 +1589,11 @@ impl App<'_> {
     /// Called after vault unlock, wizard completion, or fresh E2E setup.
     /// The profile is already fully loaded in memory (vault secrets decrypted, app_state rebuilt).
     fn promote_skeleton(&mut self, event_loop: &ActiveEventLoop) {
+        let _promote_t0 = live_data::elapsed_ms();
         eprintln!(
-            "[App] skeleton → live: dropping {} skeleton window(s)",
-            self.windows.len()
+            "[App] skeleton → live: dropping {} skeleton window(s) t={}ms (PROMOTE START — main thread blocks here; cross-ref [STARTUP-WAVE bridge] connect_public DONE timestamps to see if the connect wave lands inside this window)",
+            self.windows.len(),
+            _promote_t0,
         );
 
         // Block until any in-flight GPU frame finishes — the GPU thread holds
@@ -1610,8 +1620,10 @@ impl App<'_> {
         }
 
         eprintln!(
-            "[App] skeleton → live: {} live window(s) created",
-            self.windows.len()
+            "[App] skeleton → live: {} live window(s) created t={}ms (PROMOTE END — main blocked {}ms; any [STARTUP-WAVE] tick AFTER this is the live window draining the wave)",
+            self.windows.len(),
+            live_data::elapsed_ms(),
+            live_data::elapsed_ms().saturating_sub(_promote_t0),
         );
     }
 
@@ -2013,6 +2025,33 @@ impl ApplicationHandler for App<'_> {
 
         let _t0 = std::time::Instant::now();
         let _atw_start = _t0; // alias — both measure from same point (after FPS guard return)
+
+        // ── Inter-frame GAP detector (startup-freeze diagnostics) ────────────
+        // Measure how long the main thread was AWAY between the previous worked
+        // frame and this one. With the FPS cap this is normally ≈ target_dt
+        // (the WaitUntil sleep). A gap far larger than the frame budget means
+        // the loop was starved — either a heavy single pass (promote, GPU init,
+        // a blocking lock on bridge maps) or the OS descheduled us. This is the
+        // freeze signature `dt` hides: a 15s stall shows here as gap=15000ms even
+        // though atw for the resuming frame is tiny. Env-gated.
+        if self.perf_log_enabled {
+            if let Some(prev_end) = self.last_atw_end {
+                let gap_ms = prev_end.elapsed().as_secs_f64() * 1000.0;
+                let budget_ms = if self.fps_limit > 0 {
+                    1000.0 / self.fps_limit as f64
+                } else {
+                    16.7
+                };
+                // Only shout when the gap is far beyond the expected WaitUntil
+                // sleep (3× budget AND ≥ 120ms absolute), to skip normal pacing.
+                if gap_ms > budget_ms * 3.0 && gap_ms > 120.0 {
+                    eprintln!(
+                        "[FRAME-GAP] main thread away {:.0}ms between frames (budget={:.1}ms) t={}ms — loop was STARVED (heavy pass / lock / promote), not idle pacing",
+                        gap_ms, budget_ms, live_data::elapsed_ms(),
+                    );
+                }
+            }
+        }
 
         // ── Frame timing ────────────────────────────────────────────────────
         let now = std::time::Instant::now();
@@ -4349,6 +4388,8 @@ impl ApplicationHandler for App<'_> {
         let _t8 = std::time::Instant::now();
         // Record actual work time for this about_to_wait invocation.
         self.cached_about_to_wait_us = _atw_start.elapsed().as_micros() as u64;
+        // Stamp the end of this worked frame for the next pass's GAP detector.
+        self.last_atw_end = Some(std::time::Instant::now());
 
         // ── Timing report every 5 seconds ───────────────────────────────────
         self.frame_count += 1;

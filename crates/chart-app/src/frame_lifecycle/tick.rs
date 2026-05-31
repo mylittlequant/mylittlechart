@@ -65,6 +65,11 @@ impl ChartApp {
         // flooded the queue this frame (trade burst? backfill? reconnect?).
         let (mut n_bars, mut n_trade, mut n_ticker, mut n_connector, mut n_scroll, mut n_backfill, mut n_other) =
             (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+        // Startup-freeze diagnostics: count SymbolsLoaded events this tick, total
+        // symbols moved, and microseconds spent in the exchange_symbols.insert
+        // path. The startup symbol flood (thousands of symbols × N exchanges) is
+        // a freeze suspect — this attributes it precisely.
+        let (mut n_symbols, mut n_symbols_total, mut symbols_insert_us) = (0u32, 0usize, 0u64);
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
         // Coalesce orderbook panel updates: collect per-(symbol,exchange,account_type)
         // delta accumulation so each panel is ticked ONCE per frame with the
@@ -150,6 +155,10 @@ impl ChartApp {
                 LiveUpdate::TradeUpdate { .. } | LiveUpdate::BarUpdate { .. } => n_trade += 1,
                 LiveUpdate::MiniTickerUpdate { .. } => n_ticker += 1,
                 LiveUpdate::ConnectorReady { .. } => n_connector += 1,
+                LiveUpdate::SymbolsLoaded { symbols, .. } => {
+                    n_symbols += 1;
+                    n_symbols_total += symbols.len();
+                }
                 _ => n_other += 1,
             }
             match update {
@@ -652,9 +661,14 @@ impl ChartApp {
                         crate::dlog!("[ChartApp] ConnectorReady for disabled {}, ignoring", eid_str);
                         continue;
                     }
-                    // Always load symbols for any connector that becomes ready.
+                    // Symbols are requested at the APP level (App::tick_app_state via
+                    // the dedicated mpsc ConnectorReady channel) — exactly once per
+                    // exchange, regardless of window count. Calling it here too made
+                    // every window race the app for the same first NET-FETCH, doubling
+                    // the Spot+Futures REST work on the bridge's 2-worker runtime
+                    // during the startup wave. Cache fills on the first response;
+                    // any later window reading symbols hits the cache anyway.
                     let bridge = self.bridge.clone();
-                    bridge.request_symbols(exchange_id);
 
                     // Subscribe mini-tickers for watchlist symbols on this exchange.
                     let exchange_str = exchange_id.as_str();
@@ -684,7 +698,9 @@ impl ChartApp {
                     }
                 }
                 LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
+                    let _t = std::time::Instant::now();
                     self.exchange_symbols.insert(exchange_id, symbols);
+                    symbols_insert_us += _t.elapsed().as_micros() as u64;
                 }
                 LiveUpdate::Error { exchange_id, message } => {
                     eprintln!("[ChartApp] live-data error ({:?}): {}", exchange_id, message);
@@ -1154,6 +1170,25 @@ impl ChartApp {
                 self.last_bar_apply_us,
                 _drain_count, n_bars, n_backfill, n_scroll, n_trade, n_ticker, n_connector, n_other,
                 self.lag_event_count,
+            );
+        }
+
+        // ── Startup-wave log (connector / symbol storm) ──────────────────────
+        // Independent of the tick-budget gate above: a tick can drain a huge
+        // connect/symbol wave WITHOUT itself exceeding 3ms (the cost is the
+        // async REST work off-thread; the main-thread stall is the loop being
+        // starved BETWEEN frames while connect IO completes). So whenever this
+        // tick saw ANY connector-ready or symbols-loaded event, print a line
+        // tagging exactly how much of the startup wave landed here and what it
+        // cost on the main thread. Correlate the timestamps across ticks to see
+        // the wave colliding with the skeleton→live promote.
+        if (n_connector > 0 || n_symbols > 0) && std::env::var("MLC_PERF_LOG").is_ok() {
+            eprintln!(
+                "[STARTUP-WAVE] conn_ready={} symbols_loaded={}(total_syms={} insert={}us) tick={}us events={}us drained={} queue_depth={} | skeleton_window={}",
+                n_connector, n_symbols, n_symbols_total, symbols_insert_us,
+                self.last_tick_us, self.last_event_process_us, _drain_count,
+                self.live_update_rx.len(),
+                self.panel_app.panel_grid.windows().is_empty(),
             );
         }
     }

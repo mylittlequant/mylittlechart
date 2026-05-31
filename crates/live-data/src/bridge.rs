@@ -296,8 +296,19 @@ impl DataBridge {
         trade_map: SharedTradeMap,
         shared_orderbook: SharedOrderbookMap,
     ) -> (Self, broadcast::Receiver<LiveUpdate>, mpsc::UnboundedReceiver<ExchangeId>) {
+        // Anchor the process-relative clock here so every [STARTUP-WAVE] timestamp
+        // is measured from bridge construction (≈ app start), giving a stable t=0
+        // shared by the bridge (connect wave) and the main thread (promote).
+        let _ = crate::elapsed_ms();
+        // 4 workers (was 2): the startup connector warm-up spawns ~21 connect +
+        // ~21 symbol-fetch tasks in a burst. With 2 workers, later exchanges
+        // queue behind earlier ones for hundreds of ms, and the wave finishes
+        // landing on the main thread right inside the skeleton→live promote.
+        // 4 workers halve the tail and keep the wave off the promote on
+        // CPU-contended machines (where the freeze was observed). Idle cost is
+        // negligible — tokio worker threads park when there is no work.
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(4)
             .thread_name("live-data")
             .enable_all()
             .build()
@@ -413,6 +424,11 @@ impl DataBridge {
         {
             return;
         }
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] warmup_all_connectors START t={}ms n_exchanges={}",
+            crate::elapsed_ms(),
+            exchanges.len()
+        );
         for &eid in exchanges {
             self.ensure_connector(eid);
         }
@@ -429,7 +445,13 @@ impl DataBridge {
         let hub = self.hub.clone();
         let tx = self.tx.clone();
         let connector_ready_tx = self.connector_ready_tx.clone();
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] ensure_connector SPAWN {:?} t={}ms",
+            exchange_id,
+            crate::elapsed_ms()
+        );
         self.runtime.spawn(async move {
+            let _connect_t0 = crate::elapsed_ms();
             // Creating connector asynchronously. No stagger — the connector
             // tokio runtime is independent of the UI thread, so a startup burst
             // of TCP/TLS handshakes does not block rendering (it never did; the
@@ -437,6 +459,12 @@ impl DataBridge {
             // gives the fullest symbol list and fastest first data.
             match hub.connect_public(exchange_id, false).await {
                 Ok(()) => {
+                    crate::dlog!(
+                        "[STARTUP-WAVE bridge] connect_public DONE {:?} t={}ms took={}ms (firing ConnectorReady)",
+                        exchange_id,
+                        crate::elapsed_ms(),
+                        crate::elapsed_ms().saturating_sub(_connect_t0)
+                    );
                     let _ = tx.send(LiveUpdate::ConnectorReady { exchange_id });
                     // Also notify the app-level mpsc consumer so it doesn't
                     // need to hold a broadcast subscription open.
@@ -801,6 +829,10 @@ impl DataBridge {
         // Instant cache hit.
         if let Ok(c) = cache.lock() {
             if let Some(symbols) = c.get(&exchange_id) {
+                crate::dlog!(
+                    "[STARTUP-WAVE bridge] request_symbols CACHE-HIT {:?} t={}ms n={}",
+                    exchange_id, crate::elapsed_ms(), symbols.len()
+                );
                 let _ = tx.send(LiveUpdate::SymbolsLoaded {
                     exchange_id,
                     symbols: symbols.clone(),
@@ -809,6 +841,10 @@ impl DataBridge {
             }
         }
 
+        crate::dlog!(
+            "[STARTUP-WAVE bridge] request_symbols NET-FETCH {:?} t={}ms (cache miss — two of these for the same exchange back-to-back == the double request_symbols bug)",
+            exchange_id, crate::elapsed_ms()
+        );
         self.runtime.spawn(async move {
             let connector = match hub.rest(exchange_id) {
                 Some(c) => c,

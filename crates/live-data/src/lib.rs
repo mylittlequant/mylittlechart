@@ -69,6 +69,22 @@ macro_rules! dlog {
 }
 pub(crate) use dlog;
 
+// ── Process-relative clock (startup-freeze diagnostics) ──────────────────────
+// A single monotonic origin captured the first time it is queried. Bridge
+// startup logs stamp every connect/symbol milestone with `elapsed_ms()` so the
+// connect wave can be lined up against the skeleton→live promote on the main
+// thread (which logs its own wall-clock-relative timestamps). Lazily init'd so
+// it costs nothing when MLC_PERF_LOG is off and the logs never fire.
+static PROCESS_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Milliseconds since the first call to this function (≈ process / bridge init).
+pub fn elapsed_ms() -> u128 {
+    PROCESS_START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis()
+}
+
 /// A broadcast receiver for [`LiveUpdate`] messages.
 ///
 /// Re-exported here so that crates that depend on `live-data` but not directly
