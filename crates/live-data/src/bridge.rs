@@ -274,6 +274,19 @@ pub struct DataBridge {
     /// during the skeleton screen are reused; the live window's tick sees the flag
     /// already set and does nothing (no re-dial, no stale per-window cursor).
     warmup_started: AtomicBool,
+    /// digdigdig3-station instance. Phase 2 of the dig3+mli migration is
+    /// migrating bridge data flow (bars, trades, orderbook, ticker, funding,
+    /// OI, etc.) over to Station so that warm-start, on-disk persistence,
+    /// reconnect, gap-heal, and replay are owned by station instead of
+    /// duplicated ad-hoc in bridge + bar-store + trade-store + orderbook-store.
+    ///
+    /// Constructed in [`Self::new`] on the bridge's runtime via `block_on`.
+    /// Bars migrate in phase 2B (this commit is 2A — Station built but no
+    /// subscriptions yet). Three channels stay raw, mimicking hub (NOT
+    /// station) because station does not cover them: private streams
+    /// (OrderUpdate / BalanceUpdate / PositionUpdate — auth required),
+    /// scroll-left pagination (before_ts REST), and exchange_info.
+    station: Arc<digdigdig3_station::Station>,
 }
 
 impl DataBridge {
@@ -318,6 +331,26 @@ impl DataBridge {
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
         let hub = ExchangeHub::new();
 
+        // Build the Station on the bridge's runtime. Phase 2A wires Station
+        // into the bridge as a sibling of `hub`; subscriptions arrive in
+        // phase 2B+ (bars, trades, orderbook, ticker). Persistence is on,
+        // warm-start = 1000 most-recent points per series, gap-heal default.
+        // Storage lives under <APPDATA>/mylittlechart/dig3_storage/ so the
+        // existing %APPDATA%/mylittlechart/{bars,trades,orderbook}/ trees
+        // (legacy bar-store / trade-store / orderbook-store) stay untouched
+        // and can be deleted in phase 2C after the migration is verified.
+        let storage_root = zengeld_chart::app_data_dir().join("dig3_storage");
+        let station = runtime.block_on(async {
+            digdigdig3_station::Station::builder()
+                .storage_root(storage_root)
+                .persistence(digdigdig3_station::PersistenceConfig::on())
+                .warm_start(1000)
+                .build()
+                .await
+                .expect("failed to build digdigdig3-station")
+        });
+        let station = Arc::new(station);
+
         (Self {
             runtime,
             hub,
@@ -333,7 +366,19 @@ impl DataBridge {
             rest_orderbook_pollers: Arc::new(Mutex::new(HashMap::new())),
             orderbook_map: shared_orderbook,
             warmup_started: AtomicBool::new(false),
+            station,
         }, rx, connector_ready_rx)
+    }
+
+    /// Access to the underlying [`digdigdig3_station::Station`].
+    ///
+    /// Returned as an `Arc` so callers can spawn long-lived consumer tasks
+    /// (subscription drainers, replay UIs) without juggling lifetimes against
+    /// the bridge itself. Currently used only by phase-2 adapters inside this
+    /// crate; downstream chart code keeps consuming the legacy
+    /// [`LiveUpdate`] broadcast.
+    pub fn station(&self) -> Arc<digdigdig3_station::Station> {
+        self.station.clone()
     }
 
     /// Get a clone of the shared trade map.
