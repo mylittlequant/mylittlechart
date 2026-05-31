@@ -176,6 +176,12 @@ struct PerWindowState {
     /// Used to suppress `sidebar_dirty_scene` when the cursor moves within
     /// the same row — hover highlight only changes at row boundaries (36 px).
     last_sidebar_hover_row: Option<usize>,
+    /// Whether the cursor was inside a toolbar band on the previous CursorMoved.
+    /// `toolbar_dirty` is only set while INSIDE a toolbar zone — so a fast exit
+    /// into the chart left the cached toolbar scene with a stale hover highlight
+    /// (no dirty mark fired on the way out). We mark dirty once on the
+    /// inside→outside transition so the toolbar redraws and clears the highlight.
+    was_in_toolbar_zone: bool,
     /// When true this window is a skeleton placeholder (shown while vault unlock
     /// or first-run wizard is pending).  Skeleton windows suppress tab/toolbar
     /// rendering and chart content — only chrome window controls are drawn.
@@ -1404,6 +1410,7 @@ impl App<'_> {
             close_window_requested: false,
             delete_window_requested: false,
             last_sidebar_hover_row: None,
+            was_in_toolbar_zone: false,
             skeleton,
             render_backend: sidebar_content::state::RenderBackend::VelloGpu,
             instanced_renderer: None,

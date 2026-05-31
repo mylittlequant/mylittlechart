@@ -240,7 +240,14 @@ impl App<'_> {
                         || x > chart_w - RIGHT_TOOLBAR_WIDTH;
                     if in_toolbar_zone {
                         pw.toolbar_dirty = true;
+                    } else if pw.was_in_toolbar_zone {
+                        // Cursor just left a toolbar band. The last in-zone frame lit
+                        // a button highlight into the cached toolbar scene; without a
+                        // dirty mark on the way out (fast/horizontal exit), that
+                        // highlight would stick. Force one rebuild to clear it.
+                        pw.toolbar_dirty = true;
                     }
+                    pw.was_in_toolbar_zone = in_toolbar_zone;
 
                     // Dropdowns extend below the toolbar zone — always rebuild toolbar
                     // scene when any dropdown is open so hover highlights update.
