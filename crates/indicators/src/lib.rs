@@ -40,33 +40,36 @@
 //! assert_eq!(bar.close, 103.0);
 //! ```
 
-// Core types (bar, tick, time, calendar)
-pub mod types;
+// Compute + catalog are provided by mli (mylittleindicators) — phase 1 of
+// the dig3+mli migration deleted the in-tree bar_indicators/, catalog/, and
+// types/ trees that were byte-for-byte duplicates of mli's code. Re-export
+// mli's modules under the historical mlc paths so downstream consumers
+// (chart-app, panels, sidebar-content, signals/, managers/) keep working
+// with their existing `crate::bar_indicators::...` / `crate::catalog::...`
+// / `crate::types::...` imports.
+pub use mli::bar_indicators;
+pub use mli::catalog;
+pub use mli::core::types;
 
-// Core indicator types
-pub mod bar_indicators;
-
-// Catalog system
-pub mod catalog;
-
-// Signal system - signal types, conditions, and detectors
+// Signal system — UI-side feature, NOT in mli. Lives in mlc permanently.
 pub mod signals;
 
-// Re-exports for convenience
-pub use bar_indicators::{
-    bar_indicator_id::BarIndicatorId,
-    indicator_value::IndicatorValue,
-    instance_factory::{IndicatorConfig, IndicatorInstance},
+// Re-exports for convenience (same surface as before; types now resolve
+// to mli's definitions through the module-level pub-uses above).
+pub use mli::{
+    BarIndicatorId,
+    IndicatorValue,
+    IndicatorConfig,
+    IndicatorInstance,
+    MasterIndicatorCatalog,
+    IndicatorSignature,
+    ParamConstraint,
+    ParamValue,
+    Bar,
+    Tick,
+    CalendarService,
+    TimeService,
 };
-
-pub use catalog::{
-    master_catalog::MasterIndicatorCatalog,
-    indicator_signature::IndicatorSignature,
-    constraints::ParamConstraint,
-    param_value::ParamValue,
-};
-
-pub use types::{Bar, Tick, CalendarService, TimeService};
 
 // Signal system re-exports
 pub use signals::{

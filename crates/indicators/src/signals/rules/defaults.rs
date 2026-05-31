@@ -2,6 +2,13 @@
 //!
 //! This module provides ready-to-use SignalProfiles for popular indicators.
 //! Uses BarIndicatorId for type-safe indicator identification.
+//!
+// removed: LaguerreRsi, DivStrength, MaCross, AutoFibo, SwingsSoft, MtfMomDiv, Rc2, Rc3, Rc4,
+// Fibochan, Darkcloudcover, Doji, Engulfing, Eveningstar, Hammer, Harami, Marubozu, Morningstar,
+// Patternrec, Piercingpattern, Sfp, Shootingstar, Threeblackcrows, Threewhitesoldiers, Tweezer,
+// CandlePatterns, Trin, CciDiv, ClassicDiv, HiddenDiv, MacdDiv, MacdHistDiv, MultiDiv, ObvDiv,
+// RsiDiv, StochDiv, VolDiv, WilliamsDiv, ZigzagDiv, Zigzag, ZigzagAtr, ZigzagCandle,
+// ZigzagClassic, ZigzagLookahead, ZigzagTime, Swings
 
 use crate::bar_indicators::bar_indicator_id::BarIndicatorId;
 use super::config::{DetectorConfig, ValueSource};
@@ -165,7 +172,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Rsioma => Some(bounded_oscillator(indicator_id, "RSIOMA", 70.0, 30.0)),
         BarIndicatorId::Rsx => Some(bounded_oscillator(indicator_id, "RSX", 70.0, 30.0)),
         BarIndicatorId::AtrRsi => Some(bounded_oscillator(indicator_id, "ATR RSI", 70.0, 30.0)),
-        BarIndicatorId::LaguerreRsi => Some(threshold_only(indicator_id, "Laguerre RSI", 0.8, 0.2)),
         BarIndicatorId::IftRsi => Some(zero_cross_threshold(indicator_id, "IFT RSI", 0.05, 0.5, -0.5)),
         BarIndicatorId::Imi => Some(threshold_only(indicator_id, "IMI", 70.0, 30.0)),
         BarIndicatorId::Dss => Some(threshold_only(indicator_id, "DSS", 80.0, 20.0)),
@@ -191,7 +197,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Screstp => Some(threshold_only(indicator_id, "Spectral Crest Pct", 80.0, 20.0)),
         BarIndicatorId::Sflatp => Some(threshold_only(indicator_id, "Spectral Flatness Pct", 70.0, 30.0)),
         BarIndicatorId::Sslopep => Some(zero_cross_threshold(indicator_id, "Spectral Slope Pct", 2.0, 20.0, -20.0)),
-        BarIndicatorId::DivStrength => Some(threshold_only(indicator_id, "Divergence Strength", 70.0, 30.0)),
         BarIndicatorId::Hlva => Some(swing_levels(indicator_id, "HLVA")),
         BarIndicatorId::Cci => Some(cci_profile()),
         BarIndicatorId::Mfi => Some(mfi_profile()),
@@ -289,8 +294,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Gapo => Some(volatility_swing(indicator_id, "GAPO")),
         BarIndicatorId::DiPlusMinus => Some(dual_line_crossover(indicator_id, "DI+/DI-")),
         BarIndicatorId::Dm => Some(zero_cross_oscillator(indicator_id, "DM", 0.01)),
-        BarIndicatorId::MaCross => Some(zero_cross_oscillator(indicator_id, "MA Cross", 0.5)),
-        BarIndicatorId::AutoFibo => Some(swing_levels(indicator_id, "Auto Fibo")),
         BarIndicatorId::Highest => Some(swing_levels(indicator_id, "Highest")),
         BarIndicatorId::Lowest => Some(swing_levels(indicator_id, "Lowest")),
 
@@ -298,10 +301,7 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::RsiPctBands => Some(rsi_pct_bands_profile()),
         BarIndicatorId::BbPeriod => None, // informational metadata only
         BarIndicatorId::SwingAge => None,  // informational, not tradeable
-        BarIndicatorId::Swings => Some(swings_profile()),
-        BarIndicatorId::SwingsSoft => Some(swings_soft_profile()),
         BarIndicatorId::SweepRev => Some(histogram_signal(indicator_id, "Sweep Reversal")),
-        BarIndicatorId::MtfMomDiv => Some(histogram_signal(indicator_id, "MTF Mom Div")),
         BarIndicatorId::MoObv => Some(divergence_swing(indicator_id, "MO OBV")),
         BarIndicatorId::Rwi => Some(rwi_profile()),
         BarIndicatorId::Vhf => Some(threshold_only(indicator_id, "VHF", 0.4, 0.2)),
@@ -318,9 +318,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Sbwf => Some(overlay_crossover(indicator_id, "Whittaker Filter")),
         BarIndicatorId::Hampel => Some(overlay_crossover(indicator_id, "Hampel")),
         BarIndicatorId::Rc => Some(overlay_crossover(indicator_id, "Renko")),
-        BarIndicatorId::Rc2 => Some(overlay_crossover(indicator_id, "Renko 2")),
-        BarIndicatorId::Rc3 => Some(overlay_crossover(indicator_id, "Renko 3")),
-        BarIndicatorId::Rc4 => Some(overlay_crossover(indicator_id, "Renko 4")),
         BarIndicatorId::Scf => Some(volatility_swing(indicator_id, "SCF")),
         BarIndicatorId::Screst => Some(volatility_swing(indicator_id, "Spectral Crest")),
         BarIndicatorId::Sflux => Some(volatility_swing(indicator_id, "Spectral Flux")),
@@ -364,7 +361,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Stddevchan => Some(channel_indicator(indicator_id, "StdDev Channel")),
         BarIndicatorId::Medchan => Some(channel_indicator(indicator_id, "Median Channel")),
         BarIndicatorId::Vwapchan => Some(channel_indicator(indicator_id, "VWAP Channel")),
-        BarIndicatorId::Fibochan => Some(channel_indicator(indicator_id, "Fibo Channel")),
         BarIndicatorId::Projbands => Some(channel_indicator(indicator_id, "Projection Bands")),
         BarIndicatorId::Qrchan => Some(channel_indicator(indicator_id, "QR Channel")),
         BarIndicatorId::Theilsenchan => Some(channel_indicator(indicator_id, "Theil-Sen Channel")),
@@ -470,24 +466,8 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         // Candle Patterns
         // ============================================================
         BarIndicatorId::Candleanatomy => None, // body/wick sizes — visual only
-        BarIndicatorId::Darkcloudcover => Some(histogram_signal(indicator_id, "Dark Cloud Cover")),
-        BarIndicatorId::Doji => Some(histogram_signal(indicator_id, "Doji")),
-        BarIndicatorId::Engulfing => Some(histogram_signal(indicator_id, "Engulfing")),
-        BarIndicatorId::Eveningstar => Some(histogram_signal(indicator_id, "Evening Star")),
-        BarIndicatorId::Hammer => Some(histogram_signal(indicator_id, "Hammer")),
-        BarIndicatorId::Harami => Some(histogram_signal(indicator_id, "Harami")),
         BarIndicatorId::Heikinashi => None, // price-level overlay — visual only
-        BarIndicatorId::Marubozu => Some(histogram_signal(indicator_id, "Marubozu")),
-        BarIndicatorId::Morningstar => Some(histogram_signal(indicator_id, "Morning Star")),
-        BarIndicatorId::Patternrec => Some(histogram_signal(indicator_id, "Pattern Recognition")),
-        BarIndicatorId::Piercingpattern => Some(histogram_signal(indicator_id, "Piercing Pattern")),
-        BarIndicatorId::Sfp => Some(histogram_signal(indicator_id, "SFP")),
-        BarIndicatorId::Shootingstar => Some(histogram_signal(indicator_id, "Shooting Star")),
-        BarIndicatorId::Threeblackcrows => Some(histogram_signal(indicator_id, "Three Black Crows")),
-        BarIndicatorId::Threewhitesoldiers => Some(histogram_signal(indicator_id, "Three White Soldiers")),
-        BarIndicatorId::Tweezer => Some(histogram_signal(indicator_id, "Tweezer")),
         BarIndicatorId::Wickspike => Some(histogram_signal(indicator_id, "Wick Spike")),
-        BarIndicatorId::CandlePatterns => Some(histogram_signal(indicator_id, "Candle Patterns")),
         BarIndicatorId::HaTrend => Some(histogram_signal(indicator_id, "HA Trend")),
 
         // ============================================================
@@ -503,7 +483,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Tmf => Some(zero_cross_threshold(indicator_id, "Twiggs Money Flow", 0.01, 0.2, -0.2)),
         BarIndicatorId::Pvo => Some(zero_cross_oscillator(indicator_id, "PVO", 1.0)),
         BarIndicatorId::Pzo => Some(zero_cross_threshold(indicator_id, "PZO", 2.0, 15.0, -15.0)),
-        BarIndicatorId::Trin => Some(threshold_only(indicator_id, "TRIN", 2.0, 0.5)),
         BarIndicatorId::Vdelta => Some(vdelta_profile()),
         BarIndicatorId::Vfi => Some(zero_cross_threshold(indicator_id, "VFI", 0.05, 0.2, -0.2)),
         BarIndicatorId::Vo => Some(zero_cross_oscillator(indicator_id, "Volume Osc", 1.0)),
@@ -580,21 +559,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::Fractals => Some(fractals_profile()),
         BarIndicatorId::WilliamsMfi => Some(williams_mfi_profile()),
 
-        // ============================================================
-        // Divergence indicators
-        // ============================================================
-        BarIndicatorId::CciDiv => Some(histogram_signal(indicator_id, "CCI Divergence")),
-        BarIndicatorId::ClassicDiv => Some(histogram_signal(indicator_id, "Classic Divergence")),
-        BarIndicatorId::HiddenDiv => Some(histogram_signal(indicator_id, "Hidden Divergence")),
-        BarIndicatorId::MacdDiv => Some(histogram_signal(indicator_id, "MACD Divergence")),
-        BarIndicatorId::MacdHistDiv => Some(histogram_signal(indicator_id, "MACD Hist Divergence")),
-        BarIndicatorId::MultiDiv => Some(histogram_signal(indicator_id, "Multi Divergence")),
-        BarIndicatorId::ObvDiv => Some(histogram_signal(indicator_id, "OBV Divergence")),
-        BarIndicatorId::RsiDiv => Some(histogram_signal(indicator_id, "RSI Divergence")),
-        BarIndicatorId::StochDiv => Some(histogram_signal(indicator_id, "Stoch Divergence")),
-        BarIndicatorId::VolDiv => Some(histogram_signal(indicator_id, "Volume Divergence")),
-        BarIndicatorId::WilliamsDiv => Some(histogram_signal(indicator_id, "Williams Divergence")),
-        BarIndicatorId::ZigzagDiv => Some(histogram_signal(indicator_id, "Zigzag Divergence")),
 
         // ============================================================
         // Regression
@@ -668,16 +632,6 @@ pub fn default_profile(indicator_id: BarIndicatorId) -> Option<SignalProfile> {
         BarIndicatorId::SowEow => Some(threshold_only(indicator_id, "SOW/EOW", 0.9, 0.1)),
         BarIndicatorId::WeekMonth => Some(threshold_only(indicator_id, "Week of Month", 4.0, 2.0)),
         BarIndicatorId::Weekday => Some(threshold_only(indicator_id, "Weekday", 5.0, 2.0)),
-
-        // ============================================================
-        // Zigzag variants
-        // ============================================================
-        BarIndicatorId::Zigzag => Some(swing_levels(indicator_id, "Zigzag")),
-        BarIndicatorId::ZigzagAtr => Some(swing_levels(indicator_id, "Zigzag ATR")),
-        BarIndicatorId::ZigzagCandle => Some(swing_levels(indicator_id, "Zigzag Candle")),
-        BarIndicatorId::ZigzagClassic => Some(swing_levels(indicator_id, "Zigzag Classic")),
-        BarIndicatorId::ZigzagLookahead => Some(swing_levels(indicator_id, "Zigzag Lookahead")),
-        BarIndicatorId::ZigzagTime => Some(swing_levels(indicator_id, "Zigzag Time")),
 
         // Catch-all for truly unknown/future variants
         _ => None,
@@ -805,24 +759,6 @@ pub fn rsi_pct_bands_profile() -> SignalProfile {
         .with_detectors([
             DetectorConfig::threshold("ob_os", "RSI Levels", ValueSource::ChannelMiddle, 70.0, 30.0),
             DetectorConfig::channel("channel", "Band Position", ValueSource::ChannelUpper, ValueSource::ChannelLower),
-        ])
-}
-
-/// Swings profile
-pub fn swings_profile() -> SignalProfile {
-    SignalProfile::new(BarIndicatorId::Swings, "Swings Default")
-        .with_description("Swings: high/low channel breakouts")
-        .with_detectors([
-            DetectorConfig::channel("channel", "Swing Channel", ValueSource::First, ValueSource::Second),
-        ])
-}
-
-/// Swings Soft profile
-pub fn swings_soft_profile() -> SignalProfile {
-    SignalProfile::new(BarIndicatorId::SwingsSoft, "Swings Soft Default")
-        .with_description("Swings Soft: smoothed high/low channel")
-        .with_detectors([
-            DetectorConfig::channel("channel", "Soft Swing Channel", ValueSource::First, ValueSource::Second),
         ])
 }
 
@@ -1427,17 +1363,8 @@ mod tests {
 
     #[test]
     fn test_candle_patterns() {
-        assert!(default_profile(BarIndicatorId::Doji).is_some());
-        assert!(default_profile(BarIndicatorId::Engulfing).is_some());
-        assert!(default_profile(BarIndicatorId::Hammer).is_some());
-        assert!(default_profile(BarIndicatorId::Marubozu).is_some());
-    }
-
-    #[test]
-    fn test_divergence_profiles() {
-        assert!(default_profile(BarIndicatorId::RsiDiv).is_some());
-        assert!(default_profile(BarIndicatorId::MacdDiv).is_some());
-        assert!(default_profile(BarIndicatorId::ObvDiv).is_some());
+        assert!(default_profile(BarIndicatorId::Wickspike).is_some());
+        assert!(default_profile(BarIndicatorId::HaTrend).is_some());
     }
 
     #[test]

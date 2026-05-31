@@ -226,6 +226,8 @@ impl IndicatorBridge {
             // Catch-all for any new categories
             CatalogCategory::Custom | CatalogCategory::Composite |
             CatalogCategory::Experimental | CatalogCategory::Unknown => IndicatorCategory::Custom,
+            // New mli stream-specific categories (FundingAdvanced, OpenInterest, etc.) — render parity TBD in phase 3.
+            _ => IndicatorCategory::Custom,
         }
     }
 
