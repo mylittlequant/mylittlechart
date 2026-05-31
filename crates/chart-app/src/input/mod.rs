@@ -514,6 +514,14 @@ impl ChartApp {
             };
             if let Some(leaf_id) = cursor_leaf {
                 self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                // The cached active_frame_layout was built for the PREVIOUS active
+                // leaf. Now that the cursor's leaf is active, that cache holds the
+                // wrong leaf's chart rect — the right-click hit-test below would
+                // subtract the wrong window origin and target the old window.
+                // Invalidate it so the fallback rebuilds the layout for the newly
+                // active (cursor's) leaf. (Split-pane only; single window never
+                // changes active leaf here.)
+                self.active_frame_layout = None;
             }
         }
 
